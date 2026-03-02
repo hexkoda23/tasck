@@ -6,22 +6,18 @@ export const MetricCard = ({
   subtitle, 
   trend, 
   trendDirection = 'up',
-  icon,
   className = '' 
 }) => {
-  const trendColor = trendDirection === 'up' ? 'text-[#6BFF9A]' : trendDirection === 'down' ? 'text-[#FF4757]' : 'text-white/50';
+  const trendColor = trendDirection === 'up' ? 'text-[#6BFF9A]' : trendDirection === 'down' ? 'text-[#FF4757]' : 'text-white/40';
   const trendIcon = trendDirection === 'up' ? '↑' : trendDirection === 'down' ? '↓' : '';
 
   return (
     <div className={`metric-card ${className}`} data-testid={`metric-${title?.toLowerCase().replace(/\s+/g, '-')}`}>
-      <div className="flex items-start justify-between mb-3">
-        <span className="text-white/50 text-sm uppercase tracking-wide">{title}</span>
-        {icon && <span className="text-[#6BFF9A]">{icon}</span>}
-      </div>
-      <div className="text-3xl font-bold text-white font-mono mb-1">{value}</div>
-      {subtitle && <div className="text-sm text-white/50">{subtitle}</div>}
+      <span className="metric-label block mb-4">{title}</span>
+      <div className="big-number mb-1.5 animate-count-up">{value}</div>
+      {subtitle && <div className="text-sm text-white/40 mb-2">{subtitle}</div>}
       {trend && (
-        <div className={`text-sm mt-2 ${trendColor}`}>
+        <div className={`text-xs mt-auto pt-3 border-t border-white/5 ${trendColor}`}>
           {trendIcon} {trend}
         </div>
       )}
@@ -31,9 +27,9 @@ export const MetricCard = ({
 
 export const MetricCardSkeleton = () => (
   <div className="metric-card">
-    <div className="skeleton h-4 w-24 mb-3"></div>
-    <div className="skeleton h-8 w-32 mb-1"></div>
-    <div className="skeleton h-4 w-20"></div>
+    <div className="skeleton h-3 w-20 mb-4"></div>
+    <div className="skeleton h-9 w-28 mb-2"></div>
+    <div className="skeleton h-3 w-16"></div>
   </div>
 );
 
