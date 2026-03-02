@@ -15,28 +15,49 @@ import StaffPipeline from './pages/staff/StaffPipeline';
 import StaffDeals from './pages/staff/StaffDeals';
 import StaffRoster from './pages/staff/StaffRoster';
 import StaffBrands from './pages/staff/StaffBrands';
+import StaffProjects from './pages/staff/StaffProjects';
+import StaffOpportunities from './pages/staff/StaffOpportunities';
+import StaffRevenue from './pages/staff/StaffRevenue';
 
 // Creative Pages
 import CreativeOverview from './pages/creative/CreativeOverview';
+import CreativeOpportunities from './pages/creative/CreativeOpportunities';
+import CreativeProjects from './pages/creative/CreativeProjects';
+import CreativeTasks from './pages/creative/CreativeTasks';
+import CreativeWallet from './pages/creative/CreativeWallet';
+import CreativePortfolio from './pages/creative/CreativePortfolio';
 
 // Super Creative Pages
 import SuperCreativeOverview from './pages/super-creative/SuperCreativeOverview';
+import SuperCreativePortfolio from './pages/super-creative/SuperCreativePortfolio';
+import SuperCreativeProjects from './pages/super-creative/SuperCreativeProjects';
+import SuperCreativeOpportunities from './pages/super-creative/SuperCreativeOpportunities';
+import SuperCreativeApplications from './pages/super-creative/SuperCreativeApplications';
+import SuperCreativeWallet from './pages/super-creative/SuperCreativeWallet';
 
 // Brand Pages
 import BrandOverview from './pages/brand/BrandOverview';
+import BrandDiscover from './pages/brand/BrandDiscover';
+import BrandCampaigns from './pages/brand/BrandCampaigns';
+import BrandApprovals from './pages/brand/BrandApprovals';
+import BrandAnalytics from './pages/brand/BrandAnalytics';
+import BrandSpend from './pages/brand/BrandSpend';
 
 // Admin Pages
 import AdminOverview from './pages/admin/AdminOverview';
+import AdminUsers from './pages/admin/AdminUsers';
+import AdminDisputes from './pages/admin/AdminDisputes';
+import AdminContracts from './pages/admin/AdminContracts';
+import AdminAuditLogs from './pages/admin/AdminAuditLogs';
+import AdminPermissions from './pages/admin/AdminPermissions';
+import AdminWallets from './pages/admin/AdminWallets';
+import AdminSettings from './pages/admin/AdminSettings';
 
-// Placeholder component for pages not yet built
-const PlaceholderPage = ({ title }) => (
-  <div className="flex items-center justify-center min-h-[60vh]">
-    <div className="text-center">
-      <h2 className="text-2xl font-bold text-white mb-2">{title}</h2>
-      <p className="text-white/50">This page is coming soon</p>
-    </div>
-  </div>
-);
+// Shared Pages
+import MessagesPage from './pages/shared/MessagesPage';
+import CalendarPage from './pages/shared/CalendarPage';
+import ReportsPage from './pages/shared/ReportsPage';
+import SettingsPage from './pages/shared/SettingsPage';
 
 // Protected Route wrapper
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -79,16 +100,15 @@ function AppRoutes() {
         <Route index element={<StaffOverview />} />
         <Route path="pipeline" element={<StaffPipeline />} />
         <Route path="deals" element={<StaffDeals />} />
-        <Route path="deals/:id" element={<PlaceholderPage title="Deal Room" />} />
-        <Route path="projects" element={<PlaceholderPage title="Projects" />} />
-        <Route path="opportunities" element={<PlaceholderPage title="Opportunities" />} />
+        <Route path="projects" element={<StaffProjects />} />
+        <Route path="opportunities" element={<StaffOpportunities />} />
         <Route path="roster" element={<StaffRoster />} />
         <Route path="brands" element={<StaffBrands />} />
-        <Route path="revenue" element={<PlaceholderPage title="Revenue Intelligence" />} />
-        <Route path="messages" element={<PlaceholderPage title="Messages" />} />
-        <Route path="calendar" element={<PlaceholderPage title="Calendar" />} />
-        <Route path="reports" element={<PlaceholderPage title="Reports" />} />
-        <Route path="settings" element={<PlaceholderPage title="Settings" />} />
+        <Route path="revenue" element={<StaffRevenue />} />
+        <Route path="messages" element={<MessagesPage />} />
+        <Route path="calendar" element={<CalendarPage />} />
+        <Route path="reports" element={<ReportsPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
 
       {/* Brand Portal */}
@@ -101,14 +121,14 @@ function AppRoutes() {
         }
       >
         <Route index element={<BrandOverview />} />
-        <Route path="discover" element={<PlaceholderPage title="Discover Talent" />} />
-        <Route path="campaigns" element={<PlaceholderPage title="My Campaigns" />} />
-        <Route path="approvals" element={<PlaceholderPage title="Approvals" />} />
-        <Route path="analytics" element={<PlaceholderPage title="Campaign Analytics" />} />
-        <Route path="spend" element={<PlaceholderPage title="Spend Tracking" />} />
-        <Route path="messages" element={<PlaceholderPage title="Messages" />} />
-        <Route path="reports" element={<PlaceholderPage title="Reports" />} />
-        <Route path="settings" element={<PlaceholderPage title="Settings" />} />
+        <Route path="discover" element={<BrandDiscover />} />
+        <Route path="campaigns" element={<BrandCampaigns />} />
+        <Route path="approvals" element={<BrandApprovals />} />
+        <Route path="analytics" element={<BrandAnalytics />} />
+        <Route path="spend" element={<BrandSpend />} />
+        <Route path="messages" element={<MessagesPage />} />
+        <Route path="reports" element={<ReportsPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
 
       {/* Super Creative Portal */}
@@ -121,14 +141,14 @@ function AppRoutes() {
         }
       >
         <Route index element={<SuperCreativeOverview />} />
-        <Route path="portfolio" element={<PlaceholderPage title="Portfolio" />} />
-        <Route path="projects" element={<PlaceholderPage title="Projects" />} />
-        <Route path="opportunities" element={<PlaceholderPage title="Opportunities" />} />
-        <Route path="applications" element={<PlaceholderPage title="Applications" />} />
-        <Route path="wallet" element={<PlaceholderPage title="Wallet" />} />
-        <Route path="calendar" element={<PlaceholderPage title="Calendar" />} />
-        <Route path="messages" element={<PlaceholderPage title="Messages" />} />
-        <Route path="settings" element={<PlaceholderPage title="Settings" />} />
+        <Route path="portfolio" element={<SuperCreativePortfolio />} />
+        <Route path="projects" element={<SuperCreativeProjects />} />
+        <Route path="opportunities" element={<SuperCreativeOpportunities />} />
+        <Route path="applications" element={<SuperCreativeApplications />} />
+        <Route path="wallet" element={<SuperCreativeWallet />} />
+        <Route path="calendar" element={<CalendarPage />} />
+        <Route path="messages" element={<MessagesPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
 
       {/* Creative Portal */}
@@ -141,13 +161,13 @@ function AppRoutes() {
         }
       >
         <Route index element={<CreativeOverview />} />
-        <Route path="opportunities" element={<PlaceholderPage title="Opportunities" />} />
-        <Route path="projects" element={<PlaceholderPage title="My Projects" />} />
-        <Route path="tasks" element={<PlaceholderPage title="Tasks" />} />
-        <Route path="wallet" element={<PlaceholderPage title="Wallet" />} />
-        <Route path="portfolio" element={<PlaceholderPage title="Portfolio" />} />
-        <Route path="messages" element={<PlaceholderPage title="Messages" />} />
-        <Route path="settings" element={<PlaceholderPage title="Settings" />} />
+        <Route path="opportunities" element={<CreativeOpportunities />} />
+        <Route path="projects" element={<CreativeProjects />} />
+        <Route path="tasks" element={<CreativeTasks />} />
+        <Route path="wallet" element={<CreativeWallet />} />
+        <Route path="portfolio" element={<CreativePortfolio />} />
+        <Route path="messages" element={<MessagesPage />} />
+        <Route path="settings" element={<SettingsPage />} />
       </Route>
 
       {/* Admin Portal */}
@@ -160,13 +180,13 @@ function AppRoutes() {
         }
       >
         <Route index element={<AdminOverview />} />
-        <Route path="users" element={<PlaceholderPage title="Users & Verification" />} />
-        <Route path="disputes" element={<PlaceholderPage title="Disputes" />} />
-        <Route path="contracts" element={<PlaceholderPage title="Contracts" />} />
-        <Route path="audit" element={<PlaceholderPage title="Audit Logs" />} />
-        <Route path="permissions" element={<PlaceholderPage title="Permissions" />} />
-        <Route path="wallets" element={<PlaceholderPage title="Platform Wallets" />} />
-        <Route path="settings" element={<PlaceholderPage title="Platform Settings" />} />
+        <Route path="users" element={<AdminUsers />} />
+        <Route path="disputes" element={<AdminDisputes />} />
+        <Route path="contracts" element={<AdminContracts />} />
+        <Route path="audit" element={<AdminAuditLogs />} />
+        <Route path="permissions" element={<AdminPermissions />} />
+        <Route path="wallets" element={<AdminWallets />} />
+        <Route path="settings" element={<AdminSettings />} />
       </Route>
 
       {/* Catch all - redirect to landing */}
