@@ -27,21 +27,21 @@ export const StaffOpportunities = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-opportunities">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Opportunities</h1>
-          <p className="text-white/50 text-sm">{opportunities.length} opportunities across all projects</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Opportunities</h1>
+          <p className="text-[#64748B] text-sm">{opportunities.length} opportunities across all projects</p>
         </div>
       </div>
 
       <div className="flex items-center gap-4">
         <div className="flex-1 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
           <input 
             type="text"
             placeholder="Search opportunities..."
-            className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-white/30 focus:outline-none"
+            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none"
           />
         </div>
-        <select className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none">
+        <select className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none">
           <option value="all">All Status</option>
           <option value="open">Open</option>
           <option value="in_progress">In Progress</option>
@@ -73,31 +73,31 @@ export const StaffOpportunities = () => {
                   <td>
                     <div className="flex items-center gap-2">
                       <Target className="w-4 h-4 text-[#2F55FF]" />
-                      <span className="text-white font-medium">{opp.role}</span>
+                      <span className="text-[#0F172A] font-medium">{opp.role}</span>
                     </div>
                   </td>
-                  <td className="text-white/60 text-sm">{opp.project_title}</td>
+                  <td className="text-[#64748B] text-sm">{opp.project_title}</td>
                   <td>
                     <div className="flex items-center gap-2">
                       <Avatar name={opp.client_name} size="sm" />
-                      <span className="text-white/80 text-sm">{opp.client_name}</span>
+                      <span className="text-[#334155] text-sm">{opp.client_name}</span>
                     </div>
                   </td>
-                  <td className="text-[#6BFF9A] font-mono">{formatNaira(opp.budget, { compact: true })}</td>
+                  <td className="text-[#22C55E] font-mono">{formatNaira(opp.budget, { compact: true })}</td>
                   <td>
                     {opp.creative_name ? (
                       <div className="flex items-center gap-2">
                         <Avatar name={opp.creative_name} size="sm" />
-                        <span className="text-white/80 text-sm">{opp.creative_name}</span>
+                        <span className="text-[#334155] text-sm">{opp.creative_name}</span>
                       </div>
                     ) : (
-                      <span className="text-white/40 text-sm">Unfilled</span>
+                      <span className="text-[#94A3B8] text-sm">Unfilled</span>
                     )}
                   </td>
                   <td><StatusBadge status={opp.status} /></td>
                   <td>
                     <div className="w-24">
-                      <div className="flex items-center justify-between text-xs text-white/40 mb-1">
+                      <div className="flex items-center justify-between text-xs text-[#94A3B8] mb-1">
                         <span>{opp.tasks_completed}/{opp.tasks_count}</span>
                       </div>
                       <div className="progress-bar h-1">

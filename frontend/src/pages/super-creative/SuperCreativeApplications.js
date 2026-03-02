@@ -104,10 +104,10 @@ export const SuperCreativeApplications = () => {
 
   const getStatusStyle = (status) => {
     const styles = {
-      pending: { bg: 'bg-[#FFA502]/20', text: 'text-[#FFA502]', icon: Clock },
-      shortlisted: { bg: 'bg-[#2F55FF]/20', text: 'text-[#2F55FF]', icon: Star },
-      accepted: { bg: 'bg-[#6BFF9A]/20', text: 'text-[#6BFF9A]', icon: CheckCircle },
-      rejected: { bg: 'bg-[#FF4757]/20', text: 'text-[#FF4757]', icon: XCircle }
+      pending: { bg: 'bg-[#FFFBEB]', text: 'text-[#D97706]', icon: Clock },
+      shortlisted: { bg: 'bg-[#EEF2FF]', text: 'text-[#2F55FF]', icon: Star },
+      accepted: { bg: 'bg-[#22C55E]/20', text: 'text-[#22C55E]', icon: CheckCircle },
+      rejected: { bg: 'bg-[#FEF2F2]', text: 'text-[#DC2626]', icon: XCircle }
     };
     return styles[status] || styles.pending;
   };
@@ -116,28 +116,28 @@ export const SuperCreativeApplications = () => {
     <div className="space-y-6 animate-fade-in" data-testid="sc-applications">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Applications</h1>
-          <p className="text-white/50 text-sm">Review and manage creative applications</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Applications</h1>
+          <p className="text-[#64748B] text-sm">Review and manage creative applications</p>
         </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Applications</p>
-          <p className="text-2xl font-bold text-white">{applications.length}</p>
+          <p className="text-[#64748B] text-sm">Total Applications</p>
+          <p className="text-2xl font-bold text-[#0F172A]">{applications.length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Pending Review</p>
-          <p className="text-2xl font-bold text-[#FFA502]">{applications.filter(a => a.status === 'pending').length}</p>
+          <p className="text-[#64748B] text-sm">Pending Review</p>
+          <p className="text-2xl font-bold text-[#D97706]">{applications.filter(a => a.status === 'pending').length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Shortlisted</p>
+          <p className="text-[#64748B] text-sm">Shortlisted</p>
           <p className="text-2xl font-bold text-[#2F55FF]">{applications.filter(a => a.status === 'shortlisted').length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Accepted</p>
-          <p className="text-2xl font-bold text-[#6BFF9A]">{applications.filter(a => a.status === 'accepted').length}</p>
+          <p className="text-[#64748B] text-sm">Accepted</p>
+          <p className="text-2xl font-bold text-[#22C55E]">{applications.filter(a => a.status === 'accepted').length}</p>
         </div>
       </div>
 
@@ -147,7 +147,7 @@ export const SuperCreativeApplications = () => {
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-lg text-sm transition-colors ${filter === f ? 'bg-[#2F55FF] text-white' : 'bg-white/5 text-white/50 hover:text-white'}`}
+            className={`px-4 py-2 rounded-lg text-sm transition-colors ${filter === f ? 'bg-[#2F55FF] text-white' : 'bg-[#F8FAFC] text-[#64748B] hover:bg-[#E2E8F0] hover:text-[#334155]'}`}
           >
             {f.charAt(0).toUpperCase() + f.slice(1)} ({f === 'all' ? applications.length : applications.filter(a => a.status === f).length})
           </button>
@@ -167,21 +167,21 @@ export const SuperCreativeApplications = () => {
                   <div className="flex items-center justify-between mb-2">
                     <div>
                       <div className="flex items-center gap-3">
-                        <h3 className="text-white font-semibold text-lg">{app.creative}</h3>
+                        <h3 className="text-[#0F172A] font-semibold text-lg">{app.creative}</h3>
                         <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${status.bg} ${status.text}`}>
                           <StatusIcon className="w-3 h-3" /> {app.status.charAt(0).toUpperCase() + app.status.slice(1)}
                         </span>
                       </div>
-                      <p className="text-white/50 text-sm">Applying for: <span className="text-white/80">{app.role}</span> — {app.project}</p>
+                      <p className="text-[#64748B] text-sm">Applying for: <span className="text-[#334155]">{app.role}</span> — {app.project}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[#6BFF9A] font-mono text-lg">{formatNaira(app.rate)}</p>
-                      <p className="text-white/40 text-xs">Requested rate</p>
+                      <p className="text-[#22C55E] font-mono text-lg">{formatNaira(app.rate)}</p>
+                      <p className="text-[#94A3B8] text-xs">Requested rate</p>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-6 mb-3 text-sm text-white/50">
-                    <span className="flex items-center gap-1"><Star className="w-4 h-4 text-[#FFA502]" /> {app.rating}</span>
+                  <div className="flex items-center gap-6 mb-3 text-sm text-[#64748B]">
+                    <span className="flex items-center gap-1"><Star className="w-4 h-4 text-[#D97706]" /> {app.rating}</span>
                     <span>{app.experience} experience</span>
                     <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {app.location}</span>
                     <span>{app.portfolio} portfolio items</span>
@@ -189,35 +189,35 @@ export const SuperCreativeApplications = () => {
 
                   <div className="flex flex-wrap gap-2 mb-3">
                     {app.skills.map((skill) => (
-                      <span key={skill} className="text-xs px-3 py-1 rounded-full bg-white/5 text-white/60">{skill}</span>
+                      <span key={skill} className="text-xs px-3 py-1 rounded-full bg-[#F8FAFC] text-[#64748B]">{skill}</span>
                     ))}
                   </div>
 
-                  <div className="bg-white/5 rounded-lg p-3 mb-3">
-                    <p className="text-white/70 text-sm">"{app.message}"</p>
+                  <div className="bg-[#F8FAFC] rounded-lg p-3 mb-3">
+                    <p className="text-[#475569] text-sm">"{app.message}"</p>
                   </div>
 
                   {app.rejectionReason && (
-                    <div className="bg-[#FF4757]/10 border border-[#FF4757]/20 rounded-lg p-3 mb-3">
-                      <p className="text-[#FF4757] text-xs mb-1">Rejection Reason</p>
-                      <p className="text-white/70 text-sm">{app.rejectionReason}</p>
+                    <div className="bg-[#FEF2F2] border border-[#DC2626]/20 rounded-lg p-3 mb-3">
+                      <p className="text-[#DC2626] text-xs mb-1">Rejection Reason</p>
+                      <p className="text-[#475569] text-sm">{app.rejectionReason}</p>
                     </div>
                   )}
 
-                  <div className="flex items-center justify-between pt-3 border-t border-white/5">
-                    <span className="text-white/40 text-xs">Applied: {app.appliedDate}</span>
+                  <div className="flex items-center justify-between pt-3 border-t border-[#F1F5F9]">
+                    <span className="text-[#94A3B8] text-xs">Applied: {app.appliedDate}</span>
                     <div className="flex gap-2">
                       <button className="btn-ghost text-sm flex items-center gap-1"><Eye className="w-4 h-4" /> Portfolio</button>
                       {app.status === 'pending' && (
                         <>
-                          <button className="text-sm px-3 py-1.5 rounded-lg bg-[#FF4757]/20 text-[#FF4757]">Reject</button>
-                          <button className="text-sm px-3 py-1.5 rounded-lg bg-[#2F55FF]/20 text-[#2F55FF]">Shortlist</button>
+                          <button className="text-sm px-3 py-1.5 rounded-lg bg-[#FEF2F2] text-[#DC2626]">Reject</button>
+                          <button className="text-sm px-3 py-1.5 rounded-lg bg-[#EEF2FF] text-[#2F55FF]">Shortlist</button>
                           <button className="btn-primary text-sm">Accept & Hire</button>
                         </>
                       )}
                       {app.status === 'shortlisted' && (
                         <>
-                          <button className="text-sm px-3 py-1.5 rounded-lg bg-[#FF4757]/20 text-[#FF4757]">Reject</button>
+                          <button className="text-sm px-3 py-1.5 rounded-lg bg-[#FEF2F2] text-[#DC2626]">Reject</button>
                           <button className="btn-primary text-sm">Accept & Hire</button>
                         </>
                       )}

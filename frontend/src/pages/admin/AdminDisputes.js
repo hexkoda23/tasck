@@ -61,10 +61,10 @@ const disputes = [
 export const AdminDisputes = () => {
   const getStatusBadge = (status) => {
     const styles = {
-      under_review: 'bg-[#FFA502]/20 text-[#FFA502]',
-      resolved: 'bg-[#6BFF9A]/20 text-[#6BFF9A]',
-      pending_response: 'bg-[#2F55FF]/20 text-[#2F55FF]',
-      escalated: 'bg-[#FF4757]/20 text-[#FF4757]'
+      under_review: 'bg-[#FFFBEB] text-[#D97706]',
+      resolved: 'bg-[#22C55E]/20 text-[#22C55E]',
+      pending_response: 'bg-[#EEF2FF] text-[#2F55FF]',
+      escalated: 'bg-[#FEF2F2] text-[#DC2626]'
     };
     return styles[status] || styles.pending_response;
   };
@@ -77,28 +77,28 @@ export const AdminDisputes = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-disputes">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Disputes</h1>
-          <p className="text-white/50 text-sm">Manage platform disputes and resolutions</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Disputes</h1>
+          <p className="text-[#64748B] text-sm">Manage platform disputes and resolutions</p>
         </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Open Disputes</p>
-          <p className="text-2xl font-bold text-[#FFA502]">2</p>
+          <p className="text-[#64748B] text-sm">Open Disputes</p>
+          <p className="text-2xl font-bold text-[#D97706]">2</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Under Review</p>
-          <p className="text-2xl font-bold text-white">1</p>
+          <p className="text-[#64748B] text-sm">Under Review</p>
+          <p className="text-2xl font-bold text-[#0F172A]">1</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Resolved (MTD)</p>
-          <p className="text-2xl font-bold text-[#6BFF9A]">1</p>
+          <p className="text-[#64748B] text-sm">Resolved (MTD)</p>
+          <p className="text-2xl font-bold text-[#22C55E]">1</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Value</p>
-          <p className="text-2xl font-bold text-white font-mono">₦780K</p>
+          <p className="text-[#64748B] text-sm">Total Value</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦780K</p>
         </div>
       </div>
 
@@ -109,44 +109,44 @@ export const AdminDisputes = () => {
             <div className="flex items-start justify-between mb-4">
               <div>
                 <div className="flex items-center gap-3 mb-1">
-                  <span className="text-white/40 text-sm">{dispute.id}</span>
+                  <span className="text-[#94A3B8] text-sm">{dispute.id}</span>
                   <span className={`text-xs px-2 py-0.5 rounded-full ${getStatusBadge(dispute.status)}`}>
                     {formatStatus(dispute.status)}
                   </span>
                   {dispute.priority === 'high' && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#FF4757]/20 text-[#FF4757]">
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#FEF2F2] text-[#DC2626]">
                       HIGH PRIORITY
                     </span>
                   )}
                 </div>
-                <h3 className="text-lg font-semibold text-white">{dispute.project}</h3>
-                <p className="text-white/50 text-sm">{dispute.projectId}</p>
+                <h3 className="text-lg font-semibold text-[#0F172A]">{dispute.project}</h3>
+                <p className="text-[#64748B] text-sm">{dispute.projectId}</p>
               </div>
               <div className="text-right">
-                <p className="text-white/40 text-xs">Disputed Amount</p>
-                <p className="text-xl font-mono text-[#FF4757]">₦{dispute.amount.toLocaleString()}</p>
+                <p className="text-[#94A3B8] text-xs">Disputed Amount</p>
+                <p className="text-xl font-mono text-[#DC2626]">₦{dispute.amount.toLocaleString()}</p>
               </div>
             </div>
 
             {/* Parties */}
             <div className="grid grid-cols-2 gap-4 mb-4">
-              <div className="bg-white/5 rounded-lg p-3">
-                <p className="text-white/40 text-xs mb-2">Claimant</p>
+              <div className="bg-[#F8FAFC] rounded-lg p-3">
+                <p className="text-[#94A3B8] text-xs mb-2">Claimant</p>
                 <div className="flex items-center gap-2">
                   <Avatar name={dispute.claimant} size="sm" />
                   <div>
-                    <p className="text-white text-sm">{dispute.claimant}</p>
-                    <p className="text-white/40 text-xs">{dispute.claimantRole}</p>
+                    <p className="text-[#475569] text-sm">{dispute.claimant}</p>
+                    <p className="text-[#94A3B8] text-xs">{dispute.claimantRole}</p>
                   </div>
                 </div>
               </div>
-              <div className="bg-white/5 rounded-lg p-3">
-                <p className="text-white/40 text-xs mb-2">Respondent</p>
+              <div className="bg-[#F8FAFC] rounded-lg p-3">
+                <p className="text-[#94A3B8] text-xs mb-2">Respondent</p>
                 <div className="flex items-center gap-2">
                   <Avatar name={dispute.respondent} size="sm" />
                   <div>
-                    <p className="text-white text-sm">{dispute.respondent}</p>
-                    <p className="text-white/40 text-xs">{dispute.respondentRole}</p>
+                    <p className="text-[#475569] text-sm">{dispute.respondent}</p>
+                    <p className="text-[#94A3B8] text-xs">{dispute.respondentRole}</p>
                   </div>
                 </div>
               </div>
@@ -154,20 +154,20 @@ export const AdminDisputes = () => {
 
             {/* Issue */}
             <div className="mb-4">
-              <p className="text-white/40 text-xs mb-1">Issue Description</p>
-              <p className="text-white/80 text-sm">{dispute.issue}</p>
+              <p className="text-[#94A3B8] text-xs mb-1">Issue Description</p>
+              <p className="text-[#334155] text-sm">{dispute.issue}</p>
             </div>
 
             {dispute.resolution && (
-              <div className="mb-4 bg-[#6BFF9A]/10 border border-[#6BFF9A]/20 rounded-lg p-3">
-                <p className="text-[#6BFF9A] text-xs mb-1">Resolution</p>
-                <p className="text-white text-sm">{dispute.resolution}</p>
+              <div className="mb-4 bg-[#22C55E]/10 border border-[#22C55E]/20 rounded-lg p-3">
+                <p className="text-[#22C55E] text-xs mb-1">Resolution</p>
+                <p className="text-[#475569] text-sm">{dispute.resolution}</p>
               </div>
             )}
 
             {/* Actions */}
-            <div className="flex items-center justify-between pt-4 border-t border-white/5">
-              <div className="flex items-center gap-4 text-xs text-white/40">
+            <div className="flex items-center justify-between pt-4 border-t border-[#F1F5F9]">
+              <div className="flex items-center gap-4 text-xs text-[#94A3B8]">
                 <span>Filed: {dispute.filed}</span>
                 <span>Last update: {dispute.lastUpdate}</span>
               </div>

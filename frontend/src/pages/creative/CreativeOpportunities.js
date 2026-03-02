@@ -31,20 +31,20 @@ export const CreativeOpportunities = () => {
   }, []);
 
   const getMatchBadge = (match) => {
-    if (match >= 90) return { label: 'HOT MATCH', color: 'bg-[#FF4757]/20 text-[#FF4757]' };
-    if (match >= 85) return { label: 'GREAT FIT', color: 'bg-[#6BFF9A]/20 text-[#6BFF9A]' };
-    if (match >= 80) return { label: 'GOOD FIT', color: 'bg-[#2F55FF]/20 text-[#2F55FF]' };
-    return { label: 'MATCH', color: 'bg-white/10 text-white/60' };
+    if (match >= 90) return { label: 'HOT MATCH', color: 'bg-[#FEF2F2] text-[#DC2626]' };
+    if (match >= 85) return { label: 'GREAT FIT', color: 'bg-[#22C55E]/20 text-[#22C55E]' };
+    if (match >= 80) return { label: 'GOOD FIT', color: 'bg-[#EEF2FF] text-[#2F55FF]' };
+    return { label: 'MATCH', color: 'bg-[#F1F5F9] text-[#64748B]' };
   };
 
   return (
     <div className="space-y-6 animate-fade-in" data-testid="creative-opportunities">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Opportunities</h1>
-          <p className="text-white/50 text-sm">AI-matched gigs based on your skills and portfolio</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Opportunities</h1>
+          <p className="text-[#64748B] text-sm">AI-matched gigs based on your skills and portfolio</p>
         </div>
-        <div className="flex items-center gap-2 text-sm text-[#6BFF9A]">
+        <div className="flex items-center gap-2 text-sm text-[#22C55E]">
           <Sparkles className="w-4 h-4" />
           {opportunities.length} opportunities match your profile
         </div>
@@ -53,24 +53,24 @@ export const CreativeOpportunities = () => {
       {/* Filters */}
       <div className="flex items-center gap-4">
         <div className="flex-1 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
           <input 
             type="text"
             placeholder="Search opportunities..."
-            className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-white/30 focus:outline-none"
+            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none"
           />
         </div>
         <select 
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none"
+          className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none"
         >
           <option value="all">All Opportunities</option>
           <option value="photography">Photography</option>
           <option value="video">Videography</option>
           <option value="design">Design</option>
         </select>
-        <select className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none">
+        <select className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none">
           <option>Sort by: Match Score</option>
           <option>Sort by: Budget (High)</option>
           <option>Sort by: Deadline</option>
@@ -86,10 +86,10 @@ export const CreativeOpportunities = () => {
             const match = opp.match || (95 - index * 3);
             const badge = getMatchBadge(match);
             return (
-              <div key={opp.id} className="dashboard-card p-6 hover:border-[#2F55FF]/30 transition-colors">
+              <div key={opp.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-lg bg-[#2F55FF]/20 flex items-center justify-center">
+                    <div className="w-12 h-12 rounded-lg bg-[#EEF2FF] flex items-center justify-center">
                       <Target className="w-6 h-6 text-[#2F55FF]" />
                     </div>
                     <div>
@@ -97,19 +97,19 @@ export const CreativeOpportunities = () => {
                         <span className={`text-xs px-2 py-0.5 rounded-full ${badge.color}`}>
                           {badge.label} ({match}%)
                         </span>
-                        {index === 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-[#FFA502]/20 text-[#FFA502]">NEW</span>}
+                        {index === 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-[#FFFBEB] text-[#D97706]">NEW</span>}
                       </div>
-                      <h3 className="text-white font-semibold text-lg">{opp.role}</h3>
-                      <p className="text-white/50">{opp.project_title}</p>
+                      <h3 className="text-[#0F172A] font-semibold text-lg">{opp.role}</h3>
+                      <p className="text-[#64748B]">{opp.project_title}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-mono text-[#6BFF9A]">{formatNaira(opp.budget, { compact: true })}</p>
-                    <p className="text-white/40 text-sm">{opp.duration || '6 weeks'}</p>
+                    <p className="text-2xl font-mono text-[#22C55E]">{formatNaira(opp.budget, { compact: true })}</p>
+                    <p className="text-[#94A3B8] text-sm">{opp.duration || '6 weeks'}</p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-6 mb-4 text-sm text-white/50">
+                <div className="flex items-center gap-6 mb-4 text-sm text-[#64748B]">
                   <span className="flex items-center gap-1">
                     <Avatar name={opp.client_name} size="sm" />
                     {opp.client_name}
@@ -126,15 +126,15 @@ export const CreativeOpportunities = () => {
 
                 <div className="flex flex-wrap gap-2 mb-4">
                   {(opp.skills_required || ['Photography', 'Editorial']).map((skill) => (
-                    <span key={skill} className="text-xs px-3 py-1 rounded-full bg-white/5 text-white/60">
+                    <span key={skill} className="text-xs px-3 py-1 rounded-full bg-[#F8FAFC] text-[#64748B]">
                       {skill}
                     </span>
                   ))}
                 </div>
 
-                <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                <div className="flex items-center justify-between pt-4 border-t border-[#F1F5F9]">
                   <div className="flex items-center gap-2">
-                    <button className="text-white/40 hover:text-white p-2 rounded-lg hover:bg-white/5">
+                    <button className="text-[#94A3B8] hover:text-[#0F172A] p-2 rounded-lg hover:bg-[#F8FAFC]">
                       <Bookmark className="w-5 h-5" />
                     </button>
                   </div>

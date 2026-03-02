@@ -82,8 +82,8 @@ export const AdminPermissions = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-permissions">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Permissions</h1>
-          <p className="text-white/50 text-sm">Role-based access control</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Permissions</h1>
+          <p className="text-[#64748B] text-sm">Role-based access control</p>
         </div>
         <button className="btn-primary">+ Create Role</button>
       </div>
@@ -94,15 +94,15 @@ export const AdminPermissions = () => {
           <div key={role.name} className="dashboard-card p-6" data-testid={`role-${role.name.toLowerCase()}`}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-[#2F55FF]/20 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-lg bg-[#EEF2FF] flex items-center justify-center">
                   <Shield className="w-5 h-5 text-[#2F55FF]" />
                 </div>
                 <div>
-                  <h3 className="text-white font-semibold">{role.name}</h3>
-                  <p className="text-white/40 text-xs">{role.users} users</p>
+                  <h3 className="text-[#0F172A] font-semibold">{role.name}</h3>
+                  <p className="text-[#94A3B8] text-xs">{role.users} users</p>
                 </div>
               </div>
-              <button className="text-white/40 hover:text-white">
+              <button className="text-[#94A3B8] hover:text-[#0F172A]">
                 <SettingsIcon className="w-4 h-4" />
               </button>
             </div>
@@ -110,11 +110,11 @@ export const AdminPermissions = () => {
             <div className="space-y-2">
               {Object.entries(role.permissions).map(([permission, enabled]) => (
                 <div key={permission} className="flex items-center justify-between py-1">
-                  <span className="text-white/60 text-sm">{permission}</span>
+                  <span className="text-[#64748B] text-sm">{permission}</span>
                   {enabled ? (
-                    <Check className="w-4 h-4 text-[#6BFF9A]" />
+                    <Check className="w-4 h-4 text-[#22C55E]" />
                   ) : (
-                    <X className="w-4 h-4 text-[#FF4757]/50" />
+                    <X className="w-4 h-4 text-[#DC2626]/50" />
                   )}
                 </div>
               ))}

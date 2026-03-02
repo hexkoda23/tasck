@@ -8,8 +8,7 @@ import {
   Sparkles, 
   Palette, 
   Shield,
-  ArrowRight,
-  X
+  ArrowRight
 } from 'lucide-react';
 
 const roleCards = [
@@ -17,7 +16,7 @@ const roleCards = [
     id: 'staff',
     role: 'staff',
     title: 'TASCK Staff',
-    description: 'The command center. Originate deals, manage pipelines, orchestrate everything.',
+    description: 'Originate deals, manage pipelines, orchestrate the creative economy.',
     icon: Briefcase,
     path: '/staff'
   },
@@ -25,7 +24,7 @@ const roleCards = [
     id: 'brand',
     role: 'brand',
     title: 'Brand',
-    description: 'The client portal. Track campaigns, approve deliverables, measure ROI.',
+    description: 'Track campaigns, approve deliverables, measure ROI.',
     icon: Building2,
     path: '/brand'
   },
@@ -33,7 +32,7 @@ const roleCards = [
     id: 'super_creative',
     role: 'super_creative',
     title: 'Super Creative',
-    description: 'The power creator. Create projects, fund opportunities, hire talent.',
+    description: 'Create projects, fund opportunities, hire talent.',
     icon: Sparkles,
     path: '/super-creative'
   },
@@ -41,7 +40,7 @@ const roleCards = [
     id: 'creative',
     role: 'creative',
     title: 'Creative',
-    description: 'The talent. Find gigs, complete tasks, get paid automatically.',
+    description: 'Find gigs, complete tasks, get paid automatically.',
     icon: Palette,
     path: '/creative'
   },
@@ -49,7 +48,7 @@ const roleCards = [
     id: 'admin',
     role: 'admin',
     title: 'Admin',
-    description: 'The platform. Users, disputes, audit, permissions.',
+    description: 'Manage users, disputes, contracts, and platform settings.',
     icon: Shield,
     path: '/admin'
   }
@@ -59,7 +58,6 @@ export const LandingPage = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
   const [loading, setLoading] = useState(null);
-  const [showBanner, setShowBanner] = useState(true);
 
   const handleRoleSelect = async (card) => {
     setLoading(card.id);
@@ -74,180 +72,110 @@ export const LandingPage = () => {
   };
 
   return (
-    <div className="landing-gradient min-h-screen" data-testid="landing-page">
-      {/* Floating Demo Pill */}
-      {showBanner && (
-        <div className="demo-banner flex items-center gap-2" data-testid="demo-pill">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#6BFF9A] animate-pulse"></span>
-          <span>Demo Mode</span>
-          <button onClick={() => setShowBanner(false)} className="ml-2 hover:opacity-70 transition-opacity">
-            <X className="w-3 h-3" />
-          </button>
-        </div>
-      )}
+    <div className="landing-split" data-testid="landing-page">
+      {/* LEFT PANEL — Branding */}
+      <div className="landing-left relative">
+        {/* Arc decorations */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none z-0" viewBox="0 0 800 900" preserveAspectRatio="xMidYMid slice">
+          <ellipse cx="400" cy="1000" rx="700" ry="600" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="1" />
+          <ellipse cx="400" cy="1100" rx="850" ry="700" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5" />
+          <ellipse cx="200" cy="300" rx="300" ry="200" fill="none" stroke="rgba(47,85,255,0.08)" strokeWidth="0.5" />
+        </svg>
 
-      {/* SVG Arc Lines (TASCK signature element) */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
-        <ellipse cx="720" cy="1100" rx="900" ry="800" fill="none" stroke="rgba(47,85,255,0.06)" strokeWidth="1" />
-        <ellipse cx="720" cy="1200" rx="1100" ry="900" fill="none" stroke="rgba(47,85,255,0.04)" strokeWidth="0.5" />
-        <ellipse cx="300" cy="800" rx="600" ry="500" fill="none" stroke="rgba(107,255,154,0.04)" strokeWidth="0.5" />
-      </svg>
-
-      {/* Header */}
-      <header className="relative z-10 pt-8 px-8">
-        <nav className="max-w-7xl mx-auto flex items-center justify-between">
-          <Logo variant="light" size="md" />
-          <button className="rounded-full border border-[#071426]/15 text-[#071426] px-6 py-2.5 text-sm font-medium hover:bg-[#071426]/5 transition-all" data-testid="speak-with-us-btn">
-            Speak With Us
-          </button>
-        </nav>
-      </header>
-
-      {/* Hero Section */}
-      <section className="relative z-10 pt-32 pb-24 px-8">
-        <div className="max-w-4xl mx-auto text-center">
+        <div className="relative z-10 max-w-md text-center">
+          <div className="mb-12">
+            <Logo variant="dark" size="lg" />
+          </div>
+          
           <h1 
-            className="font-display text-[#071426] mb-8 tracking-tight leading-[0.95] animate-fade-in"
-            style={{ fontSize: 'clamp(48px, 7vw, 96px)' }}
+            className="font-display text-[#0F172A] mb-6 tracking-tight leading-[0.95]"
+            style={{ fontSize: 'clamp(40px, 5vw, 72px)' }}
           >
             Creativity,<br />
-            <span className="italic">Managed.</span>
+            <span className="italic text-[#334155]">Managed.</span>
           </h1>
           
-          <p className="text-lg text-[#071426]/55 mb-12 max-w-xl mx-auto leading-relaxed animate-fade-in" style={{ animationDelay: '100ms' }}>
-            We connect Africa's Top Creators to The World's Leading Companies.
+          <p className="text-[#94A3B8] text-base leading-relaxed max-w-sm mx-auto">
+            The operating system for Africa's creative economy. Connecting brands, artists, and talent.
           </p>
 
-          <div className="flex items-center justify-center gap-4 animate-fade-in" style={{ animationDelay: '200ms' }}>
-            <button 
-              className="rounded-full bg-[#2F55FF] text-white px-10 py-3.5 font-semibold text-sm inline-flex items-center gap-2 hover:shadow-[0_0_24px_rgba(47,85,255,0.35)] hover:scale-[1.02] active:scale-[0.97] transition-all duration-200"
-              onClick={() => document.getElementById('role-selector').scrollIntoView({ behavior: 'smooth' })}
-              data-testid="enter-demo-btn"
-            >
-              Enter Demo
-              <ArrowRight className="w-4 h-4" />
-            </button>
-            <button className="rounded-full border border-[#2F55FF]/30 text-[#2F55FF] px-10 py-3.5 font-semibold text-sm hover:bg-[#2F55FF]/5 transition-all duration-200" data-testid="learn-more-btn">
-              Learn More
-            </button>
+          {/* Stats */}
+          <div className="mt-16 grid grid-cols-3 gap-8">
+            <div>
+              <div className="text-2xl font-bold text-[#0F172A] font-mono">₦2.4B+</div>
+              <div className="text-xs text-[#CBD5E1] mt-1">Pipeline Value</div>
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-[#0F172A] font-mono">50+</div>
+              <div className="text-xs text-[#CBD5E1] mt-1">Brand Partners</div>
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-[#0F172A] font-mono">200+</div>
+              <div className="text-xs text-[#CBD5E1] mt-1">Creatives</div>
+            </div>
           </div>
         </div>
-      </section>
+      </div>
 
-      {/* Role Selector Section */}
-      <section id="role-selector" className="relative z-10 py-24 px-8">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-16">
-            <p className="text-[11px] uppercase tracking-[0.15em] text-[#2F55FF] font-semibold mb-3">Choose Your Portal</p>
-            <h2 className="font-display text-3xl md:text-4xl text-[#071426] tracking-tight">
-              Five Portals. One Platform.
-            </h2>
+      {/* RIGHT PANEL — Role Selector */}
+      <div className="landing-right" data-testid="role-selector">
+        <div className="w-full max-w-md mx-auto">
+          {/* Demo badge */}
+          <div className="inline-flex items-center gap-2 mb-8 px-3 py-1.5 rounded-full border border-[#E2E8F0] text-xs text-[#64748B]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse"></span>
+            Demo Mode — Choose a portal to explore
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-5 stagger-children">
-            {roleCards.map((card, index) => {
+          <h2 className="text-2xl font-bold text-[#0F172A] mb-2 tracking-tight">
+            Choose Your Portal
+          </h2>
+          <p className="text-[#64748B] text-sm mb-8">
+            Select a role to explore the TASCK OS platform.
+          </p>
+
+          {/* Role Cards */}
+          <div className="space-y-3">
+            {roleCards.map((card) => {
               const Icon = card.icon;
               const isLoading = loading === card.id;
               
               return (
-                <div
+                <button
                   key={card.id}
                   onClick={() => !loading && handleRoleSelect(card)}
-                  className={`role-card text-center animate-fade-in ${isLoading ? 'opacity-70 pointer-events-none' : ''}`}
-                  style={{ animationDelay: `${index * 80}ms` }}
+                  disabled={!!loading}
+                  className={`role-card w-full text-left flex items-center gap-4 ${isLoading ? 'opacity-60 pointer-events-none' : ''}`}
                   data-testid={`role-card-${card.id}`}
                 >
-                  <div className="w-10 h-10 rounded-xl bg-[#6BFF9A]/10 flex items-center justify-center mx-auto mb-5">
-                    <Icon className="w-5 h-5 text-[#6BFF9A]" strokeWidth={1.5} />
+                  <div className="w-10 h-10 rounded-lg bg-[#F1F5F9] flex items-center justify-center flex-shrink-0">
+                    <Icon className="w-5 h-5 text-[#2F55FF]" strokeWidth={1.5} />
                   </div>
                   
-                  <h3 className="text-base font-bold text-[#071426] mb-2">
-                    {card.title}
-                  </h3>
-                  
-                  <p className="text-[#071426]/50 text-sm leading-relaxed mb-5">
-                    {card.description}
-                  </p>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-[#0F172A] text-sm">{card.title}</div>
+                    <div className="text-[#94A3B8] text-xs mt-0.5">{card.description}</div>
+                  </div>
 
-                  <div className="flex items-center justify-center text-[#2F55FF] text-sm font-medium">
+                  <div className="flex-shrink-0">
                     {isLoading ? (
-                      <span className="animate-pulse">Loading...</span>
+                      <div className="w-5 h-5 border-2 border-[#2F55FF] border-t-transparent rounded-full animate-spin"></div>
                     ) : (
-                      <>
-                        Enter
-                        <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
-                      </>
+                      <ArrowRight className="w-4 h-4 text-[#CBD5E1]" />
                     )}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
-        </div>
-      </section>
 
-      {/* Two Column Cards */}
-      <section className="relative z-10 py-16 px-8">
-        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-[#2F55FF] rounded-2xl p-10 text-white relative overflow-hidden group">
-            <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 600 400">
-              <ellipse cx="500" cy="350" rx="300" ry="200" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="0.5" />
-            </svg>
-            <span className="text-[10px] tracking-[0.2em] text-white/40 uppercase mb-8 block relative z-10">BRANDS</span>
-            <h3 className="font-display text-3xl md:text-4xl mb-3 italic relative z-10 leading-tight">
-              Work Directly With<br />Top African Talent.
-            </h3>
-            <p className="text-white/50 mb-8 relative z-10">We deliver business results.</p>
-            <button className="relative z-10 rounded-full border border-white/20 text-white px-7 py-2.5 text-sm hover:bg-white/10 transition-all">
-              Work with us
-            </button>
-          </div>
-
-          <div className="bg-[#071426] rounded-2xl p-10 text-white relative overflow-hidden">
-            <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 600 400">
-              <ellipse cx="100" cy="50" rx="300" ry="200" fill="none" stroke="rgba(107,255,154,0.05)" strokeWidth="0.5" />
-            </svg>
-            <span className="text-[10px] tracking-[0.2em] text-white/40 uppercase mb-8 block relative z-10">TOP CREATORS</span>
-            <h3 className="font-display text-3xl md:text-4xl mb-3 italic relative z-10 leading-tight">
-              We Represent You.
-            </h3>
-            <p className="text-white/50 mb-8 relative z-10">For all your business needs.</p>
-            <button className="relative z-10 rounded-full bg-[#2F55FF] text-white px-7 py-2.5 text-sm hover:bg-[#2F55FF]/90 hover:shadow-[0_0_20px_rgba(47,85,255,0.3)] transition-all">
-              Work with us
-            </button>
+          {/* Footer */}
+          <div className="mt-10 pt-6 border-t border-[#F1F5F9]">
+            <p className="text-[11px] text-[#94A3B8]">
+              &copy; 2026 The TASCK Agency. All rights reserved.
+            </p>
           </div>
         </div>
-      </section>
-
-      {/* Community Section */}
-      <section className="relative z-10 py-16 px-8">
-        <div className="max-w-6xl mx-auto">
-          <div className="bg-[#071426] rounded-2xl p-16 text-center relative overflow-hidden">
-            <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 1000 400">
-              <ellipse cx="500" cy="500" rx="600" ry="400" fill="none" stroke="rgba(255,255,255,0.04)" strokeWidth="0.5" />
-              <ellipse cx="500" cy="550" rx="700" ry="450" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="0.5" />
-            </svg>
-            <h2 className="font-display text-4xl md:text-5xl text-white mb-4 italic relative z-10">
-              Join our Community
-            </h2>
-            <p className="text-white/40 mb-10 relative z-10">Soundboard, CWCA, Opportunities</p>
-            <button className="relative z-10 rounded-full bg-[#2F55FF] text-white px-10 py-3.5 font-semibold text-sm inline-flex items-center gap-2 hover:shadow-[0_0_24px_rgba(47,85,255,0.35)] transition-all">
-              Join Now
-              <ArrowRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="relative z-10 py-12 px-8 border-t border-[#071426]/5">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
-          <Logo variant="light" size="sm" />
-          <p className="text-[#071426]/35 text-sm">
-            &copy; 2026 The TASCK Agency. All rights reserved.
-          </p>
-        </div>
-      </footer>
+      </div>
     </div>
   );
 };

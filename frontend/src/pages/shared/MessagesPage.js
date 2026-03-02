@@ -73,15 +73,15 @@ export const MessagesPage = () => {
   return (
     <div className="flex h-[calc(100vh-8rem)] -m-6" data-testid="messages-page">
       {/* Thread List */}
-      <div className="w-80 border-r border-white/5 flex flex-col">
-        <div className="p-4 border-b border-white/5">
-          <h1 className="text-lg font-semibold text-white mb-3">Messages</h1>
+      <div className="w-80 border-r border-[#F1F5F9] flex flex-col">
+        <div className="p-4 border-b border-[#F1F5F9]">
+          <h1 className="text-lg font-semibold text-[#0F172A] mb-3">Messages</h1>
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
             <input 
               type="text"
               placeholder="Search conversations..."
-              className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none"
+              className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-sm text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none"
             />
           </div>
         </div>
@@ -93,22 +93,22 @@ export const MessagesPage = () => {
               onClick={() => setSelectedThread(thread)}
               className={`flex items-center gap-3 p-4 cursor-pointer border-l-2 transition-colors ${
                 selectedThread?.id === thread.id 
-                  ? 'bg-white/5 border-[#2F55FF]' 
-                  : 'border-transparent hover:bg-white/5'
+                  ? 'bg-[#F8FAFC] border-[#2F55FF]' 
+                  : 'border-transparent hover:bg-[#F8FAFC]'
               }`}
             >
               <div className="relative">
                 <Avatar name={thread.name} size="md" />
                 {thread.online && (
-                  <span className="absolute bottom-0 right-0 w-3 h-3 bg-[#6BFF9A] rounded-full border-2 border-[#0A1A30]"></span>
+                  <span className="absolute bottom-0 right-0 w-3 h-3 bg-[#22C55E] rounded-full border-2 border-[#0A1A30]"></span>
                 )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-1">
-                  <h3 className="text-white font-medium text-sm truncate">{thread.name}</h3>
-                  <span className="text-white/40 text-xs">{thread.time}</span>
+                  <h3 className="text-[#0F172A] font-medium text-sm truncate">{thread.name}</h3>
+                  <span className="text-[#94A3B8] text-xs">{thread.time}</span>
                 </div>
-                <p className="text-white/50 text-xs truncate">{thread.lastMessage}</p>
+                <p className="text-[#64748B] text-xs truncate">{thread.lastMessage}</p>
               </div>
               {thread.unread > 0 && (
                 <span className="bg-[#2F55FF] text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">
@@ -123,22 +123,22 @@ export const MessagesPage = () => {
       {/* Chat Area */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <div className="p-4 border-b border-white/5 flex items-center justify-between">
+        <div className="p-4 border-b border-[#F1F5F9] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Avatar name={selectedThread?.name} size="md" />
             <div>
-              <h2 className="text-white font-semibold">{selectedThread?.name}</h2>
-              <p className="text-white/40 text-sm">{selectedThread?.role}</p>
+              <h2 className="text-[#0F172A] font-semibold">{selectedThread?.name}</h2>
+              <p className="text-[#94A3B8] text-sm">{selectedThread?.role}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-lg">
+            <button className="p-2 text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F8FAFC] rounded-lg">
               <Phone className="w-5 h-5" />
             </button>
-            <button className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-lg">
+            <button className="p-2 text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F8FAFC] rounded-lg">
               <Video className="w-5 h-5" />
             </button>
-            <button className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-lg">
+            <button className="p-2 text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F8FAFC] rounded-lg">
               <MoreVertical className="w-5 h-5" />
             </button>
           </div>
@@ -150,19 +150,19 @@ export const MessagesPage = () => {
             <div key={msg.id} className={`flex ${msg.sender === 'me' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-md ${msg.sender === 'me' ? 'order-2' : ''}`}>
                 {msg.sender !== 'me' && (
-                  <p className="text-white/40 text-xs mb-1">{msg.name}</p>
+                  <p className="text-[#94A3B8] text-xs mb-1">{msg.name}</p>
                 )}
                 <div className={`rounded-2xl px-4 py-2 ${
                   msg.sender === 'me' 
                     ? 'bg-[#2F55FF] text-white' 
-                    : 'bg-white/10 text-white/90'
+                    : 'bg-[#F1F5F9] text-[#334155]'
                 }`}>
                   <p className="text-sm">{msg.content}</p>
                 </div>
-                <div className={`flex items-center gap-1 mt-1 text-xs text-white/40 ${msg.sender === 'me' ? 'justify-end' : ''}`}>
+                <div className={`flex items-center gap-1 mt-1 text-xs text-[#94A3B8] ${msg.sender === 'me' ? 'justify-end' : ''}`}>
                   <span>{msg.time}</span>
                   {msg.sender === 'me' && (
-                    msg.read ? <CheckCheck className="w-3 h-3 text-[#6BFF9A]" /> : <Check className="w-3 h-3" />
+                    msg.read ? <CheckCheck className="w-3 h-3 text-[#22C55E]" /> : <Check className="w-3 h-3" />
                   )}
                 </div>
               </div>
@@ -171,9 +171,9 @@ export const MessagesPage = () => {
         </div>
 
         {/* Input */}
-        <div className="p-4 border-t border-white/5">
+        <div className="p-4 border-t border-[#F1F5F9]">
           <div className="flex items-center gap-3">
-            <button className="p-2 text-white/40 hover:text-white">
+            <button className="p-2 text-[#94A3B8] hover:text-[#0F172A]">
               <Paperclip className="w-5 h-5" />
             </button>
             <input
@@ -181,7 +181,7 @@ export const MessagesPage = () => {
               value={newMessage}
               onChange={(e) => setNewMessage(e.target.value)}
               placeholder="Type a message..."
-              className="flex-1 bg-white/5 border border-white/10 rounded-full px-4 py-2 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
+              className="flex-1 bg-[#F8FAFC] border border-[#E2E8F0] rounded-full px-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
             />
             <button className="btn-primary p-2 rounded-full">
               <Send className="w-5 h-5" />

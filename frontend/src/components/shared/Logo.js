@@ -8,7 +8,7 @@ export const Logo = ({ variant = 'dark', size = 'md', showText = true }) => {
   };
 
   const { circle, text } = sizes[size];
-  const textColor = variant === 'dark' ? 'text-white' : 'text-[#071426]';
+  const textColor = variant === 'dark' ? 'text-white' : 'text-[#0F172A]';
 
   return (
     <div className="flex items-center gap-3">

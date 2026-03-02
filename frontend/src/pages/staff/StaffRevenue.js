@@ -41,8 +41,8 @@ export const StaffRevenue = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-revenue">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Revenue Intelligence</h1>
-          <p className="text-white/50 text-sm">Financial analytics and forecasting</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Revenue Intelligence</h1>
+          <p className="text-[#64748B] text-sm">Financial analytics and forecasting</p>
         </div>
         <button className="btn-secondary">Export Report</button>
       </div>
@@ -50,47 +50,47 @@ export const StaffRevenue = () => {
       {/* Key Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-xs mb-1">Revenue YTD</p>
-          <p className="text-2xl font-bold text-[#6BFF9A] font-mono">{formatNaira(revenueData.ytd, { compact: true })}</p>
-          <p className="text-xs text-[#6BFF9A] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 42% vs last year</p>
+          <p className="text-[#64748B] text-xs mb-1">Revenue YTD</p>
+          <p className="text-2xl font-bold text-[#22C55E] font-mono">{formatNaira(revenueData.ytd, { compact: true })}</p>
+          <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 42% vs last year</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-xs mb-1">TASCK Commission</p>
-          <p className="text-2xl font-bold text-white font-mono">{formatNaira(revenueData.commission, { compact: true })}</p>
-          <p className="text-xs text-[#6BFF9A] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 38%</p>
+          <p className="text-[#64748B] text-xs mb-1">TASCK Commission</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.commission, { compact: true })}</p>
+          <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 38%</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-xs mb-1">Avg Deal Size</p>
-          <p className="text-2xl font-bold text-white font-mono">{formatNaira(revenueData.avgDealSize, { compact: true })}</p>
-          <p className="text-xs text-[#6BFF9A] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 15%</p>
+          <p className="text-[#64748B] text-xs mb-1">Avg Deal Size</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.avgDealSize, { compact: true })}</p>
+          <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 15%</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-xs mb-1">Deals Closed</p>
-          <p className="text-2xl font-bold text-white font-mono">{revenueData.dealsClosedYtd}</p>
-          <p className="text-xs text-white/40">+5 vs last year</p>
+          <p className="text-[#64748B] text-xs mb-1">Deals Closed</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">{revenueData.dealsClosedYtd}</p>
+          <p className="text-xs text-[#94A3B8]">+5 vs last year</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-xs mb-1">Win Rate</p>
-          <p className="text-2xl font-bold text-white font-mono">{revenueData.winRate}%</p>
-          <p className="text-xs text-[#6BFF9A] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 7pp</p>
+          <p className="text-[#64748B] text-xs mb-1">Win Rate</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">{revenueData.winRate}%</p>
+          <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 7pp</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-xs mb-1">Avg Days to Close</p>
-          <p className="text-2xl font-bold text-white font-mono">34</p>
-          <p className="text-xs text-[#6BFF9A] flex items-center gap-1"><ArrowDown className="w-3 h-3" /> -6 days</p>
+          <p className="text-[#64748B] text-xs mb-1">Avg Days to Close</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">34</p>
+          <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowDown className="w-3 h-3" /> -6 days</p>
         </div>
       </div>
 
       {/* Target Progress */}
       <div className="dashboard-card p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-white">Annual Target Progress</h2>
-          <span className="text-[#6BFF9A] font-mono">{progressPercent.toFixed(0)}%</span>
+          <h2 className="text-lg font-semibold text-[#0F172A]">Annual Target Progress</h2>
+          <span className="text-[#22C55E] font-mono">{progressPercent.toFixed(0)}%</span>
         </div>
         <div className="progress-bar h-4 mb-2">
           <div className="progress-bar-fill" style={{ width: `${progressPercent}%` }}></div>
         </div>
-        <div className="flex items-center justify-between text-sm text-white/40">
+        <div className="flex items-center justify-between text-sm text-[#94A3B8]">
           <span>Current: {formatNaira(revenueData.ytd)}</span>
           <span>Target: {formatNaira(revenueData.target)}</span>
         </div>
@@ -99,20 +99,20 @@ export const StaffRevenue = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Revenue by Artist */}
         <div className="dashboard-card p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Revenue by Artist</h2>
+          <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Revenue by Artist</h2>
           <div className="space-y-3">
             {artistRevenue.map((artist) => (
               <div key={artist.name} className="flex items-center gap-4">
-                <div className="w-32 text-sm text-white/80 truncate">{artist.name.split('(')[0].trim()}</div>
+                <div className="w-32 text-sm text-[#334155] truncate">{artist.name.split('(')[0].trim()}</div>
                 <div className="flex-1">
-                  <div className="h-6 bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-6 bg-[#F8FAFC] rounded-full overflow-hidden">
                     <div 
                       className="h-full bg-gradient-to-r from-[#2F55FF] to-[#6BFF9A] rounded-full"
                       style={{ width: `${(artist.revenue / maxRevenue) * 100}%` }}
                     ></div>
                   </div>
                 </div>
-                <div className="w-24 text-right font-mono text-[#6BFF9A] text-sm">
+                <div className="w-24 text-right font-mono text-[#22C55E] text-sm">
                   {formatNaira(artist.revenue, { compact: true })}
                 </div>
               </div>
@@ -122,16 +122,16 @@ export const StaffRevenue = () => {
 
         {/* Revenue by Category */}
         <div className="dashboard-card p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Revenue by Category</h2>
+          <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Revenue by Category</h2>
           <div className="space-y-4">
             {categoryRevenue.map((cat, i) => {
-              const colors = ['bg-[#2F55FF]', 'bg-[#6BFF9A]', 'bg-[#FFA502]', 'bg-[#7C5CFC]', 'bg-[#FF4757]', 'bg-white/30'];
+              const colors = ['bg-[#2F55FF]', 'bg-[#22C55E]', 'bg-[#FFA502]', 'bg-[#7C5CFC]', 'bg-[#FF4757]', 'bg-white/30'];
               return (
                 <div key={cat.name} className="flex items-center gap-4">
                   <div className={`w-3 h-3 rounded-full ${colors[i]}`}></div>
-                  <div className="flex-1 text-white/80 text-sm">{cat.name}</div>
-                  <div className="text-white/40 text-sm">{cat.percentage}%</div>
-                  <div className="w-24 text-right font-mono text-white text-sm">
+                  <div className="flex-1 text-[#334155] text-sm">{cat.name}</div>
+                  <div className="text-[#94A3B8] text-sm">{cat.percentage}%</div>
+                  <div className="w-24 text-right font-mono text-[#475569] text-sm">
                     {formatNaira(cat.amount, { compact: true })}
                   </div>
                 </div>
@@ -163,8 +163,8 @@ export const StaffRevenue = () => {
               </svg>
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-white font-mono">{formatNaira(revenueData.ytd, { compact: true })}</p>
-                  <p className="text-xs text-white/40">Total</p>
+                  <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.ytd, { compact: true })}</p>
+                  <p className="text-xs text-[#94A3B8]">Total</p>
                 </div>
               </div>
             </div>

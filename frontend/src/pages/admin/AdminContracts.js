@@ -68,12 +68,12 @@ const contracts = [
 export const AdminContracts = () => {
   const getStatusBadge = (status) => {
     const styles = {
-      draft: 'bg-white/10 text-white/60',
-      pending_signature: 'bg-[#FFA502]/20 text-[#FFA502]',
-      signed: 'bg-[#2F55FF]/20 text-[#2F55FF]',
-      active: 'bg-[#6BFF9A]/20 text-[#6BFF9A]',
-      completed: 'bg-white/10 text-white/60',
-      terminated: 'bg-[#FF4757]/20 text-[#FF4757]'
+      draft: 'bg-[#F1F5F9] text-[#64748B]',
+      pending_signature: 'bg-[#FFFBEB] text-[#D97706]',
+      signed: 'bg-[#EEF2FF] text-[#2F55FF]',
+      active: 'bg-[#22C55E]/20 text-[#22C55E]',
+      completed: 'bg-[#F1F5F9] text-[#64748B]',
+      terminated: 'bg-[#FEF2F2] text-[#DC2626]'
     };
     return styles[status] || styles.draft;
   };
@@ -86,8 +86,8 @@ export const AdminContracts = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-contracts">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Contracts</h1>
-          <p className="text-white/50 text-sm">Platform contract management</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Contracts</h1>
+          <p className="text-[#64748B] text-sm">Platform contract management</p>
         </div>
         <button className="btn-primary">+ Generate Contract</button>
       </div>
@@ -95,24 +95,24 @@ export const AdminContracts = () => {
       {/* Stats */}
       <div className="grid grid-cols-5 gap-4">
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Contracts</p>
-          <p className="text-2xl font-bold text-white">{contracts.length}</p>
+          <p className="text-[#64748B] text-sm">Total Contracts</p>
+          <p className="text-2xl font-bold text-[#0F172A]">{contracts.length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Pending Signature</p>
-          <p className="text-2xl font-bold text-[#FFA502]">{contracts.filter(c => c.status === 'pending_signature').length}</p>
+          <p className="text-[#64748B] text-sm">Pending Signature</p>
+          <p className="text-2xl font-bold text-[#D97706]">{contracts.filter(c => c.status === 'pending_signature').length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Active</p>
-          <p className="text-2xl font-bold text-[#6BFF9A]">{contracts.filter(c => c.status === 'active').length}</p>
+          <p className="text-[#64748B] text-sm">Active</p>
+          <p className="text-2xl font-bold text-[#22C55E]">{contracts.filter(c => c.status === 'active').length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Value</p>
-          <p className="text-2xl font-bold text-white font-mono">₦219.7M</p>
+          <p className="text-[#64748B] text-sm">Total Value</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦219.7M</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">This Month</p>
-          <p className="text-2xl font-bold text-white">8</p>
+          <p className="text-[#64748B] text-sm">This Month</p>
+          <p className="text-2xl font-bold text-[#0F172A]">8</p>
         </div>
       </div>
 
@@ -135,8 +135,8 @@ export const AdminContracts = () => {
               <tr key={contract.id} className="group">
                 <td>
                   <div>
-                    <p className="text-white font-medium">{contract.id}</p>
-                    <p className="text-white/50 text-xs truncate max-w-xs">{contract.title}</p>
+                    <p className="text-[#0F172A] font-medium">{contract.id}</p>
+                    <p className="text-[#64748B] text-xs truncate max-w-xs">{contract.title}</p>
                   </div>
                 </td>
                 <td>
@@ -146,18 +146,18 @@ export const AdminContracts = () => {
                     ))}
                   </div>
                 </td>
-                <td className="text-white/60 text-sm">{contract.type}</td>
-                <td className="text-[#6BFF9A] font-mono">{formatNaira(contract.value)}</td>
+                <td className="text-[#64748B] text-sm">{contract.type}</td>
+                <td className="text-[#22C55E] font-mono">{formatNaira(contract.value)}</td>
                 <td>
                   <span className={`text-xs px-2 py-1 rounded-full ${getStatusBadge(contract.status)}`}>
                     {formatStatus(contract.status)}
                   </span>
                 </td>
-                <td className="text-white/40 text-sm">{contract.signedDate || contract.created}</td>
+                <td className="text-[#94A3B8] text-sm">{contract.signedDate || contract.created}</td>
                 <td>
                   <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
-                    <button className="text-white/40 hover:text-white"><Eye className="w-4 h-4" /></button>
-                    <button className="text-white/40 hover:text-white"><Download className="w-4 h-4" /></button>
+                    <button className="text-[#94A3B8] hover:text-[#0F172A]"><Eye className="w-4 h-4" /></button>
+                    <button className="text-[#94A3B8] hover:text-[#0F172A]"><Download className="w-4 h-4" /></button>
                   </div>
                 </td>
               </tr>

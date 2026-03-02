@@ -64,8 +64,8 @@ export const SuperCreativeProjects = () => {
     <div className="space-y-6 animate-fade-in" data-testid="sc-projects">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Projects</h1>
-          <p className="text-white/50 text-sm">{projects.length} total projects</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Projects</h1>
+          <p className="text-[#64748B] text-sm">{projects.length} total projects</p>
         </div>
         <button className="btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" /> New Project
@@ -75,29 +75,29 @@ export const SuperCreativeProjects = () => {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Active Projects</p>
-          <p className="text-2xl font-bold text-[#6BFF9A]">{projects.filter(p => p.status === 'active').length}</p>
+          <p className="text-[#64748B] text-sm">Active Projects</p>
+          <p className="text-2xl font-bold text-[#22C55E]">{projects.filter(p => p.status === 'active').length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Budget</p>
-          <p className="text-2xl font-bold text-white font-mono">₦83M</p>
+          <p className="text-[#64748B] text-sm">Total Budget</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦83M</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Team Members</p>
-          <p className="text-2xl font-bold text-white">41</p>
+          <p className="text-[#64748B] text-sm">Team Members</p>
+          <p className="text-2xl font-bold text-[#0F172A]">41</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Completion Rate</p>
-          <p className="text-2xl font-bold text-[#6BFF9A]">94%</p>
+          <p className="text-[#64748B] text-sm">Completion Rate</p>
+          <p className="text-2xl font-bold text-[#22C55E]">94%</p>
         </div>
       </div>
 
       <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
         <input
           type="text"
           placeholder="Search projects..."
-          className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-white/30 focus:outline-none"
+          className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none"
         />
       </div>
 
@@ -105,19 +105,19 @@ export const SuperCreativeProjects = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {projects.map((project) => {
           const getStatusColor = (status) => {
-            const colors = { active: 'bg-[#6BFF9A]/20 text-[#6BFF9A]', review: 'bg-[#FFA502]/20 text-[#FFA502]', completed: 'bg-[#2F55FF]/20 text-[#2F55FF]' };
-            return colors[status] || 'bg-white/10 text-white/60';
+            const colors = { active: 'bg-[#22C55E]/20 text-[#22C55E]', review: 'bg-[#FFFBEB] text-[#D97706]', completed: 'bg-[#EEF2FF] text-[#2F55FF]' };
+            return colors[status] || 'bg-[#F1F5F9] text-[#64748B]';
           };
           return (
-            <div key={project.id} className="dashboard-card p-6 hover:border-[#2F55FF]/30 transition-colors cursor-pointer" data-testid={`project-${project.id}`}>
+            <div key={project.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors cursor-pointer" data-testid={`project-${project.id}`}>
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-white/40 text-xs">{project.id}</span>
+                    <span className="text-[#94A3B8] text-xs">{project.id}</span>
                     <span className={`text-xs px-2 py-0.5 rounded-full capitalize ${getStatusColor(project.status)}`}>{project.status}</span>
                   </div>
-                  <h3 className="text-white font-semibold">{project.title}</h3>
-                  <p className="text-white/50 text-sm">{project.client}</p>
+                  <h3 className="text-[#0F172A] font-semibold">{project.title}</h3>
+                  <p className="text-[#64748B] text-sm">{project.client}</p>
                 </div>
                 <button className="btn-ghost text-xs">
                   <ArrowRight className="w-4 h-4" />
@@ -125,7 +125,7 @@ export const SuperCreativeProjects = () => {
               </div>
 
               <div className="mb-4">
-                <div className="flex items-center justify-between text-xs text-white/50 mb-1">
+                <div className="flex items-center justify-between text-xs text-[#64748B] mb-1">
                   <span>Progress</span>
                   <span className="font-mono">{project.progress}%</span>
                 </div>
@@ -135,25 +135,25 @@ export const SuperCreativeProjects = () => {
               </div>
 
               <div className="grid grid-cols-4 gap-2 text-center">
-                <div className="bg-white/5 rounded-lg p-2">
-                  <p className="text-white font-mono text-sm">{formatNaira(project.budget)}</p>
-                  <p className="text-white/40 text-xs">Budget</p>
+                <div className="bg-[#F8FAFC] rounded-lg p-2">
+                  <p className="text-[#0F172A] font-mono text-sm">{formatNaira(project.budget)}</p>
+                  <p className="text-[#94A3B8] text-xs">Budget</p>
                 </div>
-                <div className="bg-white/5 rounded-lg p-2">
-                  <p className="text-white font-mono text-sm flex items-center justify-center gap-1">
+                <div className="bg-[#F8FAFC] rounded-lg p-2">
+                  <p className="text-[#0F172A] font-mono text-sm flex items-center justify-center gap-1">
                     <Users className="w-3 h-3" /> {project.team}
                   </p>
-                  <p className="text-white/40 text-xs">Team</p>
+                  <p className="text-[#94A3B8] text-xs">Team</p>
                 </div>
-                <div className="bg-white/5 rounded-lg p-2">
-                  <p className="text-white font-mono text-sm">{project.tasks.completed}/{project.tasks.total}</p>
-                  <p className="text-white/40 text-xs">Tasks</p>
+                <div className="bg-[#F8FAFC] rounded-lg p-2">
+                  <p className="text-[#0F172A] font-mono text-sm">{project.tasks.completed}/{project.tasks.total}</p>
+                  <p className="text-[#94A3B8] text-xs">Tasks</p>
                 </div>
-                <div className="bg-white/5 rounded-lg p-2">
-                  <p className="text-white font-mono text-sm flex items-center justify-center gap-1">
+                <div className="bg-[#F8FAFC] rounded-lg p-2">
+                  <p className="text-[#0F172A] font-mono text-sm flex items-center justify-center gap-1">
                     <Clock className="w-3 h-3" /> {project.deadline.split('-').slice(1).join('/')}
                   </p>
-                  <p className="text-white/40 text-xs">Deadline</p>
+                  <p className="text-[#94A3B8] text-xs">Deadline</p>
                 </div>
               </div>
             </div>

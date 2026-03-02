@@ -19,12 +19,12 @@ const upcomingEvents = [
 
 const getEventColor = (type) => {
   const colors = {
-    meeting: 'bg-[#2F55FF]/20 border-[#2F55FF] text-[#2F55FF]',
-    call: 'bg-[#6BFF9A]/20 border-[#6BFF9A] text-[#6BFF9A]',
-    internal: 'bg-[#FFA502]/20 border-[#FFA502] text-[#FFA502]',
-    signing: 'bg-[#7C5CFC]/20 border-[#7C5CFC] text-[#7C5CFC]',
-    review: 'bg-white/10 border-white/30 text-white/60',
-    pitch: 'bg-[#FF4757]/20 border-[#FF4757] text-[#FF4757]'
+    meeting: 'bg-[#EEF2FF] border-[#2F55FF] text-[#2F55FF]',
+    call: 'bg-[#22C55E]/20 border-[#22C55E] text-[#22C55E]',
+    internal: 'bg-[#FFFBEB] border-[#D97706] text-[#D97706]',
+    signing: 'bg-[#F5F3FF] border-[#7C5CFC] text-[#7C3AED]',
+    review: 'bg-[#F1F5F9] border-white/30 text-[#64748B]',
+    pitch: 'bg-[#FEF2F2] border-[#DC2626] text-[#DC2626]'
   };
   return colors[type] || colors.meeting;
 };
@@ -41,8 +41,8 @@ export const CalendarPage = () => {
     <div className="space-y-6 animate-fade-in" data-testid="calendar-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Calendar</h1>
-          <p className="text-white/50 text-sm">Manage your schedule and meetings</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Calendar</h1>
+          <p className="text-[#64748B] text-sm">Manage your schedule and meetings</p>
         </div>
         <button className="btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" /> New Event
@@ -53,12 +53,12 @@ export const CalendarPage = () => {
         {/* Calendar Grid */}
         <div className="lg:col-span-2 dashboard-card p-6">
           <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-white">March 2026</h2>
+            <h2 className="text-xl font-semibold text-[#0F172A]">March 2026</h2>
             <div className="flex items-center gap-2">
-              <button className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-lg">
+              <button className="p-2 text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F8FAFC] rounded-lg">
                 <ChevronLeft className="w-5 h-5" />
               </button>
-              <button className="p-2 text-white/40 hover:text-white hover:bg-white/5 rounded-lg">
+              <button className="p-2 text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F8FAFC] rounded-lg">
                 <ChevronRight className="w-5 h-5" />
               </button>
             </div>
@@ -66,7 +66,7 @@ export const CalendarPage = () => {
 
           <div className="grid grid-cols-7 gap-1 mb-2">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-              <div key={day} className="text-center text-white/40 text-sm py-2">{day}</div>
+              <div key={day} className="text-center text-[#94A3B8] text-sm py-2">{day}</div>
             ))}
           </div>
 
@@ -81,14 +81,14 @@ export const CalendarPage = () => {
                   className={`p-2 text-center rounded-lg cursor-pointer transition-colors ${
                     isToday 
                       ? 'bg-[#2F55FF] text-white' 
-                      : 'text-white/80 hover:bg-white/5'
+                      : 'text-[#334155] hover:bg-[#F8FAFC]'
                   }`}
                 >
                   <span className="text-sm">{day}</span>
                   {hasEvents && !isToday && (
                     <div className="flex justify-center gap-0.5 mt-1">
                       <span className="w-1 h-1 rounded-full bg-[#2F55FF]"></span>
-                      {day % 3 === 0 && <span className="w-1 h-1 rounded-full bg-[#6BFF9A]"></span>}
+                      {day % 3 === 0 && <span className="w-1 h-1 rounded-full bg-[#22C55E]"></span>}
                     </div>
                   )}
                 </div>
@@ -99,16 +99,16 @@ export const CalendarPage = () => {
 
         {/* Upcoming Events */}
         <div className="dashboard-card p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Upcoming Events</h2>
+          <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Upcoming Events</h2>
           <div className="space-y-3">
             {upcomingEvents.map(event => (
-              <div key={event.id} className="flex items-start gap-3 p-3 bg-white/5 rounded-lg">
+              <div key={event.id} className="flex items-start gap-3 p-3 bg-[#F8FAFC] rounded-lg">
                 <div className="text-center min-w-[50px]">
                   <p className="text-[#2F55FF] text-xs font-semibold">{event.date}</p>
-                  <p className="text-white/40 text-xs">{event.time.split(' ')[0]}</p>
+                  <p className="text-[#94A3B8] text-xs">{event.time.split(' ')[0]}</p>
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-white text-sm font-medium">{event.title}</h3>
+                  <h3 className="text-[#475569] text-sm font-medium">{event.title}</h3>
                   <span className={`text-xs px-2 py-0.5 rounded-full border ${getEventColor(event.type)}`}>
                     {event.type}
                   </span>
@@ -121,17 +121,17 @@ export const CalendarPage = () => {
 
       {/* Today's Schedule */}
       <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Today's Schedule — March 2, 2026</h2>
+        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Today's Schedule — March 2, 2026</h2>
         <div className="space-y-4">
           {events.map(event => (
-            <div key={event.id} className={`flex items-start gap-4 p-4 rounded-lg border-l-4 bg-white/5 ${getEventColor(event.type).split(' ')[1]}`}>
+            <div key={event.id} className={`flex items-start gap-4 p-4 rounded-lg border-l-4 bg-[#F8FAFC] ${getEventColor(event.type).split(' ')[1]}`}>
               <div className="min-w-[80px]">
-                <p className="text-white font-medium">{event.time}</p>
-                <p className="text-white/40 text-xs">{event.duration}</p>
+                <p className="text-[#0F172A] font-medium">{event.time}</p>
+                <p className="text-[#94A3B8] text-xs">{event.duration}</p>
               </div>
               <div className="flex-1">
-                <h3 className="text-white font-medium">{event.title}</h3>
-                <div className="flex items-center gap-4 mt-2 text-sm text-white/50">
+                <h3 className="text-[#0F172A] font-medium">{event.title}</h3>
+                <div className="flex items-center gap-4 mt-2 text-sm text-[#64748B]">
                   <span className="flex items-center gap-1">
                     {event.location.includes('Meet') || event.location.includes('Zoom') ? (
                       <Video className="w-4 h-4" />

@@ -48,10 +48,10 @@ export const CreativeOverview = () => {
     <div className="space-y-6 animate-fade-in" data-testid="creative-overview">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-white mb-1">
+        <h1 className="text-2xl font-bold text-[#0F172A] mb-1">
           Welcome back, {user?.name?.split(' ')[0] || 'Kelechi'}
         </h1>
-        <p className="text-white/50 text-sm">
+        <p className="text-[#64748B] text-sm">
           You have {stats?.tasks_due || 3} tasks due this week and {opportunities.length} new opportunities.
         </p>
       </div>
@@ -103,8 +103,8 @@ export const CreativeOverview = () => {
         <div className="dashboard-card p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-[#6BFF9A]" />
-              <h2 className="text-lg font-semibold text-white">AI-Matched Opportunities</h2>
+              <Sparkles className="w-5 h-5 text-[#22C55E]" />
+              <h2 className="text-lg font-semibold text-[#0F172A]">AI-Matched Opportunities</h2>
             </div>
             <button className="text-[#2F55FF] text-sm hover:underline">View All</button>
           </div>
@@ -113,23 +113,23 @@ export const CreativeOverview = () => {
             {opportunities.map((opp, index) => (
               <div 
                 key={opp.id}
-                className="bg-white/5 rounded-lg p-4 hover:bg-white/10 transition-colors cursor-pointer"
+                className="bg-[#F8FAFC] rounded-lg p-4 hover:bg-[#F1F5F9] transition-colors cursor-pointer"
                 data-testid={`opportunity-${opp.id}`}
               >
                 <div className="flex items-start justify-between mb-2">
                   <div>
-                    <span className={`text-xs font-medium ${index === 0 ? 'text-[#6BFF9A]' : 'text-[#2F55FF]'}`}>
+                    <span className={`text-xs font-medium ${index === 0 ? 'text-[#22C55E]' : 'text-[#2F55FF]'}`}>
                       {index === 0 ? 'HOT MATCH' : 'NEW'} ({90 - index * 5}% Fit)
                     </span>
-                    <h3 className="text-white font-medium">{opp.role}</h3>
-                    <p className="text-white/50 text-sm">{opp.project_title}</p>
+                    <h3 className="text-[#0F172A] font-medium">{opp.role}</h3>
+                    <p className="text-[#64748B] text-sm">{opp.project_title}</p>
                   </div>
-                  <span className="text-[#6BFF9A] font-mono text-sm">
+                  <span className="text-[#22C55E] font-mono text-sm">
                     {formatNaira(opp.budget, { compact: true })}
                   </span>
                 </div>
                 
-                <div className="flex items-center justify-between text-xs text-white/40">
+                <div className="flex items-center justify-between text-xs text-[#94A3B8]">
                   <span>{opp.client_name}</span>
                   <span>Due: {opp.deadline}</span>
                 </div>
@@ -145,34 +145,34 @@ export const CreativeOverview = () => {
         {/* Tasks */}
         <div className="dashboard-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">My Tasks</h2>
+            <h2 className="text-lg font-semibold text-[#0F172A]">My Tasks</h2>
             <button className="text-[#2F55FF] text-sm hover:underline">View All</button>
           </div>
           
           <div className="space-y-3">
             {tasks.length === 0 ? (
-              <div className="text-white/40 text-center py-8">No active tasks</div>
+              <div className="text-[#94A3B8] text-center py-8">No active tasks</div>
             ) : (
               tasks.map((task) => (
                 <div 
                   key={task.id}
-                  className="bg-white/5 rounded-lg p-4"
+                  className="bg-[#F8FAFC] rounded-lg p-4"
                   data-testid={`task-${task.id}`}
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div>
-                      <h3 className="text-white font-medium">{task.title}</h3>
-                      <p className="text-white/50 text-sm">{task.project_id}</p>
+                      <h3 className="text-[#0F172A] font-medium">{task.title}</h3>
+                      <p className="text-[#64748B] text-sm">{task.project_id}</p>
                     </div>
                     <StatusBadge status={task.status} />
                   </div>
                   
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-white/40 flex items-center gap-1">
+                    <span className="text-[#94A3B8] flex items-center gap-1">
                       <Clock className="w-3 h-3" />
                       Due: {task.due_date}
                     </span>
-                    <span className="text-[#6BFF9A] font-mono">
+                    <span className="text-[#22C55E] font-mono">
                       {formatNaira(task.payment_amount, { compact: true })}
                     </span>
                   </div>

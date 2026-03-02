@@ -11,14 +11,14 @@ const Avatar = ({ name = '', size = 'md', className = '', square = false }) => {
 
   const getColor = (name) => {
     const colors = [
-      'from-[#2F55FF] to-[#6366F1]',
-      'from-[#6BFF9A] to-[#34D399]',
-      'from-[#FFA502] to-[#F59E0B]',
-      'from-[#FF4757] to-[#EF4444]',
-      'from-[#7C5CFC] to-[#A78BFA]',
-      'from-[#00D2FF] to-[#3B82F6]',
-      'from-[#E84393] to-[#EC4899]',
-      'from-[#00B894] to-[#10B981]'
+      'bg-[#EEF2FF] text-[#4F46E5]',
+      'bg-[#ECFDF5] text-[#059669]',
+      'bg-[#FFFBEB] text-[#D97706]',
+      'bg-[#FEF2F2] text-[#DC2626]',
+      'bg-[#F5F3FF] text-[#7C3AED]',
+      'bg-[#ECFEFF] text-[#0891B2]',
+      'bg-[#FDF2F8] text-[#DB2777]',
+      'bg-[#F0FDF4] text-[#16A34A]'
     ];
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
@@ -36,7 +36,7 @@ const Avatar = ({ name = '', size = 'md', className = '', square = false }) => {
 
   return (
     <div 
-      className={`${sizes[size]} ${square ? 'rounded-lg' : 'rounded-full'} bg-gradient-to-br ${getColor(name)} flex items-center justify-center text-white font-semibold flex-shrink-0 ${className}`}
+      className={`${sizes[size]} ${square ? 'rounded-lg' : 'rounded-full'} ${getColor(name)} flex items-center justify-center font-semibold flex-shrink-0 ${className}`}
       title={name}
     >
       {getInitials(name)}

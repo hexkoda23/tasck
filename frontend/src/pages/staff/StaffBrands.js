@@ -28,16 +28,16 @@ export const StaffBrands = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="staff-brands">
       <div>
-        <h1 className="text-2xl font-bold text-white tracking-tight">Brands</h1>
-        <p className="text-white/35 text-sm">Client relationships and CRM</p>
+        <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">Brands</h1>
+        <p className="text-[#94A3B8] text-sm">Client relationships and CRM</p>
       </div>
 
       <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#CBD5E1]" />
         <input 
           type="text"
           placeholder="Search brands..."
-          className="w-full search-bar pl-10 pr-4 py-2.5 text-sm text-white placeholder:text-white/25 focus:outline-none"
+          className="w-full search-bar pl-10 pr-4 py-2.5 text-sm text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none"
         />
       </div>
 
@@ -68,37 +68,37 @@ export const StaffBrands = () => {
                     <div className="flex items-center gap-3">
                       <Avatar name={brand.name} size="sm" square />
                       <div>
-                        <div className="text-white font-medium text-sm">{brand.name}</div>
-                        <div className="text-white/30 text-xs">{brand.location}</div>
+                        <div className="text-[#0F172A] font-medium text-sm">{brand.name}</div>
+                        <div className="text-[#CBD5E1] text-xs">{brand.location}</div>
                       </div>
                     </div>
                   </td>
-                  <td><span className="text-white/50 text-sm">{brand.category}</span></td>
+                  <td><span className="text-[#64748B] text-sm">{brand.category}</span></td>
                   <td>
                     <div className="flex items-center gap-2">
-                      <div className="w-20 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                      <div className="w-20 h-1.5 bg-[#F8FAFC] rounded-full overflow-hidden">
                         <div 
                           className="h-full rounded-full bg-gradient-to-r from-[#2F55FF] to-[#6BFF9A]"
                           style={{ width: `${(brand.relationship_score / 10) * 100}%` }}
                         ></div>
                       </div>
-                      <span className="text-white/50 text-xs font-mono">{brand.relationship_score}/10</span>
+                      <span className="text-[#64748B] text-xs font-mono">{brand.relationship_score}/10</span>
                     </div>
                   </td>
                   <td>
-                    <span className="text-white font-mono text-sm font-semibold">
+                    <span className="text-[#0F172A] font-mono text-sm font-semibold">
                       {formatNaira(brand.total_revenue, { compact: true })}
                     </span>
                   </td>
                   <td>
-                    <span className={`font-mono text-sm ${brand.active_deals > 0 ? 'text-white' : 'text-white/25'}`}>
+                    <span className={`font-mono text-sm ${brand.active_deals > 0 ? 'text-white' : 'text-[#CBD5E1]'}`}>
                       {brand.active_deals}
                     </span>
                   </td>
                   <td>
                     <div>
-                      <div className="text-white/70 text-sm">{brand.contact_name}</div>
-                      <div className="text-white/30 text-xs">{brand.contact_title}</div>
+                      <div className="text-[#475569] text-sm">{brand.contact_name}</div>
+                      <div className="text-[#CBD5E1] text-xs">{brand.contact_title}</div>
                     </div>
                   </td>
                   <td>

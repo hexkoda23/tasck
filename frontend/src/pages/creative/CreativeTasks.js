@@ -102,19 +102,19 @@ export const CreativeTasks = () => {
 
   const getStatusStyle = (status) => {
     const styles = {
-      in_progress: { bg: 'bg-[#FFA502]/20', text: 'text-[#FFA502]', label: 'In Progress', icon: Clock },
-      submitted: { bg: 'bg-[#2F55FF]/20', text: 'text-[#2F55FF]', label: 'Submitted', icon: Upload },
-      approved: { bg: 'bg-[#6BFF9A]/20', text: 'text-[#6BFF9A]', label: 'Approved', icon: CheckCircle },
-      revision_requested: { bg: 'bg-[#FF4757]/20', text: 'text-[#FF4757]', label: 'Revision', icon: AlertCircle }
+      in_progress: { bg: 'bg-[#FFFBEB]', text: 'text-[#D97706]', label: 'In Progress', icon: Clock },
+      submitted: { bg: 'bg-[#EEF2FF]', text: 'text-[#2F55FF]', label: 'Submitted', icon: Upload },
+      approved: { bg: 'bg-[#22C55E]/20', text: 'text-[#22C55E]', label: 'Approved', icon: CheckCircle },
+      revision_requested: { bg: 'bg-[#FEF2F2]', text: 'text-[#DC2626]', label: 'Revision', icon: AlertCircle }
     };
     return styles[status] || styles.in_progress;
   };
 
   const getPriorityStyle = (priority) => {
     const styles = {
-      high: 'bg-[#FF4757]/20 text-[#FF4757]',
-      medium: 'bg-[#FFA502]/20 text-[#FFA502]',
-      low: 'bg-white/10 text-white/50'
+      high: 'bg-[#FEF2F2] text-[#DC2626]',
+      medium: 'bg-[#FFFBEB] text-[#D97706]',
+      low: 'bg-[#F1F5F9] text-[#64748B]'
     };
     return styles[priority] || styles.medium;
   };
@@ -122,27 +122,27 @@ export const CreativeTasks = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="creative-tasks">
       <div>
-        <h1 className="text-2xl font-bold text-white">Tasks</h1>
-        <p className="text-white/50 text-sm">Your assigned deliverables and submissions</p>
+        <h1 className="text-2xl font-bold text-[#0F172A]">Tasks</h1>
+        <p className="text-[#64748B] text-sm">Your assigned deliverables and submissions</p>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="dashboard-card p-4 border-l-4 border-[#FFA502]">
-          <p className="text-white/50 text-sm">In Progress</p>
-          <p className="text-2xl font-bold text-[#FFA502]">{tasks.filter(t => t.status === 'in_progress').length}</p>
+        <div className="dashboard-card p-4 border-l-4 border-[#D97706]">
+          <p className="text-[#64748B] text-sm">In Progress</p>
+          <p className="text-2xl font-bold text-[#D97706]">{tasks.filter(t => t.status === 'in_progress').length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Submitted</p>
+          <p className="text-[#64748B] text-sm">Submitted</p>
           <p className="text-2xl font-bold text-[#2F55FF]">{tasks.filter(t => t.status === 'submitted').length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Approved</p>
-          <p className="text-2xl font-bold text-[#6BFF9A]">{tasks.filter(t => t.status === 'approved').length}</p>
+          <p className="text-[#64748B] text-sm">Approved</p>
+          <p className="text-2xl font-bold text-[#22C55E]">{tasks.filter(t => t.status === 'approved').length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Earnings</p>
-          <p className="text-2xl font-bold text-white font-mono">₦1.3M</p>
+          <p className="text-[#64748B] text-sm">Total Earnings</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦1.3M</p>
         </div>
       </div>
 
@@ -152,7 +152,7 @@ export const CreativeTasks = () => {
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-lg text-sm transition-colors ${filter === f ? 'bg-[#2F55FF] text-white' : 'bg-white/5 text-white/50 hover:text-white'}`}
+            className={`px-4 py-2 rounded-lg text-sm transition-colors ${filter === f ? 'bg-[#2F55FF] text-white' : 'bg-[#F8FAFC] text-[#64748B] hover:bg-[#E2E8F0] hover:text-[#334155]'}`}
           >
             {f === 'all' ? 'All' : f === 'in_progress' ? 'In Progress' : f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
@@ -168,7 +168,7 @@ export const CreativeTasks = () => {
             <div key={task.id} className="dashboard-card p-6" data-testid={`task-${task.id}`}>
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-white/5 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-lg bg-[#F8FAFC] flex items-center justify-center">
                     <CheckSquare className="w-5 h-5 text-[#2F55FF]" />
                   </div>
                   <div>
@@ -179,28 +179,28 @@ export const CreativeTasks = () => {
                       <span className={`text-xs px-2 py-0.5 rounded-full uppercase ${getPriorityStyle(task.priority)}`}>
                         {task.priority}
                       </span>
-                      <span className="text-white/30 text-xs">{task.id}</span>
+                      <span className="text-[#CBD5E1] text-xs">{task.id}</span>
                     </div>
-                    <h3 className="text-white font-semibold">{task.title}</h3>
-                    <p className="text-white/50 text-sm">{task.project}</p>
+                    <h3 className="text-[#0F172A] font-semibold">{task.title}</h3>
+                    <p className="text-[#64748B] text-sm">{task.project}</p>
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-[#6BFF9A] font-mono text-lg">{formatNaira(task.payment)}</p>
-                  <p className="text-white/40 text-xs">
+                  <p className="text-[#22C55E] font-mono text-lg">{formatNaira(task.payment)}</p>
+                  <p className="text-[#94A3B8] text-xs">
                     {task.status === 'approved' ? `Paid ${task.approvedDate}` : `Due ${task.deadline}`}
                   </p>
                 </div>
               </div>
 
-              <p className="text-white/60 text-sm mb-2">{task.description}</p>
-              <div className="bg-white/5 rounded-lg p-3 mb-3">
-                <p className="text-white/40 text-xs mb-1">Deliverables</p>
-                <p className="text-white/80 text-sm">{task.deliverables}</p>
+              <p className="text-[#64748B] text-sm mb-2">{task.description}</p>
+              <div className="bg-[#F8FAFC] rounded-lg p-3 mb-3">
+                <p className="text-[#94A3B8] text-xs mb-1">Deliverables</p>
+                <p className="text-[#334155] text-sm">{task.deliverables}</p>
               </div>
 
-              <div className="flex items-center justify-between pt-3 border-t border-white/5">
-                <span className="text-white/40 text-xs">Client: {task.client}</span>
+              <div className="flex items-center justify-between pt-3 border-t border-[#F1F5F9]">
+                <span className="text-[#94A3B8] text-xs">Client: {task.client}</span>
                 <div className="flex gap-2">
                   {task.status === 'in_progress' && (
                     <button className="btn-primary text-sm flex items-center gap-1">
@@ -213,7 +213,7 @@ export const CreativeTasks = () => {
                     </span>
                   )}
                   {task.status === 'approved' && (
-                    <span className="text-[#6BFF9A] text-sm flex items-center gap-1">
+                    <span className="text-[#22C55E] text-sm flex items-center gap-1">
                       <CheckCircle className="w-4 h-4" /> Payment Released
                     </span>
                   )}

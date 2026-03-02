@@ -42,8 +42,8 @@ export const StaffDeals = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-deals">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Deals</h1>
-          <p className="text-white/50 text-sm">{deals.length} total deals</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Deals</h1>
+          <p className="text-[#64748B] text-sm">{deals.length} total deals</p>
         </div>
         <button className="btn-primary flex items-center gap-2" data-testid="new-deal-btn">
           <Plus className="w-4 h-4" />
@@ -54,17 +54,17 @@ export const StaffDeals = () => {
       {/* Filters */}
       <div className="flex items-center gap-4">
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
           <input 
             type="text"
             placeholder="Search deals..."
-            className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
+            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
           />
         </div>
         <select 
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
+          className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
         >
           <option value="all">All Status</option>
           <option value="lead">Lead</option>
@@ -103,7 +103,7 @@ export const StaffDeals = () => {
               ))
             ) : filteredDeals.length === 0 ? (
               <tr>
-                <td colSpan={7} className="text-center text-white/40 py-8">
+                <td colSpan={7} className="text-center text-[#94A3B8] py-8">
                   No deals found
                 </td>
               </tr>
@@ -112,27 +112,27 @@ export const StaffDeals = () => {
                 <tr key={deal.id} className="group" data-testid={`deal-row-${deal.id}`}>
                   <td>
                     <div>
-                      <div className="text-white font-medium">{deal.deal_id}</div>
-                      <div className="text-white/50 text-xs truncate max-w-xs">{deal.title}</div>
+                      <div className="text-[#0F172A] font-medium">{deal.deal_id}</div>
+                      <div className="text-[#64748B] text-xs truncate max-w-xs">{deal.title}</div>
                     </div>
                   </td>
                   <td>
                     <div className="flex items-center gap-2">
                       <Avatar name={deal.brand_name} size="sm" />
-                      <span className="text-white/80">{deal.brand_name}</span>
+                      <span className="text-[#334155]">{deal.brand_name}</span>
                     </div>
                   </td>
                   <td>
-                    <span className="text-white/60">{deal.super_creative_name || '—'}</span>
+                    <span className="text-[#64748B]">{deal.super_creative_name || '—'}</span>
                   </td>
                   <td>
-                    <span className="text-[#6BFF9A] font-mono">{formatNaira(deal.value, { compact: true })}</span>
+                    <span className="text-[#22C55E] font-mono">{formatNaira(deal.value, { compact: true })}</span>
                   </td>
                   <td>
                     <StatusBadge status={deal.status} />
                   </td>
                   <td>
-                    <span className="text-white/40 text-sm">{formatRelativeTime(deal.last_activity)}</span>
+                    <span className="text-[#94A3B8] text-sm">{formatRelativeTime(deal.last_activity)}</span>
                   </td>
                   <td>
                     <Link 

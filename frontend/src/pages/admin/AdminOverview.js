@@ -63,8 +63,8 @@ export const AdminOverview = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-overview">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-white mb-1">Admin Dashboard</h1>
-        <p className="text-white/50 text-sm">Platform governance and management</p>
+        <h1 className="text-2xl font-bold text-[#0F172A] mb-1">Admin Dashboard</h1>
+        <p className="text-[#64748B] text-sm">Platform governance and management</p>
       </div>
 
       {/* Metrics */}
@@ -112,7 +112,7 @@ export const AdminOverview = () => {
         {/* Recent Users */}
         <div className="dashboard-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">Users</h2>
+            <h2 className="text-lg font-semibold text-[#0F172A]">Users</h2>
             <button className="text-[#2F55FF] text-sm hover:underline">View All</button>
           </div>
           
@@ -120,23 +120,23 @@ export const AdminOverview = () => {
             {users.slice(0, 6).map((user) => (
               <div 
                 key={user.id}
-                className="flex items-center justify-between py-2 border-b border-white/5 last:border-0"
+                className="flex items-center justify-between py-2 border-b border-[#F1F5F9] last:border-0"
                 data-testid={`user-${user.id}`}
               >
                 <div className="flex items-center gap-3">
                   <Avatar name={user.name} size="sm" />
                   <div>
-                    <p className="text-white text-sm">{user.name}</p>
-                    <p className="text-white/40 text-xs capitalize">{user.role?.replace('_', ' ')}</p>
+                    <p className="text-[#475569] text-sm">{user.name}</p>
+                    <p className="text-[#94A3B8] text-xs capitalize">{user.role?.replace('_', ' ')}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {user.verified ? (
-                    <span className="flex items-center gap-1 text-xs text-[#6BFF9A]">
+                    <span className="flex items-center gap-1 text-xs text-[#22C55E]">
                       <CheckCircle className="w-3 h-3" /> Verified
                     </span>
                   ) : (
-                    <span className="flex items-center gap-1 text-xs text-[#FFA502]">
+                    <span className="flex items-center gap-1 text-xs text-[#D97706]">
                       <Clock className="w-3 h-3" /> Pending
                     </span>
                   )}
@@ -149,7 +149,7 @@ export const AdminOverview = () => {
         {/* Disputes */}
         <div className="dashboard-card p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">Active Disputes</h2>
+            <h2 className="text-lg font-semibold text-[#0F172A]">Active Disputes</h2>
             <button className="text-[#2F55FF] text-sm hover:underline">View All</button>
           </div>
           
@@ -157,23 +157,23 @@ export const AdminOverview = () => {
             {disputes.map((dispute) => (
               <div 
                 key={dispute.id}
-                className="bg-white/5 rounded-lg p-4"
+                className="bg-[#F8FAFC] rounded-lg p-4"
                 data-testid={`dispute-${dispute.id}`}
               >
                 <div className="flex items-start justify-between mb-2">
                   <div>
-                    <span className="text-white/40 text-xs">{dispute.id}</span>
-                    <h3 className="text-white font-medium">{dispute.project}</h3>
-                    <p className="text-white/50 text-sm">{dispute.parties}</p>
+                    <span className="text-[#94A3B8] text-xs">{dispute.id}</span>
+                    <h3 className="text-[#0F172A] font-medium">{dispute.project}</h3>
+                    <p className="text-[#64748B] text-sm">{dispute.parties}</p>
                   </div>
                   <span className={`text-xs px-2 py-1 rounded-full ${
-                    dispute.status === 'Resolved' ? 'bg-[#6BFF9A]/20 text-[#6BFF9A]' : 'bg-[#FFA502]/20 text-[#FFA502]'
+                    dispute.status === 'Resolved' ? 'bg-[#22C55E]/20 text-[#22C55E]' : 'bg-[#FFFBEB] text-[#D97706]'
                   }`}>
                     {dispute.status}
                   </span>
                 </div>
-                <p className="text-white/40 text-sm">{dispute.issue}</p>
-                <p className="text-white/30 text-xs mt-2">Filed: {dispute.filed}</p>
+                <p className="text-[#94A3B8] text-sm">{dispute.issue}</p>
+                <p className="text-[#CBD5E1] text-xs mt-2">Filed: {dispute.filed}</p>
               </div>
             ))}
           </div>

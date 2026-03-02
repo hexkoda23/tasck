@@ -27,19 +27,19 @@ export const BrandDiscover = () => {
   const [category, setCategory] = useState('all');
 
   const getMatchColor = (match) => {
-    if (match >= 90) return 'text-[#6BFF9A]';
+    if (match >= 90) return 'text-[#22C55E]';
     if (match >= 80) return 'text-[#2F55FF]';
-    return 'text-[#FFA502]';
+    return 'text-[#D97706]';
   };
 
   return (
     <div className="space-y-6 animate-fade-in" data-testid="brand-discover">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Discover Talent</h1>
-          <p className="text-white/50 text-sm">AI-curated talent recommendations for your brand</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Discover Talent</h1>
+          <p className="text-[#64748B] text-sm">AI-curated talent recommendations for your brand</p>
         </div>
-        <div className="flex items-center gap-2 text-sm text-[#6BFF9A]">
+        <div className="flex items-center gap-2 text-sm text-[#22C55E]">
           <Sparkles className="w-4 h-4" />
           Personalized for Guinness Nigeria
         </div>
@@ -50,10 +50,10 @@ export const BrandDiscover = () => {
         {categories.map((cat) => {
           const Icon = cat.icon;
           return (
-            <button key={cat.label} className="dashboard-card p-4 hover:border-[#2F55FF]/30 transition-colors text-left">
+            <button key={cat.label} className="dashboard-card p-4 hover:border-[#C7D2FE] transition-colors text-left">
               <Icon className="w-6 h-6 text-[#2F55FF] mb-2" />
-              <p className="text-white font-medium">{cat.label}</p>
-              <p className="text-white/40 text-sm">{cat.count} available</p>
+              <p className="text-[#0F172A] font-medium">{cat.label}</p>
+              <p className="text-[#94A3B8] text-sm">{cat.count} available</p>
             </button>
           );
         })}
@@ -62,19 +62,19 @@ export const BrandDiscover = () => {
       {/* Search & Filters */}
       <div className="flex items-center gap-4">
         <div className="flex-1 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
           <input
             type="text"
             placeholder="Search by name, skill, or genre..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
+            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
           />
         </div>
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none"
+          className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none"
         >
           <option value="all">All Categories</option>
           <option value="music">Music</option>
@@ -82,7 +82,7 @@ export const BrandDiscover = () => {
           <option value="video">Videography</option>
           <option value="design">Design</option>
         </select>
-        <select className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none">
+        <select className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none">
           <option>Sort by: AI Match</option>
           <option>Sort by: Rating</option>
           <option>Sort by: Projects</option>
@@ -92,31 +92,31 @@ export const BrandDiscover = () => {
       {/* Talent Cards */}
       <div className="space-y-4">
         {talents.map((talent) => (
-          <div key={talent.id} className="dashboard-card p-6 hover:border-[#2F55FF]/30 transition-colors" data-testid={`talent-${talent.id}`}>
+          <div key={talent.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors" data-testid={`talent-${talent.id}`}>
             <div className="flex items-start gap-6">
               <Avatar name={talent.name} size="lg" />
               <div className="flex-1">
                 <div className="flex items-center gap-3 mb-1">
-                  <h3 className="text-white font-semibold text-lg">{talent.name}</h3>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${talent.type === 'Super Creative' ? 'bg-[#FFA502]/20 text-[#FFA502]' : 'bg-[#7C5CFC]/20 text-[#7C5CFC]'}`}>
+                  <h3 className="text-[#0F172A] font-semibold text-lg">{talent.name}</h3>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${talent.type === 'Super Creative' ? 'bg-[#FFFBEB] text-[#D97706]' : 'bg-[#F5F3FF] text-[#7C3AED]'}`}>
                     {talent.type}
                   </span>
                   <span className={`text-sm font-mono ${getMatchColor(talent.match)}`}>
                     {talent.match}% match
                   </span>
                 </div>
-                <p className="text-white/50">{talent.category}</p>
+                <p className="text-[#64748B]">{talent.category}</p>
 
-                <div className="flex items-center gap-6 mt-2 text-sm text-white/50">
-                  <span className="flex items-center gap-1"><Star className="w-4 h-4 text-[#FFA502]" /> {talent.rating}</span>
+                <div className="flex items-center gap-6 mt-2 text-sm text-[#64748B]">
+                  <span className="flex items-center gap-1"><Star className="w-4 h-4 text-[#D97706]" /> {talent.rating}</span>
                   <span>{talent.projects} projects</span>
                   <span className="flex items-center gap-1"><MapPin className="w-4 h-4" /> {talent.location}</span>
-                  <span className="text-[#6BFF9A] font-mono">{talent.rate}</span>
+                  <span className="text-[#22C55E] font-mono">{talent.rate}</span>
                 </div>
 
                 <div className="flex flex-wrap gap-2 mt-3">
                   {talent.tags.map((tag) => (
-                    <span key={tag} className="text-xs px-3 py-1 rounded-full bg-white/5 text-white/60">{tag}</span>
+                    <span key={tag} className="text-xs px-3 py-1 rounded-full bg-[#F8FAFC] text-[#64748B]">{tag}</span>
                   ))}
                 </div>
               </div>

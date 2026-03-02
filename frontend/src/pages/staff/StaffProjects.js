@@ -27,8 +27,8 @@ export const StaffProjects = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-projects">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Projects</h1>
-          <p className="text-white/50 text-sm">{projects.length} total projects</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Projects</h1>
+          <p className="text-[#64748B] text-sm">{projects.length} total projects</p>
         </div>
         <button className="btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" /> New Project
@@ -36,11 +36,11 @@ export const StaffProjects = () => {
       </div>
 
       <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
         <input 
           type="text"
           placeholder="Search projects..."
-          className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-white/30 focus:outline-none"
+          className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none"
         />
       </div>
 
@@ -49,18 +49,18 @@ export const StaffProjects = () => {
           Array(4).fill(0).map((_, i) => <div key={i} className="skeleton h-48 rounded-lg"></div>)
         ) : (
           projects.map((project) => (
-            <div key={project.id} className="dashboard-card p-6 hover:border-[#2F55FF]/30 transition-colors cursor-pointer">
+            <div key={project.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors cursor-pointer">
               <div className="flex items-start justify-between mb-4">
                 <div>
-                  <span className="text-white/40 text-xs">{project.project_id}</span>
-                  <h3 className="text-white font-semibold">{project.title}</h3>
-                  <p className="text-white/50 text-sm">{project.super_creative_name}</p>
+                  <span className="text-[#94A3B8] text-xs">{project.project_id}</span>
+                  <h3 className="text-[#0F172A] font-semibold">{project.title}</h3>
+                  <p className="text-[#64748B] text-sm">{project.super_creative_name}</p>
                 </div>
                 <StatusBadge status={project.status} />
               </div>
 
               <div className="mb-4">
-                <div className="flex items-center justify-between text-xs text-white/50 mb-1">
+                <div className="flex items-center justify-between text-xs text-[#64748B] mb-1">
                   <span>Progress</span>
                   <span>{project.completion}%</span>
                 </div>
@@ -70,21 +70,21 @@ export const StaffProjects = () => {
               </div>
 
               <div className="grid grid-cols-4 gap-2 text-center">
-                <div className="bg-white/5 rounded-lg p-2">
-                  <p className="text-white font-mono">{formatNaira(project.budget, { compact: true })}</p>
-                  <p className="text-white/40 text-xs">Budget</p>
+                <div className="bg-[#F8FAFC] rounded-lg p-2">
+                  <p className="text-[#0F172A] font-mono">{formatNaira(project.budget, { compact: true })}</p>
+                  <p className="text-[#94A3B8] text-xs">Budget</p>
                 </div>
-                <div className="bg-white/5 rounded-lg p-2">
-                  <p className="text-white font-mono">{project.opportunities_filled}/{project.opportunities_count}</p>
-                  <p className="text-white/40 text-xs">Hired</p>
+                <div className="bg-[#F8FAFC] rounded-lg p-2">
+                  <p className="text-[#0F172A] font-mono">{project.opportunities_filled}/{project.opportunities_count}</p>
+                  <p className="text-[#94A3B8] text-xs">Hired</p>
                 </div>
-                <div className="bg-white/5 rounded-lg p-2">
-                  <p className="text-white font-mono">{project.tasks_completed}/{project.tasks_total}</p>
-                  <p className="text-white/40 text-xs">Tasks</p>
+                <div className="bg-[#F8FAFC] rounded-lg p-2">
+                  <p className="text-[#0F172A] font-mono">{project.tasks_completed}/{project.tasks_total}</p>
+                  <p className="text-[#94A3B8] text-xs">Tasks</p>
                 </div>
-                <div className="bg-white/5 rounded-lg p-2">
-                  <p className="text-[#6BFF9A] font-mono">{formatNaira(project.released, { compact: true })}</p>
-                  <p className="text-white/40 text-xs">Released</p>
+                <div className="bg-[#F8FAFC] rounded-lg p-2">
+                  <p className="text-[#22C55E] font-mono">{formatNaira(project.released, { compact: true })}</p>
+                  <p className="text-[#94A3B8] text-xs">Released</p>
                 </div>
               </div>
             </div>

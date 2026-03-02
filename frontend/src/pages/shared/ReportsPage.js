@@ -59,8 +59,8 @@ export const ReportsPage = () => {
     <div className="space-y-6 animate-fade-in" data-testid="reports-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Reports</h1>
-          <p className="text-white/50 text-sm">Completed project reports and analytics</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Reports</h1>
+          <p className="text-[#64748B] text-sm">Completed project reports and analytics</p>
         </div>
         <button className="btn-secondary flex items-center gap-2">
           <Download className="w-4 h-4" /> Export All
@@ -70,20 +70,20 @@ export const ReportsPage = () => {
       {/* Summary Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Reports</p>
-          <p className="text-2xl font-bold text-white">{reports.length}</p>
+          <p className="text-[#64748B] text-sm">Total Reports</p>
+          <p className="text-2xl font-bold text-[#0F172A]">{reports.length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Budget</p>
-          <p className="text-2xl font-bold text-white font-mono">₦93M</p>
+          <p className="text-[#64748B] text-sm">Total Budget</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦93M</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Avg On-Time Rate</p>
-          <p className="text-2xl font-bold text-[#6BFF9A]">93.5%</p>
+          <p className="text-[#64748B] text-sm">Avg On-Time Rate</p>
+          <p className="text-2xl font-bold text-[#22C55E]">93.5%</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Avg Rating</p>
-          <p className="text-2xl font-bold text-white">4.75★</p>
+          <p className="text-[#64748B] text-sm">Avg Rating</p>
+          <p className="text-2xl font-bold text-[#0F172A]">4.75★</p>
         </div>
       </div>
 
@@ -93,19 +93,19 @@ export const ReportsPage = () => {
           <div key={report.id} className="dashboard-card p-6" data-testid={`report-${report.id}`}>
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-lg bg-[#2F55FF]/20 flex items-center justify-center">
+                <div className="w-12 h-12 rounded-lg bg-[#EEF2FF] flex items-center justify-center">
                   <FileText className="w-6 h-6 text-[#2F55FF]" />
                 </div>
                 <div>
-                  <h3 className="text-white font-semibold">{report.title}</h3>
-                  <p className="text-white/40 text-sm">{report.project}</p>
-                  <div className="flex items-center gap-4 mt-2 text-xs text-white/50">
+                  <h3 className="text-[#0F172A] font-semibold">{report.title}</h3>
+                  <p className="text-[#94A3B8] text-sm">{report.project}</p>
+                  <div className="flex items-center gap-4 mt-2 text-xs text-[#64748B]">
                     <span className="flex items-center gap-1">
                       <Calendar className="w-3 h-3" />
                       Completed: {report.completed}
                     </span>
                     <span className="flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3 text-[#6BFF9A]" />
+                      <CheckCircle className="w-3 h-3 text-[#22C55E]" />
                       {report.deliverables} deliverables
                     </span>
                   </div>
@@ -121,26 +121,26 @@ export const ReportsPage = () => {
               </div>
             </div>
 
-            <div className="grid grid-cols-5 gap-4 p-4 bg-white/5 rounded-lg">
+            <div className="grid grid-cols-5 gap-4 p-4 bg-[#F8FAFC] rounded-lg">
               <div>
-                <p className="text-white/40 text-xs mb-1">Budget</p>
-                <p className="text-white font-mono">{formatNaira(report.budget, { compact: true })}</p>
+                <p className="text-[#94A3B8] text-xs mb-1">Budget</p>
+                <p className="text-[#0F172A] font-mono">{formatNaira(report.budget, { compact: true })}</p>
               </div>
               <div>
-                <p className="text-white/40 text-xs mb-1">Actual Spend</p>
-                <p className="text-[#6BFF9A] font-mono">{formatNaira(report.actual, { compact: true })}</p>
+                <p className="text-[#94A3B8] text-xs mb-1">Actual Spend</p>
+                <p className="text-[#22C55E] font-mono">{formatNaira(report.actual, { compact: true })}</p>
               </div>
               <div>
-                <p className="text-white/40 text-xs mb-1">Savings</p>
-                <p className="text-[#6BFF9A] font-mono">{formatNaira(report.budget - report.actual, { compact: true })}</p>
+                <p className="text-[#94A3B8] text-xs mb-1">Savings</p>
+                <p className="text-[#22C55E] font-mono">{formatNaira(report.budget - report.actual, { compact: true })}</p>
               </div>
               <div>
-                <p className="text-white/40 text-xs mb-1">On-Time Rate</p>
-                <p className="text-white font-mono">{report.onTime}%</p>
+                <p className="text-[#94A3B8] text-xs mb-1">On-Time Rate</p>
+                <p className="text-[#0F172A] font-mono">{report.onTime}%</p>
               </div>
               <div>
-                <p className="text-white/40 text-xs mb-1">Client Rating</p>
-                <p className="text-[#FFA502] font-mono">{report.rating}★</p>
+                <p className="text-[#94A3B8] text-xs mb-1">Client Rating</p>
+                <p className="text-[#D97706] font-mono">{report.rating}★</p>
               </div>
             </div>
           </div>

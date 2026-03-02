@@ -26,11 +26,11 @@ const getActionIcon = (action) => {
 };
 
 const getActionColor = (action) => {
-  if (action.includes('login')) return 'bg-[#2F55FF]/20 text-[#2F55FF]';
-  if (action.includes('payment') || action.includes('released')) return 'bg-[#6BFF9A]/20 text-[#6BFF9A]';
-  if (action.includes('dispute')) return 'bg-[#FF4757]/20 text-[#FF4757]';
-  if (action.includes('verified') || action.includes('signed')) return 'bg-[#6BFF9A]/20 text-[#6BFF9A]';
-  return 'bg-[#FFA502]/20 text-[#FFA502]';
+  if (action.includes('login')) return 'bg-[#EEF2FF] text-[#2F55FF]';
+  if (action.includes('payment') || action.includes('released')) return 'bg-[#22C55E]/20 text-[#22C55E]';
+  if (action.includes('dispute')) return 'bg-[#FEF2F2] text-[#DC2626]';
+  if (action.includes('verified') || action.includes('signed')) return 'bg-[#22C55E]/20 text-[#22C55E]';
+  return 'bg-[#FFFBEB] text-[#D97706]';
 };
 
 export const AdminAuditLogs = () => {
@@ -44,8 +44,8 @@ export const AdminAuditLogs = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-audit-logs">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Audit Logs</h1>
-          <p className="text-white/50 text-sm">Complete activity trail of platform actions</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Audit Logs</h1>
+          <p className="text-[#64748B] text-sm">Complete activity trail of platform actions</p>
         </div>
         <button className="btn-secondary">Export Logs</button>
       </div>
@@ -53,17 +53,17 @@ export const AdminAuditLogs = () => {
       {/* Filters */}
       <div className="flex items-center gap-4">
         <div className="flex-1 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
           <input 
             type="text"
             placeholder="Search logs..."
-            className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-white/30 focus:outline-none"
+            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none"
           />
         </div>
         <select 
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none"
+          className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none"
         >
           <option value="all">All Actions</option>
           <option value="login">Logins</option>
@@ -74,7 +74,7 @@ export const AdminAuditLogs = () => {
         </select>
         <input 
           type="date"
-          className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none"
+          className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none"
         />
       </div>
 
@@ -100,21 +100,21 @@ export const AdminAuditLogs = () => {
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${getActionColor(log.action)}`}>
                         <Icon className="w-4 h-4" />
                       </div>
-                      <span className="text-white/80 text-sm capitalize">{log.action.replace(/_/g, ' ')}</span>
+                      <span className="text-[#334155] text-sm capitalize">{log.action.replace(/_/g, ' ')}</span>
                     </div>
                   </td>
                   <td>
                     <div className="flex items-center gap-2">
                       <Avatar name={log.user} size="sm" />
                       <div>
-                        <p className="text-white text-sm">{log.user}</p>
-                        <p className="text-white/40 text-xs">{log.role}</p>
+                        <p className="text-[#475569] text-sm">{log.user}</p>
+                        <p className="text-[#94A3B8] text-xs">{log.role}</p>
                       </div>
                     </div>
                   </td>
-                  <td className="text-white/60 text-sm max-w-xs truncate">{log.details}</td>
-                  <td className="text-white/40 text-sm font-mono">{log.ip}</td>
-                  <td className="text-white/40 text-sm">{log.timestamp}</td>
+                  <td className="text-[#64748B] text-sm max-w-xs truncate">{log.details}</td>
+                  <td className="text-[#94A3B8] text-sm font-mono">{log.ip}</td>
+                  <td className="text-[#94A3B8] text-sm">{log.timestamp}</td>
                 </tr>
               );
             })}

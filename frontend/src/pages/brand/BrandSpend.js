@@ -37,8 +37,8 @@ export const BrandSpend = () => {
     <div className="space-y-6 animate-fade-in" data-testid="brand-spend">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Spend Tracking</h1>
-          <p className="text-white/50 text-sm">Budget utilization and payment history</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Spend Tracking</h1>
+          <p className="text-[#64748B] text-sm">Budget utilization and payment history</p>
         </div>
         <button className="btn-secondary">Export Statement</button>
       </div>
@@ -47,28 +47,28 @@ export const BrandSpend = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-6 bg-gradient-to-br from-[#2F55FF]/20 to-transparent">
           <Wallet className="w-6 h-6 text-[#2F55FF] mb-3" />
-          <p className="text-white/50 text-sm">Total Budget</p>
-          <p className="text-3xl font-bold text-white font-mono">{formatNaira(spendData.totalBudget)}</p>
+          <p className="text-[#64748B] text-sm">Total Budget</p>
+          <p className="text-3xl font-bold text-[#0F172A] font-mono">{formatNaira(spendData.totalBudget)}</p>
         </div>
         <div className="dashboard-card p-6">
-          <p className="text-white/50 text-sm">Total Spent</p>
-          <p className="text-2xl font-bold text-[#6BFF9A] font-mono">{formatNaira(spendData.totalSpent)}</p>
-          <p className="text-xs text-white/40 mt-1">{spentPercent.toFixed(0)}% utilized</p>
+          <p className="text-[#64748B] text-sm">Total Spent</p>
+          <p className="text-2xl font-bold text-[#22C55E] font-mono">{formatNaira(spendData.totalSpent)}</p>
+          <p className="text-xs text-[#94A3B8] mt-1">{spentPercent.toFixed(0)}% utilized</p>
         </div>
         <div className="dashboard-card p-6">
-          <p className="text-white/50 text-sm">Remaining</p>
-          <p className="text-2xl font-bold text-white font-mono">{formatNaira(spendData.remaining)}</p>
+          <p className="text-[#64748B] text-sm">Remaining</p>
+          <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(spendData.remaining)}</p>
         </div>
         <div className="dashboard-card p-6">
-          <TrendingUp className="w-5 h-5 text-[#FFA502] mb-2" />
-          <p className="text-white/50 text-sm">Monthly Burn Rate</p>
-          <p className="text-2xl font-bold text-[#FFA502] font-mono">{formatNaira(spendData.monthlyBurn)}</p>
+          <TrendingUp className="w-5 h-5 text-[#D97706] mb-2" />
+          <p className="text-[#64748B] text-sm">Monthly Burn Rate</p>
+          <p className="text-2xl font-bold text-[#D97706] font-mono">{formatNaira(spendData.monthlyBurn)}</p>
         </div>
       </div>
 
       {/* Budget by Campaign */}
       <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-white mb-4">Budget by Campaign</h2>
+        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Budget by Campaign</h2>
         <div className="space-y-6">
           {campaignSpend.map((campaign) => {
             const percent = (campaign.spent / campaign.budget) * 100;
@@ -76,16 +76,16 @@ export const BrandSpend = () => {
               <div key={campaign.name}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
-                    <span className="text-white font-medium">{campaign.name}</span>
+                    <span className="text-[#0F172A] font-medium">{campaign.name}</span>
                     {campaign.status === 'near_limit' && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#FFA502]/20 text-[#FFA502] flex items-center gap-1">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-[#FFFBEB] text-[#D97706] flex items-center gap-1">
                         <AlertCircle className="w-3 h-3" /> Near Limit
                       </span>
                     )}
                   </div>
                   <div className="flex items-center gap-4 text-sm">
-                    <span className="text-white/40">Spent: <span className="text-white font-mono">{formatNaira(campaign.spent)}</span></span>
-                    <span className="text-white/40">of <span className="text-white font-mono">{formatNaira(campaign.budget)}</span></span>
+                    <span className="text-[#94A3B8]">Spent: <span className="text-[#0F172A] font-mono">{formatNaira(campaign.spent)}</span></span>
+                    <span className="text-[#94A3B8]">of <span className="text-[#0F172A] font-mono">{formatNaira(campaign.budget)}</span></span>
                   </div>
                 </div>
                 <div className="progress-bar h-3">
@@ -94,7 +94,7 @@ export const BrandSpend = () => {
                     style={{ width: `${percent}%` }}
                   ></div>
                 </div>
-                <div className="flex justify-between text-xs text-white/40 mt-1">
+                <div className="flex justify-between text-xs text-[#94A3B8] mt-1">
                   <span>{percent.toFixed(0)}% used</span>
                   <span>{formatNaira(campaign.remaining)} remaining</span>
                 </div>
@@ -106,8 +106,8 @@ export const BrandSpend = () => {
 
       {/* Recent Payments */}
       <div className="dashboard-card overflow-hidden">
-        <div className="p-4 border-b border-white/5">
-          <h2 className="text-lg font-semibold text-white">Recent Payments</h2>
+        <div className="p-4 border-b border-[#F1F5F9]">
+          <h2 className="text-lg font-semibold text-[#0F172A]">Recent Payments</h2>
         </div>
         <table className="data-table">
           <thead>
@@ -122,13 +122,13 @@ export const BrandSpend = () => {
           <tbody>
             {recentPayments.map((payment) => (
               <tr key={payment.id}>
-                <td className="text-white text-sm">{payment.description}</td>
-                <td className="text-white/60 text-sm">{payment.campaign}</td>
-                <td className="text-[#FF4757] font-mono">-{formatNaira(payment.amount)}</td>
-                <td className="text-white/40 text-sm">{payment.date}</td>
+                <td className="text-[#475569] text-sm">{payment.description}</td>
+                <td className="text-[#64748B] text-sm">{payment.campaign}</td>
+                <td className="text-[#DC2626] font-mono">-{formatNaira(payment.amount)}</td>
+                <td className="text-[#94A3B8] text-sm">{payment.date}</td>
                 <td>
                   <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    payment.status === 'completed' ? 'bg-[#6BFF9A]/20 text-[#6BFF9A]' : 'bg-[#FFA502]/20 text-[#FFA502]'
+                    payment.status === 'completed' ? 'bg-[#22C55E]/20 text-[#22C55E]' : 'bg-[#FFFBEB] text-[#D97706]'
                   }`}>
                     {payment.status === 'held_in_escrow' ? 'In Escrow' : 'Completed'}
                   </span>

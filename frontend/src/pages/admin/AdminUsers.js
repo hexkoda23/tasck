@@ -40,21 +40,21 @@ export const AdminUsers = () => {
 
   const getRoleBadge = (role) => {
     const colors = {
-      staff: 'bg-[#2F55FF]/20 text-[#2F55FF]',
-      brand: 'bg-[#6BFF9A]/20 text-[#6BFF9A]',
-      super_creative: 'bg-[#FFA502]/20 text-[#FFA502]',
-      creative: 'bg-[#7C5CFC]/20 text-[#7C5CFC]',
-      admin: 'bg-[#FF4757]/20 text-[#FF4757]'
+      staff: 'bg-[#EEF2FF] text-[#2F55FF]',
+      brand: 'bg-[#22C55E]/20 text-[#22C55E]',
+      super_creative: 'bg-[#FFFBEB] text-[#D97706]',
+      creative: 'bg-[#F5F3FF] text-[#7C3AED]',
+      admin: 'bg-[#FEF2F2] text-[#DC2626]'
     };
-    return colors[role] || 'bg-white/10 text-white/60';
+    return colors[role] || 'bg-[#F1F5F9] text-[#64748B]';
   };
 
   return (
     <div className="space-y-6 animate-fade-in" data-testid="admin-users">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Users & Verification</h1>
-          <p className="text-white/50 text-sm">{users.length} total users on the platform</p>
+          <h1 className="text-2xl font-bold text-[#0F172A]">Users & Verification</h1>
+          <p className="text-[#64748B] text-sm">{users.length} total users on the platform</p>
         </div>
         <button className="btn-primary">+ Add User</button>
       </div>
@@ -62,17 +62,17 @@ export const AdminUsers = () => {
       {/* Filters */}
       <div className="flex items-center gap-4">
         <div className="flex-1 relative max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
           <input 
             type="text"
             placeholder="Search users..."
-            className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
+            className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg pl-10 pr-4 py-2 text-[#0F172A] placeholder:text-[#CBD5E1] focus:outline-none focus:ring-2 focus:ring-[#2F55FF]"
           />
         </div>
         <select 
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-white focus:outline-none"
+          className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-lg px-4 py-2 text-[#0F172A] focus:outline-none"
         >
           <option value="all">All Users</option>
           <option value="verified">Verified</option>
@@ -83,20 +83,20 @@ export const AdminUsers = () => {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Total Users</p>
-          <p className="text-2xl font-bold text-white">{users.length}</p>
+          <p className="text-[#64748B] text-sm">Total Users</p>
+          <p className="text-2xl font-bold text-[#0F172A]">{users.length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Verified</p>
-          <p className="text-2xl font-bold text-[#6BFF9A]">{users.filter(u => u.verified).length}</p>
+          <p className="text-[#64748B] text-sm">Verified</p>
+          <p className="text-2xl font-bold text-[#22C55E]">{users.filter(u => u.verified).length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">Pending</p>
-          <p className="text-2xl font-bold text-[#FFA502]">{users.filter(u => !u.verified).length}</p>
+          <p className="text-[#64748B] text-sm">Pending</p>
+          <p className="text-2xl font-bold text-[#D97706]">{users.filter(u => !u.verified).length}</p>
         </div>
         <div className="dashboard-card p-4">
-          <p className="text-white/50 text-sm">This Month</p>
-          <p className="text-2xl font-bold text-white">12</p>
+          <p className="text-[#64748B] text-sm">This Month</p>
+          <p className="text-2xl font-bold text-[#0F172A]">12</p>
         </div>
       </div>
 
@@ -126,8 +126,8 @@ export const AdminUsers = () => {
                     <div className="flex items-center gap-3">
                       <Avatar name={user.name} size="sm" />
                       <div>
-                        <p className="text-white font-medium">{user.name}</p>
-                        <p className="text-white/40 text-xs">{user.id}</p>
+                        <p className="text-[#0F172A] font-medium">{user.name}</p>
+                        <p className="text-[#94A3B8] text-xs">{user.id}</p>
                       </div>
                     </div>
                   </td>
@@ -136,22 +136,22 @@ export const AdminUsers = () => {
                       {user.role?.replace('_', ' ')}
                     </span>
                   </td>
-                  <td className="text-white/60">{user.email}</td>
-                  <td className="text-white/60">{user.location || 'Lagos, Nigeria'}</td>
+                  <td className="text-[#64748B]">{user.email}</td>
+                  <td className="text-[#64748B]">{user.location || 'Lagos, Nigeria'}</td>
                   <td>
                     {user.verified ? (
-                      <span className="flex items-center gap-1 text-xs text-[#6BFF9A]">
+                      <span className="flex items-center gap-1 text-xs text-[#22C55E]">
                         <CheckCircle className="w-3 h-3" /> Verified
                       </span>
                     ) : (
-                      <span className="flex items-center gap-1 text-xs text-[#FFA502]">
+                      <span className="flex items-center gap-1 text-xs text-[#D97706]">
                         <Clock className="w-3 h-3" /> Pending
                       </span>
                     )}
                   </td>
-                  <td className="text-white/40 text-sm">Jan 2026</td>
+                  <td className="text-[#94A3B8] text-sm">Jan 2026</td>
                   <td>
-                    <button className="opacity-0 group-hover:opacity-100 text-white/40 hover:text-white">
+                    <button className="opacity-0 group-hover:opacity-100 text-[#94A3B8] hover:text-[#0F172A]">
                       <MoreVertical className="w-4 h-4" />
                     </button>
                   </td>
