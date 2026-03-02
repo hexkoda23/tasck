@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Any
 
 class TASCKAPITester:
-    def __init__(self, base_url: str = "https://agency-os-14.preview.emergentagent.com"):
+    def __init__(self, base_url: str = "https://tasck-live-demo.preview.emergentagent.com"):
         self.base_url = base_url.rstrip('/')
         self.api_base = f"{self.base_url}/api"
         self.session = requests.Session()
