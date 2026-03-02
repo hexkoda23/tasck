@@ -64,7 +64,7 @@ export const StaffPipeline = () => {
         <button className="text-[#CBD5E1] hover:text-[#94A3B8]"><MoreVertical className="w-3.5 h-3.5" /></button>
       </div>
       
-      <div className="font-mono text-xl font-bold text-[#0F172A] mb-2">
+      <div className="font-mono text-base font-bold text-[#0F172A] mb-2">
         {formatNaira(deal.value, { compact: true })}
       </div>
       
@@ -83,7 +83,7 @@ export const StaffPipeline = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="staff-pipeline">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">Pipeline</h1>
+        <h1 className="text-lg font-bold text-[#0F172A] tracking-tight">Pipeline</h1>
         <p className="text-[#94A3B8] text-sm">Drag deals between stages</p>
       </div>
 

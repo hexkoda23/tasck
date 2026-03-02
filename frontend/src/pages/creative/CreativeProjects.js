@@ -67,7 +67,7 @@ export const CreativeProjects = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="creative-projects">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A]">My Projects</h1>
+        <h1 className="text-lg font-bold text-[#0F172A]">My Projects</h1>
         <p className="text-[#64748B] text-sm">Projects you're currently working on</p>
       </div>
 
@@ -75,26 +75,26 @@ export const CreativeProjects = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Active Projects</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{projects.filter(p => p.status === 'active').length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{projects.filter(p => p.status === 'active').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Earnings</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦1.675M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">₦1.675M</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Tasks Completed</p>
-          <p className="text-2xl font-bold text-[#0F172A]">14/18</p>
+          <p className="text-lg font-bold text-[#0F172A]">14/18</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Reliability Score</p>
-          <p className="text-2xl font-bold text-[#22C55E]">97%</p>
+          <p className="text-lg font-bold text-[#22C55E]">97%</p>
         </div>
       </div>
 
       {/* Project Cards */}
       <div className="space-y-4">
         {projects.map((project) => (
-          <div key={project.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors cursor-pointer" data-testid={`project-${project.id}`}>
+          <div key={project.id} className="dashboard-card p-5 hover:border-[#C7D2FE] transition-colors cursor-pointer" data-testid={`project-${project.id}`}>
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-lg bg-[#EEF2FF] flex items-center justify-center">

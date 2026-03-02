@@ -59,7 +59,7 @@ export const ReportsPage = () => {
     <div className="space-y-6 animate-fade-in" data-testid="reports-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Reports</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Reports</h1>
           <p className="text-[#64748B] text-sm">Completed project reports and analytics</p>
         </div>
         <button className="btn-secondary flex items-center gap-2">
@@ -71,26 +71,26 @@ export const ReportsPage = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Reports</p>
-          <p className="text-2xl font-bold text-[#0F172A]">{reports.length}</p>
+          <p className="text-lg font-bold text-[#0F172A]">{reports.length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Budget</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦93M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">₦93M</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Avg On-Time Rate</p>
-          <p className="text-2xl font-bold text-[#22C55E]">93.5%</p>
+          <p className="text-lg font-bold text-[#22C55E]">93.5%</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Avg Rating</p>
-          <p className="text-2xl font-bold text-[#0F172A]">4.75★</p>
+          <p className="text-lg font-bold text-[#0F172A]">4.75★</p>
         </div>
       </div>
 
       {/* Reports List */}
       <div className="space-y-4">
         {reports.map((report) => (
-          <div key={report.id} className="dashboard-card p-6" data-testid={`report-${report.id}`}>
+          <div key={report.id} className="dashboard-card p-5" data-testid={`report-${report.id}`}>
             <div className="flex items-start justify-between mb-4">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-lg bg-[#EEF2FF] flex items-center justify-center">

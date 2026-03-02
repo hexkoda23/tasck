@@ -122,7 +122,7 @@ export const CreativeTasks = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="creative-tasks">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A]">Tasks</h1>
+        <h1 className="text-lg font-bold text-[#0F172A]">Tasks</h1>
         <p className="text-[#64748B] text-sm">Your assigned deliverables and submissions</p>
       </div>
 
@@ -130,19 +130,19 @@ export const CreativeTasks = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4 border-l-4 border-[#D97706]">
           <p className="text-[#64748B] text-sm">In Progress</p>
-          <p className="text-2xl font-bold text-[#D97706]">{tasks.filter(t => t.status === 'in_progress').length}</p>
+          <p className="text-lg font-bold text-[#D97706]">{tasks.filter(t => t.status === 'in_progress').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Submitted</p>
-          <p className="text-2xl font-bold text-[#2F55FF]">{tasks.filter(t => t.status === 'submitted').length}</p>
+          <p className="text-lg font-bold text-[#2F55FF]">{tasks.filter(t => t.status === 'submitted').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Approved</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{tasks.filter(t => t.status === 'approved').length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{tasks.filter(t => t.status === 'approved').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Earnings</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦1.3M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">₦1.3M</p>
         </div>
       </div>
 
@@ -165,7 +165,7 @@ export const CreativeTasks = () => {
           const status = getStatusStyle(task.status);
           const StatusIcon = status.icon;
           return (
-            <div key={task.id} className="dashboard-card p-6" data-testid={`task-${task.id}`}>
+            <div key={task.id} className="dashboard-card p-5" data-testid={`task-${task.id}`}>
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-start gap-4">
                   <div className="w-10 h-10 rounded-lg bg-[#F8FAFC] flex items-center justify-center">

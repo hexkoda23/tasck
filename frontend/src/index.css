@@ -265,8 +265,8 @@ h1, h2, h3, h4, h5, h6 {
 .metric-card {
   background: white;
   border: 1px solid var(--tasck-border);
-  border-radius: 12px;
-  padding: 24px;
+  border-radius: 10px;
+  padding: 16px 18px;
   transition: all 0.2s ease;
 }
 
@@ -275,17 +275,65 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .metric-label {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--tasck-text-muted);
   font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .big-number {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 32px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 22px;
   font-weight: 700;
   color: var(--tasck-dark);
-  line-height: 1.1;
+  line-height: 1.2;
+}
+
+/* ===== WELCOME BANNER ===== */
+.welcome-banner {
+  border-radius: 16px;
+  padding: 28px 32px;
+  position: relative;
+  overflow: hidden;
+}
+
+.welcome-banner-staff {
+  background: linear-gradient(135deg, #0F172A 0%, #1E3A5F 50%, #2F55FF 100%);
+}
+
+.welcome-banner-brand {
+  background: linear-gradient(135deg, #1E293B 0%, #334155 50%, #475569 100%);
+}
+
+.welcome-banner-super_creative {
+  background: linear-gradient(135deg, #0F172A 0%, #1E293B 60%, #2F55FF 100%);
+}
+
+.welcome-banner-creative {
+  background: linear-gradient(135deg, #0F172A 0%, #1A2332 50%, #22C55E 150%);
+}
+
+.welcome-banner-admin {
+  background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #4F46E5 100%);
+}
+
+.welcome-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 300px 200px at 85% 30%, rgba(47, 85, 255, 0.15) 0%, transparent 60%),
+    radial-gradient(ellipse 200px 150px at 15% 70%, rgba(34, 197, 94, 0.1) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.welcome-banner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
 }
 
 /* ===== KANBAN ===== */

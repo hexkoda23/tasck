@@ -95,7 +95,7 @@ export const BrandApprovals = () => {
     <div className="space-y-6 animate-fade-in" data-testid="brand-approvals">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Approvals</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Approvals</h1>
           <p className="text-[#64748B] text-sm">Review and approve campaign deliverables</p>
         </div>
       </div>
@@ -104,19 +104,19 @@ export const BrandApprovals = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4 border-l-4 border-[#D97706]">
           <p className="text-[#64748B] text-sm">Pending Review</p>
-          <p className="text-2xl font-bold text-[#D97706]">{approvals.filter(a => a.status === 'pending').length}</p>
+          <p className="text-lg font-bold text-[#D97706]">{approvals.filter(a => a.status === 'pending').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Revision Requested</p>
-          <p className="text-2xl font-bold text-[#2F55FF]">{approvals.filter(a => a.status === 'revision').length}</p>
+          <p className="text-lg font-bold text-[#2F55FF]">{approvals.filter(a => a.status === 'revision').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Approved (MTD)</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{approvals.filter(a => a.status === 'approved').length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{approvals.filter(a => a.status === 'approved').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Avg Review Time</p>
-          <p className="text-2xl font-bold text-[#0F172A]">1.8 days</p>
+          <p className="text-lg font-bold text-[#0F172A]">1.8 days</p>
         </div>
       </div>
 
@@ -139,7 +139,7 @@ export const BrandApprovals = () => {
           const status = getStatusStyle(item.status);
           const FileIcon = getFileIcon(item.fileType);
           return (
-            <div key={item.id} className="dashboard-card p-6" data-testid={`approval-${item.id}`}>
+            <div key={item.id} className="dashboard-card p-5" data-testid={`approval-${item.id}`}>
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-start gap-4">
                   <div className="w-12 h-12 rounded-lg bg-[#F8FAFC] flex items-center justify-center">

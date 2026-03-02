@@ -116,7 +116,7 @@ export const SuperCreativeApplications = () => {
     <div className="space-y-6 animate-fade-in" data-testid="sc-applications">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Applications</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Applications</h1>
           <p className="text-[#64748B] text-sm">Review and manage creative applications</p>
         </div>
       </div>
@@ -125,19 +125,19 @@ export const SuperCreativeApplications = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Applications</p>
-          <p className="text-2xl font-bold text-[#0F172A]">{applications.length}</p>
+          <p className="text-lg font-bold text-[#0F172A]">{applications.length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Pending Review</p>
-          <p className="text-2xl font-bold text-[#D97706]">{applications.filter(a => a.status === 'pending').length}</p>
+          <p className="text-lg font-bold text-[#D97706]">{applications.filter(a => a.status === 'pending').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Shortlisted</p>
-          <p className="text-2xl font-bold text-[#2F55FF]">{applications.filter(a => a.status === 'shortlisted').length}</p>
+          <p className="text-lg font-bold text-[#2F55FF]">{applications.filter(a => a.status === 'shortlisted').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Accepted</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{applications.filter(a => a.status === 'accepted').length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{applications.filter(a => a.status === 'accepted').length}</p>
         </div>
       </div>
 
@@ -160,7 +160,7 @@ export const SuperCreativeApplications = () => {
           const status = getStatusStyle(app.status);
           const StatusIcon = status.icon;
           return (
-            <div key={app.id} className="dashboard-card p-6" data-testid={`application-${app.id}`}>
+            <div key={app.id} className="dashboard-card p-5" data-testid={`application-${app.id}`}>
               <div className="flex items-start gap-4">
                 <Avatar name={app.creative} size="lg" />
                 <div className="flex-1">

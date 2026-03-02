@@ -98,7 +98,7 @@ export const StaffMeetings = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-meetings">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">Meetings</h1>
+          <h1 className="text-lg font-bold text-[#0F172A] tracking-tight">Meetings</h1>
           <p className="text-[#94A3B8] text-sm">Record, transcribe, and convert meetings to action steps</p>
         </div>
         <button onClick={() => setShowNewMeeting(true)} className="btn-primary flex items-center gap-2 text-sm" data-testid="new-meeting-btn">
@@ -109,23 +109,23 @@ export const StaffMeetings = () => {
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         <div className="metric-card">
-          <span className="metric-label block mb-2">This Week</span>
-          <div className="text-2xl font-bold text-[#0F172A] font-mono">3</div>
+          <span className="metric-label block mb-1">This Week</span>
+          <div className="text-lg font-bold text-[#0F172A] font-mono">3</div>
           <div className="text-xs text-[#94A3B8]">meetings scheduled</div>
         </div>
         <div className="metric-card">
-          <span className="metric-label block mb-2">Recordings</span>
-          <div className="text-2xl font-bold text-[#0F172A] font-mono">12</div>
+          <span className="metric-label block mb-1">Recordings</span>
+          <div className="text-lg font-bold text-[#0F172A] font-mono">12</div>
           <div className="text-xs text-[#94A3B8]">total recordings</div>
         </div>
         <div className="metric-card">
-          <span className="metric-label block mb-2">Transcribed</span>
-          <div className="text-2xl font-bold text-[#22C55E] font-mono">10</div>
+          <span className="metric-label block mb-1">Transcribed</span>
+          <div className="text-lg font-bold text-[#22C55E] font-mono">10</div>
           <div className="text-xs text-[#94A3B8]">with AI summaries</div>
         </div>
         <div className="metric-card">
-          <span className="metric-label block mb-2">Action Items</span>
-          <div className="text-2xl font-bold text-[#0F172A] font-mono">8</div>
+          <span className="metric-label block mb-1">Action Items</span>
+          <div className="text-lg font-bold text-[#0F172A] font-mono">8</div>
           <div className="text-xs text-[#94A3B8]">3 pending, 5 done</div>
         </div>
       </div>
@@ -176,7 +176,7 @@ export const StaffMeetings = () => {
         {/* Meeting Detail */}
         <div className="lg:col-span-2">
           {selectedMeeting ? (
-            <div className="dashboard-card p-6 space-y-6" data-testid="meeting-detail">
+            <div className="dashboard-card p-5 space-y-6" data-testid="meeting-detail">
               <div className="flex items-start justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-[#0F172A] mb-1">{selectedMeeting.title}</h2>

@@ -42,7 +42,7 @@ export const StaffDeals = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-deals">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Deals</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Deals</h1>
           <p className="text-[#64748B] text-sm">{deals.length} total deals</p>
         </div>
         <button className="btn-primary flex items-center gap-2" data-testid="new-deal-btn">

@@ -75,7 +75,7 @@ export const MessagesPage = () => {
       {/* Thread List */}
       <div className="w-80 border-r border-[#F1F5F9] flex flex-col">
         <div className="p-4 border-b border-[#F1F5F9]">
-          <h1 className="text-lg font-semibold text-[#0F172A] mb-3">Messages</h1>
+          <h1 className="text-sm font-semibold text-[#0F172A] mb-3">Messages</h1>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#94A3B8]" />
             <input 

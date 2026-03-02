@@ -44,7 +44,7 @@ export const AdminAuditLogs = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-audit-logs">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Audit Logs</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Audit Logs</h1>
           <p className="text-[#64748B] text-sm">Complete activity trail of platform actions</p>
         </div>
         <button className="btn-secondary">Export Logs</button>

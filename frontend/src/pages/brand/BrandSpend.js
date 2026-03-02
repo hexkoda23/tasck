@@ -37,7 +37,7 @@ export const BrandSpend = () => {
     <div className="space-y-6 animate-fade-in" data-testid="brand-spend">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Spend Tracking</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Spend Tracking</h1>
           <p className="text-[#64748B] text-sm">Budget utilization and payment history</p>
         </div>
         <button className="btn-secondary">Export Statement</button>
@@ -45,30 +45,30 @@ export const BrandSpend = () => {
 
       {/* Overview Cards */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="dashboard-card p-6 bg-gradient-to-br from-[#2F55FF]/20 to-transparent">
+        <div className="dashboard-card p-5 bg-gradient-to-br from-[#2F55FF]/20 to-transparent">
           <Wallet className="w-6 h-6 text-[#2F55FF] mb-3" />
           <p className="text-[#64748B] text-sm">Total Budget</p>
-          <p className="text-3xl font-bold text-[#0F172A] font-mono">{formatNaira(spendData.totalBudget)}</p>
+          <p className="text-xl font-bold text-[#0F172A] font-mono">{formatNaira(spendData.totalBudget)}</p>
         </div>
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <p className="text-[#64748B] text-sm">Total Spent</p>
-          <p className="text-2xl font-bold text-[#22C55E] font-mono">{formatNaira(spendData.totalSpent)}</p>
+          <p className="text-lg font-bold text-[#22C55E] font-mono">{formatNaira(spendData.totalSpent)}</p>
           <p className="text-xs text-[#94A3B8] mt-1">{spentPercent.toFixed(0)}% utilized</p>
         </div>
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <p className="text-[#64748B] text-sm">Remaining</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(spendData.remaining)}</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">{formatNaira(spendData.remaining)}</p>
         </div>
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <TrendingUp className="w-5 h-5 text-[#D97706] mb-2" />
           <p className="text-[#64748B] text-sm">Monthly Burn Rate</p>
-          <p className="text-2xl font-bold text-[#D97706] font-mono">{formatNaira(spendData.monthlyBurn)}</p>
+          <p className="text-lg font-bold text-[#D97706] font-mono">{formatNaira(spendData.monthlyBurn)}</p>
         </div>
       </div>
 
       {/* Budget by Campaign */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Budget by Campaign</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Budget by Campaign</h2>
         <div className="space-y-6">
           {campaignSpend.map((campaign) => {
             const percent = (campaign.spent / campaign.budget) * 100;
@@ -107,7 +107,7 @@ export const BrandSpend = () => {
       {/* Recent Payments */}
       <div className="dashboard-card overflow-hidden">
         <div className="p-4 border-b border-[#F1F5F9]">
-          <h2 className="text-lg font-semibold text-[#0F172A]">Recent Payments</h2>
+          <h2 className="text-sm font-semibold text-[#0F172A]">Recent Payments</h2>
         </div>
         <table className="data-table">
           <thead>

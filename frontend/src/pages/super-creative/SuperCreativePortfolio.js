@@ -33,7 +33,7 @@ export const SuperCreativePortfolio = () => {
     <div className="space-y-6 animate-fade-in" data-testid="sc-portfolio">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Portfolio</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Portfolio</h1>
           <p className="text-[#64748B] text-sm">Public profile at teams.tasck.app/{user?.name?.toLowerCase().replace(/\s+/g, '-') || 'mavin-records'}</p>
         </div>
         <div className="flex gap-2">
@@ -52,7 +52,7 @@ export const SuperCreativePortfolio = () => {
             </button>
           </div>
           <div className="flex-1">
-            <h2 className="text-2xl font-bold text-[#0F172A]">{user?.name || 'MAVIN RECORDS'}</h2>
+            <h2 className="text-lg font-bold text-[#0F172A]">{user?.name || 'MAVIN RECORDS'}</h2>
             <p className="text-[#64748B] text-lg">Nigeria's Premier Music Label & Creative Agency</p>
             <p className="text-[#22C55E] mt-1">"We don't just make music. We build culture."</p>
 
@@ -67,31 +67,31 @@ export const SuperCreativePortfolio = () => {
 
         <div className="grid grid-cols-5 gap-4 mt-6 pt-6 border-t border-[#E2E8F0]">
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#0F172A]">35</p>
+            <p className="text-lg font-bold text-[#0F172A]">35</p>
             <p className="text-[#94A3B8] text-sm">Projects</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#D97706]">4.8</p>
+            <p className="text-lg font-bold text-[#D97706]">4.8</p>
             <p className="text-[#94A3B8] text-sm">Avg Rating</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#0F172A] font-mono">₦450M+</p>
+            <p className="text-lg font-bold text-[#0F172A] font-mono">₦450M+</p>
             <p className="text-[#94A3B8] text-sm">Total Revenue</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#22C55E]">94%</p>
+            <p className="text-lg font-bold text-[#22C55E]">94%</p>
             <p className="text-[#94A3B8] text-sm">On-Time Rate</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#0F172A]">12+</p>
+            <p className="text-lg font-bold text-[#0F172A]">12+</p>
             <p className="text-[#94A3B8] text-sm">Years Active</p>
           </div>
         </div>
       </div>
 
       {/* Team */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Team Roster</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Team Roster</h2>
         <div className="grid grid-cols-5 gap-4">
           {artists.map((artist) => (
             <div key={artist.name} className="text-center bg-[#F8FAFC] rounded-lg p-4">
@@ -108,8 +108,8 @@ export const SuperCreativePortfolio = () => {
       </div>
 
       {/* Featured Projects */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Featured Projects</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Featured Projects</h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           {projects.map((project) => (
             <div key={project.id} className="group cursor-pointer">
@@ -127,8 +127,8 @@ export const SuperCreativePortfolio = () => {
       </div>
 
       {/* Reviews */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Client Reviews</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Client Reviews</h2>
         <div className="space-y-4">
           {reviews.map((review) => (
             <div key={review.id} className="bg-[#F8FAFC] rounded-lg p-4">

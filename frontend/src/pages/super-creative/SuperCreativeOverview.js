@@ -3,15 +3,10 @@ import { useAuth } from '../../context/AuthContext';
 import { getSuperCreativeStats, getProjects, getWallet } from '../../lib/api';
 import { formatNaira, formatRelativeTime } from '../../lib/utils';
 import MetricCard, { MetricCardSkeleton } from '../../components/shared/MetricCard';
+import WelcomeBanner from '../../components/shared/WelcomeBanner';
 import { StatusBadge } from '../../components/shared/StatusBadge';
 import { 
-  Wallet, 
-  FolderOpen, 
-  Target,
-  Plus,
-  ArrowUpRight,
-  ArrowDownRight,
-  Clock
+  Wallet, FolderOpen, Target, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 
 export const SuperCreativeOverview = () => {
@@ -42,96 +37,65 @@ export const SuperCreativeOverview = () => {
   }, [user?.id]);
 
   return (
-    <div className="space-y-6 animate-fade-in" data-testid="super-creative-overview">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[#0F172A] mb-1">
-            Welcome back, {stats?.team_name || 'Mavin Records'}
-          </h1>
-          <p className="text-[#64748B] text-sm">
-            You have {stats?.active_projects || 3} active projects and {stats?.opportunities_posted || 7} opportunities posted.
-          </p>
-        </div>
-        <button className="btn-primary flex items-center gap-2" data-testid="new-project-btn">
-          <Plus className="w-4 h-4" />
-          New Project
-        </button>
+    <div className="space-y-5 animate-fade-in" data-testid="super-creative-overview">
+      <WelcomeBanner
+        role="super_creative"
+        userName={stats?.team_name || 'Mavin Records'}
+        subtitle={`${stats?.active_projects || 3} active projects and ${stats?.opportunities_posted || 7} opportunities posted.`}
+        stats={[
+          { label: 'Available', value: formatNaira(stats?.wallet_balance || 12450000, { compact: true }) },
+          { label: 'Escrowed', value: formatNaira(stats?.escrowed || 9000000, { compact: true }) },
+          { label: 'Projects', value: String(stats?.active_projects || 3) }
+        ]}
+      />
+
+      {/* Wallet Quick View */}
+      <div className="grid grid-cols-3 gap-3">
+        <MetricCard
+          title="Available Balance"
+          value={formatNaira(stats?.wallet_balance || 12450000, { compact: true })}
+          icon={<Wallet className="w-3.5 h-3.5" />}
+        />
+        <MetricCard
+          title="In Escrow"
+          value={formatNaira(stats?.escrowed || 9000000, { compact: true })}
+          subtitle="Across 3 projects"
+        />
+        <MetricCard
+          title="Total Balance"
+          value={formatNaira(stats?.total_balance || 21450000, { compact: true })}
+          change="+12% this month"
+        />
       </div>
 
-      {/* Wallet Card */}
-      <div className="dashboard-card p-6 bg-gradient-to-r from-[#2F55FF]/20 to-[#6BFF9A]/10">
-        <div className="flex items-center gap-2 mb-4">
-          <Wallet className="w-5 h-5 text-[#22C55E]" />
-          <h2 className="text-lg font-semibold text-[#0F172A]">TASCK Wallet</h2>
-        </div>
-        
-        <div className="grid grid-cols-3 gap-6">
-          <div>
-            <p className="text-[#64748B] text-sm mb-1">Available</p>
-            <p className="text-3xl font-bold text-[#0F172A] font-mono">
-              {formatNaira(stats?.wallet_balance || 12450000, { compact: true })}
-            </p>
-          </div>
-          <div>
-            <p className="text-[#64748B] text-sm mb-1">Escrowed</p>
-            <p className="text-3xl font-bold text-[#D97706] font-mono">
-              {formatNaira(stats?.escrowed || 9000000, { compact: true })}
-            </p>
-          </div>
-          <div>
-            <p className="text-[#64748B] text-sm mb-1">Total</p>
-            <p className="text-3xl font-bold text-[#22C55E] font-mono">
-              {formatNaira(stats?.total_balance || 21450000, { compact: true })}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6 flex gap-3">
-          <button className="btn-primary text-sm py-2 px-4">+ Fund Wallet</button>
-          <button className="btn-secondary text-sm py-2 px-4 border-white/20 text-[#0F172A]">Withdraw</button>
-        </div>
-      </div>
-
-      {/* Two Column Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Two Column */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Active Projects */}
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-[#0F172A]">Active Projects</h2>
-            <button className="text-[#2F55FF] text-sm hover:underline">View All</button>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Active Projects</h2>
+            <button className="text-[#2F55FF] text-xs hover:underline">View All</button>
           </div>
-          
-          <div className="space-y-4">
+          <div className="space-y-3">
             {projects.map((project) => (
-              <div 
-                key={project.id}
-                className="bg-[#F8FAFC] rounded-lg p-4 hover:bg-[#F1F5F9] transition-colors cursor-pointer"
-                data-testid={`project-${project.id}`}
-              >
-                <div className="flex items-start justify-between mb-2">
+              <div key={project.id} className="bg-[#F8FAFC] rounded-lg p-3 hover:bg-[#F1F5F9] transition-colors cursor-pointer" data-testid={`project-${project.id}`}>
+                <div className="flex items-start justify-between mb-1.5">
                   <div>
-                    <h3 className="text-[#0F172A] font-medium">{project.title}</h3>
+                    <h3 className="text-xs font-medium text-[#0F172A]">{project.title}</h3>
                     <StatusBadge status={project.status} size="sm" className="mt-1" />
                   </div>
-                  <span className="text-[#94A3B8] text-sm">{project.project_id}</span>
+                  <span className="text-[#94A3B8] text-[10px]">{project.project_id}</span>
                 </div>
-                
-                {/* Progress Bar */}
-                <div className="mt-3">
-                  <div className="flex items-center justify-between text-xs text-[#64748B] mb-1">
+                <div className="mt-2">
+                  <div className="flex items-center justify-between text-[10px] text-[#64748B] mb-1">
                     <span>Progress</span>
                     <span>{project.completion}%</span>
                   </div>
                   <div className="progress-bar">
-                    <div 
-                      className="progress-bar-fill" 
-                      style={{ width: `${project.completion}%` }}
-                    ></div>
+                    <div className="progress-bar-fill" style={{ width: `${project.completion}%` }}></div>
                   </div>
                 </div>
-                
-                <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]">
                   <div>
                     <span className="text-[#94A3B8]">Budget</span>
                     <p className="text-[#0F172A] font-mono">{formatNaira(project.budget, { compact: true })}</p>
@@ -150,37 +114,32 @@ export const SuperCreativeOverview = () => {
           </div>
         </div>
 
-        {/* Recent Wallet Activity */}
-        <div className="dashboard-card p-6">
+        {/* Recent Activity */}
+        <div className="dashboard-card p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-[#0F172A]">Recent Activity</h2>
-            <button className="text-[#2F55FF] text-sm hover:underline">View All</button>
+            <h2 className="text-sm font-semibold text-[#0F172A]">Recent Activity</h2>
+            <button className="text-[#2F55FF] text-xs hover:underline">View All</button>
           </div>
-          
-          <div className="space-y-3">
+          <div className="space-y-2">
             {transactions.length === 0 ? (
-              <div className="text-[#94A3B8] text-center py-8">No recent transactions</div>
+              <div className="text-[#94A3B8] text-xs text-center py-8">No recent transactions</div>
             ) : (
               transactions.map((tx) => (
-                <div 
-                  key={tx.id}
-                  className="flex items-center justify-between py-3 border-b border-[#F1F5F9] last:border-0"
-                  data-testid={`transaction-${tx.id}`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                      tx.transaction_type === 'credit' ? 'bg-[#22C55E]/20 text-[#22C55E]' : 
+                <div key={tx.id} className="flex items-center justify-between py-2.5 border-b border-[#F1F5F9] last:border-0" data-testid={`transaction-${tx.id}`}>
+                  <div className="flex items-center gap-2.5">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center ${
+                      tx.transaction_type === 'credit' ? 'bg-[#22C55E]/15 text-[#22C55E]' : 
                       tx.transaction_type === 'escrow_hold' ? 'bg-[#FFFBEB] text-[#D97706]' :
                       'bg-[#FEF2F2] text-[#DC2626]'
                     }`}>
-                      {tx.transaction_type === 'credit' ? <ArrowDownRight className="w-4 h-4" /> : <ArrowUpRight className="w-4 h-4" />}
+                      {tx.transaction_type === 'credit' ? <ArrowDownRight className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
                     </div>
                     <div>
-                      <p className="text-[#475569] text-sm">{tx.description}</p>
-                      <p className="text-[#94A3B8] text-xs">{formatRelativeTime(tx.created_at)}</p>
+                      <p className="text-[#475569] text-xs">{tx.description}</p>
+                      <p className="text-[#94A3B8] text-[10px]">{formatRelativeTime(tx.created_at)}</p>
                     </div>
                   </div>
-                  <span className={`font-mono text-sm ${
+                  <span className={`font-mono text-xs ${
                     tx.transaction_type === 'credit' ? 'text-[#22C55E]' : 'text-[#64748B]'
                   }`}>
                     {tx.transaction_type === 'credit' ? '+' : '-'}{formatNaira(tx.amount, { compact: true })}

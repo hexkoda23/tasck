@@ -27,7 +27,7 @@ export const StaffOpportunities = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-opportunities">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Opportunities</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Opportunities</h1>
           <p className="text-[#64748B] text-sm">{opportunities.length} opportunities across all projects</p>
         </div>
       </div>

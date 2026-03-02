@@ -99,7 +99,7 @@ export const SuperCreativeOpportunities = () => {
     <div className="space-y-6 animate-fade-in" data-testid="sc-opportunities">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Opportunities</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Opportunities</h1>
           <p className="text-[#64748B] text-sm">Manage job listings and hired talent</p>
         </div>
         <button className="btn-primary flex items-center gap-2">
@@ -111,19 +111,19 @@ export const SuperCreativeOpportunities = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Posted</p>
-          <p className="text-2xl font-bold text-[#0F172A]">{opportunities.length}</p>
+          <p className="text-lg font-bold text-[#0F172A]">{opportunities.length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Open</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{opportunities.filter(o => o.status === 'open').length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{opportunities.filter(o => o.status === 'open').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Filled</p>
-          <p className="text-2xl font-bold text-[#2F55FF]">{opportunities.filter(o => o.status === 'filled').length}</p>
+          <p className="text-lg font-bold text-[#2F55FF]">{opportunities.filter(o => o.status === 'filled').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Applications</p>
-          <p className="text-2xl font-bold text-[#0F172A]">{opportunities.reduce((sum, o) => sum + o.applicants, 0)}</p>
+          <p className="text-lg font-bold text-[#0F172A]">{opportunities.reduce((sum, o) => sum + o.applicants, 0)}</p>
         </div>
       </div>
 

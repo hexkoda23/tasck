@@ -64,7 +64,7 @@ export const SuperCreativeProjects = () => {
     <div className="space-y-6 animate-fade-in" data-testid="sc-projects">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Projects</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Projects</h1>
           <p className="text-[#64748B] text-sm">{projects.length} total projects</p>
         </div>
         <button className="btn-primary flex items-center gap-2">
@@ -76,19 +76,19 @@ export const SuperCreativeProjects = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Active Projects</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{projects.filter(p => p.status === 'active').length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{projects.filter(p => p.status === 'active').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Budget</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦83M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">₦83M</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Team Members</p>
-          <p className="text-2xl font-bold text-[#0F172A]">41</p>
+          <p className="text-lg font-bold text-[#0F172A]">41</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Completion Rate</p>
-          <p className="text-2xl font-bold text-[#22C55E]">94%</p>
+          <p className="text-lg font-bold text-[#22C55E]">94%</p>
         </div>
       </div>
 
@@ -109,7 +109,7 @@ export const SuperCreativeProjects = () => {
             return colors[status] || 'bg-[#F1F5F9] text-[#64748B]';
           };
           return (
-            <div key={project.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors cursor-pointer" data-testid={`project-${project.id}`}>
+            <div key={project.id} className="dashboard-card p-5 hover:border-[#C7D2FE] transition-colors cursor-pointer" data-testid={`project-${project.id}`}>
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <div className="flex items-center gap-2 mb-1">

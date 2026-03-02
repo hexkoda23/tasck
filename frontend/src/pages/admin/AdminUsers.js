@@ -53,7 +53,7 @@ export const AdminUsers = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-users">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Users & Verification</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Users & Verification</h1>
           <p className="text-[#64748B] text-sm">{users.length} total users on the platform</p>
         </div>
         <button className="btn-primary">+ Add User</button>
@@ -84,19 +84,19 @@ export const AdminUsers = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Users</p>
-          <p className="text-2xl font-bold text-[#0F172A]">{users.length}</p>
+          <p className="text-lg font-bold text-[#0F172A]">{users.length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Verified</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{users.filter(u => u.verified).length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{users.filter(u => u.verified).length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Pending</p>
-          <p className="text-2xl font-bold text-[#D97706]">{users.filter(u => !u.verified).length}</p>
+          <p className="text-lg font-bold text-[#D97706]">{users.filter(u => !u.verified).length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">This Month</p>
-          <p className="text-2xl font-bold text-[#0F172A]">12</p>
+          <p className="text-lg font-bold text-[#0F172A]">12</p>
         </div>
       </div>
 

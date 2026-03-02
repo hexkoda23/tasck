@@ -83,7 +83,7 @@ export const StaffContracts = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-contracts">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">Contracts</h1>
+          <h1 className="text-lg font-bold text-[#0F172A] tracking-tight">Contracts</h1>
           <p className="text-[#94A3B8] text-sm">Create, send, and track contract signatures</p>
         </div>
         <button className="btn-primary flex items-center gap-2 text-sm"><Plus className="w-4 h-4" /> New Contract</button>
@@ -91,10 +91,10 @@ export const StaffContracts = () => {
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="metric-card"><span className="metric-label block mb-2">Total Contracts</span><div className="text-2xl font-bold text-[#0F172A] font-mono">{contracts.length}</div></div>
-        <div className="metric-card"><span className="metric-label block mb-2">Pending Signature</span><div className="text-2xl font-bold text-[#D97706] font-mono">{contracts.filter(c=>c.status==='pending_signature').length}</div></div>
-        <div className="metric-card"><span className="metric-label block mb-2">Fully Signed</span><div className="text-2xl font-bold text-[#059669] font-mono">{contracts.filter(c=>c.status==='fully_signed').length}</div></div>
-        <div className="metric-card"><span className="metric-label block mb-2">Total Value</span><div className="text-2xl font-bold text-[#0F172A] font-mono">₦138.8M</div></div>
+        <div className="metric-card"><span className="metric-label block mb-1">Total Contracts</span><div className="text-lg font-bold text-[#0F172A] font-mono">{contracts.length}</div></div>
+        <div className="metric-card"><span className="metric-label block mb-1">Pending Signature</span><div className="text-lg font-bold text-[#D97706] font-mono">{contracts.filter(c=>c.status==='pending_signature').length}</div></div>
+        <div className="metric-card"><span className="metric-label block mb-1">Fully Signed</span><div className="text-lg font-bold text-[#059669] font-mono">{contracts.filter(c=>c.status==='fully_signed').length}</div></div>
+        <div className="metric-card"><span className="metric-label block mb-1">Total Value</span><div className="text-lg font-bold text-[#0F172A] font-mono">₦138.8M</div></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -122,7 +122,7 @@ export const StaffContracts = () => {
         {/* Contract Detail */}
         <div className="lg:col-span-2">
           {selected ? (
-            <div className="dashboard-card p-6 space-y-6" data-testid="contract-detail">
+            <div className="dashboard-card p-5 space-y-6" data-testid="contract-detail">
               <div className="flex items-start justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-[#0F172A] mb-1">{selected.title}</h2>
@@ -142,7 +142,7 @@ export const StaffContracts = () => {
               {/* Contract Value */}
               <div className="bg-[#F8FAFC] rounded-xl p-5 border border-[#F1F5F9]">
                 <div className="text-xs text-[#94A3B8] uppercase tracking-wider mb-1">Contract Value</div>
-                <div className="text-3xl font-bold text-[#0F172A] font-mono">{formatNaira(selected.value)}</div>
+                <div className="text-xl font-bold text-[#0F172A] font-mono">{formatNaira(selected.value)}</div>
               </div>
 
               {/* Parties & Signatures */}

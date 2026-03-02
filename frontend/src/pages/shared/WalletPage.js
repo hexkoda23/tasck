@@ -65,7 +65,7 @@ const WalletPage = () => {
   if (role === 'staff') {
     return (
       <div className="space-y-6 animate-fade-in" data-testid="wallet-page">
-        <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">Wallet</h1>
+        <h1 className="text-lg font-bold text-[#0F172A] tracking-tight">Wallet</h1>
         <p className="text-[#94A3B8] text-sm">Staff members manage wallets via the Admin portal.</p>
       </div>
     );
@@ -75,7 +75,7 @@ const WalletPage = () => {
     <div className="space-y-6 animate-fade-in" data-testid="wallet-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">{data.label}</h1>
+          <h1 className="text-lg font-bold text-[#0F172A] tracking-tight">{data.label}</h1>
           <p className="text-[#94A3B8] text-sm">Manage funds, escrow, and payments</p>
         </div>
         <div className="flex gap-2">
@@ -116,14 +116,14 @@ const WalletPage = () => {
           )}
 
           {/* Balance Card */}
-          <div className="dashboard-card p-6">
+          <div className="dashboard-card p-5">
             <div className="flex items-center justify-between mb-4">
               <span className="text-xs text-[#94A3B8] uppercase tracking-wider">Available Balance</span>
               <button onClick={() => setShowBalance(!showBalance)} className="text-[#94A3B8] hover:text-[#64748B]">
                 {showBalance ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
               </button>
             </div>
-            <div className="text-3xl font-bold text-[#0F172A] font-mono mb-4">
+            <div className="text-xl font-bold text-[#0F172A] font-mono mb-4">
               {showBalance ? formatNaira(data.available) : '••••••••'}
             </div>
             

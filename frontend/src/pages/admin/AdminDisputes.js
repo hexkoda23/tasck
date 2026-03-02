@@ -77,7 +77,7 @@ export const AdminDisputes = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-disputes">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Disputes</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Disputes</h1>
           <p className="text-[#64748B] text-sm">Manage platform disputes and resolutions</p>
         </div>
       </div>
@@ -86,26 +86,26 @@ export const AdminDisputes = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Open Disputes</p>
-          <p className="text-2xl font-bold text-[#D97706]">2</p>
+          <p className="text-lg font-bold text-[#D97706]">2</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Under Review</p>
-          <p className="text-2xl font-bold text-[#0F172A]">1</p>
+          <p className="text-lg font-bold text-[#0F172A]">1</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Resolved (MTD)</p>
-          <p className="text-2xl font-bold text-[#22C55E]">1</p>
+          <p className="text-lg font-bold text-[#22C55E]">1</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Value</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦780K</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">₦780K</p>
         </div>
       </div>
 
       {/* Disputes List */}
       <div className="space-y-4">
         {disputes.map((dispute) => (
-          <div key={dispute.id} className="dashboard-card p-6" data-testid={`dispute-${dispute.id}`}>
+          <div key={dispute.id} className="dashboard-card p-5" data-testid={`dispute-${dispute.id}`}>
             <div className="flex items-start justify-between mb-4">
               <div>
                 <div className="flex items-center gap-3 mb-1">
@@ -119,7 +119,7 @@ export const AdminDisputes = () => {
                     </span>
                   )}
                 </div>
-                <h3 className="text-lg font-semibold text-[#0F172A]">{dispute.project}</h3>
+                <h3 className="text-sm font-semibold text-[#0F172A]">{dispute.project}</h3>
                 <p className="text-[#64748B] text-sm">{dispute.projectId}</p>
               </div>
               <div className="text-right">

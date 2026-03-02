@@ -38,7 +38,7 @@ export const BrandAnalytics = () => {
     <div className="space-y-6 animate-fade-in" data-testid="brand-analytics">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Campaign Analytics</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Campaign Analytics</h1>
           <p className="text-[#64748B] text-sm">Performance metrics across all campaigns</p>
         </div>
         <div className="flex gap-2">
@@ -56,39 +56,39 @@ export const BrandAnalytics = () => {
         <div className="dashboard-card p-4">
           <Eye className="w-5 h-5 text-[#2F55FF] mb-2" />
           <p className="text-[#64748B] text-xs">Total Impressions</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">124.4M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">124.4M</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 23%</p>
         </div>
         <div className="dashboard-card p-4">
           <Heart className="w-5 h-5 text-[#DC2626] mb-2" />
           <p className="text-[#64748B] text-xs">Total Engagement</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">8.6M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">8.6M</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 18%</p>
         </div>
         <div className="dashboard-card p-4">
           <Share2 className="w-5 h-5 text-[#22C55E] mb-2" />
           <p className="text-[#64748B] text-xs">Avg Engagement Rate</p>
-          <p className="text-2xl font-bold text-[#22C55E] font-mono">6.9%</p>
+          <p className="text-lg font-bold text-[#22C55E] font-mono">6.9%</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 1.2pp</p>
         </div>
         <div className="dashboard-card p-4">
           <Users className="w-5 h-5 text-[#D97706] mb-2" />
           <p className="text-[#64748B] text-xs">Total Reach</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">80.1M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">80.1M</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 31%</p>
         </div>
         <div className="dashboard-card p-4">
           <TrendingUp className="w-5 h-5 text-[#7C3AED] mb-2" />
           <p className="text-[#64748B] text-xs">Brand Sentiment</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">90%</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">90%</p>
           <p className="text-xs text-[#22C55E]">Positive</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Engagement Trend */}
-        <div className="dashboard-card p-6">
-          <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Engagement Trend</h2>
+        <div className="dashboard-card p-5">
+          <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Engagement Trend</h2>
           <div className="flex items-end gap-3 h-48">
             {monthlyData.map((d) => (
               <div key={d.month} className="flex-1 flex flex-col items-center gap-2">
@@ -105,8 +105,8 @@ export const BrandAnalytics = () => {
         </div>
 
         {/* Social Breakdown */}
-        <div className="dashboard-card p-6">
-          <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Social Platform Breakdown</h2>
+        <div className="dashboard-card p-5">
+          <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Social Platform Breakdown</h2>
           <div className="space-y-4">
             {socialBreakdown.map((platform) => (
               <div key={platform.platform}>
@@ -126,7 +126,7 @@ export const BrandAnalytics = () => {
       {/* Campaign Performance Table */}
       <div className="dashboard-card overflow-hidden">
         <div className="p-4 border-b border-[#F1F5F9]">
-          <h2 className="text-lg font-semibold text-[#0F172A]">Campaign Performance</h2>
+          <h2 className="text-sm font-semibold text-[#0F172A]">Campaign Performance</h2>
         </div>
         <table className="data-table">
           <thead>

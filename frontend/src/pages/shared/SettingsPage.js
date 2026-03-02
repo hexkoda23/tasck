@@ -9,13 +9,13 @@ export const SettingsPage = () => {
   return (
     <div className="space-y-6 animate-fade-in max-w-4xl" data-testid="settings-page">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A]">Settings</h1>
+        <h1 className="text-lg font-bold text-[#0F172A]">Settings</h1>
         <p className="text-[#64748B] text-sm">Manage your account and preferences</p>
       </div>
 
       {/* Profile Section */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Profile</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Profile</h2>
         <div className="flex items-start gap-6">
           <div className="relative">
             <Avatar name={user?.name} size="xl" />
@@ -74,10 +74,10 @@ export const SettingsPage = () => {
       </div>
 
       {/* Notification Settings */}
-      <div className="dashboard-card p-6">
+      <div className="dashboard-card p-5">
         <div className="flex items-center gap-3 mb-4">
           <Bell className="w-5 h-5 text-[#2F55FF]" />
-          <h2 className="text-lg font-semibold text-[#0F172A]">Notifications</h2>
+          <h2 className="text-sm font-semibold text-[#0F172A]">Notifications</h2>
         </div>
         <div className="space-y-4">
           {[
@@ -102,10 +102,10 @@ export const SettingsPage = () => {
       </div>
 
       {/* Security */}
-      <div className="dashboard-card p-6">
+      <div className="dashboard-card p-5">
         <div className="flex items-center gap-3 mb-4">
           <Shield className="w-5 h-5 text-[#22C55E]" />
-          <h2 className="text-lg font-semibold text-[#0F172A]">Security</h2>
+          <h2 className="text-sm font-semibold text-[#0F172A]">Security</h2>
         </div>
         <div className="space-y-4">
           <div className="flex items-center justify-between p-3 bg-[#F8FAFC] rounded-lg">
@@ -133,10 +133,10 @@ export const SettingsPage = () => {
       </div>
 
       {/* Appearance */}
-      <div className="dashboard-card p-6">
+      <div className="dashboard-card p-5">
         <div className="flex items-center gap-3 mb-4">
           <Palette className="w-5 h-5 text-[#D97706]" />
-          <h2 className="text-lg font-semibold text-[#0F172A]">Appearance</h2>
+          <h2 className="text-sm font-semibold text-[#0F172A]">Appearance</h2>
         </div>
         <div className="grid grid-cols-3 gap-4">
           <button className="p-4 bg-[#071426] border-2 border-[#2F55FF] rounded-lg text-center">

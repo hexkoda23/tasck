@@ -1,24 +1,25 @@
 import React from 'react';
 
-export const MetricCard = ({ 
-  title, 
-  value, 
-  subtitle, 
-  trend, 
-  trendDirection = 'up',
-  className = '' 
-}) => {
-  const trendColor = trendDirection === 'up' ? 'text-[#22C55E]' : trendDirection === 'down' ? 'text-[#EF4444]' : 'text-[#94A3B8]';
-  const trendIcon = trendDirection === 'up' ? '↑' : trendDirection === 'down' ? '↓' : '';
-
+const MetricCard = ({ title, value, subtitle, change, icon, className = '' }) => {
   return (
     <div className={`metric-card ${className}`} data-testid={`metric-${title?.toLowerCase().replace(/\s+/g, '-')}`}>
-      <span className="metric-label block mb-3">{title}</span>
-      <div className="big-number mb-1">{value}</div>
-      {subtitle && <div className="text-xs text-[#94A3B8]">{subtitle}</div>}
-      {trend && (
-        <div className={`text-xs mt-3 pt-3 border-t border-[#F1F5F9] ${trendColor}`}>
-          {trendIcon} {trend}
+      <div className="flex items-center justify-between mb-2">
+        <span className="metric-label">{title}</span>
+        {icon && (
+          <span className="text-[#94A3B8]">{icon}</span>
+        )}
+      </div>
+      <div className="big-number">{value}</div>
+      {(subtitle || change) && (
+        <div className="flex items-center gap-2 mt-1">
+          {subtitle && <span className="text-[10px] text-[#94A3B8]">{subtitle}</span>}
+          {change && (
+            <span className={`text-[10px] font-medium ${
+              change.startsWith('+') || change.includes('Up') ? 'text-[#22C55E]' : 'text-[#EF4444]'
+            }`}>
+              {change}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -26,10 +27,9 @@ export const MetricCard = ({
 };
 
 export const MetricCardSkeleton = () => (
-  <div className="metric-card">
-    <div className="skeleton h-3 w-20 mb-4"></div>
-    <div className="skeleton h-8 w-28 mb-2"></div>
-    <div className="skeleton h-3 w-16"></div>
+  <div className="metric-card animate-pulse">
+    <div className="h-3 bg-[#F1F5F9] rounded w-20 mb-3"></div>
+    <div className="h-6 bg-[#F1F5F9] rounded w-16"></div>
   </div>
 );
 

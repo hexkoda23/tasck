@@ -31,7 +31,7 @@ export const StaffRoster = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="staff-roster">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">Roster</h1>
+        <h1 className="text-lg font-bold text-[#0F172A] tracking-tight">Roster</h1>
         <p className="text-[#94A3B8] text-sm">Super Creative teams managed by TASCK</p>
       </div>
 
@@ -52,7 +52,7 @@ export const StaffRoster = () => {
           artists.map((artist) => (
             <div key={artist.id} className="dashboard-card overflow-hidden cursor-pointer group" data-testid={`artist-card-${artist.id}`}>
               <div className={`${getGradientClass(artist.team_name)} h-20 relative flex items-center justify-center`}>
-                <span className="text-white/90 text-3xl font-bold tracking-tighter">
+                <span className="text-white/90 text-xl font-bold tracking-tighter">
                   {(artist.team_name || '').split(/[\s()]+/).filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase()}
                 </span>
               </div>

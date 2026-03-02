@@ -82,7 +82,7 @@ export const AdminPermissions = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-permissions">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Permissions</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Permissions</h1>
           <p className="text-[#64748B] text-sm">Role-based access control</p>
         </div>
         <button className="btn-primary">+ Create Role</button>
@@ -91,7 +91,7 @@ export const AdminPermissions = () => {
       {/* Roles Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {roles.map((role) => (
-          <div key={role.name} className="dashboard-card p-6" data-testid={`role-${role.name.toLowerCase()}`}>
+          <div key={role.name} className="dashboard-card p-5" data-testid={`role-${role.name.toLowerCase()}`}>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-[#EEF2FF] flex items-center justify-center">

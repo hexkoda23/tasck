@@ -86,7 +86,7 @@ export const AdminContracts = () => {
     <div className="space-y-6 animate-fade-in" data-testid="admin-contracts">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Contracts</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Contracts</h1>
           <p className="text-[#64748B] text-sm">Platform contract management</p>
         </div>
         <button className="btn-primary">+ Generate Contract</button>
@@ -96,23 +96,23 @@ export const AdminContracts = () => {
       <div className="grid grid-cols-5 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Contracts</p>
-          <p className="text-2xl font-bold text-[#0F172A]">{contracts.length}</p>
+          <p className="text-lg font-bold text-[#0F172A]">{contracts.length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Pending Signature</p>
-          <p className="text-2xl font-bold text-[#D97706]">{contracts.filter(c => c.status === 'pending_signature').length}</p>
+          <p className="text-lg font-bold text-[#D97706]">{contracts.filter(c => c.status === 'pending_signature').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Active</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{contracts.filter(c => c.status === 'active').length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{contracts.filter(c => c.status === 'active').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Value</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦219.7M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">₦219.7M</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">This Month</p>
-          <p className="text-2xl font-bold text-[#0F172A]">8</p>
+          <p className="text-lg font-bold text-[#0F172A]">8</p>
         </div>
       </div>
 

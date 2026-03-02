@@ -27,7 +27,7 @@ export const StaffProjects = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-projects">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Projects</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Projects</h1>
           <p className="text-[#64748B] text-sm">{projects.length} total projects</p>
         </div>
         <button className="btn-primary flex items-center gap-2">
@@ -49,7 +49,7 @@ export const StaffProjects = () => {
           Array(4).fill(0).map((_, i) => <div key={i} className="skeleton h-48 rounded-lg"></div>)
         ) : (
           projects.map((project) => (
-            <div key={project.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors cursor-pointer">
+            <div key={project.id} className="dashboard-card p-5 hover:border-[#C7D2FE] transition-colors cursor-pointer">
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <span className="text-[#94A3B8] text-xs">{project.project_id}</span>

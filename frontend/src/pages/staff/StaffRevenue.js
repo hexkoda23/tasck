@@ -41,7 +41,7 @@ export const StaffRevenue = () => {
     <div className="space-y-6 animate-fade-in" data-testid="staff-revenue">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Revenue Intelligence</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Revenue Intelligence</h1>
           <p className="text-[#64748B] text-sm">Financial analytics and forecasting</p>
         </div>
         <button className="btn-secondary">Export Report</button>
@@ -51,40 +51,40 @@ export const StaffRevenue = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-xs mb-1">Revenue YTD</p>
-          <p className="text-2xl font-bold text-[#22C55E] font-mono">{formatNaira(revenueData.ytd, { compact: true })}</p>
+          <p className="text-lg font-bold text-[#22C55E] font-mono">{formatNaira(revenueData.ytd, { compact: true })}</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 42% vs last year</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-xs mb-1">TASCK Commission</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.commission, { compact: true })}</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.commission, { compact: true })}</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 38%</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-xs mb-1">Avg Deal Size</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.avgDealSize, { compact: true })}</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.avgDealSize, { compact: true })}</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 15%</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-xs mb-1">Deals Closed</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">{revenueData.dealsClosedYtd}</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">{revenueData.dealsClosedYtd}</p>
           <p className="text-xs text-[#94A3B8]">+5 vs last year</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-xs mb-1">Win Rate</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">{revenueData.winRate}%</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">{revenueData.winRate}%</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowUp className="w-3 h-3" /> 7pp</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-xs mb-1">Avg Days to Close</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">34</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">34</p>
           <p className="text-xs text-[#22C55E] flex items-center gap-1"><ArrowDown className="w-3 h-3" /> -6 days</p>
         </div>
       </div>
 
       {/* Target Progress */}
-      <div className="dashboard-card p-6">
+      <div className="dashboard-card p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[#0F172A]">Annual Target Progress</h2>
+          <h2 className="text-sm font-semibold text-[#0F172A]">Annual Target Progress</h2>
           <span className="text-[#22C55E] font-mono">{progressPercent.toFixed(0)}%</span>
         </div>
         <div className="progress-bar h-4 mb-2">
@@ -98,8 +98,8 @@ export const StaffRevenue = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Revenue by Artist */}
-        <div className="dashboard-card p-6">
-          <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Revenue by Artist</h2>
+        <div className="dashboard-card p-5">
+          <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Revenue by Artist</h2>
           <div className="space-y-3">
             {artistRevenue.map((artist) => (
               <div key={artist.name} className="flex items-center gap-4">
@@ -121,8 +121,8 @@ export const StaffRevenue = () => {
         </div>
 
         {/* Revenue by Category */}
-        <div className="dashboard-card p-6">
-          <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Revenue by Category</h2>
+        <div className="dashboard-card p-5">
+          <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Revenue by Category</h2>
           <div className="space-y-4">
             {categoryRevenue.map((cat, i) => {
               const colors = ['bg-[#2F55FF]', 'bg-[#22C55E]', 'bg-[#FFA502]', 'bg-[#7C5CFC]', 'bg-[#FF4757]', 'bg-white/30'];
@@ -163,7 +163,7 @@ export const StaffRevenue = () => {
               </svg>
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.ytd, { compact: true })}</p>
+                  <p className="text-lg font-bold text-[#0F172A] font-mono">{formatNaira(revenueData.ytd, { compact: true })}</p>
                   <p className="text-xs text-[#94A3B8]">Total</p>
                 </div>
               </div>

@@ -41,7 +41,7 @@ export const CalendarPage = () => {
     <div className="space-y-6 animate-fade-in" data-testid="calendar-page">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Calendar</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Calendar</h1>
           <p className="text-[#64748B] text-sm">Manage your schedule and meetings</p>
         </div>
         <button className="btn-primary flex items-center gap-2">
@@ -51,7 +51,7 @@ export const CalendarPage = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Calendar Grid */}
-        <div className="lg:col-span-2 dashboard-card p-6">
+        <div className="lg:col-span-2 dashboard-card p-5">
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-semibold text-[#0F172A]">March 2026</h2>
             <div className="flex items-center gap-2">
@@ -98,8 +98,8 @@ export const CalendarPage = () => {
         </div>
 
         {/* Upcoming Events */}
-        <div className="dashboard-card p-6">
-          <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Upcoming Events</h2>
+        <div className="dashboard-card p-5">
+          <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Upcoming Events</h2>
           <div className="space-y-3">
             {upcomingEvents.map(event => (
               <div key={event.id} className="flex items-start gap-3 p-3 bg-[#F8FAFC] rounded-lg">
@@ -120,8 +120,8 @@ export const CalendarPage = () => {
       </div>
 
       {/* Today's Schedule */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Today's Schedule — March 2, 2026</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Today's Schedule — March 2, 2026</h2>
         <div className="space-y-4">
           {events.map(event => (
             <div key={event.id} className={`flex items-start gap-4 p-4 rounded-lg border-l-4 bg-[#F8FAFC] ${getEventColor(event.type).split(' ')[1]}`}>

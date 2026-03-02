@@ -41,7 +41,7 @@ export const CreativeOpportunities = () => {
     <div className="space-y-6 animate-fade-in" data-testid="creative-opportunities">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Opportunities</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Opportunities</h1>
           <p className="text-[#64748B] text-sm">AI-matched gigs based on your skills and portfolio</p>
         </div>
         <div className="flex items-center gap-2 text-sm text-[#22C55E]">
@@ -86,7 +86,7 @@ export const CreativeOpportunities = () => {
             const match = opp.match || (95 - index * 3);
             const badge = getMatchBadge(match);
             return (
-              <div key={opp.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors">
+              <div key={opp.id} className="dashboard-card p-5 hover:border-[#C7D2FE] transition-colors">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-start gap-4">
                     <div className="w-12 h-12 rounded-lg bg-[#EEF2FF] flex items-center justify-center">
@@ -104,7 +104,7 @@ export const CreativeOpportunities = () => {
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-mono text-[#22C55E]">{formatNaira(opp.budget, { compact: true })}</p>
+                    <p className="text-base font-mono text-[#22C55E]">{formatNaira(opp.budget, { compact: true })}</p>
                     <p className="text-[#94A3B8] text-sm">{opp.duration || '6 weeks'}</p>
                   </div>
                 </div>

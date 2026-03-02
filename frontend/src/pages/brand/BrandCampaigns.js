@@ -74,7 +74,7 @@ export const BrandCampaigns = () => {
     <div className="space-y-6 animate-fade-in" data-testid="brand-campaigns">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">My Campaigns</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">My Campaigns</h1>
           <p className="text-[#64748B] text-sm">{campaigns.length} campaigns managed by TASCK</p>
         </div>
         <button className="btn-primary flex items-center gap-2">
@@ -86,19 +86,19 @@ export const BrandCampaigns = () => {
       <div className="grid grid-cols-4 gap-4">
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Active Campaigns</p>
-          <p className="text-2xl font-bold text-[#22C55E]">{campaigns.filter(c => c.status === 'active').length}</p>
+          <p className="text-lg font-bold text-[#22C55E]">{campaigns.filter(c => c.status === 'active').length}</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Budget</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦123M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">₦123M</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Total Spent</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">₦79.8M</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">₦79.8M</p>
         </div>
         <div className="dashboard-card p-4">
           <p className="text-[#64748B] text-sm">Deliverables Completed</p>
-          <p className="text-2xl font-bold text-[#0F172A]">40/64</p>
+          <p className="text-lg font-bold text-[#0F172A]">40/64</p>
         </div>
       </div>
 
@@ -118,7 +118,7 @@ export const BrandCampaigns = () => {
           const status = getStatusBadge(campaign.status);
           const StatusIcon = status.icon;
           return (
-            <div key={campaign.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors cursor-pointer" data-testid={`campaign-${campaign.id}`}>
+            <div key={campaign.id} className="dashboard-card p-5 hover:border-[#C7D2FE] transition-colors cursor-pointer" data-testid={`campaign-${campaign.id}`}>
               <div className="flex items-start justify-between mb-4">
                 <div>
                   <div className="flex items-center gap-3 mb-1">

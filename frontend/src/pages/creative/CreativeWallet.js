@@ -21,12 +21,12 @@ export const CreativeWallet = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="creative-wallet">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A]">Wallet</h1>
+        <h1 className="text-lg font-bold text-[#0F172A]">Wallet</h1>
         <p className="text-[#64748B] text-sm">Manage your earnings and withdrawals</p>
       </div>
 
       {/* Balance Card */}
-      <div className="dashboard-card p-6 bg-gradient-to-br from-[#2F55FF]/20 to-[#6BFF9A]/10">
+      <div className="dashboard-card p-5 bg-gradient-to-br from-[#2F55FF]/20 to-[#6BFF9A]/10">
         <div className="flex items-start justify-between mb-6">
           <div>
             <p className="text-[#64748B] text-sm mb-1">Available Balance</p>
@@ -55,8 +55,8 @@ export const CreativeWallet = () => {
       </div>
 
       {/* Bank Account */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Linked Bank Account</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Linked Bank Account</h2>
         <div className="flex items-center justify-between p-4 bg-[#F8FAFC] rounded-lg">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-lg bg-[#FEF2F2] flex items-center justify-center">
@@ -75,9 +75,9 @@ export const CreativeWallet = () => {
       </div>
 
       {/* Transaction History */}
-      <div className="dashboard-card p-6">
+      <div className="dashboard-card p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[#0F172A]">Transaction History</h2>
+          <h2 className="text-sm font-semibold text-[#0F172A]">Transaction History</h2>
           <button className="text-[#2F55FF] text-sm hover:underline">Export</button>
         </div>
         

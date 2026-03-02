@@ -28,7 +28,7 @@ export const StaffBrands = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="staff-brands">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A] tracking-tight">Brands</h1>
+        <h1 className="text-lg font-bold text-[#0F172A] tracking-tight">Brands</h1>
         <p className="text-[#94A3B8] text-sm">Client relationships and CRM</p>
       </div>
 

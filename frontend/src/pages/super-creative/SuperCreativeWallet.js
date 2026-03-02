@@ -38,33 +38,33 @@ export const SuperCreativeWallet = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="sc-wallet">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A]">Wallet</h1>
+        <h1 className="text-lg font-bold text-[#0F172A]">Wallet</h1>
         <p className="text-[#64748B] text-sm">Manage team finances and escrow</p>
       </div>
 
       {/* Balance Cards */}
       <div className="grid grid-cols-4 gap-4">
-        <div className="dashboard-card p-6 bg-gradient-to-br from-[#2F55FF]/20 to-transparent">
+        <div className="dashboard-card p-5 bg-gradient-to-br from-[#2F55FF]/20 to-transparent">
           <Wallet className="w-6 h-6 text-[#2F55FF] mb-3" />
           <p className="text-[#64748B] text-sm">Available Balance</p>
-          <p className="text-3xl font-bold text-[#0F172A] font-mono">{formatNaira(walletData.available)}</p>
+          <p className="text-xl font-bold text-[#0F172A] font-mono">{formatNaira(walletData.available)}</p>
         </div>
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <Lock className="w-5 h-5 text-[#D97706] mb-2" />
           <p className="text-[#64748B] text-sm">Held in Escrow</p>
-          <p className="text-2xl font-bold text-[#D97706] font-mono">{formatNaira(walletData.escrow)}</p>
+          <p className="text-lg font-bold text-[#D97706] font-mono">{formatNaira(walletData.escrow)}</p>
           <p className="text-xs text-[#94A3B8] mt-1">Funds securing active contracts</p>
         </div>
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <CreditCard className="w-5 h-5 text-[#22C55E] mb-2" />
           <p className="text-[#64748B] text-sm">Pending Payments</p>
-          <p className="text-2xl font-bold text-[#22C55E] font-mono">{formatNaira(walletData.pending)}</p>
+          <p className="text-lg font-bold text-[#22C55E] font-mono">{formatNaira(walletData.pending)}</p>
           <p className="text-xs text-[#94A3B8] mt-1">Expected within 7 days</p>
         </div>
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <TrendingUp className="w-5 h-5 text-[#64748B] mb-2" />
           <p className="text-[#64748B] text-sm">Total Earned (Lifetime)</p>
-          <p className="text-2xl font-bold text-[#0F172A] font-mono">{formatNaira(walletData.totalEarned)}</p>
+          <p className="text-lg font-bold text-[#0F172A] font-mono">{formatNaira(walletData.totalEarned)}</p>
         </div>
       </div>
 
@@ -76,8 +76,8 @@ export const SuperCreativeWallet = () => {
       </div>
 
       {/* Linked Account */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Linked Bank Account</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Linked Bank Account</h2>
         <div className="flex items-center justify-between p-4 bg-[#F8FAFC] rounded-lg">
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 rounded-lg bg-[#EEF2FF] flex items-center justify-center">
@@ -93,9 +93,9 @@ export const SuperCreativeWallet = () => {
       </div>
 
       {/* Transaction History */}
-      <div className="dashboard-card p-6">
+      <div className="dashboard-card p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[#0F172A]">Transaction History</h2>
+          <h2 className="text-sm font-semibold text-[#0F172A]">Transaction History</h2>
           <button className="text-[#2F55FF] text-sm hover:underline">Export</button>
         </div>
         <div className="space-y-3">

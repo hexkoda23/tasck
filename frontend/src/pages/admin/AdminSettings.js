@@ -5,13 +5,13 @@ export const AdminSettings = () => {
   return (
     <div className="space-y-6 animate-fade-in" data-testid="admin-settings">
       <div>
-        <h1 className="text-2xl font-bold text-[#0F172A]">Platform Settings</h1>
+        <h1 className="text-lg font-bold text-[#0F172A]">Platform Settings</h1>
         <p className="text-[#64748B] text-sm">Configure platform-wide settings and preferences</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Commission Settings */}
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-[#22C55E]/20 flex items-center justify-center">
               <CreditCard className="w-5 h-5 text-[#22C55E]" />
@@ -40,7 +40,7 @@ export const AdminSettings = () => {
         </div>
 
         {/* Escrow Settings */}
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-[#FFFBEB] flex items-center justify-center">
               <Shield className="w-5 h-5 text-[#D97706]" />
@@ -73,7 +73,7 @@ export const AdminSettings = () => {
         </div>
 
         {/* KYC Requirements */}
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-[#EEF2FF] flex items-center justify-center">
               <Shield className="w-5 h-5 text-[#2F55FF]" />
@@ -97,7 +97,7 @@ export const AdminSettings = () => {
         </div>
 
         {/* Notification Settings */}
-        <div className="dashboard-card p-6">
+        <div className="dashboard-card p-5">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-lg bg-[#F5F3FF] flex items-center justify-center">
               <Bell className="w-5 h-5 text-[#7C3AED]" />

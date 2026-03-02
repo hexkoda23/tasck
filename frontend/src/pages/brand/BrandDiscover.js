@@ -36,7 +36,7 @@ export const BrandDiscover = () => {
     <div className="space-y-6 animate-fade-in" data-testid="brand-discover">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Discover Talent</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Discover Talent</h1>
           <p className="text-[#64748B] text-sm">AI-curated talent recommendations for your brand</p>
         </div>
         <div className="flex items-center gap-2 text-sm text-[#22C55E]">
@@ -92,7 +92,7 @@ export const BrandDiscover = () => {
       {/* Talent Cards */}
       <div className="space-y-4">
         {talents.map((talent) => (
-          <div key={talent.id} className="dashboard-card p-6 hover:border-[#C7D2FE] transition-colors" data-testid={`talent-${talent.id}`}>
+          <div key={talent.id} className="dashboard-card p-5 hover:border-[#C7D2FE] transition-colors" data-testid={`talent-${talent.id}`}>
             <div className="flex items-start gap-6">
               <Avatar name={talent.name} size="lg" />
               <div className="flex-1">

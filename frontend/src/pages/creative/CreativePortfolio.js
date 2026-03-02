@@ -25,7 +25,7 @@ export const CreativePortfolio = () => {
     <div className="space-y-6 animate-fade-in" data-testid="creative-portfolio">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-[#0F172A]">Portfolio</h1>
+          <h1 className="text-lg font-bold text-[#0F172A]">Portfolio</h1>
           <p className="text-[#64748B] text-sm">Your public profile at creative.tasck.app/{user?.name?.toLowerCase().replace(/\s+/g, '-') || 'kelechi-amadi-obi'}</p>
         </div>
         <div className="flex gap-2">
@@ -48,7 +48,7 @@ export const CreativePortfolio = () => {
             </button>
           </div>
           <div className="flex-1">
-            <h2 className="text-2xl font-bold text-[#0F172A]">{user?.name || 'KELECHI AMADI-OBI'}</h2>
+            <h2 className="text-lg font-bold text-[#0F172A]">{user?.name || 'KELECHI AMADI-OBI'}</h2>
             <p className="text-[#64748B] text-lg">Photographer | Art Director | Visual Storyteller</p>
             <p className="text-[#22C55E] mt-1">"Capturing the soul of African creativity"</p>
             
@@ -69,31 +69,31 @@ export const CreativePortfolio = () => {
         {/* Stats */}
         <div className="grid grid-cols-5 gap-4 mt-6 pt-6 border-t border-[#E2E8F0]">
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#0F172A]">14</p>
+            <p className="text-lg font-bold text-[#0F172A]">14</p>
             <p className="text-[#94A3B8] text-sm">Projects</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#D97706]">4.9</p>
+            <p className="text-lg font-bold text-[#D97706]">4.9</p>
             <p className="text-[#94A3B8] text-sm">Avg Rating</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#0F172A] font-mono">₦18.2M</p>
+            <p className="text-lg font-bold text-[#0F172A] font-mono">₦18.2M</p>
             <p className="text-[#94A3B8] text-sm">Total Earned</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#22C55E]">97%</p>
+            <p className="text-lg font-bold text-[#22C55E]">97%</p>
             <p className="text-[#94A3B8] text-sm">Reliability</p>
           </div>
           <div className="text-center">
-            <p className="text-2xl font-bold text-[#0F172A]">6+</p>
+            <p className="text-lg font-bold text-[#0F172A]">6+</p>
             <p className="text-[#94A3B8] text-sm">Years Exp</p>
           </div>
         </div>
       </div>
 
       {/* Rate Card */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Rate Card</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Rate Card</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
             { service: 'Full Day', rate: '₦350,000' },
@@ -110,8 +110,8 @@ export const CreativePortfolio = () => {
       </div>
 
       {/* Featured Work */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Featured Work</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Featured Work</h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           {portfolioItems.map((item) => (
             <div key={item.id} className="group cursor-pointer">
@@ -129,8 +129,8 @@ export const CreativePortfolio = () => {
       </div>
 
       {/* Reviews */}
-      <div className="dashboard-card p-6">
-        <h2 className="text-lg font-semibold text-[#0F172A] mb-4">Client Reviews</h2>
+      <div className="dashboard-card p-5">
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Client Reviews</h2>
         <div className="space-y-4">
           {reviews.map((review) => (
             <div key={review.id} className="bg-[#F8FAFC] rounded-lg p-4">
