@@ -1,0 +1,113 @@
+{
+  "project_name": "TASCK OS",
+  "version": "1.0",
+  "design_philosophy": {
+    "core_concept": "Creativity, Managed.",
+    "aesthetic": "Premium Nigerian Fintech meets Creative Studio",
+    "theme_strategy": "Hybrid",
+    "theme_rules": "Landing Page is Light Mode (Sky Blue/White). Dashboards are Dark Mode (Deep Navy/Electric Blue). This is a strict separation of 'Front of House' vs 'Back of House'.",
+    "emotional_tone": "Professional, Trustworthy, Culturally Vibrant, Tech-Forward"
+  },
+  "typography": {
+    "font_family": {
+      "headings": "DM Sans, sans-serif",
+      "body": "Inter, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "scale": {
+      "h1": "text-5xl md:text-7xl font-bold tracking-tight",
+      "h2": "text-4xl md:text-5xl font-bold tracking-tight",
+      "h3": "text-2xl md:text-3xl font-bold",
+      "body_lg": "text-lg md:text-xl leading-relaxed",
+      "body": "text-base leading-relaxed text-muted-foreground",
+      "caption": "text-sm text-muted-foreground uppercase tracking-widest"
+    }
+  },
+  "colors": {
+    "primary": {
+      "name": "Electric Blue",
+      "hex": "#2F55FF",
+      "tailwind": "bg-[#2F55FF] text-white hover:bg-[#2F55FF]/90"
+    },
+    "secondary": {
+      "name": "Accent Green",
+      "hex": "#6BFF9A",
+      "tailwind": "text-[#6BFF9A] border-[#6BFF9A]"
+    },
+    "backgrounds": {
+      "landing": "bg-gradient-to-b from-[#E0F2FE] via-[#F0F9FF] to-white",
+      "dashboard": "bg-[#071426]",
+      "dashboard_card": "bg-[#0A1A30]",
+      "dashboard_sidebar": "bg-[#050E1C]"
+    },
+    "gradients": {
+      "hero": "bg-gradient-to-r from-[#2F55FF] to-[#6BFF9A] bg-clip-text text-transparent",
+      "card_hover": "hover:bg-gradient-to-br hover:from-white/10 hover:to-white/5"
+    }
+  },
+  "layout": {
+    "spacing_scale": "luxurious",
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "grid_system": {
+      "landing": "grid grid-cols-1 md:grid-cols-12 gap-8",
+      "dashboard": "grid grid-cols-1 md:grid-cols-4 gap-6"
+    },
+    "border_radius": {
+      "card": "rounded-2xl",
+      "button": "rounded-full",
+      "input": "rounded-lg"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "rounded-full bg-[#2F55FF] text-white px-8 py-3 font-semibold hover:scale-105 transition-transform shadow-lg shadow-blue-500/20",
+      "secondary": "rounded-full border border-[#2F55FF] text-[#2F55FF] px-8 py-3 font-semibold hover:bg-blue-50",
+      "ghost": "rounded-full text-white/70 hover:text-white hover:bg-white/10 px-4 py-2"
+    },
+    "cards": {
+      "landing": "bg-white/50 backdrop-blur-xl border border-white/60 shadow-xl rounded-2xl p-8 hover:-translate-y-1 transition-all duration-300",
+      "dashboard": "bg-[#0A1A30] border border-white/5 rounded-xl p-6 shadow-lg"
+    },
+    "inputs": {
+      "style": "bg-white/5 border border-white/10 text-white placeholder:text-white/30 rounded-lg focus:ring-2 focus:ring-[#2F55FF] focus:border-transparent"
+    },
+    "navigation": {
+      "sidebar": "w-64 fixed h-screen bg-[#050E1C] border-r border-white/5 flex flex-col p-6",
+      "topbar": "h-16 border-b border-white/5 bg-[#071426]/80 backdrop-blur-md sticky top-0 z-50 px-6 flex items-center justify-between"
+    }
+  },
+  "assets": {
+    "logo": {
+      "type": "component",
+      "instruction": "Create a <Logo /> component. Blue circle (#2F55FF) with 'TASCK' text in white (or dark on light bg). Font: DM Sans Bold."
+    },
+    "images": {
+      "landing_hero": "https://images.unsplash.com/photo-1615842046963-9eb6748cbb10?crop=entropy&cs=srgb&fm=jpg&ixlib=rb-4.1.0&q=85",
+      "creative_music": "https://images.unsplash.com/photo-1763480847312-7f7e97ac21a3?crop=entropy&cs=srgb&fm=jpg&ixlib=rb-4.1.0&q=85",
+      "creative_fashion": "https://images.unsplash.com/photo-1770777352681-2fb5f5677d0f?crop=entropy&cs=srgb&fm=jpg&ixlib=rb-4.1.0&q=85",
+      "corporate_meeting": "https://images.unsplash.com/photo-1709803857154-d20ee16ff763?crop=entropy&cs=srgb&fm=jpg&ixlib=rb-4.1.0&q=85",
+      "concert_crowd": "https://images.unsplash.com/photo-1604153806126-de074b474fe4?crop=entropy&cs=srgb&fm=jpg&ixlib=rb-4.1.0&q=85"
+    },
+    "placeholders": {
+      "user_avatar": "https://github.com/shadcn.png",
+      "brand_logos": "Use text-based logos or simple geometric shapes with initials for MTN, Guinness, Pepsi if real logos are unavailable."
+    }
+  },
+  "routes_structure": {
+    "/": "Landing Page (Role Selector)",
+    "/staff": "TASCK Staff Dashboard (Overview, Deal Rooms, Roster)",
+    "/brand": "Brand Portal (Campaigns, Approvals)",
+    "/creative": "Creative Portal (Tasks, Wallet)",
+    "/super-creative": "Super Creative Portal (Projects, Opportunities)",
+    "/admin": "Admin Portal (Users, Settings)"
+  },
+  "universal_guidelines": [
+    "Use 'sonner' for all toast notifications.",
+    "All interactive elements MUST have 'data-testid' attributes.",
+    "Do not use generic gradients. Use the specific gradients defined in colors.",
+    "Dashboards must feel dense but legible. Use 'text-sm' for data tables.",
+    "Animations: Use 'framer-motion' for page transitions and complex interactions if possible, otherwise CSS transitions.",
+    "Charts: Use 'Recharts' with custom tooltips styling (dark bg, white text)."
+  ],
+  "instructions_to_main_agent": "1. Start by setting up the Router structure. 2. Implement the Landing Page with the 'Sky Blue' theme. 3. Build the 'DashboardLayout' component that enforces the 'Deep Navy' theme for all protected routes. 4. Use Shadcn components but heavily customize them via tailwind classes to match the Deep Navy theme (e.g. dark backgrounds, white text, 10% opacity borders). 5. Populate the dashboards with dummy data relevant to Nigeria (Naira currency, Nigerian names)."
+}
