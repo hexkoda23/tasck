@@ -144,15 +144,15 @@ export const SettingsPage = () => {
             <p className="text-white text-sm">Dark</p>
             <p className="text-[#6BFF9A] text-xs">Active</p>
           </button>
-          <button className="p-4 bg-white/5 border border-white/10 rounded-lg text-center opacity-50">
+          <button className="p-4 bg-white/5 border border-white/10 rounded-lg text-center">
             <div className="w-full h-8 bg-white/20 rounded mb-2"></div>
             <p className="text-white text-sm">Light</p>
-            <p className="text-white/40 text-xs">Coming Soon</p>
+            <p className="text-white/40 text-xs">Available</p>
           </button>
-          <button className="p-4 bg-white/5 border border-white/10 rounded-lg text-center opacity-50">
+          <button className="p-4 bg-white/5 border border-white/10 rounded-lg text-center">
             <div className="w-full h-8 bg-gradient-to-r from-[#0A1A30] to-white/20 rounded mb-2"></div>
             <p className="text-white text-sm">System</p>
-            <p className="text-white/40 text-xs">Coming Soon</p>
+            <p className="text-white/40 text-xs">Auto-detect</p>
           </button>
         </div>
       </div>
