@@ -408,3 +408,16 @@ h1, h2, h3, h4, h5, h6 {
     @apply bg-background text-foreground;
   }
 }
+
+/* Hide Emergent badge */
+[data-testid="emergent-badge"],
+a[href*="emergent"],
+div[class*="emergent"],
+.emergent-badge,
+iframe[src*="emergent"],
+div:has(> a[href*="utm_source=emergent"]) {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
