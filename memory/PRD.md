@@ -6,9 +6,9 @@
 **Updated:** March 2, 2026
 
 ## Problem Statement
-Premium demo for TASCK — a Nigerian creator economy company connecting Brands, Super Creatives, Creatives, Staff, and Admins.
+Premium demo for TASCK -- a Nigerian creator economy company connecting Brands, Super Creatives, Creatives, Staff, and Admins.
 
-## Design System (Light Theme — V2)
+## Design System (Light Theme -- V2)
 - **Background:** #F8FAFC (page), #FFFFFF (cards, sidebar)
 - **Text:** #0F172A (headings), #475569 (body), #94A3B8 (muted), #CBD5E1 (subtle)
 - **Borders:** #E2E8F0 (standard), #F1F5F9 (light)
@@ -21,11 +21,11 @@ Premium demo for TASCK — a Nigerian creator economy company connecting Brands,
 - **Cards:** White bg, 1px #E2E8F0 border, 12px radius, hover shadow
 - **Sidebar:** 240px white, blue active indicator bg
 - **Landing:** Split-screen (dark left, white right with role cards)
-- **References:** WeTransfer, Compound, SimilarWeb, Perk
+- **References:** WeTransfer, Compound, SimilarWeb, Perk, Wiza, documentation.ai
 
 ## What's Implemented
 
-### Phase 1 — Complete (March 2, 2026)
+### Phase 1 -- Complete (March 2, 2026)
 - Split-screen login page (dark branding left, white role selector right)
 - 5-role demo login system
 - Staff Dashboard: metrics, activity feed, copilot, pipeline kanban, roster grid, brands CRM, revenue, projects, opportunities, deals
@@ -39,12 +39,20 @@ Premium demo for TASCK — a Nigerian creator economy company connecting Brands,
 - Full light theme conversion across all pages
 - Backend: FastAPI + MongoDB with seed data
 
+### Phase 2 -- Complete (March 2, 2026)
+- Staff Meetings page: meeting list, recording/transcription, AI summary, AI-generated action items, new meeting modal
+- Staff Contracts page: contract list with parties, signature status tracking, send-to-all-parties modal
+- Shared WalletPage: unified wallet with card visualization, balance, escrow, transactions for all roles (Creative, Super Creative, Brand, Admin)
+- Quick Action modals: role-specific popups for "New" buttons across all 5 portals
+- Navigation updated: Meetings + Contracts in Staff sidebar, Wallet in Brand sidebar
+- Toaster updated to match light theme
+
 ### Testing Results
-- Iteration 4: 100% — all 46 pages, 5 portals, no invisible text, no "coming soon"
+- Iteration 5: 100% -- 19/19 features verified across all 5 portals
 
 ## Backlog
 ### P0
-- [ ] Connect frontend to backend API
+- [ ] Connect frontend to backend API (replace mock data with live API calls)
 - [ ] Deal Room detail view
 - [ ] Deal Origination Wizard
 
@@ -54,7 +62,27 @@ Premium demo for TASCK — a Nigerian creator economy company connecting Brands,
 - [ ] Contract auto-generation
 
 ### P2
-- [ ] Charts (Recharts)
+- [ ] Charts (Recharts) for analytics pages
 - [ ] Calendar integration
 - [ ] Mobile responsive
 - [ ] PDF export
+
+## Architecture
+```
+/app/
+  backend/ (FastAPI + MongoDB)
+    server.py
+  frontend/ (React + Tailwind + Shadcn)
+    src/
+      App.js (routes)
+      components/layout/DashboardLayout.js (sidebar + header + quick actions)
+      components/shared/ (MetricCard, Avatar, Logo, StatusBadge)
+      pages/staff/ (10 pages including Meetings, Contracts)
+      pages/brand/ (6 pages)
+      pages/super-creative/ (5 pages)
+      pages/creative/ (5 pages)
+      pages/admin/ (8 pages)
+      pages/shared/ (WalletPage, MessagesPage, CalendarPage, ReportsPage, SettingsPage)
+      lib/api.js, utils.js
+      context/AuthContext.js
+```
