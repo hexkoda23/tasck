@@ -7,7 +7,7 @@ import {
   Home, GitBranch, Handshake, FolderOpen, Target, Users, Building2,
   BarChart3, MessageSquare, Calendar, FileText, Settings, Bell, Search,
   LogOut, Plus, ChevronRight, Wallet, CheckSquare,
-  Shield, AlertTriangle, Activity, Sparkles, Star, Layout
+  Shield, AlertTriangle, Activity, Sparkles, Star, Layout, Video, Pen
 } from 'lucide-react';
 
 const navigationConfig = {
@@ -20,6 +20,8 @@ const navigationConfig = {
     { icon: Users, label: 'Roster', path: '/staff/roster' },
     { icon: Building2, label: 'Brands', path: '/staff/brands' },
     { icon: BarChart3, label: 'Revenue', path: '/staff/revenue' },
+    { icon: Video, label: 'Meetings', path: '/staff/meetings' },
+    { icon: Pen, label: 'Contracts', path: '/staff/contracts' },
     { divider: true },
     { icon: MessageSquare, label: 'Messages', path: '/staff/messages' },
     { icon: Calendar, label: 'Calendar', path: '/staff/calendar' },
@@ -32,7 +34,7 @@ const navigationConfig = {
     { icon: FolderOpen, label: 'My Campaigns', path: '/brand/campaigns' },
     { icon: CheckSquare, label: 'Approvals', path: '/brand/approvals' },
     { icon: BarChart3, label: 'Analytics', path: '/brand/analytics' },
-    { icon: Wallet, label: 'Spend Tracking', path: '/brand/spend' },
+    { icon: Wallet, label: 'Wallet', path: '/brand/wallet' },
     { divider: true },
     { icon: MessageSquare, label: 'Messages', path: '/brand/messages' },
     { icon: FileText, label: 'Reports', path: '/brand/reports' },
@@ -87,8 +89,40 @@ export const DashboardLayout = ({ role }) => {
   const navigate = useNavigate();
   const [showCopilot, setShowCopilot] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showQuickAction, setShowQuickAction] = useState(false);
 
   const navItems = navigationConfig[role] || navigationConfig.staff;
+
+  const quickActionConfig = {
+    staff: { label: 'New Deal', items: [
+      { title: 'Create New Deal', desc: 'Start a new brand partnership deal', icon: Handshake },
+      { title: 'Schedule Meeting', desc: 'Set up a meeting with recording', icon: Video },
+      { title: 'Create Contract', desc: 'Draft a new contract for parties', icon: FileText },
+      { title: 'Post Opportunity', desc: 'Create an open creative opportunity', icon: Target }
+    ]},
+    brand: { label: 'New Campaign', items: [
+      { title: 'Launch Campaign', desc: 'Start a new creative campaign', icon: FolderOpen },
+      { title: 'Discover Talent', desc: 'Browse top Nigerian creatives', icon: Star },
+      { title: 'Request Approval', desc: 'Submit deliverables for review', icon: CheckSquare }
+    ]},
+    super_creative: { label: 'New Project', items: [
+      { title: 'Create Project', desc: 'Start a new creative project', icon: FolderOpen },
+      { title: 'Post Opportunity', desc: 'Find talent for your project', icon: Target },
+      { title: 'Fund Wallet', desc: 'Add funds for escrow payments', icon: Wallet }
+    ]},
+    creative: { label: 'New Application', items: [
+      { title: 'Browse Opportunities', desc: 'Find open gigs and projects', icon: Target },
+      { title: 'Update Portfolio', desc: 'Add new work to your portfolio', icon: Layout },
+      { title: 'Withdraw Funds', desc: 'Withdraw to your bank account', icon: Wallet }
+    ]},
+    admin: { label: 'Quick Action', items: [
+      { title: 'Manage Users', desc: 'Add or update platform users', icon: Users },
+      { title: 'Review Disputes', desc: 'Resolve pending disputes', icon: AlertTriangle },
+      { title: 'Generate Report', desc: 'Create platform analytics report', icon: BarChart3 }
+    ]}
+  };
+
+  const actionConfig = quickActionConfig[role] || quickActionConfig.staff;
 
   const handleLogout = () => {
     logout();
@@ -176,11 +210,13 @@ export const DashboardLayout = ({ role }) => {
           </button>
 
           <div className="flex items-center gap-3">
-            {role === 'staff' && (
-              <button className="btn-primary text-xs py-2 px-5 flex items-center gap-1.5" data-testid="new-deal-btn">
-                <Plus className="w-3.5 h-3.5" /> New Deal
-              </button>
-            )}
+            <button 
+              onClick={() => setShowQuickAction(true)} 
+              className="btn-primary text-xs py-2 px-5 flex items-center gap-1.5" 
+              data-testid="new-action-btn"
+            >
+              <Plus className="w-3.5 h-3.5" /> {actionConfig.label}
+            </button>
 
             <button className="relative p-2 text-[#94A3B8] hover:text-[#64748B] transition-colors rounded-lg hover:bg-[#F1F5F9]" data-testid="notifications-btn">
               <Bell className="w-[18px] h-[18px]" strokeWidth={1.5} />
@@ -266,15 +302,50 @@ export const DashboardLayout = ({ role }) => {
             </div>
             <div className="p-2 max-h-96 overflow-y-auto">
               <div className="px-3 py-2 text-[10px] text-[#94A3B8] uppercase tracking-wider">Quick Actions</div>
-              <button className="w-full flex items-center gap-3 px-3 py-2.5 text-[#64748B] hover:bg-[#F8FAFC] rounded-lg text-left text-sm transition-colors">
-                <Plus className="w-4 h-4 text-[#CBD5E1]" /> Create Deal
+              {actionConfig.items.map((item, idx) => {
+                const ActionIcon = item.icon;
+                return (
+                  <button key={idx} className="w-full flex items-center gap-3 px-3 py-2.5 text-[#64748B] hover:bg-[#F8FAFC] rounded-lg text-left text-sm transition-colors">
+                    <ActionIcon className="w-4 h-4 text-[#CBD5E1]" /> {item.title}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Action Modal */}
+      {showQuickAction && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center" onClick={() => setShowQuickAction(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()} data-testid="quick-action-modal">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-lg font-bold text-[#0F172A]">{actionConfig.label}</h2>
+              <button onClick={() => setShowQuickAction(false)} className="text-[#94A3B8] hover:text-[#64748B] p-1 rounded-lg hover:bg-[#F1F5F9]">
+                <Plus className="w-5 h-5 rotate-45" />
               </button>
-              <button className="w-full flex items-center gap-3 px-3 py-2.5 text-[#64748B] hover:bg-[#F8FAFC] rounded-lg text-left text-sm transition-colors">
-                <FolderOpen className="w-4 h-4 text-[#CBD5E1]" /> Create Project
-              </button>
-              <button className="w-full flex items-center gap-3 px-3 py-2.5 text-[#64748B] hover:bg-[#F8FAFC] rounded-lg text-left text-sm transition-colors">
-                <Target className="w-4 h-4 text-[#CBD5E1]" /> Create Opportunity
-              </button>
+            </div>
+            <div className="space-y-2">
+              {actionConfig.items.map((item, idx) => {
+                const ActionIcon = item.icon;
+                return (
+                  <button 
+                    key={idx} 
+                    onClick={() => setShowQuickAction(false)}
+                    className="w-full flex items-center gap-4 p-4 rounded-xl border border-[#E2E8F0] hover:border-[#2F55FF] hover:shadow-sm transition-all text-left group"
+                    data-testid={`quick-action-${idx}`}
+                  >
+                    <div className="w-10 h-10 rounded-lg bg-[#F1F5F9] group-hover:bg-[#EEF2FF] flex items-center justify-center transition-colors">
+                      <ActionIcon className="w-5 h-5 text-[#64748B] group-hover:text-[#2F55FF] transition-colors" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-[#0F172A]">{item.title}</div>
+                      <div className="text-[11px] text-[#94A3B8]">{item.desc}</div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-[#CBD5E1] group-hover:text-[#2F55FF] transition-colors" />
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>

@@ -18,13 +18,17 @@ import StaffBrands from './pages/staff/StaffBrands';
 import StaffProjects from './pages/staff/StaffProjects';
 import StaffOpportunities from './pages/staff/StaffOpportunities';
 import StaffRevenue from './pages/staff/StaffRevenue';
+import StaffMeetings from './pages/staff/StaffMeetings';
+import StaffContracts from './pages/staff/StaffContracts';
+
+// Shared Wallet Page
+import WalletPage from './pages/shared/WalletPage';
 
 // Creative Pages
 import CreativeOverview from './pages/creative/CreativeOverview';
 import CreativeOpportunities from './pages/creative/CreativeOpportunities';
 import CreativeProjects from './pages/creative/CreativeProjects';
 import CreativeTasks from './pages/creative/CreativeTasks';
-import CreativeWallet from './pages/creative/CreativeWallet';
 import CreativePortfolio from './pages/creative/CreativePortfolio';
 
 // Super Creative Pages
@@ -33,7 +37,6 @@ import SuperCreativePortfolio from './pages/super-creative/SuperCreativePortfoli
 import SuperCreativeProjects from './pages/super-creative/SuperCreativeProjects';
 import SuperCreativeOpportunities from './pages/super-creative/SuperCreativeOpportunities';
 import SuperCreativeApplications from './pages/super-creative/SuperCreativeApplications';
-import SuperCreativeWallet from './pages/super-creative/SuperCreativeWallet';
 
 // Brand Pages
 import BrandOverview from './pages/brand/BrandOverview';
@@ -105,6 +108,8 @@ function AppRoutes() {
         <Route path="roster" element={<StaffRoster />} />
         <Route path="brands" element={<StaffBrands />} />
         <Route path="revenue" element={<StaffRevenue />} />
+        <Route path="meetings" element={<StaffMeetings />} />
+        <Route path="contracts" element={<StaffContracts />} />
         <Route path="messages" element={<MessagesPage />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="reports" element={<ReportsPage />} />
@@ -126,6 +131,7 @@ function AppRoutes() {
         <Route path="approvals" element={<BrandApprovals />} />
         <Route path="analytics" element={<BrandAnalytics />} />
         <Route path="spend" element={<BrandSpend />} />
+        <Route path="wallet" element={<WalletPage />} />
         <Route path="messages" element={<MessagesPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="settings" element={<SettingsPage />} />
@@ -145,7 +151,7 @@ function AppRoutes() {
         <Route path="projects" element={<SuperCreativeProjects />} />
         <Route path="opportunities" element={<SuperCreativeOpportunities />} />
         <Route path="applications" element={<SuperCreativeApplications />} />
-        <Route path="wallet" element={<SuperCreativeWallet />} />
+        <Route path="wallet" element={<WalletPage />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="messages" element={<MessagesPage />} />
         <Route path="settings" element={<SettingsPage />} />
@@ -164,7 +170,7 @@ function AppRoutes() {
         <Route path="opportunities" element={<CreativeOpportunities />} />
         <Route path="projects" element={<CreativeProjects />} />
         <Route path="tasks" element={<CreativeTasks />} />
-        <Route path="wallet" element={<CreativeWallet />} />
+        <Route path="wallet" element={<WalletPage />} />
         <Route path="portfolio" element={<CreativePortfolio />} />
         <Route path="messages" element={<MessagesPage />} />
         <Route path="settings" element={<SettingsPage />} />
@@ -204,9 +210,10 @@ function App() {
           position="top-right"
           toastOptions={{
             style: {
-              background: '#0A1A30',
-              color: 'white',
-              border: '1px solid rgba(255,255,255,0.1)'
+              background: '#FFFFFF',
+              color: '#0F172A',
+              border: '1px solid #E2E8F0',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
             }
           }}
         />

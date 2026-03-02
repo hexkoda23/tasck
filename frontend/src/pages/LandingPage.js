@@ -86,32 +86,34 @@ export const LandingPage = () => {
           <div className="mb-12">
             <Logo variant="dark" size="lg" />
           </div>
+
+          <p className="text-white/50 text-xs uppercase tracking-[0.2em] mb-6">THE TASCK AGENCY.</p>
           
           <h1 
-            className="font-display text-[#0F172A] mb-6 tracking-tight leading-[0.95]"
+            className="font-display text-white mb-6 tracking-tight leading-[0.95]"
             style={{ fontSize: 'clamp(40px, 5vw, 72px)' }}
           >
             Creativity,<br />
-            <span className="italic text-[#334155]">Managed.</span>
+            <span className="italic text-white/80">Managed.</span>
           </h1>
           
-          <p className="text-[#94A3B8] text-base leading-relaxed max-w-sm mx-auto">
+          <p className="text-white/40 text-base leading-relaxed max-w-sm mx-auto">
             The operating system for Africa's creative economy. Connecting brands, artists, and talent.
           </p>
 
           {/* Stats */}
           <div className="mt-16 grid grid-cols-3 gap-8">
             <div>
-              <div className="text-2xl font-bold text-[#0F172A] font-mono">₦2.4B+</div>
-              <div className="text-xs text-[#CBD5E1] mt-1">Pipeline Value</div>
+              <div className="text-2xl font-bold text-white font-mono">₦2.4B+</div>
+              <div className="text-xs text-white/30 mt-1">Pipeline Value</div>
             </div>
             <div>
-              <div className="text-2xl font-bold text-[#0F172A] font-mono">50+</div>
-              <div className="text-xs text-[#CBD5E1] mt-1">Brand Partners</div>
+              <div className="text-2xl font-bold text-white font-mono">50+</div>
+              <div className="text-xs text-white/30 mt-1">Brand Partners</div>
             </div>
             <div>
-              <div className="text-2xl font-bold text-[#0F172A] font-mono">200+</div>
-              <div className="text-xs text-[#CBD5E1] mt-1">Creatives</div>
+              <div className="text-2xl font-bold text-white font-mono">200+</div>
+              <div className="text-xs text-white/30 mt-1">Creatives</div>
             </div>
           </div>
         </div>
@@ -153,7 +155,7 @@ export const LandingPage = () => {
                   
                   <div className="flex-1 min-w-0">
                     <div className="font-semibold text-[#0F172A] text-sm">{card.title}</div>
-                    <div className="text-[#94A3B8] text-xs mt-0.5">{card.description}</div>
+                    <div className="text-[#94A3B8] text-[11px] mt-0.5 leading-snug">{card.description}</div>
                   </div>
 
                   <div className="flex-shrink-0">

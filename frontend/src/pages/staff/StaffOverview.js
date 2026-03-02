@@ -68,12 +68,12 @@ export const StaffOverview = () => {
           Array(6).fill(0).map((_, i) => <MetricCardSkeleton key={i} />)
         ) : (
           <>
-            <MetricCard title="Active Deals" value={stats?.active_deals || 14} subtitle="3 closing this week" trend="Up 27% vs last month" trendDirection="up" />
-            <MetricCard title="Pipeline Value" value={formatNaira(stats?.pipeline_value || 847200000, { compact: true })} subtitle={`Weighted: ${formatNaira(stats?.weighted_pipeline || 412500000, { compact: true })}`} trend="Up 15%" trendDirection="up" />
+            <MetricCard title="Active Deals" value={stats?.active_deals || 5} subtitle="3 closing this week" trend="Up 27% vs last month" trendDirection="up" />
+            <MetricCard title="Pipeline Value" value={formatNaira(stats?.pipeline_value || 240200000, { compact: true })} subtitle={`Weighted: ${formatNaira(stats?.weighted_pipeline || 117700000, { compact: true })}`} trend="Up 15%" trendDirection="up" />
             <MetricCard title="Revenue YTD" value={formatNaira(stats?.revenue_ytd || 234800000, { compact: true })} subtitle="Target: ₦500M (47%)" />
-            <MetricCard title="Artists Managed" value={stats?.artists_managed || 8} subtitle="2 onboarding" />
-            <MetricCard title="Active Projects" value={stats?.active_projects || 11} subtitle="4 in fulfillment" />
-            <MetricCard title="Brand Relationships" value={stats?.brand_relationships || 23} subtitle="5 new this quarter" trend="Up 3" trendDirection="up" />
+            <MetricCard title="Artists Managed" value={stats?.artists_managed || 4} subtitle="2 onboarding" />
+            <MetricCard title="Active Projects" value={stats?.active_projects || 6} subtitle="4 in fulfillment" />
+            <MetricCard title="Brand Relationships" value={stats?.brand_relationships || 12} subtitle="5 new this quarter" trend="Up 3" trendDirection="up" />
           </>
         )}
       </div>
