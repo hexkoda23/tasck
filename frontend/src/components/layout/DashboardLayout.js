@@ -22,6 +22,7 @@ const navigationConfig = {
     { icon: BarChart3, label: 'Revenue', path: '/staff/revenue' },
     { icon: Video, label: 'Meetings', path: '/staff/meetings' },
     { icon: Pen, label: 'Contracts', path: '/staff/contracts' },
+    { icon: Wallet, label: 'Wallet', path: '/staff/wallet' },
     { divider: true },
     { icon: MessageSquare, label: 'Messages', path: '/staff/messages' },
     { icon: Calendar, label: 'Calendar', path: '/staff/calendar' },

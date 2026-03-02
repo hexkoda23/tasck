@@ -110,6 +110,7 @@ function AppRoutes() {
         <Route path="revenue" element={<StaffRevenue />} />
         <Route path="meetings" element={<StaffMeetings />} />
         <Route path="contracts" element={<StaffContracts />} />
+        <Route path="wallet" element={<WalletPage />} />
         <Route path="messages" element={<MessagesPage />} />
         <Route path="calendar" element={<CalendarPage />} />
         <Route path="reports" element={<ReportsPage />} />
