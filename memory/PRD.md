@@ -16,16 +16,17 @@ Premium demo for TASCK -- a Nigerian creator economy company connecting Brands, 
 - **Success:** #22C55E, light: #ECFDF5
 - **Warning:** #F59E0B, light: #FFFBEB
 - **Error:** #EF4444, light: #FEF2F2
-- **Fonts:** Playfair Display (display), DM Sans (UI), JetBrains Mono (numbers)
-- **Big Numbers:** 32px JetBrains Mono bold #0F172A
-- **Cards:** White bg, 1px #E2E8F0 border, 12px radius, hover shadow
-- **Sidebar:** 240px white, blue active indicator bg
-- **Landing:** Split-screen (dark left, white right with role cards)
-- **References:** WeTransfer, Compound, SimilarWeb, Perk, Wiza, documentation.ai
+- **Fonts:** Playfair Display (display), DM Sans (UI + numbers)
+- **Big Numbers:** 22px DM Sans bold #0F172A (reduced from 32px)
+- **Metric Label:** 11px uppercase, letter-spacing 0.03em
+- **Cards:** White bg, 1px border, 10px radius, 16px padding (compact)
+- **Welcome Banners:** Role-specific gradients (dark navy to accent color), 16px radius, 28px padding
+- **Sidebar:** 240px white, blue active indicator
+- **References:** WeTransfer, Compound, SimilarWeb, Trafft, Morningscore, documentation.ai
 
 ## What's Implemented
 
-### Phase 1 -- Complete (March 2, 2026)
+### Phase 1 -- Complete
 - Split-screen login page (dark branding left, white role selector right)
 - 5-role demo login system
 - Staff Dashboard: metrics, activity feed, copilot, pipeline kanban, roster grid, brands CRM, revenue, projects, opportunities, deals
@@ -35,20 +36,26 @@ Premium demo for TASCK -- a Nigerian creator economy company connecting Brands, 
 - Admin Portal: overview, users, disputes, contracts, audit logs, permissions, wallets, settings
 - Shared: messages, calendar, reports, settings
 - Command palette (Ctrl+K)
-- All 46 pages populated with Nigerian creative economy dummy data
-- Full light theme conversion across all pages
-- Backend: FastAPI + MongoDB with seed data
+- All 46+ pages populated with Nigerian creative economy data
+- Full light theme conversion
 
-### Phase 2 -- Complete (March 2, 2026)
-- Staff Meetings page: meeting list, recording/transcription, AI summary, AI-generated action items, new meeting modal
-- Staff Contracts page: contract list with parties, signature status tracking, send-to-all-parties modal
-- Shared WalletPage: unified wallet with card visualization, balance, escrow, transactions for all roles (Creative, Super Creative, Brand, Admin)
-- Quick Action modals: role-specific popups for "New" buttons across all 5 portals
-- Navigation updated: Meetings + Contracts in Staff sidebar, Wallet in Brand sidebar
-- Toaster updated to match light theme
+### Phase 2 -- Complete
+- Staff Meetings page: meeting list, recording/transcription, AI summary, action items, new meeting modal
+- Staff Contracts page: contract list with parties, signature tracking, send-to-all modal
+- Shared WalletPage: unified wallet with card visualization, escrow, transactions
+- Quick Action modals: role-specific popups for all 5 portals
+
+### Phase 3 -- Complete (Design Refresh)
+- Welcome gradient banners on all 5 portal overviews (Trafft/Morningscore inspired)
+- Compact metric cards: reduced from 32px to 22px numbers, smaller padding
+- Smaller font sizes across all dashboard cards and content (text-sm, text-xs, text-[10px])
+- Pipeline card values reduced from text-xl to text-base
+- Page headers reduced from text-2xl to text-lg
+- Section headers reduced from text-lg to text-sm
+- Card padding reduced from p-6 to p-5 globally
 
 ### Testing Results
-- Iteration 5: 100% -- 19/19 features verified across all 5 portals
+- Iteration 6: 100% -- 27/27 features verified across all 5 portals
 
 ## Backlog
 ### P0
@@ -66,23 +73,3 @@ Premium demo for TASCK -- a Nigerian creator economy company connecting Brands, 
 - [ ] Calendar integration
 - [ ] Mobile responsive
 - [ ] PDF export
-
-## Architecture
-```
-/app/
-  backend/ (FastAPI + MongoDB)
-    server.py
-  frontend/ (React + Tailwind + Shadcn)
-    src/
-      App.js (routes)
-      components/layout/DashboardLayout.js (sidebar + header + quick actions)
-      components/shared/ (MetricCard, Avatar, Logo, StatusBadge)
-      pages/staff/ (10 pages including Meetings, Contracts)
-      pages/brand/ (6 pages)
-      pages/super-creative/ (5 pages)
-      pages/creative/ (5 pages)
-      pages/admin/ (8 pages)
-      pages/shared/ (WalletPage, MessagesPage, CalendarPage, ReportsPage, SettingsPage)
-      lib/api.js, utils.js
-      context/AuthContext.js
-```
