@@ -6,6 +6,14 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 // Layout
 import DashboardLayout from './components/layout/DashboardLayout';
 
+// V2 Layout + Pages
+import V2Layout from './components/v2/V2Layout';
+import VersionSelector from './pages/VersionSelector';
+import V2RoleSelector from './pages/v2/V2RoleSelector';
+import CommandCenter from './pages/v2/command/CommandCenter';
+import IntelligenceCenter from './pages/v2/command/IntelligenceCenter';
+import V2Placeholder from './pages/v2/V2Placeholder';
+
 // Pages
 import LandingPage from './pages/LandingPage';
 
@@ -91,7 +99,56 @@ function AppRoutes() {
       {/* Landing Page */}
       <Route path="/" element={<LandingPage />} />
 
-      {/* Staff Portal */}
+      {/* Version Selector */}
+      <Route path="/select" element={<VersionSelector />} />
+
+      {/* V1 Role Selector (existing landing with role cards) */}
+      <Route path="/v1" element={<LandingPage />} />
+
+      {/* V2 Routes */}
+      <Route path="/v2" element={<V2RoleSelector />} />
+
+      {/* V2 TASCK Command */}
+      <Route path="/v2/command" element={<V2Layout portal="command" />}>
+        <Route index element={<CommandCenter />} />
+        <Route path="signals" element={<IntelligenceCenter />} />
+        <Route path="pipeline" element={<V2Placeholder />} />
+        <Route path="deals" element={<V2Placeholder />} />
+        <Route path="projects" element={<V2Placeholder />} />
+        <Route path="network" element={<V2Placeholder />} />
+        <Route path="talent" element={<V2Placeholder />} />
+        <Route path="revenue" element={<V2Placeholder />} />
+        <Route path="messages" element={<V2Placeholder />} />
+        <Route path="automations" element={<V2Placeholder />} />
+        <Route path="settings" element={<V2Placeholder />} />
+        <Route path="live" element={<V2Placeholder />} />
+      </Route>
+
+      {/* V2 Brand Portal */}
+      <Route path="/v2/brand" element={<V2Layout portal="brand" />}>
+        <Route index element={<V2Placeholder />} />
+        <Route path="campaigns" element={<V2Placeholder />} />
+        <Route path="approvals" element={<V2Placeholder />} />
+        <Route path="discover" element={<V2Placeholder />} />
+        <Route path="analytics" element={<V2Placeholder />} />
+        <Route path="spend" element={<V2Placeholder />} />
+        <Route path="messages" element={<V2Placeholder />} />
+        <Route path="settings" element={<V2Placeholder />} />
+      </Route>
+
+      {/* V2 Talent Network */}
+      <Route path="/v2/talent" element={<V2Layout portal="talent" />}>
+        <Route index element={<V2Placeholder />} />
+        <Route path="opportunities" element={<V2Placeholder />} />
+        <Route path="projects" element={<V2Placeholder />} />
+        <Route path="wallet" element={<V2Placeholder />} />
+        <Route path="portfolio" element={<V2Placeholder />} />
+        <Route path="analytics" element={<V2Placeholder />} />
+        <Route path="messages" element={<V2Placeholder />} />
+        <Route path="settings" element={<V2Placeholder />} />
+      </Route>
+
+      {/* Staff Portal (V1) */}
       <Route 
         path="/staff" 
         element={

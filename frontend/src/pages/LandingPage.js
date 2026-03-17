@@ -101,6 +101,17 @@ export const LandingPage = () => {
             The operating system for Africa's creative economy. Connecting brands, artists, and talent.
           </p>
 
+          {/* Enter Demo Button */}
+          <div className="mt-10">
+            <button
+              onClick={() => navigate('/select')}
+              className="inline-flex items-center gap-2 px-8 py-3 rounded-full bg-white text-[#0F172A] text-sm font-medium hover:bg-white/90 transition-colors"
+              data-testid="enter-demo-btn"
+            >
+              Enter Demo <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+
           {/* Stats */}
           <div className="mt-16 grid grid-cols-3 gap-8">
             <div>
