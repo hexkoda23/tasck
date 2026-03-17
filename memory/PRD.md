@@ -11,7 +11,7 @@ Premium demo for TASCK -- a Nigerian creator economy company connecting Brands, 
 ## What's Implemented
 
 ### V1 -- Complete
-- Split-screen login with 5-role demo login
+- Full-screen "Creativity, Managed." landing page → Enter Demo → Version Selector → V1 Role Selector (5 roles)
 - All 46+ pages populated with Nigerian creative economy data
 - Full light theme across all pages
 - Welcome gradient banners on all 5 overview pages

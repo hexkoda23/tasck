@@ -18,6 +18,9 @@ import V2Network from './pages/v2/command/V2Network';
 import V2LiveCommand from './pages/v2/command/V2LiveCommand';
 import V2Placeholder from './pages/v2/V2Placeholder';
 
+// V1 Role Selector
+import V1RoleSelector from './pages/v1/V1RoleSelector';
+
 // Pages
 import LandingPage from './pages/LandingPage';
 
@@ -106,8 +109,8 @@ function AppRoutes() {
       {/* Version Selector */}
       <Route path="/select" element={<VersionSelector />} />
 
-      {/* V1 Role Selector (existing landing with role cards) */}
-      <Route path="/v1" element={<LandingPage />} />
+      {/* V1 Role Selector */}
+      <Route path="/v1" element={<V1RoleSelector />} />
 
       {/* V2 Routes */}
       <Route path="/v2" element={<V2RoleSelector />} />
