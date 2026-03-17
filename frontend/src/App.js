@@ -12,6 +12,10 @@ import VersionSelector from './pages/VersionSelector';
 import V2RoleSelector from './pages/v2/V2RoleSelector';
 import CommandCenter from './pages/v2/command/CommandCenter';
 import IntelligenceCenter from './pages/v2/command/IntelligenceCenter';
+import V2Pipeline from './pages/v2/command/V2Pipeline';
+import V2DealRoom from './pages/v2/command/V2DealRoom';
+import V2Network from './pages/v2/command/V2Network';
+import V2LiveCommand from './pages/v2/command/V2LiveCommand';
 import V2Placeholder from './pages/v2/V2Placeholder';
 
 // Pages
@@ -112,16 +116,16 @@ function AppRoutes() {
       <Route path="/v2/command" element={<V2Layout portal="command" />}>
         <Route index element={<CommandCenter />} />
         <Route path="signals" element={<IntelligenceCenter />} />
-        <Route path="pipeline" element={<V2Placeholder />} />
-        <Route path="deals" element={<V2Placeholder />} />
+        <Route path="pipeline" element={<V2Pipeline />} />
+        <Route path="deals" element={<V2DealRoom />} />
         <Route path="projects" element={<V2Placeholder />} />
-        <Route path="network" element={<V2Placeholder />} />
+        <Route path="network" element={<V2Network />} />
         <Route path="talent" element={<V2Placeholder />} />
         <Route path="revenue" element={<V2Placeholder />} />
         <Route path="messages" element={<V2Placeholder />} />
         <Route path="automations" element={<V2Placeholder />} />
         <Route path="settings" element={<V2Placeholder />} />
-        <Route path="live" element={<V2Placeholder />} />
+        <Route path="live" element={<V2LiveCommand />} />
       </Route>
 
       {/* V2 Brand Portal */}
