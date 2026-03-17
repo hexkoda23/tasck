@@ -21,6 +21,7 @@ import V2Placeholder from './pages/v2/V2Placeholder';
 
 // V1 Role Selector
 import V1RoleSelector from './pages/v1/V1RoleSelector';
+import FeedbackAdmin from './pages/FeedbackAdmin';
 
 // Pages
 import LandingPage from './pages/LandingPage';
@@ -109,6 +110,9 @@ function AppRoutes() {
 
       {/* Version Selector */}
       <Route path="/select" element={<VersionSelector />} />
+
+      {/* Feedback Admin */}
+      <Route path="/feedback" element={<FeedbackAdmin />} />
 
       {/* V1 Role Selector */}
       <Route path="/v1" element={<V1RoleSelector />} />

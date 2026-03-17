@@ -563,6 +563,36 @@ async def get_admin_stats():
 async def root():
     return {"message": "TASCK OS API", "version": "1.0.0", "status": "healthy"}
 
+# ==================== FEEDBACK ====================
+
+class FeedbackCreate(BaseModel):
+    name: str
+    email: str
+    comment: str
+    page_url: str
+
+@api_router.post("/feedback")
+async def create_feedback(data: FeedbackCreate):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": data.name,
+        "email": data.email,
+        "comment": data.comment,
+        "page_url": data.page_url,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.feedback.insert_one(doc)
+    return {"id": doc["id"], "message": "Feedback saved"}
+
+@api_router.get("/feedback")
+async def get_feedback(page_url: Optional[str] = None):
+    query = {}
+    if page_url:
+        query["page_url"] = page_url
+    cursor = db.feedback.find(query, {"_id": 0}).sort("created_at", -1)
+    results = await cursor.to_list(length=200)
+    return results
+
 @api_router.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
