@@ -7,7 +7,7 @@ export const LandingPage = () => {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-[#06080F] flex items-center justify-center relative overflow-hidden" data-testid="landing-page">
+    <div className="min-h-screen bg-[#0E1420] flex items-center justify-center relative overflow-hidden" data-testid="landing-page">
       {/* Background decorations */}
       <svg className="absolute inset-0 w-full h-full pointer-events-none z-0" viewBox="0 0 1200 900" preserveAspectRatio="xMidYMid slice">
         <ellipse cx="600" cy="1000" rx="900" ry="700" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="1" />
