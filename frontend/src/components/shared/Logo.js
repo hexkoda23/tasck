@@ -13,7 +13,7 @@ export const Logo = ({ variant = 'dark', size = 'md', showText = true }) => {
   return (
     <div className="flex items-center gap-3">
       <div 
-        className="flex items-center justify-center rounded-full bg-[#2F55FF] flex-shrink-0"
+        className="flex items-center justify-center rounded-full bg-[#5B8DEF] flex-shrink-0"
         style={{ width: circle, height: circle }}
       >
         <div className={`font-bold ${text} leading-tight text-center`}>

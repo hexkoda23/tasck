@@ -21,8 +21,9 @@ export const LandingPage = () => {
       <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] rounded-full bg-[#22C55E]/[0.02] blur-[120px] pointer-events-none" />
 
       <div className="relative z-10 max-w-lg text-center px-6">
-        <div className="mb-14">
-          <Logo variant="dark" size="lg" />
+        {/* Logo - top left corner */}
+        <div className="fixed top-6 left-8 z-20">
+          <Logo variant="dark" size="md" />
         </div>
 
         <p className="text-white/40 text-xs uppercase tracking-[0.25em] mb-8">THE TASCK AGENCY</p>
