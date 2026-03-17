@@ -154,7 +154,7 @@ const V2Layout = ({ portal = 'command' }) => {
       </aside>
 
       {/* Main */}
-      <div className="v2-main">
+      <div className={`v2-main ${sidebarExpanded ? 'v2-main--shifted' : ''}`}>
         {/* Top Bar */}
         <header className="v2-topbar" data-testid="v2-topbar">
           <div className="flex items-center gap-3 flex-shrink-0">
