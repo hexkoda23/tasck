@@ -3,66 +3,59 @@
 ## Overview
 **Product Name:** TASCK OS  
 **Tagline:** "Creativity, Managed."  
-**Updated:** March 2, 2026
+**Updated:** March 17, 2026
 
 ## Problem Statement
-Premium demo for TASCK -- a Nigerian creator economy company connecting Brands, Super Creatives, Creatives, Staff, and Admins.
-
-## Design System (Light Theme -- V2)
-- **Background:** #F8FAFC (page), #FFFFFF (cards, sidebar)
-- **Text:** #0F172A (headings), #475569 (body), #94A3B8 (muted), #CBD5E1 (subtle)
-- **Borders:** #E2E8F0 (standard), #F1F5F9 (light)
-- **Primary:** #2F55FF, light: #EEF2FF
-- **Success:** #22C55E, light: #ECFDF5
-- **Warning:** #F59E0B, light: #FFFBEB
-- **Error:** #EF4444, light: #FEF2F2
-- **Fonts:** Playfair Display (display), DM Sans (UI + numbers)
-- **Compact UI:** 22px numbers, 11px labels, 16px card padding
-- **Welcome Banners:** Role-specific dark gradients with inline stats
-- **References:** WeTransfer, Compound, SimilarWeb, Trafft, Morningscore
+Premium demo for TASCK -- a Nigerian creator economy company connecting Brands, Super Creatives, Creatives, Staff, and Admins. The product has two versions: V1 (solid functional platform) and V2 (futuristic AI-powered operating system).
 
 ## What's Implemented
 
-### Phase 1 -- Complete
+### V1 -- Complete
 - Split-screen login with 5-role demo login
 - All 46+ pages populated with Nigerian creative economy data
 - Full light theme across all pages
-
-### Phase 2 -- Complete
-- Staff Meetings (with transcript upload), Staff Contracts, Shared WalletPage
+- Welcome gradient banners on all 5 overview pages
+- Compact metric cards, font size optimization
+- Data-rich dashboards with clickable detail popups
+- Meetings (transcript upload), Contracts, Shared Wallet
 - Quick Action modals for all 5 portals
 
-### Phase 3 -- Complete (Design Refresh)
-- Welcome gradient banners on all 5 overview pages
-- Compact metric cards (22px numbers, smaller padding/labels)
-- Font size reduction across all pages
+### V2 Phase A -- Complete
+- Version Selector (V1 vs V2) at /select
+- V2 Role Selector (3 roles: TASCK Command, Brand Portal, Talent Network)
+- V2 Layout with slim icon-only sidebar, command bar, Geist fonts
+- Command Center (AI briefing dashboard) at /v2/command
+- Intelligence Center (market signals feed) at /v2/command/signals
+- Command Bar (Cmd+K) with quick actions
 
-### Phase 4 -- Complete (Data Enrichment)
-- **Staff Overview**: 8 metric cards + Top Deals (5) + Pipeline Summary + Upcoming Tasks (5) + Team Performance (4) + Money Movement (4 transactions) + Activity Feed + Upcoming Meetings (4) + Brand Relationships (6) — all clickable with detail popups
-- **Brand Overview**: 7 metric cards + Campaign Performance table (4 campaigns with impressions/engagement) + Deliverables (4) + AI Talent Recommendations (4 with match %) + Spend Breakdown (5 categories with bars) — all clickable
-- **Creative Overview**: 8 metric cards + AI-Matched Opportunities (5 with fit scores) + Tasks (5) + Earnings Trend (3 months) + Skill Demand (4 skills with rates/trends) + Recent Payments (4) + Portfolio Stats (4) — all clickable
-- **Super Creative Overview**: 8 metric cards + Project Timeline (4 with progress bars) + Transactions + Team Members (5 with earnings/ratings) + Hiring Pipeline (4 open roles with applicant counts) — all clickable
-- **Admin Overview**: 8 metric cards + Platform Health (4 KPIs) + Revenue Breakdown (5 streams ₦200M total) + Compliance Alerts (4) + Active Disputes (3) + User Growth (4 months with stacked bars) + Top Creatives (4) + Top Brands (4) + Recent Users (6) — all clickable with action buttons
-- **Meetings**: Upload Transcript button + drag-drop upload modal + per-meeting upload + AI processing indicator
-- **Wallet**: Accessible from ALL portal sidebars (staff, brand, super_creative, creative, admin)
-- **DetailPopup**: Reusable component for all clickable items across portals
+### V2 Phase B -- Complete (March 17, 2026)
+- **Pipeline** (/v2/command/pipeline): Kanban/Flow/Timeline views, 15 deals across 7 stages, Sankey-style flow visualization, stage transitions, monthly timeline with deadlines
+- **Deal Room** (/v2/command/deals): Deal list + interactive Simulator with 5 sliders, scenario modeling, AI recommendations, quick scenario presets
+- **Network** (/v2/command/network): Force-directed relationship graph (react-force-graph-2d), 10 brands + 10 creatives + TASCK hub, 30 connections, filter by type/active deals
+- **Live Command** (/v2/command/live): Mission control with 6 live metric tiles, 3-column layout (Active Deals, Event Feed, Team Activity), revenue target tracker, Copilot status
 
 ### Testing Results
-- Iteration 7: 100% — 45/45 features verified across all 5 portals, 0 issues
+- Iteration 8: 100% -- V2 Phase A (40+ features)
+- Iteration 9: 100% -- V2 Phase B (60+ features, all 4 new pages verified)
 
 ## Backlog
+
 ### P0
 - [ ] Connect frontend to backend API (replace mock data with live API calls)
-- [ ] Deal Room detail view
-- [ ] Deal Origination Wizard
 
-### P1
-- [ ] Functional task submission workflow
-- [ ] Messaging with threads
-- [ ] Contract auto-generation
+### P1 (V2 Phase C -- Should Have)
+- [ ] Revenue Intelligence (Forecast tab with scenario modeling)
+- [ ] Automations Engine (Visual workflow automation)
+- [ ] Money Flow Visualization (Sankey diagram for wallet/revenue)
+- [ ] V2 Brand Portal (Enhanced analytics & health dashboard)
+- [ ] V2 Talent Network (Unified view with performance analytics)
+- [ ] Inline Copilot suggestions throughout V2
 
-### P2
-- [ ] Charts (Recharts) for analytics pages
-- [ ] Calendar integration
+### P2 (Nice to Have)
+- [ ] Analytics Playground
+- [ ] Gantt timeline
+- [ ] Conversational Copilot
+- [ ] Match radar charts
+- [ ] Command Palette functional search
+- [ ] Messaging system
 - [ ] Mobile responsive
-- [ ] PDF export
