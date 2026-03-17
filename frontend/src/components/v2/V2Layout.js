@@ -93,6 +93,14 @@ const V2Layout = ({ portal = 'command' }) => {
 
   return (
     <div className="v2-shell" data-testid="v2-layout">
+      {/* Sidebar scrim - dims content when sidebar expanded */}
+      {sidebarExpanded && (
+        <div
+          className="fixed inset-0 bg-black/20 z-30 lg:hidden"
+          onClick={() => setSidebarExpanded(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <aside
         className={`v2-sidebar ${sidebarExpanded ? 'v2-sidebar--expanded' : ''}`}
