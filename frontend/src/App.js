@@ -42,6 +42,8 @@ import V3AdminTasks from './pages/v3/admin/V3AdminTasks';
 import V3AdminUsers from './pages/v3/admin/V3AdminUsers';
 import V3AdminBrainstorm from './pages/v3/admin/V3AdminBrainstorm';
 import V3AdminFeedback from './pages/v3/admin/V3AdminFeedback';
+import V3AdminScopeChange from './pages/v3/admin/V3AdminScopeChange';
+import V3AdminContractPreview from './pages/v3/admin/V3AdminContractPreview';
 import V3BrandInreach from './pages/v3/V3BrandInreach';
 
 // V3 Brand Portal Pages
@@ -324,6 +326,8 @@ function AppRoutes() {
         <Route path="projects/:id" element={<V3AdminProjectDetail />} />
         <Route path="projects/:id/brainstorm" element={<V3AdminBrainstorm />} />
         <Route path="projects/:id/feedback" element={<V3AdminFeedback />} />
+        <Route path="projects/:id/scope-changes" element={<V3AdminScopeChange />} />
+        <Route path="projects/:id/contract" element={<V3AdminContractPreview />} />
         <Route path="crm" element={<V3AdminCRM />} />
         <Route path="crm/:id" element={<V3AdminBrandDetail />} />
         <Route path="creators" element={<V3AdminCreators />} />

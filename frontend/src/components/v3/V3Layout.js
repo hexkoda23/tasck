@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import Logo from '../../components/shared/Logo';
+import V3NotificationCenter from './V3NotificationCenter';
+import V3CommandK from './V3CommandK';
 import {
   LayoutDashboard, GitBranch, FolderOpen, Building2, Users, FileText,
   BookOpen, BarChart3, Wallet, Settings, Receipt, Layers,
-  CheckSquare, FileCheck, MessageSquare, User, Upload, Briefcase
+  CheckSquare, FileCheck, MessageSquare, User, Upload, Briefcase, Search, Moon, Sun
 } from 'lucide-react';
 
 const navConfig = {
@@ -58,6 +60,7 @@ const V3Layout = ({ portal }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const config = navConfig[portal];
+  const [darkMode, setDarkMode] = useState(false);
 
   const isActive = (item) => {
     if (item.exact) return location.pathname === item.path;
@@ -65,8 +68,11 @@ const V3Layout = ({ portal }) => {
   };
 
   return (
-    <div className="v3-shell" data-testid="v3-layout">
-      {/* Sidebar — always expanded, 240px */}
+    <div className={`v3-shell ${darkMode ? 'v3-dark' : ''}`} data-testid="v3-layout">
+      {/* Command+K */}
+      <V3CommandK />
+
+      {/* Sidebar */}
       <aside className="v3-sidebar" data-testid="v3-sidebar">
         <div className="p-5 pb-3">
           <div className="cursor-pointer" onClick={() => navigate('/select')}><Logo variant="light" size="sm" /></div>
@@ -101,8 +107,28 @@ const V3Layout = ({ portal }) => {
         </div>
       </aside>
 
-      {/* Main content */}
+      {/* Main content with topbar */}
       <div className="v3-main">
+        {/* Topbar */}
+        <div className="sticky top-0 z-20 bg-[#FAFAF7]/80 backdrop-blur-md border-b border-[#E8E4DB] px-6 py-2.5 flex items-center gap-3">
+          <button onClick={() => {
+            const event = new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true });
+            window.dispatchEvent(event);
+          }} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#E8E4DB] bg-white hover:border-[#D4CDBF] transition-colors cursor-text" data-testid="search-trigger">
+            <Search className="w-3.5 h-3.5 text-[#8A8A8A]" />
+            <span className="text-[12px] text-[#D4CDBF]">Search...</span>
+            <kbd className="text-[9px] text-[#8A8A8A] bg-[#F4F2EC] px-1 py-0.5 rounded border border-[#E8E4DB] ml-4">⌘K</kbd>
+          </button>
+          <div className="flex-1" />
+          <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg hover:bg-[#F4F2EC] transition-colors" data-testid="dark-mode-toggle" title={darkMode ? 'Light mode' : 'Dark mode'}>
+            {darkMode ? <Sun className="w-4 h-4 text-[#C49B5F]" /> : <Moon className="w-4 h-4 text-[#8A8A8A]" />}
+          </button>
+          <V3NotificationCenter />
+          <div className="w-7 h-7 rounded-full bg-[#DDE7E2] flex items-center justify-center text-[10px] font-bold text-[#1F4A3A]">
+            {portal === 'admin' ? 'TB' : portal === 'brand' ? 'FA' : 'RE'}
+          </div>
+        </div>
+
         <main className="v3-content">
           <Outlet />
         </main>

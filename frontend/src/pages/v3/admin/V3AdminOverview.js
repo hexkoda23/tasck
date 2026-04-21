@@ -18,22 +18,40 @@ const V3AdminOverview = () => {
       <h1 className="v3-heading text-2xl mb-1" style={{ fontFamily: "'Fraunces', serif" }}>Today</h1>
       <p className="text-[#8A8A8A] text-sm mb-8">What needs your attention right now.</p>
 
-      {/* Quick stats */}
+      {/* Quick stats with sparklines */}
       <div className="grid grid-cols-4 gap-4 mb-8">
         {[
-          { label: 'Active Projects', value: v3Projects.length, icon: FolderOpen, color: '#1F4A3A' },
-          { label: 'Pipeline Value', value: formatNairaV3(totalValue), icon: TrendingUp, color: '#C49B5F' },
-          { label: 'Brands', value: v3Brands.length, icon: Users, color: '#9B9380' },
-          { label: 'Creators', value: v3Creators.length, icon: Users, color: '#567B3F' },
+          { label: 'Active Projects', value: v3Projects.length, icon: FolderOpen, color: '#1F4A3A', spark: [4, 5, 6, 7, 8, 10], change: '+2 this month' },
+          { label: 'Pipeline Value', value: formatNairaV3(totalValue), icon: TrendingUp, color: '#C49B5F', spark: [400, 520, 650, 780, 950, 1195], change: '+₦245M this month' },
+          { label: 'Brands', value: v3Brands.length, icon: Users, color: '#9B9380', spark: [3, 4, 5, 6, 8, 10], change: '+2 this month' },
+          { label: 'Creators', value: v3Creators.length, icon: Users, color: '#567B3F', spark: [5, 5, 6, 7, 8, 10], change: '+2 this month' },
         ].map((s, i) => {
           const Icon = s.icon;
+          const maxSpark = Math.max(...s.spark);
           return (
             <div key={i} className="v3-card p-5">
               <div className="flex items-center gap-2 mb-3">
                 <Icon className="w-4 h-4" style={{ color: s.color }} strokeWidth={1.5} />
                 <span className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">{s.label}</span>
               </div>
-              <p className="text-[#1A1A1A] text-xl font-semibold v3-mono" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{s.value}</p>
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="text-[#1A1A1A] text-xl font-semibold" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{s.value}</p>
+                  <p className="text-[10px] text-[#1F4A3A] mt-1">{s.change}</p>
+                </div>
+                {/* Sparkline */}
+                <svg width="60" height="28" viewBox="0 0 60 28" fill="none" className="flex-shrink-0">
+                  <polyline
+                    points={s.spark.map((v, j) => `${j * (60 / (s.spark.length - 1))},${28 - (v / maxSpark) * 24}`).join(' ')}
+                    stroke={s.color}
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                  <circle cx={60} cy={28 - (s.spark[s.spark.length - 1] / maxSpark) * 24} r="2" fill={s.color} />
+                </svg>
+              </div>
             </div>
           );
         })}

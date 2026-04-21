@@ -365,8 +365,16 @@ const V3AdminProjectDetail = () => {
               )}
 
               {(activeTab === 'contracts' || activeTab === 'financials') && (
-                <div className="v3-card p-8 text-center">
-                  <p className="text-[14px] text-[#8A8A8A]">Details available once the project reaches the appropriate stage.</p>
+                <div className="space-y-4">
+                  <div className="v3-card p-5">
+                    <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Contract</h3>
+                    <p className="text-[13px] text-[#5C5C5C] mb-3">{project.engagement === 'retainer' ? 'Retainer' : 'Direct'} Campaign Services Agreement — {formatNairaV3(project.estimatedValue)}</p>
+                    <button onClick={() => navigate(`/v3/admin/projects/${id}/contract`)} className="v3-btn-primary" data-testid="view-contract">View Contract</button>
+                  </div>
+                  <div className="v3-card p-5">
+                    <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Scope Changes</h3>
+                    <button onClick={() => navigate(`/v3/admin/projects/${id}/scope-changes`)} className="v3-btn-secondary" data-testid="view-scope-changes">View Scope Changes</button>
+                  </div>
                 </div>
               )}
             </div>

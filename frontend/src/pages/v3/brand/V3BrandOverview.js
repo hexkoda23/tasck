@@ -1,12 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v3Projects, v3Stages, v3Deliverables, getBrand, getCreator, getRM, formatNairaV3 } from '../../../lib/v3data';
-import { FolderOpen, Clock, CheckCircle, Circle, ArrowRight, FileText } from 'lucide-react';
+import { FolderOpen, Clock, CheckCircle, Circle, ArrowRight, FileText, Sparkles } from 'lucide-react';
+import V3BrandOnboarding from '../../../components/v3/V3BrandOnboarding';
 
 const brandId = 'brand-cocacola';
 
 const V3BrandOverview = () => {
   const navigate = useNavigate();
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const brand = getBrand(brandId);
   const projects = v3Projects.filter(p => p.brandId === brandId);
   const allProjects = v3Projects.filter(p => ['brand-cocacola', 'brand-guinness', 'brand-mtn'].includes(p.brandId));
@@ -17,8 +19,17 @@ const V3BrandOverview = () => {
 
   return (
     <div data-testid="v3-brand-overview">
-      <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Brand Portal</p>
-      <h1 className="v3-heading text-2xl mb-1" style={{ fontFamily: "'Fraunces', serif" }}>Welcome back, Folake</h1>
+      {showOnboarding && <V3BrandOnboarding onComplete={() => setShowOnboarding(false)} />}
+
+      <div className="flex items-center justify-between mb-1">
+        <div>
+          <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Brand Portal</p>
+          <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>Welcome back, Folake</h1>
+        </div>
+        <button onClick={() => setShowOnboarding(true)} className="v3-btn-secondary text-[11px]" data-testid="replay-onboarding">
+          <Sparkles className="w-3 h-3" /> Replay Onboarding
+        </button>
+      </div>
       <p className="text-[#8A8A8A] text-sm mb-8">Here's what's happening with your campaigns.</p>
 
       {/* Quick stats */}
