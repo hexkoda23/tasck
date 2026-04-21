@@ -136,6 +136,17 @@ const V3AdminProjectDetail = () => {
                       {' '}The project is currently in the {stage?.label} stage, managed by {rm?.name}.
                     </p>
                   </div>
+                  {/* Quick links */}
+                  <div className="flex gap-3">
+                    <button onClick={() => navigate(`/v3/admin/projects/${id}/brainstorm`)} className="v3-btn-secondary flex-1 justify-center" data-testid="go-brainstorm">
+                      <Sparkles className="w-3.5 h-3.5" /> Campaign Workspace
+                    </button>
+                    {(project.stage === 'deliver' || project.stage === 'closed') && (
+                      <button onClick={() => navigate(`/v3/admin/projects/${id}/feedback`)} className="v3-btn-secondary flex-1 justify-center" data-testid="go-feedback">
+                        <MessageSquare className="w-3.5 h-3.5" /> Feedback
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 

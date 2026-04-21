@@ -38,6 +38,11 @@ import V3AdminReports from './pages/v3/admin/V3AdminReports';
 import V3AdminWallet from './pages/v3/admin/V3AdminWallet';
 import V3AdminFees from './pages/v3/admin/V3AdminFees';
 import V3AdminSettings from './pages/v3/admin/V3AdminSettings';
+import V3AdminTasks from './pages/v3/admin/V3AdminTasks';
+import V3AdminUsers from './pages/v3/admin/V3AdminUsers';
+import V3AdminBrainstorm from './pages/v3/admin/V3AdminBrainstorm';
+import V3AdminFeedback from './pages/v3/admin/V3AdminFeedback';
+import V3BrandInreach from './pages/v3/V3BrandInreach';
 
 // V3 Brand Portal Pages
 import V3BrandOverview from './pages/v3/brand/V3BrandOverview';
@@ -305,6 +310,9 @@ function AppRoutes() {
         <Route path="settings" element={<AdminSettings />} />
       </Route>
 
+      {/* V3 Brand Inreach (public form) */}
+      <Route path="/v3/enquiry" element={<V3BrandInreach />} />
+
       {/* V3 Role Selector */}
       <Route path="/v3" element={<V3RoleSelector />} />
 
@@ -314,6 +322,8 @@ function AppRoutes() {
         <Route path="pipeline" element={<V3AdminPipeline />} />
         <Route path="projects" element={<V3AdminProjects />} />
         <Route path="projects/:id" element={<V3AdminProjectDetail />} />
+        <Route path="projects/:id/brainstorm" element={<V3AdminBrainstorm />} />
+        <Route path="projects/:id/feedback" element={<V3AdminFeedback />} />
         <Route path="crm" element={<V3AdminCRM />} />
         <Route path="crm/:id" element={<V3AdminBrandDetail />} />
         <Route path="creators" element={<V3AdminCreators />} />
@@ -325,6 +335,8 @@ function AppRoutes() {
         <Route path="wallet" element={<V3AdminWallet />} />
         <Route path="fees" element={<V3AdminFees />} />
         <Route path="settings" element={<V3AdminSettings />} />
+        <Route path="tasks" element={<V3AdminTasks />} />
+        <Route path="users" element={<V3AdminUsers />} />
       </Route>
 
       {/* V3 Brand Portal */}

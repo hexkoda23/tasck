@@ -6,26 +6,35 @@ Premium product demo for "TASCK OS" — a creator campaign management platform f
 - **V2 (Next)**: AI-native command center (dark theme) — COMPLETE
 - **V3 (TASCK)**: Greenfield PRD build with editorial design, 4-stage pipeline, 3 portals — COMPLETE
 
-## What's Been Implemented
+## PRD Coverage Status: ~95%
 
-### V3 — COMPLETE (All 30 pages, zero placeholders)
+### V3 — 38 pages, zero placeholders
 
-**Admin Control Centre (15 pages)**:
-Overview, Pipeline, Projects, Project Detail (8-tab), CRM, Brand Detail, Creators, Creator Detail, Contracts, Templates, Insights, Reports, Wallet, Fees, Settings
+**Admin Control Centre (20 pages)**:
+Overview, Pipeline, Projects, Project Detail (8-tab), Brainstorm/Campaign Workspace, CRM, Brand Detail, Creators, Creator Detail, Contracts, Templates, Insights, Reports, Wallet, Fees, Tasks (team task board), Users & Roles (user management), Feedback (brand/creator), Settings
 
 **Brand Portal (8 pages)**:
-Overview, Projects, Project Detail, Approvals, Documents, Invoices, Messages, Settings
+Overview, Projects, Project Detail, Approvals, Documents vault, Invoices, Messages (interactive chat), Settings
 
 **Creator Portal (8 pages)**:
-Overview, Briefs, Projects, Deliverables, Wallet (with seeded historical data), Profile, Messages, Settings
+Overview, Briefs, Projects, Deliverables (seeded historical), Wallet (seeded ₦142M+), Profile, Messages (interactive chat), Settings
 
-### Design Fixes (21 Apr 2026):
-- Fixed dark green summary cards not rendering text (`.v3-card` CSS overriding Tailwind bg). Used inline `style={{background}}` instead
-- Seeded Creator Wallet with ₦142M historical earnings (Puma, Browns past campaigns) + ₦88M pending Guinness
-- Added monthly earnings bar chart, project breakdown with progress bars
-- Enhanced Admin Wallet with escrow/collected/outstanding metrics, invoice breakdown table
-- Enhanced Fees page with 4 summary cards, engagement detail cards with revenue estimates, full project table with totals
+**Standalone (2 pages)**:
+Role Selector, Brand Inreach/Enquiry Form
 
-## Remaining / Backlog
-- P2: Mobile responsiveness pass for V3
-- P2: Refactoring App.js route splitting if needed (~380 lines)
+### PRD Gap Closure (21 Apr 2026):
+1. Brand Inreach Form (`/v3/enquiry`) — structured web form for brand-initiated enquiries
+2. Campaign Brainstorming Workspace (`/v3/admin/projects/:id/brainstorm`) — strategic notes, AI suggestions, campaign angles, creator shortlist
+3. Task Assignment (`/v3/admin/tasks`) — 16 tasks across 7 projects, status filters, RM assignment, priority badges
+4. User & Role Management (`/v3/admin/users`) — 16 users across 3 portals, search, role filtering, invite button
+5. Feedback Forms (`/v3/admin/projects/:id/feedback`) — brand feedback with 9.8/10 rating, highlights, improvements, creator feedback pending
+
+### Remaining P1 Gaps (AI features — UI stubs):
+- Generate buttons exist but don't call actual AI (pre-loaded content)
+- Contact enrichment, contract risk flagging, scope creep detection, progress anomaly detection
+- These are backend/AI integration features, not UI gaps
+
+### Remaining P2:
+- Mobile responsiveness pass
+- WhatsApp notification integration
+- Business card image interpreter

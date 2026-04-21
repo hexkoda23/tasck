@@ -76,8 +76,11 @@ const V3RoleSelector = () => {
           })}
         </div>
 
-        <div className="mt-10 pt-6 border-t border-[#E8E4DB]">
+        <div className="mt-10 pt-6 border-t border-[#E8E4DB] flex items-center justify-between">
           <p className="text-[10px] text-[#8A8A8A]">&copy; 2026 The TASCK Agency. All rights reserved.</p>
+          <button onClick={() => navigate('/v3/enquiry')} className="text-[11px] text-[#1F4A3A] hover:underline" data-testid="v3-inreach-link">
+            Are you a brand? Submit an enquiry &rarr;
+          </button>
         </div>
       </div>
     </div>

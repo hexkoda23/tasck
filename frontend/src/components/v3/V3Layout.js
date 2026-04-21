@@ -22,6 +22,8 @@ const navConfig = {
       { path: '/v3/admin/reports', label: 'Reports', icon: Layers },
       { path: '/v3/admin/wallet', label: 'Wallet', icon: Wallet },
       { path: '/v3/admin/fees', label: 'Fees', icon: Receipt },
+      { path: '/v3/admin/tasks', label: 'Tasks', icon: CheckSquare },
+      { path: '/v3/admin/users', label: 'Users', icon: User },
       { path: '/v3/admin/settings', label: 'Settings', icon: Settings },
     ]
   },
