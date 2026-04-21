@@ -19,6 +19,36 @@ import V2Network from './pages/v2/command/V2Network';
 import V2LiveCommand from './pages/v2/command/V2LiveCommand';
 import V2Placeholder from './pages/v2/V2Placeholder';
 
+// V3 Layout + Pages
+import V3Layout from './components/v3/V3Layout';
+import V3RoleSelector from './pages/v3/V3RoleSelector';
+import V3Placeholder from './pages/v3/V3Placeholder';
+import V3AdminOverview from './pages/v3/admin/V3AdminOverview';
+import V3AdminPipeline from './pages/v3/admin/V3AdminPipeline';
+import V3AdminProjects from './pages/v3/admin/V3AdminProjects';
+import V3AdminProjectDetail from './pages/v3/admin/V3AdminProjectDetail';
+import V3AdminCRM from './pages/v3/admin/V3AdminCRM';
+import V3AdminBrandDetail from './pages/v3/admin/V3AdminBrandDetail';
+import V3AdminCreators from './pages/v3/admin/V3AdminCreators';
+
+// V3 Brand Portal Pages
+import V3BrandOverview from './pages/v3/brand/V3BrandOverview';
+import V3BrandProjects from './pages/v3/brand/V3BrandProjects';
+import V3BrandProjectDetail from './pages/v3/brand/V3BrandProjectDetail';
+import V3BrandApprovals from './pages/v3/brand/V3BrandApprovals';
+import V3BrandDocuments from './pages/v3/brand/V3BrandDocuments';
+import V3BrandInvoices from './pages/v3/brand/V3BrandInvoices';
+import V3BrandMessages from './pages/v3/brand/V3BrandMessages';
+
+// V3 Creator Portal Pages
+import V3CreatorOverview from './pages/v3/creator/V3CreatorOverview';
+import V3CreatorBriefs from './pages/v3/creator/V3CreatorBriefs';
+import V3CreatorProjects from './pages/v3/creator/V3CreatorProjects';
+import V3CreatorDeliverables from './pages/v3/creator/V3CreatorDeliverables';
+import V3CreatorWallet from './pages/v3/creator/V3CreatorWallet';
+import V3CreatorProfile from './pages/v3/creator/V3CreatorProfile';
+import V3CreatorMessages from './pages/v3/creator/V3CreatorMessages';
+
 // V1 Role Selector
 import V1RoleSelector from './pages/v1/V1RoleSelector';
 import FeedbackAdmin from './pages/FeedbackAdmin';
@@ -263,6 +293,53 @@ function AppRoutes() {
         <Route path="permissions" element={<AdminPermissions />} />
         <Route path="wallets" element={<AdminWallets />} />
         <Route path="settings" element={<AdminSettings />} />
+      </Route>
+
+      {/* V3 Role Selector */}
+      <Route path="/v3" element={<V3RoleSelector />} />
+
+      {/* V3 Admin Portal */}
+      <Route path="/v3/admin" element={<V3Layout portal="admin" />}>
+        <Route index element={<V3AdminOverview />} />
+        <Route path="pipeline" element={<V3AdminPipeline />} />
+        <Route path="projects" element={<V3AdminProjects />} />
+        <Route path="projects/:id" element={<V3AdminProjectDetail />} />
+        <Route path="crm" element={<V3AdminCRM />} />
+        <Route path="crm/:id" element={<V3AdminBrandDetail />} />
+        <Route path="creators" element={<V3AdminCreators />} />
+        <Route path="creators/:id" element={<V3Placeholder />} />
+        <Route path="contracts" element={<V3Placeholder />} />
+        <Route path="templates" element={<V3Placeholder />} />
+        <Route path="insights" element={<V3Placeholder />} />
+        <Route path="reports" element={<V3Placeholder />} />
+        <Route path="wallet" element={<V3Placeholder />} />
+        <Route path="fees" element={<V3Placeholder />} />
+        <Route path="settings" element={<V3Placeholder />} />
+      </Route>
+
+      {/* V3 Brand Portal */}
+      <Route path="/v3/brand" element={<V3Layout portal="brand" />}>
+        <Route index element={<V3BrandOverview />} />
+        <Route path="projects" element={<V3BrandProjects />} />
+        <Route path="projects/:id" element={<V3BrandProjectDetail />} />
+        <Route path="approvals" element={<V3BrandApprovals />} />
+        <Route path="documents" element={<V3BrandDocuments />} />
+        <Route path="invoices" element={<V3BrandInvoices />} />
+        <Route path="messages" element={<V3BrandMessages />} />
+        <Route path="settings" element={<V3Placeholder />} />
+      </Route>
+
+      {/* V3 Creator Portal */}
+      <Route path="/v3/creator" element={<V3Layout portal="creator" />}>
+        <Route index element={<V3CreatorOverview />} />
+        <Route path="briefs" element={<V3CreatorBriefs />} />
+        <Route path="briefs/:id" element={<V3Placeholder />} />
+        <Route path="projects" element={<V3CreatorProjects />} />
+        <Route path="deliverables" element={<V3CreatorDeliverables />} />
+        <Route path="wallet" element={<V3CreatorWallet />} />
+        <Route path="profile" element={<V3CreatorProfile />} />
+        <Route path="messages" element={<V3CreatorMessages />} />
+        <Route path="settings" element={<V3Placeholder />} />
       </Route>
 
       {/* Catch all - redirect to landing */}
