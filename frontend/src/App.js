@@ -30,6 +30,14 @@ import V3AdminProjectDetail from './pages/v3/admin/V3AdminProjectDetail';
 import V3AdminCRM from './pages/v3/admin/V3AdminCRM';
 import V3AdminBrandDetail from './pages/v3/admin/V3AdminBrandDetail';
 import V3AdminCreators from './pages/v3/admin/V3AdminCreators';
+import V3AdminCreatorDetail from './pages/v3/admin/V3AdminCreatorDetail';
+import V3AdminContracts from './pages/v3/admin/V3AdminContracts';
+import V3AdminTemplates from './pages/v3/admin/V3AdminTemplates';
+import V3AdminInsights from './pages/v3/admin/V3AdminInsights';
+import V3AdminReports from './pages/v3/admin/V3AdminReports';
+import V3AdminWallet from './pages/v3/admin/V3AdminWallet';
+import V3AdminFees from './pages/v3/admin/V3AdminFees';
+import V3AdminSettings from './pages/v3/admin/V3AdminSettings';
 
 // V3 Brand Portal Pages
 import V3BrandOverview from './pages/v3/brand/V3BrandOverview';
@@ -39,6 +47,7 @@ import V3BrandApprovals from './pages/v3/brand/V3BrandApprovals';
 import V3BrandDocuments from './pages/v3/brand/V3BrandDocuments';
 import V3BrandInvoices from './pages/v3/brand/V3BrandInvoices';
 import V3BrandMessages from './pages/v3/brand/V3BrandMessages';
+import V3BrandSettings from './pages/v3/brand/V3BrandSettings';
 
 // V3 Creator Portal Pages
 import V3CreatorOverview from './pages/v3/creator/V3CreatorOverview';
@@ -48,6 +57,7 @@ import V3CreatorDeliverables from './pages/v3/creator/V3CreatorDeliverables';
 import V3CreatorWallet from './pages/v3/creator/V3CreatorWallet';
 import V3CreatorProfile from './pages/v3/creator/V3CreatorProfile';
 import V3CreatorMessages from './pages/v3/creator/V3CreatorMessages';
+import V3CreatorSettings from './pages/v3/creator/V3CreatorSettings';
 
 // V1 Role Selector
 import V1RoleSelector from './pages/v1/V1RoleSelector';
@@ -307,14 +317,14 @@ function AppRoutes() {
         <Route path="crm" element={<V3AdminCRM />} />
         <Route path="crm/:id" element={<V3AdminBrandDetail />} />
         <Route path="creators" element={<V3AdminCreators />} />
-        <Route path="creators/:id" element={<V3Placeholder />} />
-        <Route path="contracts" element={<V3Placeholder />} />
-        <Route path="templates" element={<V3Placeholder />} />
-        <Route path="insights" element={<V3Placeholder />} />
-        <Route path="reports" element={<V3Placeholder />} />
-        <Route path="wallet" element={<V3Placeholder />} />
-        <Route path="fees" element={<V3Placeholder />} />
-        <Route path="settings" element={<V3Placeholder />} />
+        <Route path="creators/:id" element={<V3AdminCreatorDetail />} />
+        <Route path="contracts" element={<V3AdminContracts />} />
+        <Route path="templates" element={<V3AdminTemplates />} />
+        <Route path="insights" element={<V3AdminInsights />} />
+        <Route path="reports" element={<V3AdminReports />} />
+        <Route path="wallet" element={<V3AdminWallet />} />
+        <Route path="fees" element={<V3AdminFees />} />
+        <Route path="settings" element={<V3AdminSettings />} />
       </Route>
 
       {/* V3 Brand Portal */}
@@ -326,20 +336,20 @@ function AppRoutes() {
         <Route path="documents" element={<V3BrandDocuments />} />
         <Route path="invoices" element={<V3BrandInvoices />} />
         <Route path="messages" element={<V3BrandMessages />} />
-        <Route path="settings" element={<V3Placeholder />} />
+        <Route path="settings" element={<V3BrandSettings />} />
       </Route>
 
       {/* V3 Creator Portal */}
       <Route path="/v3/creator" element={<V3Layout portal="creator" />}>
         <Route index element={<V3CreatorOverview />} />
         <Route path="briefs" element={<V3CreatorBriefs />} />
-        <Route path="briefs/:id" element={<V3Placeholder />} />
+        <Route path="briefs/:id" element={<V3CreatorBriefs />} />
         <Route path="projects" element={<V3CreatorProjects />} />
         <Route path="deliverables" element={<V3CreatorDeliverables />} />
         <Route path="wallet" element={<V3CreatorWallet />} />
         <Route path="profile" element={<V3CreatorProfile />} />
         <Route path="messages" element={<V3CreatorMessages />} />
-        <Route path="settings" element={<V3Placeholder />} />
+        <Route path="settings" element={<V3CreatorSettings />} />
       </Route>
 
       {/* Catch all - redirect to landing */}
