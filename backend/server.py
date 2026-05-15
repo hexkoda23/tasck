@@ -16,6 +16,7 @@ from models import (
     DemoLoginRequest, DemoLoginResponse
 )
 from seed_data import get_seed_data
+from v3_routes import make_v3_router
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -34,6 +35,9 @@ api_router = APIRouter(prefix="/api")
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# v3 router — registered here so the startup handler can call it.
+v3_router = make_v3_router(db)
 
 # ==================== SEED DATABASE ====================
 
@@ -65,7 +69,8 @@ async def seed_database():
 @app.on_event("startup")
 async def startup_event():
     await seed_database()
-    logger.info("TASCK OS API started successfully")
+    await v3_router.seed_v3()
+    logger.info("TASCK OS API started successfully (v1+v2+v3)")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -599,6 +604,9 @@ async def health_check():
 
 # Include router
 app.include_router(api_router)
+
+# v3 router — separate /api/v3 namespace, isolated from v1/v2 collections
+app.include_router(v3_router)
 
 # CORS
 app.add_middleware(

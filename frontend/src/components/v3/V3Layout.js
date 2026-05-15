@@ -14,6 +14,7 @@ const navConfig = {
     label: 'Admin Control Centre',
     items: [
       { path: '/v3/admin', label: 'Overview', icon: LayoutDashboard, exact: true },
+      { path: '/v3/admin/business-cases', label: 'Business Cases', icon: Briefcase },
       { path: '/v3/admin/pipeline', label: 'Pipeline', icon: GitBranch },
       { path: '/v3/admin/projects', label: 'Projects', icon: FolderOpen },
       { path: '/v3/admin/crm', label: 'CRM — Brands', icon: Building2 },

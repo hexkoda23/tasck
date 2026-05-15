@@ -1,0 +1,65 @@
+{
+  "summary": "Full integration test of TASCK OS v3.2 backend (/api/v3/*) + new admin Business Cases pages. 16/16 backend pytest cases PASS. All 4 frontend scenarios PASS (BC list with live metrics + 12 BCs, NB flagship detail with tabs/deliver/scope-creep banner/scope-change log, OSF Grant detail with 'Grant — TTA pays creator directly' pill and no SDF section, CRM with 11 brands + live badge + Paid/Grant pills). No regressions on /v3/admin and /v3/admin/projects.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/v3/admin/business-cases — filter row",
+        "issues": [
+          "Stage/Track filter tab groups render correctly and are clickable (All/Connect/Frame/Plan/Deliver/Closed + All tracks/Paid/Grant) but the wrapper containers do not expose data-testid='bc-filter-stage' or 'bc-filter-track' as requested in the spec. Individual filter buttons appear to lack data-testid too. Non-blocking for users, but recommended for testability."
+        ]
+      }
+    ]
+  },
+  "feature_test_results": {
+    "GET /api/v3/brands (11 brands incl. OSF Grant)": "PASS",
+    "GET /api/v3/business-cases (>=5 seeded)": "PASS — 5 seeded + a few test BCs created by pytest",
+    "GET /api/v3/business-cases/bc-nb-flagship hydration": "PASS — brand, creator, alignment, brief, snapshot, contract, deliverables(6), invoices, final_report keys all present",
+    "GET /api/v3/business-cases/bc-osf-cj Grant track + waived_reason": "PASS",
+    "POST /api/v3/business-cases creates in connect with timeline": "PASS",
+    "POST advance gate-blocking (frame->plan without alignment+SDF)": "PASS — 400 with errors",
+    "POST advance with override=true": "PASS",
+    "POST AI alignment generates 11-section under_review doc": "PASS",
+    "POST alignment approve generates SDF invoice (Paid)": "PASS",
+    "POST alignment approve SKIPS invoice + sets waived_reason (Grant)": "PASS",
+    "POST brainstorm-rounds auto-eliminates conversion_behavior<3": "PASS — Wizkid (cb=2) and Boy Spyce (cb=1) eliminated with correct reason",
+    "POST deliverables transition pending_upload->pending_rm_review->approved + milestone counter update + 400 on already approved": "PASS",
+    "POST scope-change pauses + approve resumes (scope_creep_paused flag)": "PASS",
+    "POST feedback/brand + feedback/creator updates closure_pct": "PASS",
+    "GET /api/v3/metrics/admin-overview by_stage + paid/grant totals": "PASS — by_stage {connect:3,frame:6,plan:1,deliver:2,closed:0}, paid_count=10, grant_count=2",
+    "Frontend /v3/admin/business-cases list with bc-metrics + bc-row-*": "PASS — 12 BCs rendered, metrics card shows totals + by-stage + paid/grant pipeline values",
+    "Frontend /v3/admin/business-cases/bc-nb-flagship tabs + Deliver milestones + scope log": "PASS — bc-tabs present, all 5 tab data-testids (connect/frame/plan/deliver/closure), 'Delivery paused — scope change pending brand approval' banner visible, 'Detty December' bonus scope change in log",
+    "Frontend /v3/admin/business-cases/bc-osf-cj Grant pill + no SDF section": "PASS — 'GRANT — TTA PAYS CREATOR DIRECTLY' pill, Frame tab shows 'Strategy Development Fee is waived' / 'no Strategy Development Fee issued (Grant track)'",
+    "Frontend /v3/admin/crm 11 brands + live badge + Paid/Grant pills": "PASS — crm-live-badge present, 11 crm-track-pill-* (10 Paid + 1 Grant for OSF)",
+    "Regression /v3/admin + /v3/admin/projects": "PASS — both load"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v3_backend.py",
+    "/app/test_reports/pytest/v3_backend.xml"
+  ],
+  "action_items": [
+    "(Optional/Low priority) Expose data-testid='bc-filter-stage' and 'bc-filter-track' on the filter group containers on /v3/admin/business-cases for testing reliability — visible UI already works."
+  ],
+  "critical_code_review_comments": [
+    "Seed is idempotent only on empty collections — once a deliverable is transitioned in a prior dev session it stays advanced, so any test that hardcodes a starting status (e.g. del-nb-5 pending_upload) will be brittle. Fixed in test by dynamically selecting first non-approved deliverable.",
+    "/api/v3/business-cases/{id}/advance returns HTTPException(400, {'errors':[...]}) — the dict is wrapped under 'detail' by FastAPI which is fine, but a consistent error envelope would help frontend rendering.",
+    "Frontend filter chips on Business Cases list are functional but lack the data-testid attributes that other testable elements have — minor testability gap.",
+    "AI alignment endpoint returns the existing snapshot if one already exists (idempotent generate) — good. However the response in that branch is the raw stored doc, while a freshly generated doc returns the same shape so this is consistent.",
+    "v3_routes.py uses dict-spread {**d} when inserting docs to avoid mutating seeds — good defensive pattern."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v3_backend.py"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% (all 4 requested flows)"},
+  "test_credentials": "Not required — /select role cards bypass auth for /v3/admin/*",
+  "seed_data_creation": "pytest created a handful of TEST_ prefixed BCs (TEST_New BC from pytest, TEST_Override advance, TEST_Alignment paid, TEST_Alignment grant, TEST_Brainstorm) — they appear in the list but do not collide with the 5 demo BCs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All v3.2 endpoints are live and seeded under /api/v3/*. Pytest suite at /app/backend/tests/test_v3_backend.py is robust to repeat runs (dynamically picks non-approved deliverables). MTN BC (bc-mtn-burna) has feedback applied by these tests, raising its closure_pct to 100%; do not assume it's still at 75. Test BCs are intentionally left in the DB.",
+  "rca of the issue": "Initial single test failure on deliverable transition was due to seed-state drift across runs (del-nb-5 had already been advanced by prior dev usage). Mitigation: test now selects the first non-approved deliverable dynamically rather than hardcoding del-nb-5."
+}
