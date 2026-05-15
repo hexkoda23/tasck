@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v3Brands as fallbackBrands, getProjectsForBrand } from '../../../lib/v3data';
-import { v3GetBrands } from '../../../lib/v3api';
+import { v3GetBrands, v3CreateBrand } from '../../../lib/v3api';
 import { useV3Resource } from '../../../lib/useV3Resource';
+import V3Modal from '../../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles } from 'lucide-react';
 
 // Normalises both API and mock shapes so the rest of the component is unaware
@@ -24,8 +25,29 @@ const V3AdminCRM = () => {
   const [sortBy, setSortBy] = useState('score');
   const [trackFilter, setTrackFilter] = useState('all');
 
-  const { data: brands, source } = useV3Resource(() => v3GetBrands(), fallbackBrands);
+  const { data: brands, source, setData } = useV3Resource(() => v3GetBrands(), fallbackBrands);
   const normalised = (brands || []).map(normaliseBrand);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ company: '', industry: '', primary_contact: '', role: '', email: '', engagement_track_default: 'paid' });
+  const [submitting, setSubmitting] = useState(false);
+
+  const submitBrand = async () => {
+    if (!form.company || !form.industry || !form.primary_contact) return;
+    setSubmitting(true);
+    try {
+      const created = await v3CreateBrand(form);
+      // Refresh list and navigate to detail
+      const updated = await v3GetBrands();
+      setData(updated);
+      setAddOpen(false);
+      navigate(`/v3/admin/crm/${created.id}`);
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const filtered = normalised
     .filter((b) =>
@@ -42,6 +64,7 @@ const V3AdminCRM = () => {
       : { label: 'Paid', bg: '#DDE7E2', fg: '#1F4A3A' };
 
   return (
+    <>
     <div data-testid="v3-admin-crm">
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -56,7 +79,7 @@ const V3AdminCRM = () => {
             )}
           </p>
         </div>
-        <button className="v3-btn-primary" data-testid="add-brand-btn">
+        <button className="v3-btn-primary" data-testid="add-brand-btn" onClick={() => setAddOpen(true)}>
           <Plus className="w-4 h-4" /> Add Brand
         </button>
       </div>
@@ -149,6 +172,65 @@ const V3AdminCRM = () => {
         })}
       </div>
     </div>
+
+      <V3Modal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Add Brand"
+        subtitle="Capture the lead and continue to its first Business Case."
+        testid="add-brand-modal"
+        footer={
+          <>
+            <button onClick={() => setAddOpen(false)} className="v3-btn-secondary" data-testid="add-brand-cancel">Cancel</button>
+            <button onClick={submitBrand} disabled={submitting} className="v3-btn-primary" data-testid="add-brand-submit">
+              {submitting ? 'Saving…' : 'Create Brand'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          {[
+            { k: 'company', label: 'Company name', placeholder: 'e.g. Nigerian Breweries PLC' },
+            { k: 'industry', label: 'Industry', placeholder: 'e.g. FMCG — Beverages' },
+            { k: 'primary_contact', label: 'Primary contact', placeholder: 'e.g. Funke Adebiyi' },
+            { k: 'role', label: 'Contact role', placeholder: 'e.g. Brand Manager, Star Lager' },
+            { k: 'email', label: 'Contact email (optional)', placeholder: 'name@brand.com' },
+          ].map((f) => (
+            <div key={f.k}>
+              <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">{f.label}</label>
+              <input
+                type="text"
+                value={form[f.k]}
+                onChange={(e) => setForm({ ...form, [f.k]: e.target.value })}
+                placeholder={f.placeholder}
+                className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+                data-testid={`add-brand-${f.k}`}
+              />
+            </div>
+          ))}
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Engagement track default</label>
+            <div className="flex gap-2">
+              {['paid', 'grant'].map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setForm({ ...form, engagement_track_default: t })}
+                  className={`flex-1 px-3 py-2 text-[12px] rounded-lg border transition-colors ${form.engagement_track_default === t ? 'bg-[#1F4A3A] text-white border-[#1F4A3A]' : 'bg-white border-[#E8E4DB] text-[#6E6657]'}`}
+                  data-testid={`add-brand-track-${t}`}
+                >
+                  {t === 'paid' ? 'Paid Strategy' : 'Grant'}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-[#8A8A8A] mt-1">
+              {form.engagement_track_default === 'grant'
+                ? 'No Strategy Development Fee will be invoiced. Funder pays creator directly.'
+                : 'Strategy Development Fee invoiced on Alignment Snapshot approval.'}
+            </p>
+          </div>
+        </div>
+      </V3Modal>
+    </>
   );
 };
 

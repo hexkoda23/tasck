@@ -3,18 +3,12 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  v3GetBusinessCase,
-  v3AdvanceBusinessCase,
-  v3GenerateAlignment,
-  v3ApproveAlignment,
-  v3ApproveSnapshot,
-  v3SignContract,
-  v3TransitionDeliverable,
-  v3RequestScopeChange,
-  v3ApproveScopeChange,
-  v3MarkInvoicePaid,
-  v3SubmitBrandFeedback,
-  v3SubmitCreatorFeedback,
+  v3GetBusinessCase, v3AdvanceBusinessCase, v3GenerateAlignment, v3ApproveAlignment,
+  v3ApproveSnapshot, v3SignContract, v3TransitionDeliverable, v3RequestScopeChange,
+  v3ApproveScopeChange, v3MarkInvoicePaid, v3SubmitBrandFeedback, v3SubmitCreatorFeedback,
+  v3GetCreators, v3CreateBrief, v3SimulateBriefResponse, v3CreateSnapshot, v3CreateContract,
+  v3CreateBrainstorm, v3AddDeliverable, v3GenerateFinalReport, v3SetConnectStatus,
+  v3CreateInteraction, v3ResolveScopeFlag,
 } from '../../../lib/v3api';
 import { formatNairaV3 } from '../../../lib/v3data';
 import V3DocumentSurface from '../../../components/v3/V3DocumentSurface';
@@ -50,8 +44,13 @@ const V3AdminBusinessCaseDetail = () => {
   const [tab, setTab] = useState('frame');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
+  const [creators, setCreators] = useState([]);
 
   const reload = () => v3GetBusinessCase(id).then(setBundle).catch((e) => setError(e.message));
+
+  useEffect(() => {
+    v3GetCreators().then(setCreators).catch(() => {});
+  }, []);
 
   useEffect(() => {
     reload();
@@ -170,6 +169,7 @@ const V3AdminBusinessCaseDetail = () => {
 
       {/* CONNECT */}
       {tab === 'connect' && (
+        <>
         <Section title="Connect — Discovery">
           <dl className="grid grid-cols-2 gap-4 text-[13px]">
             <div>
@@ -178,7 +178,19 @@ const V3AdminBusinessCaseDetail = () => {
             </div>
             <div>
               <dt className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Connect status</dt>
-              <dd>{c.connect?.connect_status || '—'}</dd>
+              <dd className="flex items-center gap-2">
+                <span>{c.connect?.connect_status || '—'}</span>
+                {c.stage === 'connect' && c.connect?.connect_status !== 'qualified_to_frame' && (
+                  <button
+                    onClick={wrap(() => v3SetConnectStatus(c.id, 'qualified_to_frame'))}
+                    disabled={busy}
+                    className="text-[10px] px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A] hover:bg-[#C5D6CE]"
+                    data-testid="bc-mark-qualified"
+                  >
+                    Mark Qualified
+                  </button>
+                )}
+              </dd>
             </div>
             <div className="col-span-2">
               <dt className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Stated intent</dt>
@@ -192,7 +204,7 @@ const V3AdminBusinessCaseDetail = () => {
                 <div key={i.id} className="p-3 border border-[#E8E4DB] rounded" data-testid={`bc-interaction-${i.id}`}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[12px] font-medium">{i.title}</span>
-                    <span className="text-[10px] text-[#8A8A8A]">{i.date_iso}</span>
+                    <span className="text-[10px] text-[#8A8A8A]">{(i.date_iso || '').slice(0, 10)}</span>
                   </div>
                   <p className="text-[11px] text-[#8A8A8A] mb-1">{i.author}</p>
                   <p className="text-[12px] text-[#6E6657] line-clamp-3 whitespace-pre-wrap">{i.content}</p>
@@ -211,6 +223,13 @@ const V3AdminBusinessCaseDetail = () => {
             </button>
           )}
         </Section>
+        <LogInteractionForm
+          businessCaseId={c.id}
+          brandId={c.brand_id}
+          busy={busy}
+          wrap={wrap}
+        />
+        </>
       )}
 
       {/* FRAME */}
@@ -293,6 +312,39 @@ const V3AdminBusinessCaseDetail = () => {
             </Section>
           )}
 
+          {/* Scope flags — RM resolves before advancing */}
+          {bundle.alignment_snapshot?.scope_flags?.length > 0 && (
+            <Section title="Scope flags to resolve before Plan">
+              <p className="text-[12px] text-[#8A8A8A] mb-3">
+                {c.frame?.scope_flags_resolved || 0} of {c.frame?.scope_flags_total || bundle.alignment_snapshot.scope_flags.length} resolved
+              </p>
+              <div className="space-y-2">
+                {bundle.alignment_snapshot.scope_flags.map((f, i) => {
+                  const resolved = i < (c.frame?.scope_flags_resolved || 0);
+                  return (
+                    <div key={i} className={`p-3 border rounded flex items-start justify-between gap-3 ${resolved ? 'bg-[#DDE7E2] border-[#C5D6CE]' : 'bg-[#FAF9F5] border-[#E8E4DB]'}`} data-testid={`bc-scope-flag-${i}`}>
+                      <div className="flex-1">
+                        <p className={`text-[13px] font-medium ${resolved ? 'text-[#1F4A3A]' : 'text-[#1A1A1A]'}`}>{f.text}</p>
+                        <p className="text-[11px] text-[#6E6657] mt-0.5">{f.reason}</p>
+                      </div>
+                      {!resolved && (
+                        <button
+                          onClick={wrap(() => v3ResolveScopeFlag(c.id, i))}
+                          disabled={busy}
+                          className="v3-btn-secondary text-[11px]"
+                          data-testid={`bc-resolve-flag-${i}`}
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Resolve
+                        </button>
+                      )}
+                      {resolved && <CheckCircle2 className="w-4 h-4 text-[#1F4A3A] flex-shrink-0" />}
+                    </div>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
+
           {/* Strategy Development Fee invoice */}
           {bundle.invoices?.length > 0 && (
             <Section title="Strategy Development Fee">
@@ -338,6 +390,14 @@ const V3AdminBusinessCaseDetail = () => {
       {/* PLAN */}
       {tab === 'plan' && (
         <>
+          <PlanStageActions
+            bundle={bundle}
+            creators={creators}
+            busy={busy}
+            wrap={wrap}
+            isGrant={isGrant}
+          />
+
           {bundle.brainstorm_round && (
             <Section title="Brainstorm — 7-phase round">
               <div className="grid grid-cols-7 gap-2 mb-4">
@@ -476,11 +536,30 @@ const V3AdminBusinessCaseDetail = () => {
             </div>
           )}
 
-          <Section title="Milestones">
+          <Section
+            title="Milestones"
+            action={
+              <button
+                onClick={wrap(async () => {
+                  const title = prompt('Deliverable title?');
+                  if (!title) return;
+                  await v3AddDeliverable({ business_case_id: c.id, title });
+                })}
+                disabled={busy}
+                className="v3-btn-secondary"
+                data-testid="bc-add-deliverable"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add deliverable
+              </button>
+            }
+          >
             <p className="text-[12px] text-[#8A8A8A] mb-3">
               {c.deliver?.milestones_complete || 0} of {c.deliver?.milestones_total || bundle.deliverables.length} approved
             </p>
             <div className="space-y-2">
+              {bundle.deliverables.length === 0 && (
+                <p className="text-[12px] text-[#8A8A8A] italic">No deliverables yet. Add the first one to begin Deliver.</p>
+              )}
               {bundle.deliverables.map((d) => (
                 <div key={d.id} className="flex items-center justify-between p-3 border border-[#E8E4DB] rounded" data-testid={`bc-deliverable-${d.id}`}>
                   <div className="flex items-center gap-3">
@@ -590,7 +669,15 @@ const V3AdminBusinessCaseDetail = () => {
             </Section>
           ) : (
             <Section title="Final report">
-              <p className="text-[12px] text-[#8A8A8A]">No final report generated yet.</p>
+              <p className="text-[12px] text-[#8A8A8A] mb-3">No final report generated yet. The AI compiles deliverables + KPI targets into a templated report you can edit.</p>
+              <button
+                onClick={wrap(() => v3GenerateFinalReport(c.id))}
+                disabled={busy}
+                className="v3-btn-primary"
+                data-testid="bc-generate-final-report"
+              >
+                <Sparkles className="w-4 h-4" /> Generate Final Report
+              </button>
             </Section>
           )}
 
@@ -632,6 +719,249 @@ const V3AdminBusinessCaseDetail = () => {
       )}
     </div>
   );
+};
+
+// ============================================================================
+// LogInteractionForm — Connect-tab inline form
+// ============================================================================
+const LogInteractionForm = ({ businessCaseId, brandId, busy, wrap }) => {
+  const [form, setForm] = useState({
+    type: 'call_transcript',
+    title: '',
+    author: '',
+    content: '',
+  });
+
+  const reset = () => setForm({ type: 'call_transcript', title: '', author: '', content: '' });
+
+  return (
+    <div className="v3-card p-6 mb-4" data-testid="bc-log-interaction">
+      <h3 className="text-[13px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">
+        Log a new interaction
+      </h3>
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <select
+          value={form.type}
+          onChange={(e) => setForm({ ...form, type: e.target.value })}
+          className="px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white"
+          data-testid="bc-li-type"
+        >
+          <option value="email">Email</option>
+          <option value="call_transcript">Call transcript</option>
+          <option value="file">File / Document</option>
+          <option value="note">Note</option>
+        </select>
+        <input
+          type="text"
+          value={form.author}
+          onChange={(e) => setForm({ ...form, author: e.target.value })}
+          placeholder="Author (you)"
+          className="px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white"
+          data-testid="bc-li-author"
+        />
+      </div>
+      <input
+        type="text"
+        value={form.title}
+        onChange={(e) => setForm({ ...form, title: e.target.value })}
+        placeholder="Title — e.g. 'Discovery call with Funke + Kola'"
+        className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white mb-3"
+        data-testid="bc-li-title"
+      />
+      <textarea
+        value={form.content}
+        onChange={(e) => setForm({ ...form, content: e.target.value })}
+        placeholder="Content — paste the transcript or notes here."
+        rows={4}
+        className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white mb-3"
+        data-testid="bc-li-content"
+      />
+      <button
+        onClick={wrap(async () => {
+          if (!form.title || !form.content || !form.author) return;
+          await v3CreateInteraction({
+            brand_id: brandId,
+            business_case_id: businessCaseId,
+            ...form,
+          });
+          reset();
+        })}
+        disabled={busy || !form.title || !form.content || !form.author}
+        className="v3-btn-primary"
+        data-testid="bc-li-save"
+      >
+        <Plus className="w-3.5 h-3.5" /> Save interaction
+      </button>
+    </div>
+  );
+};
+
+// ============================================================================
+// PlanStageActions — surfaces the next contextual action in the Plan stage
+// ============================================================================
+const PlanStageActions = ({ bundle, creators, busy, wrap, isGrant }) => {
+  const c = bundle.business_case;
+  const hasBrainstorm = !!bundle.brainstorm_round;
+  const hasBrief = !!bundle.creative_brief;
+  const hasResponse = !!bundle.creative_brief?.creator_response;
+  const hasSnapshot = !!bundle.creative_snapshot;
+  const snapshotApproved = bundle.creative_snapshot?.status === 'approved';
+  const hasContract = !!bundle.contract;
+  const contractSigned = bundle.contract?.status === 'signed';
+
+  const [briefText, setBriefText] = useState('');
+  const [selectedCreator, setSelectedCreator] = useState(c.creator_id || '');
+  const [contractTemplate, setContractTemplate] = useState(isGrant ? 'four_party_grant' : 'creator_principal');
+
+  // Brainstorm CTA — defaults to scoring the top 4 super-tier creators
+  if (!hasBrainstorm) {
+    return (
+      <div className="v3-card p-6 mb-4 border-[#C49B5F]" data-testid="bc-plan-action-brainstorm">
+        <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-2 text-[#1A1A1A]">Next: brainstorm round</h3>
+        <p className="text-[12px] text-[#6E6657] mb-4">
+          Run a 7-phase brainstorm to score creators against the brief. The system auto-eliminates anyone with a conversion-behaviour score below 3.
+        </p>
+        <button
+          onClick={wrap(async () => {
+            const scored = creators.slice(0, 6).map((cr, i) => ({
+              creator_id: cr.id,
+              cultural_fit: Math.max(2, 5 - Math.floor(i / 2)),
+              conversion_behavior: i < 3 ? 5 : i === 3 ? 4 : 2,
+              reliability: Math.max(2, 5 - i),
+            }));
+            await v3CreateBrainstorm({ business_case_id: c.id, scored_creators: scored });
+          })}
+          disabled={busy || creators.length < 4}
+          className="v3-btn-primary"
+          data-testid="bc-start-brainstorm"
+        >
+          <Sparkles className="w-4 h-4" /> Run brainstorm round
+        </button>
+      </div>
+    );
+  }
+
+  if (!hasBrief) {
+    return (
+      <div className="v3-card p-6 mb-4 border-[#C49B5F]" data-testid="bc-plan-action-brief">
+        <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-2 text-[#1A1A1A]">Next: send Creative Brief</h3>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <select
+            value={selectedCreator}
+            onChange={(e) => setSelectedCreator(e.target.value)}
+            className="px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white"
+            data-testid="bc-brief-creator"
+          >
+            <option value="">Pick a creator</option>
+            {creators.map((cr) => (
+              <option key={cr.id} value={cr.id}>{cr.name} ({cr.tier})</option>
+            ))}
+          </select>
+        </div>
+        <textarea
+          value={briefText}
+          onChange={(e) => setBriefText(e.target.value)}
+          placeholder="Brief — write the one-paragraph creative ask you want to send the creator."
+          rows={4}
+          className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white mb-3"
+          data-testid="bc-brief-text"
+        />
+        <button
+          onClick={wrap(async () => {
+            if (!selectedCreator || !briefText) return;
+            await v3CreateBrief({ business_case_id: c.id, creator_id: selectedCreator, brief_text: briefText });
+            setBriefText('');
+          })}
+          disabled={busy || !selectedCreator || !briefText}
+          className="v3-btn-primary"
+          data-testid="bc-send-brief"
+        >
+          <FileText className="w-3.5 h-3.5" /> Send Creative Brief
+        </button>
+      </div>
+    );
+  }
+
+  if (hasBrief && !hasResponse) {
+    return (
+      <div className="v3-card p-6 mb-4 border-[#C49B5F]" data-testid="bc-plan-action-response">
+        <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-2 text-[#1A1A1A]">Awaiting creator response</h3>
+        <p className="text-[12px] text-[#6E6657] mb-4">
+          Brief was sent {bundle.creative_brief.sent_at?.slice(0, 10)}. For the demo, you can simulate the creator's response.
+        </p>
+        <button
+          onClick={wrap(() => v3SimulateBriefResponse(bundle.creative_brief.id))}
+          disabled={busy}
+          className="v3-btn-primary"
+          data-testid="bc-simulate-response"
+        >
+          <Sparkles className="w-4 h-4" /> Simulate creator response
+        </button>
+      </div>
+    );
+  }
+
+  if (hasResponse && !hasSnapshot) {
+    return (
+      <div className="v3-card p-6 mb-4 border-[#C49B5F]" data-testid="bc-plan-action-snapshot">
+        <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-2 text-[#1A1A1A]">Next: draft Creative Snapshot</h3>
+        <p className="text-[12px] text-[#6E6657] mb-4">
+          Compile the brief response into a brand-facing Creative Snapshot. Concept defaults to the creator's proposed concept; budget is auto-allocated from the estimated value.
+        </p>
+        <button
+          onClick={wrap(() => v3CreateSnapshot({ business_case_id: c.id }))}
+          disabled={busy}
+          className="v3-btn-primary"
+          data-testid="bc-draft-snapshot"
+        >
+          <Sparkles className="w-4 h-4" /> Draft Creative Snapshot
+        </button>
+      </div>
+    );
+  }
+
+  if (snapshotApproved && !hasContract) {
+    return (
+      <div className="v3-card p-6 mb-4 border-[#C49B5F]" data-testid="bc-plan-action-contract">
+        <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-2 text-[#1A1A1A]">Next: draft Contract</h3>
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <select
+            value={contractTemplate}
+            onChange={(e) => setContractTemplate(e.target.value)}
+            className="px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white"
+            data-testid="bc-contract-template"
+          >
+            <option value="creator_principal">Creator Principal (Paid)</option>
+            <option value="brand_msa">Brand MSA</option>
+            <option value="four_party_grant">Four-party Grant</option>
+          </select>
+        </div>
+        <button
+          onClick={wrap(() => v3CreateContract({
+            business_case_id: c.id,
+            template: contractTemplate,
+            value: c.estimated_value,
+            parties: [
+              bundle.brand?.company || 'Brand',
+              bundle.creator?.name || 'Creator',
+              'Future Africa Group (TTA)',
+            ],
+          }))}
+          disabled={busy}
+          className="v3-btn-primary"
+          data-testid="bc-draft-contract"
+        >
+          <FileSignature className="w-3.5 h-3.5" /> Draft Contract
+        </button>
+      </div>
+    );
+  }
+
+  if (hasContract && !contractSigned) {
+    return null; // contract sign button is in the existing contract card below
+  }
+
+  return null;
 };
 
 export default V3AdminBusinessCaseDetail;

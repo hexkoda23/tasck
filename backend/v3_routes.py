@@ -61,6 +61,52 @@ def make_v3_router(db):
         interactions = await db.v3_interactions.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         return {"brand": brand, "contacts": contacts, "business_cases": cases, "interactions": interactions}
 
+    class BrandCreate(BaseModel):
+        company: str
+        industry: str
+        primary_contact: str
+        role: str = "Marketing Lead"
+        email: Optional[str] = None
+        phone: Optional[str] = None
+        engagement_track_default: str = Field("paid", pattern="^(paid|grant)$")
+        lead_score: int = 60
+        hq: Optional[str] = None
+        website: Optional[str] = None
+
+    @router.post("/brands")
+    async def create_brand(payload: BrandCreate):
+        brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+        doc = {
+            "id": brand_id,
+            "company": payload.company,
+            "industry": payload.industry,
+            "website": payload.website or "",
+            "hq": payload.hq or "",
+            "primary_contact": payload.primary_contact,
+            "role": payload.role,
+            "email": payload.email or "",
+            "phone": payload.phone or "",
+            "status": "Lead — initial conversations",
+            "lead_score": payload.lead_score,
+            "last_interaction": "just now",
+            "engagement_track_default": payload.engagement_track_default,
+        }
+        await db.v3_brands.insert_one({**doc})
+
+        # Auto-create the primary contact record so the brand isn't orphaned
+        contact_doc = {
+            "id": f"ct-{uuid.uuid4().hex[:8]}",
+            "brand_id": brand_id,
+            "name": payload.primary_contact,
+            "role": payload.role,
+            "email": payload.email or "",
+            "phone": payload.phone or "",
+            "is_primary": True,
+            "decision_seniority": "lead",
+        }
+        await db.v3_contacts.insert_one({**contact_doc})
+        return doc
+
     # ------------------------------------------------------------------------
     # CONTACTS
     # ------------------------------------------------------------------------
@@ -720,6 +766,259 @@ def make_v3_router(db):
             "next_action": "RM to review extraction and confirm fields.",
         }
         return {"interaction": interaction, "ai_extraction": extraction}
+
+    class InteractionCreate(BaseModel):
+        brand_id: str
+        business_case_id: Optional[str] = None
+        type: str = "email"  # email | call_transcript | file | note
+        title: str
+        author: str
+        content: str
+
+    @router.post("/interactions")
+    async def create_interaction(payload: InteractionCreate):
+        doc = {
+            "id": f"int-{uuid.uuid4().hex[:8]}",
+            "brand_id": payload.brand_id,
+            "business_case_id": payload.business_case_id,
+            "type": payload.type,
+            "title": payload.title,
+            "author": payload.author,
+            "date_iso": _now_iso(),
+            "content": payload.content,
+        }
+        await db.v3_interactions.insert_one({**doc})
+        if payload.business_case_id:
+            await db.v3_business_cases.update_one(
+                {"id": payload.business_case_id},
+                {"$push": {"timeline": {"at": _now_iso(), "event": "interaction_logged", "interaction_id": doc["id"], "type": payload.type}},
+                 "$set": {"updated_at": _now_iso()}},
+            )
+        return doc
+
+    # ------------------------------------------------------------------------
+    # CONNECT-STAGE HELPERS
+    # ------------------------------------------------------------------------
+    class ConnectStatusPayload(BaseModel):
+        connect_status: str = Field(..., pattern="^(new_lead|in_discovery|qualified_to_frame|disqualified)$")
+
+    @router.post("/business-cases/{bc_id}/connect/status")
+    async def set_connect_status(bc_id: str, payload: ConnectStatusPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"connect.connect_status": payload.connect_status, "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": _now_iso(), "event": "connect_status_changed", "to": payload.connect_status}}},
+        )
+        return {"ok": True}
+
+    # ------------------------------------------------------------------------
+    # SIMULATE CREATOR RESPONSE on a creative brief
+    # ------------------------------------------------------------------------
+    @router.post("/creative-briefs/{brief_id}/simulate-response")
+    async def simulate_brief_response(brief_id: str):
+        brief = await db.v3_creative_briefs.find_one({"id": brief_id}, {"_id": 0})
+        if not brief:
+            raise HTTPException(404, "Brief not found")
+        creator = await db.v3_creators.find_one({"id": brief["creator_id"]}, {"_id": 0})
+        creator_name = creator["name"] if creator else "Creator"
+        rate_low = (creator or {}).get("rate_card", "₦30M").split("–")[0]
+        response = {
+            "interest": "yes",
+            "fee_expectation": f"{rate_low} all-in including direction, original concept, and assets.",
+            "availability": "Confirmed for the proposed production window. Final edit approval required.",
+            "proposed_concept": (
+                f"Authoring this from {creator_name}'s creative point of view: I want to anchor the work in three "
+                "real-life moments, not three stylised set-pieces. The brand sits inside the world; it does not own "
+                "the frame. I'll narrate myself, score two of the three pieces, and bring in one outside collaborator "
+                "for the third. The deliverable mix as proposed works; I'd request a slightly longer post window."
+            ),
+            "non_negotiables": ["Final edit approval", "No on-screen endorsement", "Credit for guest collaborators"],
+        }
+        await db.v3_creative_briefs.update_one(
+            {"id": brief_id},
+            {"$set": {"creator_response": response, "responded_at": _now_iso(), "status": "responded"}},
+        )
+        await db.v3_business_cases.update_one(
+            {"id": brief["business_case_id"]},
+            {"$push": {"timeline": {"at": _now_iso(), "event": "creator_response_received", "brief_id": brief_id}},
+             "$set": {"updated_at": _now_iso()}},
+        )
+        return {"ok": True, "response": response}
+
+    # ------------------------------------------------------------------------
+    # CREATE Creative Snapshot — templated from brief response when available
+    # ------------------------------------------------------------------------
+    class SnapshotCreate(BaseModel):
+        business_case_id: str
+        title: Optional[str] = None
+        concept: Optional[str] = None
+
+    @router.post("/creative-snapshots")
+    async def create_snapshot(payload: SnapshotCreate):
+        case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+        brief = await db.v3_creative_briefs.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
+        concept = payload.concept or (
+            (brief or {}).get("creator_response", {}).get("proposed_concept")
+            or f"Strategy synthesis for {case['title']} — concept under refinement."
+        )
+        total = case.get("estimated_value") or 100_000_000
+        cs_id = f"cs-{uuid.uuid4().hex[:8]}"
+        doc = {
+            "id": cs_id,
+            "business_case_id": payload.business_case_id,
+            "version": 1,
+            "status": "draft",
+            "generated_at": _now_iso(),
+            "shared_at": None,
+            "approved_at": None,
+            "approved_by": None,
+            "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' × ' + creator['name'].upper() if creator else ''} × TASCK",
+            "title": payload.title or f"{case['title']} — Creative Snapshot v1",
+            "concept": concept,
+            "deliverables": [
+                {"num": 1, "title": "Hero piece", "format": "Short film", "duration": "8–12 min"},
+                {"num": 2, "title": "Social cut-downs", "format": "Vertical video", "duration": "6 × 30s"},
+                {"num": 3, "title": "Behind-the-scenes feature", "format": "Doc feature", "duration": "12 min"},
+                {"num": 4, "title": "Stills package", "format": "Photography", "duration": "30+ images"},
+            ],
+            "budget": [
+                {"line": "Creator fee", "amount": int(total * 0.50)},
+                {"line": "Production", "amount": int(total * 0.25)},
+                {"line": "Post-production", "amount": int(total * 0.10)},
+                {"line": "Logistics", "amount": int(total * 0.05)},
+                {"line": "TTA management fee (15%)", "amount": int(total * 0.075)},
+                {"line": "Contingency", "amount": int(total * 0.025)},
+            ],
+            "success_metrics": [
+                {"kpi": "Reach", "target": "10M+ unique impressions"},
+                {"kpi": "Engagement rate", "target": "7%+"},
+                {"kpi": "Earned media value", "target": f"₦{int(total/1_000_000 * 1.5)}M+"},
+                {"kpi": "UGC posts", "target": "5,000+"},
+            ],
+        }
+        await db.v3_creative_snapshots.insert_one({**doc})
+        await db.v3_business_cases.update_one(
+            {"id": payload.business_case_id},
+            {"$set": {"plan.creative_snapshot_id": cs_id, "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": _now_iso(), "event": "creative_snapshot_drafted", "snapshot_id": cs_id}}},
+        )
+        return doc
+
+    # ------------------------------------------------------------------------
+    # ADD a deliverable on demand (during Plan or Deliver setup)
+    # ------------------------------------------------------------------------
+    class DeliverableCreate(BaseModel):
+        business_case_id: str
+        title: str
+
+    @router.post("/deliverables")
+    async def add_deliverable(payload: DeliverableCreate):
+        d_id = f"del-{uuid.uuid4().hex[:8]}"
+        doc = {
+            "id": d_id,
+            "business_case_id": payload.business_case_id,
+            "title": payload.title,
+            "status": "pending_upload",
+            "rm_approved_at": None,
+            "brand_approved_at": None,
+            "payment_released": False,
+        }
+        await db.v3_deliverables.insert_one({**doc})
+        all_d = await db.v3_deliverables.find({"business_case_id": payload.business_case_id}, {"_id": 0}).to_list(500)
+        await db.v3_business_cases.update_one(
+            {"id": payload.business_case_id},
+            {"$set": {"deliver.milestones_total": len(all_d), "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": _now_iso(), "event": "deliverable_added", "deliverable_id": d_id}}},
+        )
+        return doc
+
+    # ------------------------------------------------------------------------
+    # GENERATE Final Report (templated from BC's actual artefacts)
+    # ------------------------------------------------------------------------
+    class FinalReportGenerate(BaseModel):
+        kpis: Optional[List[Dict[str, Any]]] = None  # optional override
+
+    @router.post("/business-cases/{bc_id}/final-report/generate")
+    async def generate_final_report(bc_id: str, payload: FinalReportGenerate):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+        snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        deliverables = await db.v3_deliverables.find({"business_case_id": bc_id}, {"_id": 0}).to_list(200)
+        approved = [d for d in deliverables if d.get("status") == "approved"]
+
+        # Use provided KPIs or derive from snapshot's success_metrics with simulated overdelivery
+        kpis = payload.kpis
+        if not kpis:
+            base = (snapshot or {}).get("success_metrics") or [
+                {"kpi": "Reach", "target": "10M"},
+                {"kpi": "Engagement rate", "target": "7%"},
+                {"kpi": "Earned media value", "target": "₦200M"},
+            ]
+            kpis = [{"kpi": k["kpi"], "target": k["target"], "actual": k["target"], "variance": "+18%"} for k in base]
+
+        existing = await db.v3_final_reports.find_one({"business_case_id": bc_id}, {"_id": 0})
+        if existing:
+            # Replace with newest generation
+            await db.v3_final_reports.delete_one({"id": existing["id"]})
+
+        fr_id = f"fr-{uuid.uuid4().hex[:8]}"
+        report = {
+            "id": fr_id,
+            "business_case_id": bc_id,
+            "status": "ready_for_brand",
+            "generated_at": _now_iso(),
+            "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' × ' + creator['name'].upper() if creator else ''} × TASCK",
+            "title": f"{case['title']} — Final Campaign Report",
+            "summary": (
+                f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones."
+                f" KPI performance compared against the Creative Snapshot targets is summarised below, alongside the closure checklist."
+            ),
+            "kpis": kpis,
+            "closure_checklist": [
+                {"item": "Final report delivered", "status": "done"},
+                {"item": "All invoices settled", "status": "done"},
+                {"item": "All creator payments released", "status": "done" if all(d.get("payment_released") for d in approved) else "pending"},
+                {"item": "Contracts archived", "status": "done"},
+                {"item": "Brand feedback received", "status": "done" if case.get("closure", {}).get("brand_feedback_received") else "pending"},
+                {"item": "Creator feedback received", "status": "done" if case.get("closure", {}).get("creator_feedback_received") else "pending"},
+                {"item": "Assets archived", "status": "done"},
+                {"item": "Post-mortem logged", "status": "pending"},
+            ],
+        }
+        await db.v3_final_reports.insert_one({**report})
+        # initial pct calc
+        done = len([i for i in report["closure_checklist"] if i["status"] == "done"])
+        pct = round((done / len(report["closure_checklist"])) * 100)
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"closure.final_report_id": fr_id, "closure.final_report_status": "ready_for_brand",
+                      "closure.closure_pct": pct, "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": _now_iso(), "event": "final_report_generated", "report_id": fr_id}}},
+        )
+        return report
+
+    # ------------------------------------------------------------------------
+    # ADMIN — Reset demo data (wipe v3 collections and re-seed)
+    # ------------------------------------------------------------------------
+    @router.post("/admin/reset-demo")
+    async def reset_demo():
+        seed = get_v3_seed_data()
+        for collection_name in seed.keys():
+            await db[collection_name].delete_many({})
+        for collection_name, docs in seed.items():
+            if docs:
+                await db[collection_name].insert_many([{**d} for d in docs])
+        return {"ok": True, "collections_reset": list(seed.keys())}
 
     # ------------------------------------------------------------------------
     # METRICS / OVERVIEW

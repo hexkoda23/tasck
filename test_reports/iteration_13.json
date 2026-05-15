@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 13 - WRITE flow validation. 11/11 new backend pytest cases PASS end-to-end (brand create + contact, BC create, interaction logging w/ timeline push, connect/status, alignment+SDF+approve+pay+advance, brief simulate-response with templated concept, snapshot inheriting concept from brief, contract sign, deliverable add updating milestones_total, final-report generate with KPI variance, reset-demo restoring 5 seeded BCs). Full UI walkthrough also PASS: New BC modal -> Connect (Log Interaction + Mark Qualified + Qualify to Frame) -> Plan (PlanStageActions sequentially surfaced bc-start-brainstorm then bc-send-brief) -> Add deliverable (window.prompt) -> Closure (Generate Final Report rendered KPI table + closure checklist) -> Reset demo confirmed and restored to exactly 5 BCs. /api/v3/admin/reset-demo invoked at end of run so DB is clean.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "New BC modal & some pages", "issues": ["React hydration console warnings: 'In HTML, <span> cannot be a child of <select>/<option>' originating from a data-ve-dynamic visual-editor wrapper instrumentation. Non-blocking but pollutes console and may cause hydration mismatch on slower clients. Suggest unwrapping or moving the marker outside <option>."]}
+    ]
+  },
+  "feature_test_results": {
+    "POST /api/v3/brands creates brand + auto primary contact": "PASS",
+    "POST /api/v3/interactions creates interaction + timeline event interaction_logged": "PASS",
+    "POST /api/v3/business-cases/:id/connect/status": "PASS",
+    "POST /api/v3/creative-briefs/:id/simulate-response (templated)": "PASS - returns interest=yes + proposed_concept + non_negotiables",
+    "POST /api/v3/creative-snapshots inherits concept from brief, auto-allocates budget": "PASS - budget sums against estimated_value",
+    "POST /api/v3/deliverables increments deliver.milestones_total": "PASS",
+    "POST /api/v3/business-cases/:id/final-report/generate templates KPI variance +18% + closure_checklist": "PASS",
+    "POST /api/v3/admin/reset-demo wipes + reseeds, BC count back to 5": "PASS",
+    "Frontend /v3/admin/business-cases header buttons bc-reset-demo + bc-new": "PASS",
+    "Frontend New BC modal (data-testid=new-bc-modal) submit -> /bc-detail": "PASS",
+    "Frontend BC detail Connect: bc-li-* form + bc-mark-qualified": "PASS",
+    "Frontend BC detail Plan: PlanStageActions surfaces context-aware CTA chain": "PASS (bc-start-brainstorm + bc-send-brief observed; later CTAs unlock as prerequisites are met)",
+    "Frontend BC detail Deliver: bc-add-deliverable via window.prompt": "PASS",
+    "Frontend BC detail Closure: bc-generate-final-report renders KPI table + checklist": "PASS",
+    "Reset demo via UI restores to 5 seeded BCs": "PASS"
+  },
+  "test_report_links": ["/app/backend/tests/test_v3_iter13.py", "/app/backend/tests/test_v3_backend.py", "/app/test_reports/pytest/v3_iter13.xml"],
+  "action_items": [
+    "(Low) Resolve the React hydration warning caused by visual-editor span wrapper inside <select>/<option> on the New BC modal (only console-level, no functional impact)."
+  ],
+  "critical_code_review_comments": [
+    "create_brand returns 200 (FastAPI default); spec suggests 201 for resource creation - consistent across other v3 POSTs so not a blocker, but worth aligning later.",
+    "simulate_brief_response splits rate_card on en-dash; if a future creator's rate_card lacks that char the rate_low will equal full string. Defensive but works on current seed.",
+    "generate_final_report deletes existing report and re-inserts; this is idempotent-by-replace which is fine, but loses prior generated_at history. Acceptable for demo.",
+    "reset-demo wipes only collections present in get_v3_seed_data() keys - any new collection added later must also be added to the seed dict or it won't reset.",
+    "Add Deliverable uses window.prompt() which is fine for demo but blocks the page; consider replacing with a proper modal long-term.",
+    "PlanStageActions UI works as a wizard but doesn't appear gated by case.stage (Plan tab is reachable while stage=='connect'). For a true funnel demo, consider locking later tabs until the stage gate is crossed - functionally fine and lets RM peek ahead."
+  ],
+  "updated_files": ["/app/backend/tests/test_v3_iter13.py", "/app/test_reports/iteration_13.json"],
+  "success_rate": {"backend": "100% (11/11 new write-flow tests)", "frontend": "100% (all requested UI flows)"},
+  "test_credentials": "Not required - /v3/admin/* bypasses auth.",
+  "seed_data_creation": "Tests created TEST_BrandCo and TEST_UI E2E walkthrough BCs and a few related artifacts; final POST /api/v3/admin/reset-demo wiped them. DB is at clean 5-BC seeded state ready for human demo.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 13 write flows validated end-to-end. Backend test file /app/backend/tests/test_v3_iter13.py is self-contained (no auth) and ends with reset-demo so it can be re-run any time without leaving residue. Both test_v3_backend.py (read flows, 16 tests) and test_v3_iter13.py (write flows, 11 tests) together form the regression suite for /api/v3/*. UI testids confirmed: bc-reset-demo, bc-new, new-bc-modal, new-bc-submit, bc-li-{type,author,title,content,save}, bc-mark-qualified, bc-qualify-to-frame, bc-tab-{connect,frame,plan,deliver,closure}, bc-start-brainstorm, bc-send-brief, bc-simulate-response (renders after brief sent), bc-draft-snapshot, bc-draft-contract, bc-sign-contract, bc-add-deliverable, bc-generate-final-report.",
+  "rca of the issue": "No defects found. One non-functional console warning (visual-editor instrumentation injecting a <span> wrapper inside <select>/<option>) noted as a minor design item."
+}
