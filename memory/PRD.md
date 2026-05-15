@@ -2,57 +2,81 @@
 
 ## Original Problem Statement
 Premium product demo for "TASCK OS" — a creator campaign management platform for the African market. Three versions:
-- **V1 (Classic)**: Multi-portal operational platform (light theme) — COMPLETE
-- **V2 (Next)**: AI-native command center (dark theme) — COMPLETE
-- **V3 (TASCK v3.2)**: Editorial AI-native platform with strict 4-stage pipeline and Business Case primitive — **NOW BACKED BY LIVE BACKEND** (15 May 2026)
+- **V1 (Classic)**: Multi-portal operational platform — COMPLETE
+- **V2 (Next)**: AI-native command center — COMPLETE
+- **V3 (TASCK v3.2)**: Editorial AI-native platform with Business Case primitive + 4-stage pipeline + live backend — **NOW INCLUDES FULL TTA-USER WORKFLOW** (15 May 2026)
 
-## V3 — v3.2 Consolidated Build Spec (15 May 2026)
+## V3 — v3.2 Architecture
 
-### Architecture (NEW)
-- **Business Case primitive**: every project = one MongoDB document in `v3_business_cases` spanning Connect → Frame → Plan → Deliver → Closure. Hydrated via single `/api/v3/business-cases/:id` call with all artifacts (brand, creator, alignment_snapshot, brief, snapshot, contract, deliverables, invoices, final_report, brainstorm, interactions).
-- **Engagement tracks**: `paid` (Strategy Development Fee invoiced on alignment approval) and `grant` (no SDF; TTA absorbs strategy cost; OSF pays creator directly).
-- **Stage gates**: enforced on `/advance` (connect→frame needs `qualified_to_frame`; frame→plan needs approved alignment + resolved scope flags + SDF paid for paid track; plan→deliver needs approved snapshot + signed contract; deliver→closed needs 100% closure).
+### Business Case Primitive
+Every project = one MongoDB document in `v3_business_cases` spanning Connect → Frame → Plan → Deliver → Closure. Single `GET /api/v3/business-cases/:id` returns the full hydrated bundle (brand, creator, alignment_snapshot, brief, snapshot, contract, deliverables, invoices, final_report, brainstorm, interactions, timeline).
 
-### Backend Endpoints (`/api/v3/*`)
-- Brands & Contacts: `/brands`, `/brands/:id` (full hydrated bundle), `/contacts`
-- Creators: `/creators`, `/creators/:id`
-- Business Cases: `/business-cases` (list, filter by stage/engagement), `/business-cases/:id` (hydrated), `POST /business-cases`, `POST /business-cases/:id/advance`
-- Frame: `POST /business-cases/:id/ai/alignment` (generate 11-section template), `POST /ai/alignment/approve` (auto-issues SDF invoice for paid track, waives for grant), `POST /scope-flags/:idx/resolve`
-- Invoices: `/invoices`, `POST /invoices/:id/mark-paid`
-- Plan: `/creative-briefs` (CRUD), `/creative-snapshots`, `POST /business-cases/:id/creative-snapshot/approve`, `/brainstorm-rounds` (auto-eliminates `conversion_behavior < 3`)
-- Contracts: `/contracts`, `POST /contracts` (with AI risk flagging based on template), `POST /contracts/:id/sign`
-- Deliver: `/deliverables`, `POST /deliverables/:id/transition` (pending_upload → pending_rm_review → approved with milestone counter sync), `POST /business-cases/:id/scope-change` (pauses delivery), `/scope-change/:id/approve`
-- Closure: `/final-reports`, `POST /business-cases/:id/feedback/brand`, `/feedback/creator` (auto-computes average score and updates `closure_pct`)
-- CRM Activity: `/interactions`, `POST /interactions/ingest-transcript` (mock AI extraction)
-- Metrics: `/metrics/admin-overview`
+### Engagement Tracks
+- **Paid**: Strategy Development Fee invoiced on alignment approval.
+- **Grant**: SDF waived; TTA absorbs strategy cost; funder pays creator directly.
 
-### Seeded Demo Data (15 May 2026)
-- **11 brands** (incl. Nigerian Breweries / Star Lager as primary demo, and Open Society Foundations as Grant track demo)
-- **11 creators** (incl. C.J. Obasi filmmaker for OSF grant)
-- **5 flagship Business Cases** spanning all stages:
-  - `bc-nb-flagship` — Star Originals × Burna Boy (Deliver, Paid, ₦185M) — primary E2E demo
-  - `bc-cc-tems` — Coca-Cola × Tems (Frame, Paid)
-  - `bc-gn-rema` — Made of More: Africa (Plan, Paid)
-  - `bc-mtn-burna` — Lagos Unlimited (Deliver/Closure, Paid)
-  - `bc-osf-cj` — West African Press Freedom (Frame, **Grant**)
-- All Alignment Snapshots are 11-section editorial documents. NB and OSF are realistic TTA-style placeholders (no lorem ipsum). MTN final report carries verbatim KPI variances.
+### Stage Gates (`POST /business-cases/:id/advance`)
+- connect → frame: `connect_status === 'qualified_to_frame'`
+- frame → plan: alignment approved + scope flags resolved + SDF paid (paid track only)
+- plan → deliver: snapshot approved + contract signed
+- deliver → closed: closure 100%
+- Override via `{override: true, reason: "..."}` for demo flexibility.
+
+### Full Backend API (`/api/v3/*`)
+**Read**: `/brands`, `/brands/:id` (hydrated), `/contacts`, `/creators`, `/creators/:id`, `/business-cases`, `/business-cases/:id` (full bundle), `/creative-briefs`, `/creative-snapshots`, `/contracts`, `/deliverables`, `/invoices`, `/final-reports`, `/brainstorm-rounds`, `/interactions`, `/metrics/admin-overview`.
+
+**Write**:
+- `POST /brands` — create + auto-create primary contact
+- `POST /business-cases` — create in Connect stage
+- `POST /business-cases/:id/advance` — gate-checked
+- `POST /business-cases/:id/connect/status` — Mark Qualified
+- `POST /business-cases/:id/ai/alignment` — generate 11-section template
+- `POST /business-cases/:id/ai/alignment/approve` — auto-issues SDF invoice (paid) or waives (grant)
+- `POST /business-cases/:id/scope-flags/:idx/resolve`
+- `POST /invoices/:id/mark-paid`
+- `POST /brainstorm-rounds` — auto-eliminates conversion_behavior < 3
+- `POST /creative-briefs` — send brief to creator
+- `POST /creative-briefs/:id/simulate-response` — templated AI creator response
+- `POST /creative-snapshots` — templated brand-facing snapshot (concept inherits from brief; budget auto-allocated)
+- `POST /business-cases/:id/creative-snapshot/approve`
+- `POST /contracts` — with AI risk flagging based on template
+- `POST /contracts/:id/sign`
+- `POST /deliverables` — add milestone
+- `POST /deliverables/:id/transition` — 3-stage workflow
+- `POST /business-cases/:id/scope-change` — pauses delivery
+- `POST /business-cases/:id/scope-change/:id/approve` — resumes
+- `POST /business-cases/:id/final-report/generate` — templated from deliverables + snapshot KPIs
+- `POST /business-cases/:id/feedback/brand` + `/feedback/creator` — auto-computes score + closure_pct
+- `POST /interactions` + `/interactions/ingest-transcript`
+- `POST /admin/reset-demo` — wipes and reseeds 14 v3 collections
+
+### Seeded Demo Data
+- 11 brands (Coca-Cola, Guinness, MTN, Access, Star Lager (Nigerian Breweries), Pepsi, UBA, Dangote, Airtel, GTBank, **OSF — Grant track**)
+- 11 creators (Burna Boy, Tems, Rema, Davido, Ayra Starr, Fireboy, Adekunle Gold, Don Jazzy, Wizkid, Boy Spyce, **C.J. Obasi** for OSF)
+- 5 flagship Business Cases (NB Star Originals as primary end-to-end demo; OSF West African Press Freedom as Grant track; Coca-Cola Frame, Guinness Plan, MTN Closure)
+- All content realistic TTA-style placeholder (no lorem ipsum)
 
 ### V3 Frontend
-- 38 existing V3 pages remain functional via `v3data.js` (progressive layering).
-- **NEW**: `/v3/admin/business-cases` — list page with live metrics, stage/track filters
-- **NEW**: `/v3/admin/business-cases/:id` — tabbed Connect / Frame / Plan / Deliver / Closure detail with full doc chain rendered on `V3DocumentSurface`. Interactive: advance stage, generate alignment, approve docs, sign contract, transition deliverables, request/approve scope change, submit feedback.
-- **Upgraded**: `/v3/admin/crm` — pulls live brands with Paid/Grant pills + live badge.
-- New nav link "Business Cases" in V3 admin sidebar.
+- 38 existing V3 pages remain functional via `v3data.js` (progressive layering with mock fallback)
+- **NEW**: `/v3/admin/business-cases` — list with live metrics, stage/track filters, **+ New Business Case modal**, **Reset demo button**
+- **NEW**: `/v3/admin/business-cases/:id` — tabbed live workflow:
+  - **Connect**: source/intent display, interactions list, **Log a New Interaction form**, **Mark Qualified button**, Qualify-to-Frame button
+  - **Frame**: AI-generated Alignment Snapshot on V3DocumentSurface, **scope-flag Resolve buttons**, SDF invoice (or grant waiver), Advance-to-Plan
+  - **Plan**: **PlanStageActions** card surfaces context-aware next CTA (brainstorm → send brief → simulate response → draft snapshot → approve → draft contract → sign), full brainstorm visualisation with auto-eliminated creators
+  - **Deliver**: milestone tracker, **Add deliverable button**, 3-stage transition, scope-change request/approve, scope-creep pause banner
+  - **Closure**: **Generate Final Report button**, KPI variance table, closure checklist, brand/creator feedback forms
+- **Upgraded** `/v3/admin/crm`: live brands list with Paid/Grant pills + **Add Brand modal**
 
 ### Testing
-- iteration_9.json: V2 — 100% pass
-- iteration_10.json: V3 foundation — 100% pass (27/27)
-- iteration_11.json: V3 premium features — 100% pass (18/18)
-- **iteration_12.json: v3.2 backend + new admin pages — 100% pass (16/16 backend, 4/4 frontend)** (15 May 2026)
+- iteration_12.json — backend read flows + new admin pages: 100% (16/16 + 4/4)
+- **iteration_13.json — backend write flows + full TTA-user UI walkthrough: 100% (11/11 backend + all UI flows)**
+
+### Demo Reset
+Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admin/reset-demo`). Restores the 5 seeded Business Cases. Use between MI rehearsal runs.
 
 ### Remaining P2 / Future
-- Wire Brand and Creator portals to `/api/v3` (currently still on v3data.js fallback)
-- Add minor `data-testid` on filter group containers (low priority; functional today)
-- Real LLM integration for AI moments (currently mocked per user choice)
+- Wire Brand + Creator portals to `/api/v3/*` (still on `v3data.js` fallback)
+- Resolve low-priority React hydration console warning from visual-editor `<span>` inside `<select>` on the New BC modal
+- Real LLM integration for AI moments (currently deterministic templates per user choice)
 - Mobile responsiveness pass
 - WhatsApp integration
