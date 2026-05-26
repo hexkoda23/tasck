@@ -7,7 +7,7 @@ const seededTasks = [
   { id: 't2', projectId: 'proj-cocacola-tems', title: 'Send Alignment Snapshot to brand for confirmation', assignee: 'rm-temi', priority: 'high', status: 'in_progress', dueDate: '17 Mar 2026', category: 'communication' },
   { id: 't3', projectId: 'proj-cocacola-tems', title: 'Clarify budget ceiling with Chidi Okafor', assignee: 'rm-temi', priority: 'medium', status: 'in_progress', dueDate: '18 Mar 2026', category: 'communication' },
   { id: 't4', projectId: 'proj-cocacola-tems', title: 'Prepare creator shortlist for brainstorm', assignee: 'rm-temi', priority: 'medium', status: 'todo', dueDate: '20 Mar 2026', category: 'planning' },
-  { id: 't5', projectId: 'proj-guinness-rema', title: 'Review Creative Snapshot v1 internally', assignee: 'rm-adaeze', priority: 'high', status: 'in_progress', dueDate: '18 Mar 2026', category: 'document' },
+  { id: 't5', projectId: 'proj-guinness-rema', title: 'Review Strategy Snapshot v1 internally', assignee: 'rm-adaeze', priority: 'high', status: 'in_progress', dueDate: '18 Mar 2026', category: 'document' },
   { id: 't6', projectId: 'proj-guinness-rema', title: 'Confirm Obongjayar availability for film 3 score', assignee: 'rm-adaeze', priority: 'medium', status: 'todo', dueDate: '25 Mar 2026', category: 'communication' },
   { id: 't7', projectId: 'proj-guinness-rema', title: 'Coordinate Sophia Karimi (Nairobi) sign-off timeline', assignee: 'rm-adaeze', priority: 'high', status: 'todo', dueDate: '20 Mar 2026', category: 'communication' },
   { id: 't8', projectId: 'proj-guinness-rema', title: 'Lock DOP — confirm Kagho Idhebor rate', assignee: 'rm-adaeze', priority: 'medium', status: 'todo', dueDate: '28 Mar 2026', category: 'planning' },

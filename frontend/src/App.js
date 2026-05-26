@@ -57,6 +57,8 @@ import V3BrandDocuments from './pages/v3/brand/V3BrandDocuments';
 import V3BrandInvoices from './pages/v3/brand/V3BrandInvoices';
 import V3BrandMessages from './pages/v3/brand/V3BrandMessages';
 import V3BrandSettings from './pages/v3/brand/V3BrandSettings';
+import V3BrandChangePassword from './pages/v3/brand/V3BrandChangePassword';
+import V3BrandLogin from './pages/v3/brand/V3BrandLogin';
 
 // V3 Creator Portal Pages
 import V3CreatorOverview from './pages/v3/creator/V3CreatorOverview';
@@ -347,6 +349,8 @@ function AppRoutes() {
         <Route path="users" element={<V3AdminUsers />} />
       </Route>
 
+      <Route path="/v3/brand/login" element={<V3BrandLogin />} />
+
       {/* V3 Brand Portal */}
       <Route path="/v3/brand" element={<V3Layout portal="brand" />}>
         <Route index element={<V3BrandOverview />} />
@@ -357,6 +361,7 @@ function AppRoutes() {
         <Route path="invoices" element={<V3BrandInvoices />} />
         <Route path="messages" element={<V3BrandMessages />} />
         <Route path="settings" element={<V3BrandSettings />} />
+        <Route path="change-password" element={<V3BrandChangePassword />} />
       </Route>
 
       {/* V3 Creator Portal */}

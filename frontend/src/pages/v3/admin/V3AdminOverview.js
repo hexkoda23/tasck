@@ -123,7 +123,7 @@ const V3AdminOverview = () => {
         <div className="space-y-1">
           {[
             { time: '2 hours ago', text: 'Temi Bakare generated Alignment Snapshot for Coca-Cola × Tems', stage: 'frame' },
-            { time: '5 hours ago', text: 'Adaeze Obi drafted Creative Snapshot v1 for Guinness × Rema', stage: 'plan' },
+            { time: '5 hours ago', text: 'Adaeze Obi drafted Strategy Snapshot v1 for Guinness × Rema', stage: 'plan' },
             { time: '1 day ago', text: 'MTN approved all remaining deliverables for Lagos Unlimited', stage: 'deliver' },
             { time: '1 day ago', text: 'Rema submitted brief response for Made of More: Africa', stage: 'plan' },
             { time: '2 days ago', text: 'Femi Oladipo sent Creator Brief to Davido for Access Bank project', stage: 'plan' },

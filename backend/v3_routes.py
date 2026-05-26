@@ -8,7 +8,7 @@ Stage advancement rules:
   connect → frame  : Connect status must be `qualified_to_frame`
   frame   → plan   : Alignment Snapshot approved; all scope flags resolved;
                      Strategy Development Fee paid (unless engagement_track == 'grant')
-  plan    → deliver: Creative Snapshot approved AND contract signed
+  plan    → deliver: Strategy Snapshot approved AND contract signed
   deliver → closed : Closure checklist complete (final report + feedback)
 """
 from fastapi import APIRouter, HTTPException
@@ -22,6 +22,100 @@ from v3_seed import get_v3_seed_data
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _slug(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "." for ch in (value or "brand"))
+    parts = [p for p in cleaned.split(".") if p]
+    return ".".join(parts[:3]) or "brand"
+
+
+def _temporary_password() -> str:
+    return f"TASCK-{uuid.uuid4().hex[:4].upper()}-{uuid.uuid4().hex[:4].upper()}"
+
+
+def _fallback_creator_email(creator: Dict[str, Any]) -> str:
+    email = creator.get("email") or creator.get("manager_email")
+    if email:
+        return email
+    return f"{_slug(creator.get('name', 'creator'))}@creator.tasck.demo"
+
+
+def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
+    """Deterministic transcript extraction used by the demo AI layer.
+
+    The production version can swap this for an LLM/transcription provider while
+    keeping the same response contract.
+    """
+    text = (content or "").strip()
+    lower = text.lower()
+
+    def _after_any(labels: List[str], fallback: str) -> str:
+        for label in labels:
+            marker = label.lower()
+            pos = lower.find(marker)
+            if pos >= 0:
+                chunk = text[pos + len(label):].lstrip(" :-\n\t")
+                stop = len(chunk)
+                for sep in ["\n", ". ", "; "]:
+                    hit = chunk.find(sep)
+                    if hit > 20:
+                        stop = min(stop, hit + (1 if sep == "\n" else 0))
+                value = chunk[:stop].strip(" .;-")
+                if value:
+                    return value[:260]
+        return fallback
+
+    focus = _after_any(
+        ["key marketing focus", "marketing focus", "focus", "objective", "goal"],
+        "Clarify the brand problem, campaign ambition, and cultural role from the discovery call.",
+    )
+    audience = _after_any(
+        ["primary target audience", "target audience", "audience", "consumer"],
+        "Primary customer segment mentioned by the brand; admin review required.",
+    )
+
+    channel_candidates = []
+    for channel in ["Instagram", "TikTok", "YouTube", "X", "Twitter", "OOH", "Events", "Radio", "TV", "Influencers", "Retail", "PR"]:
+        if channel.lower() in lower:
+            channel_candidates.append("X" if channel == "Twitter" else channel)
+    if not channel_candidates:
+        channel_candidates = ["Instagram", "TikTok", "YouTube", "PR"]
+
+    kpis = []
+    for name in ["Reach", "Engagement rate", "UGC posts", "Sales lift", "App installs", "Earned media value", "Lead conversion"]:
+        if name.lower() in lower:
+            kpis.append({"kpi": name, "target": "Target mentioned in transcript; admin to confirm exact number."})
+    if not kpis:
+        kpis = [
+            {"kpi": "Reach", "target": "AI-inferred from campaign ambition; confirm with brand."},
+            {"kpi": "Engagement rate", "target": "AI-inferred; confirm channel benchmark."},
+            {"kpi": "Conversion signal", "target": "Define the business outcome before Plan."},
+        ]
+
+    return {
+        "key_marketing_focus": focus,
+        "primary_target_audience": audience,
+        "key_marketing_channels": channel_candidates[:6],
+        "marketing_kpis": kpis[:5],
+        "source_excerpt": text[:420],
+        "extraction_confidence": 0.82 if text else 0.35,
+        "generated_at": _now_iso(),
+    }
+
+
+def _marketing_intelligence_from_case(case: Dict[str, Any]) -> Dict[str, Any]:
+    connect = case.get("connect", {}) or {}
+    mi = connect.get("marketing_intelligence") or {}
+    if mi:
+        return mi
+    return {
+        "key_marketing_focus": connect.get("key_marketing_focus") or connect.get("stated_intent") or "Admin review required.",
+        "primary_target_audience": connect.get("primary_target_audience") or "Admin review required.",
+        "key_marketing_channels": connect.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"],
+        "marketing_kpis": connect.get("marketing_kpis") or [{"kpi": "Reach", "target": "Confirm with brand."}],
+        "extraction_confidence": 0.45,
+    }
 
 
 def make_v3_router(db):
@@ -41,6 +135,34 @@ def make_v3_router(db):
 
     router.seed_v3 = seed_v3  # exposed so server.py can call it on startup
 
+    async def queue_email(
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        kind: str,
+        brand_id: Optional[str] = None,
+        business_case_id: Optional[str] = None,
+        creator_id: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        email = {
+            "id": f"mail-{uuid.uuid4().hex[:8]}",
+            "to": to,
+            "subject": subject,
+            "body": body,
+            "kind": kind,
+            "brand_id": brand_id,
+            "business_case_id": business_case_id,
+            "creator_id": creator_id,
+            "attachments": attachments or [],
+            "status": "queued",
+            "queued_at": _now_iso(),
+            "sent_at": None,
+        }
+        await db.v3_email_outbox.insert_one({**email})
+        return email
+
     # ------------------------------------------------------------------------
     # BRANDS
     # ------------------------------------------------------------------------
@@ -59,7 +181,18 @@ def make_v3_router(db):
         contacts = await db.v3_contacts.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         cases = await db.v3_business_cases.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         interactions = await db.v3_interactions.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
-        return {"brand": brand, "contacts": contacts, "business_cases": cases, "interactions": interactions}
+        account = await db.v3_brand_accounts.find_one({"brand_id": brand_id}, {"_id": 0})
+        emails = await db.v3_email_outbox.find({"brand_id": brand_id}, {"_id": 0}).sort("queued_at", -1).to_list(100)
+        opportunities = await db.v3_opportunities.find({"brand_id": brand_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+        return {
+            "brand": brand,
+            "contacts": contacts,
+            "business_cases": cases,
+            "interactions": interactions,
+            "account": account,
+            "emails": emails,
+            "opportunities": opportunities,
+        }
 
     class BrandCreate(BaseModel):
         company: str
@@ -105,7 +238,79 @@ def make_v3_router(db):
             "decision_seniority": "lead",
         }
         await db.v3_contacts.insert_one({**contact_doc})
-        return doc
+
+        username = (payload.email or f"{_slug(payload.company)}@brand.tasck.demo").lower()
+        temp_password = _temporary_password()
+        account_doc = {
+            "id": f"acct-{uuid.uuid4().hex[:8]}",
+            "brand_id": brand_id,
+            "role": "brand",
+            "username": username,
+            "temporary_password": temp_password,
+            "password": temp_password,
+            "must_change_password": True,
+            "status": "active",
+            "created_at": _now_iso(),
+            "last_login_at": None,
+            "password_changed_at": None,
+        }
+        await db.v3_brand_accounts.insert_one({**account_doc})
+
+        welcome = await queue_email(
+            to=username,
+            subject="Welcome to TASCK OS - your brand portal access",
+            body=(
+                f"Welcome to TASCK OS, {payload.primary_contact}.\n\n"
+                f"Your brand account for {payload.company} is ready.\n"
+                f"Username: {username}\n"
+                f"Temporary password: {temp_password}\n\n"
+                "On first login, please change your password from the brand portal."
+            ),
+            kind="brand_welcome",
+            brand_id=brand_id,
+        )
+        return {
+            **doc,
+            "account": {
+                "username": username,
+                "temporary_password": temp_password,
+                "must_change_password": True,
+            },
+            "welcome_email_id": welcome["id"],
+        }
+
+    class BrandPasswordChange(BaseModel):
+        username: str
+        current_password: str
+        new_password: str = Field(..., min_length=8)
+
+    @router.post("/brand-accounts/change-password")
+    async def change_brand_password(payload: BrandPasswordChange):
+        account = await db.v3_brand_accounts.find_one({"username": payload.username.lower()}, {"_id": 0})
+        if not account:
+            raise HTTPException(404, "Brand account not found")
+        accepted = {account.get("password"), account.get("temporary_password")}
+        if payload.current_password not in accepted:
+            raise HTTPException(400, "Current password is incorrect")
+        await db.v3_brand_accounts.update_one(
+            {"id": account["id"]},
+            {"$set": {
+                "password": payload.new_password,
+                "temporary_password": None,
+                "must_change_password": False,
+                "password_changed_at": _now_iso(),
+            }},
+        )
+        return {"ok": True, "must_change_password": False}
+
+    @router.get("/email-outbox")
+    async def list_email_outbox(brand_id: Optional[str] = None, business_case_id: Optional[str] = None):
+        query = {}
+        if brand_id:
+            query["brand_id"] = brand_id
+        if business_case_id:
+            query["business_case_id"] = business_case_id
+        return await db.v3_email_outbox.find(query, {"_id": 0}).sort("queued_at", -1).to_list(500)
 
     # ------------------------------------------------------------------------
     # CONTACTS
@@ -130,6 +335,222 @@ def make_v3_router(db):
             raise HTTPException(404, "Creator not found")
         briefs = await db.v3_creative_briefs.find({"creator_id": creator_id}, {"_id": 0}).to_list(100)
         return {"creator": creator, "briefs": briefs}
+
+    class CreatorCreate(BaseModel):
+        name: str
+        tier: str = "rising"
+        genre: str
+        location: str = "Lagos"
+        email: Optional[str] = None
+        manager_name: Optional[str] = None
+        manager_email: Optional[str] = None
+        phone: Optional[str] = None
+        rate_card: str = "TBD"
+        platforms: List[str] = Field(default_factory=list)
+        audience: Optional[str] = None
+        categories: List[str] = Field(default_factory=list)
+        past_brand_work: List[str] = Field(default_factory=list)
+        notes: Optional[str] = None
+        source: str = "manual"
+        source_links: List[str] = Field(default_factory=list)
+        discovery_notes: Optional[str] = None
+        pipeline_status: str = "approved"
+
+    @router.post("/creators")
+    async def create_creator(payload: CreatorCreate):
+        cr_id = f"creator-{uuid.uuid4().hex[:8]}"
+        doc = {
+            "id": cr_id,
+            "name": payload.name,
+            "tier": payload.tier,
+            "genre": payload.genre,
+            "location": payload.location,
+            "fit_score": 70,
+            "on_time_rate": 85,
+            "brand_satisfaction": 8.0,
+            "repeat_brand_count": 0,
+            "rate_card": payload.rate_card,
+            "reliability": 8.0,
+            "platforms": payload.platforms,
+            "email": payload.email,
+            "manager_name": payload.manager_name,
+            "manager_email": payload.manager_email,
+            "phone": payload.phone,
+            "audience": payload.audience,
+            "categories": payload.categories,
+            "past_brand_work": payload.past_brand_work,
+            "notes": payload.notes,
+            "source_links": payload.source_links,
+            "discovery_notes": payload.discovery_notes,
+            "pipeline_status": payload.pipeline_status,
+            "source": payload.source,
+            "created_at": _now_iso(),
+        }
+        await db.v3_creators.insert_one({**doc})
+        return doc
+
+    class CreatorWebSearchPayload(BaseModel):
+        business_case_id: Optional[str] = None
+        query: Optional[str] = None
+        limit: int = 6
+        auto_store: bool = False
+
+    @router.post("/creators/search-web")
+    async def search_web_creators(payload: CreatorWebSearchPayload):
+        case = None
+        mi: Dict[str, Any] = {}
+        if payload.business_case_id:
+            case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0})
+            if not case:
+                raise HTTPException(404, "Business case not found")
+            mi = _marketing_intelligence_from_case(case)
+        focus = (payload.query or mi.get("key_marketing_focus") or (case or {}).get("title") or "Nigerian creators, influencers, culture studios, celebrities")[:90]
+        templates = [
+            {
+                "name": "Culture Lens Studio",
+                "genre": "Director / culture storyteller",
+                "platforms": ["YouTube", "Instagram"],
+                "location": "Lagos",
+                "audience": "Youth culture, documentary, fashion, and music communities across Lagos and Abuja.",
+                "source_links": ["culturelens.example/portfolio", "instagram.com/culturelensstudio"],
+                "discovery_notes": "Found through public portfolio pages and campaign credits for music-led short films.",
+            },
+            {
+                "name": "Pulse Street Collective",
+                "genre": "Street culture creators",
+                "platforms": ["TikTok", "Instagram"],
+                "location": "Lagos / Port Harcourt",
+                "audience": "Gen-Z streetwear, campus culture, nightlife, and dance communities.",
+                "source_links": ["tiktok.com/@pulsestreetcollective", "instagram.com/pulsestreet"],
+                "discovery_notes": "High short-form velocity and frequent collaborations with emerging event promoters.",
+            },
+            {
+                "name": "Signal Social Lab",
+                "genre": "Social-first creator studio",
+                "platforms": ["TikTok", "X", "Instagram"],
+                "location": "Remote / Nigeria",
+                "audience": "Digital-native audiences interested in memes, tech, creator economy, and social commentary.",
+                "source_links": ["signalsocial.example/case-studies", "x.com/signalsociallab"],
+                "discovery_notes": "Discovered from public case studies and viral social campaign threads.",
+            },
+            {
+                "name": "Frame & Rhythm",
+                "genre": "Music video and brand film team",
+                "platforms": ["YouTube", "Instagram"],
+                "location": "Lagos",
+                "audience": "Afrobeats fans, music video audiences, lifestyle consumers, and culture press.",
+                "source_links": ["frame-rhythm.example/work", "youtube.com/@frameandrhythm"],
+                "discovery_notes": "Repeatedly credited in public music-video descriptions and BTS posts.",
+            },
+            {
+                "name": "Northside Food Diaries",
+                "genre": "Food and lifestyle creator",
+                "platforms": ["Instagram", "TikTok", "YouTube"],
+                "location": "Abuja",
+                "audience": "Food discovery, weekend lifestyle, and premium casual dining audiences.",
+                "source_links": ["instagram.com/northsidefooddiaries", "tiktok.com/@northsidefood"],
+                "discovery_notes": "Strong relevance for FMCG, QSR, beverage, and mall activation briefs.",
+            },
+            {
+                "name": "Campus Plug NG",
+                "genre": "Campus culture network",
+                "platforms": ["TikTok", "Instagram", "WhatsApp"],
+                "location": "Lagos / Ibadan / Benin",
+                "audience": "Students, young creators, campus entertainment pages, and youth communities.",
+                "source_links": ["instagram.com/campusplugng", "campusplug.example/media-kit"],
+                "discovery_notes": "Public media kit signals useful reach for youth conversion and campus activation briefs.",
+            },
+        ]
+        discovered = []
+        for idx, template in enumerate(templates[: max(1, min(payload.limit, len(templates))) ]):
+            name = template["name"]
+            cr_id = f"creator-web-{_slug(name)}"
+            existing = await db.v3_creators.find_one({"id": cr_id}, {"_id": 0})
+            doc = {
+                "id": cr_id,
+                "name": name,
+                "tier": "discovered",
+                "genre": template["genre"],
+                "location": template["location"],
+                "fit_score": 88 - idx * 2,
+                "on_time_rate": 0,
+                "brand_satisfaction": 0,
+                "repeat_brand_count": 0,
+                "rate_card": "TBD - outreach required",
+                "reliability": 7.0 + min(idx, 2) * 0.2,
+                "platforms": template["platforms"],
+                "email": f"hello@{_slug(name)}.demo",
+                "manager_name": "Public contact",
+                "manager_email": f"hello@{_slug(name)}.demo",
+                "audience": mi.get("primary_target_audience") or template["audience"],
+                "categories": [focus],
+                "source": "web_discovery_simulated",
+                "source_links": template["source_links"],
+                "discovery_notes": template["discovery_notes"],
+                "pipeline_status": "pending_review",
+                "discovered_for_business_case_id": payload.business_case_id,
+                "created_at": _now_iso(),
+            }
+            if existing:
+                doc = {**doc, **existing, "pipeline_status": existing.get("pipeline_status", "approved")}
+            elif payload.auto_store:
+                doc["pipeline_status"] = "approved"
+                await db.v3_creators.insert_one({**doc})
+            discovered.append(doc)
+        if case:
+            await db.v3_business_cases.update_one(
+                {"id": payload.business_case_id},
+                {"$push": {"timeline": {"at": _now_iso(), "event": "web_creator_search_completed", "count": len(discovered), "review_only": not payload.auto_store}}},
+            )
+        return {"query": focus, "creators": discovered}
+
+    @router.post("/business-cases/{bc_id}/ai/creator-matches")
+    async def suggest_creator_matches(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        mi = _marketing_intelligence_from_case(case)
+        creators = await db.v3_creators.find({}, {"_id": 0}).to_list(500)
+        haystack = " ".join([
+            str(mi.get("key_marketing_focus", "")),
+            str(mi.get("primary_target_audience", "")),
+            " ".join(mi.get("key_marketing_channels", [])),
+        ]).lower()
+        matches = []
+        for cr in creators:
+            score = int(cr.get("fit_score", 70))
+            reasons = []
+            profile_text = " ".join([
+                cr.get("name", ""),
+                cr.get("genre", ""),
+                cr.get("audience") or "",
+                " ".join(cr.get("platforms", [])),
+                " ".join(cr.get("categories", [])),
+            ]).lower()
+            if any(word in profile_text for word in haystack.split() if len(word) > 4):
+                score += 8
+                reasons.append("Profile language overlaps with the Alignment Snapshot focus.")
+            if any(ch.lower() in profile_text for ch in mi.get("key_marketing_channels", [])):
+                score += 5
+                reasons.append("Active channels line up with the requested marketing channels.")
+            if cr.get("reliability", 0) >= 8:
+                score += 4
+                reasons.append("Reliability score is strong enough for brand-facing work.")
+            if cr.get("manager_email") or cr.get("email"):
+                score += 2
+                reasons.append("Contact route is available for immediate brief send.")
+            matches.append({
+                "creator": cr,
+                "score": min(score, 99),
+                "reasons": reasons or ["Strong general fit; admin should validate audience and fee conditions."],
+                "risk_notes": [] if cr.get("rate_card") != "TBD" else ["Rate card is not confirmed yet."],
+            })
+        matches.sort(key=lambda m: m["score"], reverse=True)
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.ai_creator_match_generated_at": _now_iso(), "updated_at": _now_iso()}},
+        )
+        return {"business_case_id": bc_id, "matches": matches[:8]}
 
     # ------------------------------------------------------------------------
     # BUSINESS CASES (the central primitive)
@@ -185,6 +606,10 @@ def make_v3_router(db):
         connect_status: str = "new_lead"
         stated_intent: str = ""
         source: str = ""
+        key_marketing_focus: Optional[str] = None
+        primary_target_audience: Optional[str] = None
+        key_marketing_channels: List[str] = Field(default_factory=list)
+        marketing_kpis: List[Dict[str, Any]] = Field(default_factory=list)
 
     @router.post("/business-cases")
     async def create_business_case(payload: BusinessCaseCreate):
@@ -211,6 +636,14 @@ def make_v3_router(db):
                 "source": payload.source,
                 "connect_status": payload.connect_status,
                 "stated_intent": payload.stated_intent,
+                "marketing_intelligence": {
+                    "key_marketing_focus": payload.key_marketing_focus or payload.stated_intent,
+                    "primary_target_audience": payload.primary_target_audience or "",
+                    "key_marketing_channels": payload.key_marketing_channels,
+                    "marketing_kpis": payload.marketing_kpis,
+                    "generated_at": _now_iso(),
+                    "source": "manual_intake",
+                },
             },
             "frame": {},
             "plan": {},
@@ -226,6 +659,12 @@ def make_v3_router(db):
     # STAGE ADVANCEMENT
     # ------------------------------------------------------------------------
     STAGE_ORDER = ["connect", "frame", "plan", "deliver", "closed"]
+    STAGE_NEXT_ACTIONS = {
+        "frame": "Generate, edit, and send the Alignment Snapshot for approval.",
+        "plan": "Select creatives, send the brief, capture the creative discussion, and draft the Strategy Snapshot.",
+        "deliver": "Generate contracts, manage budget and timeline planning, and track campaign delivery.",
+        "closed": "Generate the final report, collect feedback, and close the project.",
+    }
 
     class AdvancePayload(BaseModel):
         actor: str = "rm"
@@ -256,14 +695,14 @@ def make_v3_router(db):
                     gate_errors.append("Alignment Snapshot must be approved.")
                 if frame.get("scope_flags_resolved", 0) < frame.get("scope_flags_total", 0):
                     gate_errors.append("All scope flags must be resolved.")
-                if case.get("engagement_track") == "paid" and not frame.get("strategy_development_fee_paid"):
-                    gate_errors.append("Strategy Development Fee invoice must be paid (Paid engagement track).")
             elif next_stage == "deliver":
                 plan = case.get("plan", {})
                 if not plan.get("creative_snapshot_approved_at"):
-                    gate_errors.append("Creative Snapshot must be approved before Deliver.")
+                    gate_errors.append("Strategy Snapshot must be approved before Deliver.")
                 if not plan.get("contract_signed_at"):
                     gate_errors.append("Contract must be signed before Deliver.")
+                if case.get("engagement_track") == "paid" and not case.get("frame", {}).get("strategy_development_fee_paid"):
+                    gate_errors.append("Strategy Development Fee must be paid before Deliver.")
             elif next_stage == "closed":
                 closure = case.get("closure", {})
                 if closure.get("closure_pct", 0) < 100:
@@ -280,10 +719,19 @@ def make_v3_router(db):
             "override": payload.override,
             "reason": payload.reason,
         }
+        stage_updates = {
+            "stage": next_stage,
+            "days_in_stage": 0,
+            "next_action": STAGE_NEXT_ACTIONS.get(next_stage, case.get("next_action")),
+            "updated_at": _now_iso(),
+        }
+        if next_stage == "frame":
+            stage_updates["connect.connect_status"] = "qualified_to_frame"
+
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {
-                "$set": {"stage": next_stage, "days_in_stage": 0, "updated_at": _now_iso()},
+                "$set": stage_updates,
                 "$push": {"timeline": timeline_event},
             },
         )
@@ -306,6 +754,86 @@ def make_v3_router(db):
             return existing
 
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        mi = _marketing_intelligence_from_case(case)
+        channels = mi.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"]
+        kpis = mi.get("marketing_kpis") or [{"kpi": "Reach", "target": "Confirm with brand."}]
+        scope_flags = []
+        if not mi.get("key_marketing_focus") or "review required" in str(mi.get("key_marketing_focus", "")).lower():
+            scope_flags.append({"text": "Key Marketing Focus", "reason": "Needs brand confirmation before Plan."})
+        if not mi.get("primary_target_audience") or "review required" in str(mi.get("primary_target_audience", "")).lower():
+            scope_flags.append({"text": "Primary Target Audience", "reason": "Audience definition is not yet specific enough."})
+        if not scope_flags:
+            scope_flags = [
+                {"text": "Budget envelope", "reason": "Confirm before creative brief is issued."},
+                {"text": "Timeline", "reason": "Confirm production and approval windows."},
+            ]
+        as_id = f"as-{uuid.uuid4().hex[:8]}"
+        doc = {
+            "id": as_id,
+            "business_case_id": bc_id,
+            "status": "under_review",
+            "generated_at": _now_iso(),
+            "last_edited_at": None,
+            "last_edited_by": None,
+            "sent_to_brand_at": None,
+            "approved_at": None,
+            "approved_by": None,
+            "approved_by_party": None,
+            "brand_header": f"{brand['company'].split(' ')[0].upper()} x TASCK",
+            "title": f"{case['title']} - Alignment Snapshot",
+            "meta": "AI-generated from connector call. Pending admin review and brand approval.",
+            "marketing_intelligence": mi,
+            "brand_comments": [],
+            "sections": [
+                {"heading": "Business promotion summary", "type": "prose", "content": (
+                    f"TASCK recommends progressing {brand['company']} into a creator-led strategy track for "
+                    f"{case['title']}. The connector call indicates a clear commercial opportunity: "
+                    f"{mi.get('key_marketing_focus')}"
+                )},
+                {"heading": "Key Marketing Focus", "type": "prose", "content": mi.get("key_marketing_focus", "Admin review required.")},
+                {"heading": "Primary Target Audience", "type": "prose", "content": mi.get("primary_target_audience", "Admin review required.")},
+                {"heading": "Key Marketing Channels", "type": "bullets", "items": channels},
+                {"heading": "Marketing KPIs", "type": "kpis", "flagged": True, "items": kpis},
+                {"heading": "Brand background", "type": "prose", "content": f"{brand['company']} operates in {brand['industry']}. Stated intent at intake: {case.get('connect', {}).get('stated_intent', 'Pending admin review.')}"},
+                {"heading": "Proposed creator direction", "type": "prose", "content": (
+                    "Move forward only if the creator shortlist can credibly serve the marketing focus, audience, "
+                    "channels, and KPI expectations above. The next stage should test cultural fit, conversion "
+                    "behavior, reliability, manager responsiveness, fee conditions, and brand-safety posture."
+                )},
+                {"heading": "Approval language for brand", "type": "prose", "content": (
+                    "If approved, TASCK will use this Alignment Snapshot as the working business promotion, then "
+                    "shortlist creators and send a Creative Brief. The Strategy Development Fee is not due in Frame; "
+                    "it becomes payable after creator fit is established and before the Strategy Snapshot is drafted."
+                )},
+                {"heading": "Open questions & ambiguities", "type": "flags", "items": scope_flags},
+                {"heading": "Risk register (preliminary)", "type": "bullets", "items": [
+                    "Misalignment between stated audience and actual channel behavior.",
+                    "KPI targets may require brand-owned data access before final planning.",
+                    "Creator fees and non-negotiables may change the eventual strategy recommendation.",
+                ]},
+                {"heading": "Next steps", "type": "bullets", "items": [
+                    "Admin reviews and edits this AI draft.",
+                    "Send Alignment Snapshot to brand portal and email.",
+                    "Brand or admin approval moves the case into Plan.",
+                    "AI suggests creators; admin sends briefs and collects fees/conditions.",
+                    "Issue Strategy Development Fee before drafting the Strategy Snapshot.",
+                ]},
+            ],
+            "scope_flags": scope_flags,
+        }
+        await db.v3_alignment_snapshots.insert_one({**doc})
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {
+                "frame.alignment_snapshot_id": as_id,
+                "frame.alignment_snapshot_status": "under_review",
+                "frame.alignment_snapshot_generated_at": doc["generated_at"],
+                "frame.scope_flags_total": len(doc["scope_flags"]),
+                "frame.scope_flags_resolved": 0,
+                "updated_at": _now_iso(),
+            }, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_generated", "snapshot_id": as_id}}}
+        )
+        return doc
         as_id = f"as-{uuid.uuid4().hex[:8]}"
         doc = {
             "id": as_id,
@@ -324,7 +852,7 @@ def make_v3_router(db):
                 {"heading": "Key challenges", "type": "numbered", "items": ["To be confirmed in RM review."]},
                 {"heading": "Proposed campaign direction", "type": "prose", "content": "RM to populate post-review."},
                 {"heading": "Open questions & ambiguities", "type": "flags", "items": [{"text": "Budget envelope confirmation"}, {"text": "Timeline lock"}, {"text": "Creator preference signals"}]},
-                {"heading": "Engagement track", "type": "prose", "content": "Grant — no Strategy Development Fee." if case.get("engagement_track") == "grant" else "Paid Strategy — Strategy Development Fee to be invoiced on approval."},
+                {"heading": "Engagement track", "type": "prose", "content": "Grant — no Strategy Development Fee." if case.get("engagement_track") == "grant" else "Paid Strategy — Strategy Development Fee is issued after creator briefing and before the Strategy Snapshot."},
                 {"heading": "Risk register (preliminary)", "type": "bullets", "items": ["To be populated during RM review."]},
                 {"heading": "Decision-maker map", "type": "bullets", "items": [f"{brand['primary_contact']} — {brand['role']}"]},
                 {"heading": "TTA recommendation", "type": "prose", "content": "Pending RM completion."},
@@ -348,6 +876,7 @@ def make_v3_router(db):
 
     class ApproveAlignmentPayload(BaseModel):
         approver: str
+        approver_party: str = "admin"
 
     @router.post("/business-cases/{bc_id}/ai/alignment/approve")
     async def approve_alignment(bc_id: str, payload: ApproveAlignmentPayload):
@@ -361,8 +890,34 @@ def make_v3_router(db):
         approved_at = _now_iso()
         await db.v3_alignment_snapshots.update_one(
             {"id": snap["id"]},
-            {"$set": {"status": "approved", "approved_at": approved_at, "approved_by": payload.approver}},
+            {"$set": {
+                "status": "approved",
+                "approved_at": approved_at,
+                "approved_by": payload.approver,
+                "approved_by_party": payload.approver_party,
+            }},
         )
+
+        updates: Dict[str, Any] = {
+            "frame.alignment_snapshot_status": "approved",
+            "frame.alignment_snapshot_approved_at": approved_at,
+            "frame.alignment_approved_by_party": payload.approver_party,
+            "updated_at": _now_iso(),
+        }
+        if case.get("engagement_track") == "grant":
+            updates["frame.strategy_development_fee_invoice_id"] = None
+            updates["frame.strategy_development_fee_paid"] = False
+            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement - TTA absorbs strategy cost."
+        else:
+            updates["frame.strategy_development_fee_invoice_id"] = case.get("frame", {}).get("strategy_development_fee_invoice_id")
+            updates["frame.strategy_development_fee_paid"] = bool(case.get("frame", {}).get("strategy_development_fee_paid", False))
+            updates["frame.strategy_development_fee_due_stage"] = "after_creator_brief_before_strategy_snapshot"
+
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_approved", "by": payload.approver, "party": payload.approver_party}}},
+        )
+        return {"ok": True, "approved_at": approved_at, "fee_due_stage": updates.get("frame.strategy_development_fee_due_stage")}
 
         # If paid engagement, generate the Strategy Development Fee invoice.
         updates: Dict[str, Any] = {
@@ -391,6 +946,107 @@ def make_v3_router(db):
 
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_approved", "by": payload.approver}}})
         return {"ok": True, "approved_at": approved_at}
+
+    class AlignmentUpdatePayload(BaseModel):
+        title: Optional[str] = None
+        meta: Optional[str] = None
+        sections: Optional[List[Dict[str, Any]]] = None
+        reviewer: str = "admin"
+
+    @router.patch("/alignment-snapshots/{snapshot_id}")
+    async def update_alignment_snapshot(snapshot_id: str, payload: AlignmentUpdatePayload):
+        snap = await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "Alignment Snapshot not found")
+        updates = {"last_edited_at": _now_iso(), "last_edited_by": payload.reviewer}
+        if payload.title is not None:
+            updates["title"] = payload.title
+        if payload.meta is not None:
+            updates["meta"] = payload.meta
+        if payload.sections is not None:
+            updates["sections"] = payload.sections
+        await db.v3_alignment_snapshots.update_one({"id": snapshot_id}, {"$set": updates})
+        await db.v3_business_cases.update_one(
+            {"id": snap["business_case_id"]},
+            {"$set": {"updated_at": _now_iso()}, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_edited", "by": payload.reviewer}}},
+        )
+        return await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+
+    @router.post("/business-cases/{bc_id}/ai/alignment/send")
+    async def send_alignment_to_brand(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        snap = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "No Alignment Snapshot to send.")
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        sent_at = _now_iso()
+        await db.v3_alignment_snapshots.update_one(
+            {"id": snap["id"]},
+            {"$set": {"status": "sent_to_brand", "sent_to_brand_at": sent_at, "meta": "Shared with brand for review and approval."}},
+        )
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"frame.alignment_snapshot_status": "sent_to_brand", "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": sent_at, "event": "alignment_sent_to_brand", "snapshot_id": snap["id"]}}},
+        )
+        email = await queue_email(
+            to=(brand or {}).get("email", ""),
+            subject=f"Alignment Snapshot ready for approval - {case['title']}",
+            body=(
+                f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
+                f"The Alignment Snapshot for {case['title']} is ready in your TASCK brand portal. "
+                "You can approve it or add line-level comments for the admin team."
+            ),
+            kind="alignment_snapshot_review",
+            brand_id=case["brand_id"],
+            business_case_id=bc_id,
+            attachments=[{"type": "alignment_snapshot", "id": snap["id"], "title": snap.get("title")}],
+        )
+        return {"ok": True, "sent_at": sent_at, "email": email}
+
+    class AlignmentCommentPayload(BaseModel):
+        section_index: int
+        line_index: Optional[int] = None
+        quoted_text: str = ""
+        comment: str
+        suggested_text: Optional[str] = None
+        author: str = "brand"
+
+    @router.post("/alignment-snapshots/{snapshot_id}/comments")
+    async def add_alignment_comment(snapshot_id: str, payload: AlignmentCommentPayload):
+        snap = await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "Alignment Snapshot not found")
+        comment = {
+            "id": f"cm-{uuid.uuid4().hex[:8]}",
+            "section_index": payload.section_index,
+            "line_index": payload.line_index,
+            "quoted_text": payload.quoted_text,
+            "comment": payload.comment,
+            "suggested_text": payload.suggested_text,
+            "author": payload.author,
+            "status": "open",
+            "created_at": _now_iso(),
+            "resolved_at": None,
+        }
+        await db.v3_alignment_snapshots.update_one({"id": snapshot_id}, {"$push": {"brand_comments": comment}})
+        await db.v3_business_cases.update_one(
+            {"id": snap["business_case_id"]},
+            {"$set": {"updated_at": _now_iso()}, "$push": {"timeline": {"at": _now_iso(), "event": "brand_alignment_comment", "comment_id": comment["id"]}}},
+        )
+        return comment
+
+    @router.post("/alignment-snapshots/{snapshot_id}/comments/{comment_id}/resolve")
+    async def resolve_alignment_comment(snapshot_id: str, comment_id: str):
+        result = await db.v3_alignment_snapshots.update_one(
+            {"id": snapshot_id, "brand_comments.id": comment_id},
+            {"$set": {"brand_comments.$.status": "resolved", "brand_comments.$.resolved_at": _now_iso()}},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(404, "Alignment comment not found")
+        return {"ok": True}
 
     @router.post("/business-cases/{bc_id}/scope-flags/{flag_index}/resolve")
     async def resolve_scope_flag(bc_id: str, flag_index: int):
@@ -434,10 +1090,19 @@ def make_v3_router(db):
         business_case_id: str
         creator_id: str
         brief_text: str
+        subject: Optional[str] = None
 
     @router.post("/creative-briefs")
     async def create_brief(payload: CreativeBriefCreate):
+        case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        creator = await db.v3_creators.find_one({"id": payload.creator_id}, {"_id": 0})
+        if not creator:
+            raise HTTPException(404, "Creator not found")
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
         cb_id = f"cb-{uuid.uuid4().hex[:8]}"
+        creator_email = _fallback_creator_email(creator)
         doc = {
             "id": cb_id,
             "business_case_id": payload.business_case_id,
@@ -445,16 +1110,87 @@ def make_v3_router(db):
             "sent_at": _now_iso(),
             "responded_at": None,
             "status": "sent",
+            "subject": payload.subject or f"Creative Brief - {case['title']}",
             "brief_text": payload.brief_text,
+            "creator_contact_email": creator_email,
+            "reminder_count": 0,
+            "last_reminded_at": None,
             "creator_response": None,
         }
         await db.v3_creative_briefs.insert_one({**doc})
+        invoice_update: Dict[str, Any] = {}
+        existing_sdf = await db.v3_invoices.find_one({"business_case_id": payload.business_case_id, "kind": "strategy_development_fee"}, {"_id": 0})
+        if case.get("engagement_track") == "paid" and not existing_sdf:
+            inv_id = f"inv-{uuid.uuid4().hex[:8]}"
+            inv = {
+                "id": inv_id,
+                "business_case_id": payload.business_case_id,
+                "kind": "strategy_development_fee",
+                "amount": 4_000_000,
+                "status": "issued",
+                "issued_at": _now_iso(),
+                "paid_at": None,
+                "triggered_by": "creative_brief_sent",
+            }
+            await db.v3_invoices.insert_one({**inv})
+            invoice_update = {
+                "frame.strategy_development_fee_invoice_id": inv_id,
+                "frame.strategy_development_fee_paid": False,
+                "frame.strategy_development_fee_due_stage": "before_strategy_snapshot",
+            }
+            await queue_email(
+                to=(brand or {}).get("email", ""),
+                subject=f"Strategy Development Fee issued - {case['title']}",
+                body=(
+                    f"The creator brief for {case['title']} has been sent. "
+                    "The Strategy Development Fee is now due before TASCK drafts the Strategy Snapshot."
+                ),
+                kind="strategy_development_fee_invoice",
+                brand_id=case["brand_id"],
+                business_case_id=payload.business_case_id,
+            )
+        await queue_email(
+            to=creator_email,
+            subject=doc["subject"],
+            body=payload.brief_text,
+            kind="creative_brief",
+            brand_id=case["brand_id"],
+            business_case_id=payload.business_case_id,
+            creator_id=payload.creator_id,
+            attachments=[{"type": "brief_text", "id": cb_id, "title": doc["subject"]}],
+        )
         await db.v3_business_cases.update_one(
             {"id": payload.business_case_id},
-            {"$set": {"plan.creative_brief_id": cb_id, "updated_at": _now_iso()},
+            {"$set": {"creator_id": payload.creator_id, "plan.creative_brief_id": cb_id, "updated_at": _now_iso(), **invoice_update},
              "$push": {"timeline": {"at": _now_iso(), "event": "creative_brief_sent", "creator_id": payload.creator_id}}},
         )
         return doc
+
+    @router.post("/creative-briefs/{brief_id}/remind")
+    async def remind_creator(brief_id: str):
+        brief = await db.v3_creative_briefs.find_one({"id": brief_id}, {"_id": 0})
+        if not brief:
+            raise HTTPException(404, "Brief not found")
+        case = await db.v3_business_cases.find_one({"id": brief["business_case_id"]}, {"_id": 0})
+        creator = await db.v3_creators.find_one({"id": brief["creator_id"]}, {"_id": 0})
+        ts = _now_iso()
+        await db.v3_creative_briefs.update_one(
+            {"id": brief_id},
+            {"$set": {"last_reminded_at": ts}, "$inc": {"reminder_count": 1}},
+        )
+        email = await queue_email(
+            to=brief.get("creator_contact_email") or _fallback_creator_email(creator or {}),
+            subject=f"Reminder: {brief.get('subject') or 'Creative Brief'}",
+            body=(
+                "Quick reminder to review the creative brief and reply with interest, fee expectation, "
+                "conditions, and availability."
+            ),
+            kind="creative_brief_reminder",
+            brand_id=(case or {}).get("brand_id"),
+            business_case_id=brief["business_case_id"],
+            creator_id=brief["creator_id"],
+        )
+        return {"ok": True, "reminded_at": ts, "email": email}
 
     @router.get("/creative-briefs")
     async def list_briefs(business_case_id: Optional[str] = None, creator_id: Optional[str] = None):
@@ -466,24 +1202,125 @@ def make_v3_router(db):
         return await db.v3_creative_briefs.find(query, {"_id": 0}).to_list(200)
 
     # ------------------------------------------------------------------------
-    # CREATIVE SNAPSHOTS (Plan flagship #3 — brand-facing aggregate)
+    # STRATEGY SNAPSHOTS (stored in legacy v3_creative_snapshots collection)
     # ------------------------------------------------------------------------
     @router.get("/creative-snapshots")
     async def list_snapshots(business_case_id: Optional[str] = None):
         query = {"business_case_id": business_case_id} if business_case_id else {}
         return await db.v3_creative_snapshots.find(query, {"_id": 0}).to_list(200)
 
+    class StrategySnapshotUpdatePayload(BaseModel):
+        title: Optional[str] = None
+        concept: Optional[str] = None
+        deliverables: Optional[List[Dict[str, Any]]] = None
+        budget: Optional[List[Dict[str, Any]]] = None
+        success_metrics: Optional[List[Dict[str, Any]]] = None
+        reviewer: str = "admin"
+
+    @router.patch("/creative-snapshots/{snapshot_id}")
+    async def update_strategy_snapshot(snapshot_id: str, payload: StrategySnapshotUpdatePayload):
+        snap = await db.v3_creative_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "Strategy Snapshot not found")
+        updates = {"last_edited_at": _now_iso(), "last_edited_by": payload.reviewer}
+        for key in ["title", "concept", "deliverables", "budget", "success_metrics"]:
+            value = getattr(payload, key)
+            if value is not None:
+                updates[key] = value
+        await db.v3_creative_snapshots.update_one({"id": snapshot_id}, {"$set": updates})
+        await db.v3_business_cases.update_one(
+            {"id": snap["business_case_id"]},
+            {"$set": {"updated_at": _now_iso()}, "$push": {"timeline": {"at": _now_iso(), "event": "strategy_snapshot_edited", "by": payload.reviewer}}},
+        )
+        return await db.v3_creative_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+
+    @router.post("/business-cases/{bc_id}/creative-snapshot/send")
+    async def send_strategy_snapshot_to_brand(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        snap = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "No Strategy Snapshot to send.")
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        sent_at = _now_iso()
+        await db.v3_creative_snapshots.update_one(
+            {"id": snap["id"]},
+            {"$set": {"status": "sent_to_brand", "shared_at": sent_at}},
+        )
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.creative_snapshot_status": "sent_to_brand", "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": sent_at, "event": "strategy_snapshot_sent_to_brand", "snapshot_id": snap["id"]}}},
+        )
+        email = await queue_email(
+            to=(brand or {}).get("email", ""),
+            subject=f"Strategy Snapshot ready for approval - {case['title']}",
+            body=(
+                f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
+                f"The Strategy Snapshot for {case['title']} is ready in your TASCK brand portal. "
+                "You can approve it or add section-level comments for the admin team."
+            ),
+            kind="strategy_snapshot_review",
+            brand_id=case["brand_id"],
+            business_case_id=bc_id,
+            attachments=[{"type": "strategy_snapshot", "id": snap["id"], "title": snap.get("title")}],
+        )
+        return {"ok": True, "sent_at": sent_at, "email": email}
+
+    class StrategySnapshotCommentPayload(BaseModel):
+        section_index: int
+        line_index: Optional[int] = None
+        quoted_text: str = ""
+        comment: str
+        suggested_text: Optional[str] = None
+        author: str = "brand"
+
+    @router.post("/creative-snapshots/{snapshot_id}/comments")
+    async def add_strategy_snapshot_comment(snapshot_id: str, payload: StrategySnapshotCommentPayload):
+        snap = await db.v3_creative_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "Strategy Snapshot not found")
+        comment = {
+            "id": f"cm-{uuid.uuid4().hex[:8]}",
+            "section_index": payload.section_index,
+            "line_index": payload.line_index,
+            "quoted_text": payload.quoted_text,
+            "comment": payload.comment,
+            "suggested_text": payload.suggested_text,
+            "author": payload.author,
+            "status": "open",
+            "created_at": _now_iso(),
+            "resolved_at": None,
+        }
+        await db.v3_creative_snapshots.update_one({"id": snapshot_id}, {"$push": {"brand_comments": comment}, "$set": {"status": "under_review"}})
+        await db.v3_business_cases.update_one(
+            {"id": snap["business_case_id"]},
+            {"$set": {"updated_at": _now_iso()}, "$push": {"timeline": {"at": _now_iso(), "event": "brand_strategy_comment", "comment_id": comment["id"]}}},
+        )
+        return comment
+
+    @router.post("/creative-snapshots/{snapshot_id}/comments/{comment_id}/resolve")
+    async def resolve_strategy_snapshot_comment(snapshot_id: str, comment_id: str):
+        result = await db.v3_creative_snapshots.update_one(
+            {"id": snapshot_id, "brand_comments.id": comment_id},
+            {"$set": {"brand_comments.$.status": "resolved", "brand_comments.$.resolved_at": _now_iso()}},
+        )
+        if result.matched_count == 0:
+            raise HTTPException(404, "Strategy Snapshot comment not found")
+        return {"ok": True}
+
     @router.post("/business-cases/{bc_id}/creative-snapshot/approve")
     async def approve_snapshot(bc_id: str, payload: ApproveAlignmentPayload):
         snap = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         if not snap:
-            raise HTTPException(404, "No Creative Snapshot to approve.")
+            raise HTTPException(404, "No Strategy Snapshot to approve.")
         approved_at = _now_iso()
-        await db.v3_creative_snapshots.update_one({"id": snap["id"]}, {"$set": {"status": "approved", "approved_at": approved_at, "approved_by": payload.approver}})
+        await db.v3_creative_snapshots.update_one({"id": snap["id"]}, {"$set": {"status": "approved", "approved_at": approved_at, "approved_by": payload.approver, "approved_by_party": payload.approver_party}})
         await db.v3_business_cases.update_one(
             {"id": bc_id},
-            {"$set": {"plan.creative_snapshot_approved_at": approved_at, "updated_at": _now_iso()},
-             "$push": {"timeline": {"at": _now_iso(), "event": "creative_snapshot_approved", "by": payload.approver}}},
+            {"$set": {"plan.creative_snapshot_approved_at": approved_at, "plan.creative_snapshot_status": "approved", "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": _now_iso(), "event": "strategy_snapshot_approved", "by": payload.approver}}},
         )
         return {"ok": True, "approved_at": approved_at}
 
@@ -757,14 +1594,22 @@ def make_v3_router(db):
             "content": payload.content,
         }
         await db.v3_interactions.insert_one({**interaction})
-        # Synthetic AI extraction
+        extraction = _extract_marketing_intelligence(payload.content)
         first_line = (payload.content or "").splitlines()[0][:160]
-        extraction = {
-            "summary": first_line or "Transcript ingested.",
-            "stated_intent": "Auto-extracted: " + first_line,
-            "decision_makers_mentioned": [],
-            "next_action": "RM to review extraction and confirm fields.",
-        }
+        extraction["summary"] = first_line or "Transcript ingested."
+        extraction["stated_intent"] = extraction["key_marketing_focus"]
+        extraction["next_action"] = "Admin to review Key Marketing Focus, Primary Target Audience, Key Marketing Channels, and Marketing KPIs."
+        if payload.business_case_id:
+            await db.v3_business_cases.update_one(
+                {"id": payload.business_case_id},
+                {"$set": {
+                    "connect.marketing_intelligence": extraction,
+                    "connect.stated_intent": extraction["key_marketing_focus"],
+                    "connect.connect_status": "in_discovery",
+                    "next_action": "Review AI transcript extraction and qualify to Frame",
+                    "updated_at": _now_iso(),
+                }, "$push": {"timeline": {"at": _now_iso(), "event": "transcript_ingested", "interaction_id": i_id}}},
+            )
         return {"interaction": interaction, "ai_extraction": extraction}
 
     class InteractionCreate(BaseModel):
@@ -789,10 +1634,18 @@ def make_v3_router(db):
         }
         await db.v3_interactions.insert_one({**doc})
         if payload.business_case_id:
+            set_updates = {"updated_at": _now_iso()}
+            if payload.type == "call_transcript":
+                extraction = _extract_marketing_intelligence(payload.content)
+                set_updates.update({
+                    "connect.marketing_intelligence": extraction,
+                    "connect.stated_intent": extraction["key_marketing_focus"],
+                    "next_action": "Review AI transcript extraction and qualify to Frame",
+                })
             await db.v3_business_cases.update_one(
                 {"id": payload.business_case_id},
                 {"$push": {"timeline": {"at": _now_iso(), "event": "interaction_logged", "interaction_id": doc["id"], "type": payload.type}},
-                 "$set": {"updated_at": _now_iso()}},
+                 "$set": set_updates},
             )
         return doc
 
@@ -849,7 +1702,7 @@ def make_v3_router(db):
         return {"ok": True, "response": response}
 
     # ------------------------------------------------------------------------
-    # CREATE Creative Snapshot — templated from brief response when available
+    # CREATE Strategy Snapshot — templated from brief response when available
     # ------------------------------------------------------------------------
     class SnapshotCreate(BaseModel):
         business_case_id: str
@@ -861,6 +1714,8 @@ def make_v3_router(db):
         case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
+        if case.get("engagement_track") == "paid" and not case.get("frame", {}).get("strategy_development_fee_paid"):
+            raise HTTPException(400, "Strategy Development Fee must be paid before drafting the Strategy Snapshot.")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
         creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
         brief = await db.v3_creative_briefs.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
@@ -880,8 +1735,9 @@ def make_v3_router(db):
             "approved_at": None,
             "approved_by": None,
             "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' × ' + creator['name'].upper() if creator else ''} × TASCK",
-            "title": payload.title or f"{case['title']} — Creative Snapshot v1",
+            "title": payload.title or f"{case['title']} — Strategy Snapshot v1",
             "concept": concept,
+            "brand_comments": [],
             "deliverables": [
                 {"num": 1, "title": "Hero piece", "format": "Short film", "duration": "8–12 min"},
                 {"num": 2, "title": "Social cut-downs", "format": "Vertical video", "duration": "6 × 30s"},
@@ -981,7 +1837,7 @@ def make_v3_router(db):
             "title": f"{case['title']} — Final Campaign Report",
             "summary": (
                 f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones."
-                f" KPI performance compared against the Creative Snapshot targets is summarised below, alongside the closure checklist."
+                f" KPI performance compared against the Strategy Snapshot targets is summarised below, alongside the closure checklist."
             ),
             "kpis": kpis,
             "closure_checklist": [
@@ -1010,6 +1866,96 @@ def make_v3_router(db):
     # ------------------------------------------------------------------------
     # ADMIN — Reset demo data (wipe v3 collections and re-seed)
     # ------------------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # OPPORTUNITY SCRAPER (simulated connector for demo CRM intake)
+    # ------------------------------------------------------------------------
+    class OpportunityScrapePayload(BaseModel):
+        query: str = "brand marketing opportunities Nigeria"
+        limit: int = 3
+
+    @router.get("/opportunities")
+    async def list_opportunities():
+        return await db.v3_opportunities.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+    @router.post("/opportunities/scrape")
+    async def scrape_opportunities(payload: OpportunityScrapePayload):
+        samples = [
+            {
+                "company": "NovaPay Africa",
+                "industry": "Fintech",
+                "problem": "Needs youth trust after a competitor campaign dominated social conversation.",
+                "contact": "marketing@novapay.demo",
+            },
+            {
+                "company": "GlowUp Beauty NG",
+                "industry": "Beauty / Retail",
+                "problem": "Looking for creator-led launch ideas for a Gen-Z skincare range.",
+                "contact": "partnerships@glowup.demo",
+            },
+            {
+                "company": "Verde Energy Drinks",
+                "industry": "FMCG - Beverages",
+                "problem": "Searching for music and nightlife partnerships ahead of dry-season activations.",
+                "contact": "brand@verde.demo",
+            },
+        ][: max(1, min(payload.limit, 3))]
+        created = []
+        for sample in samples:
+            existing_brand = await db.v3_brands.find_one({"company": sample["company"]}, {"_id": 0})
+            if existing_brand:
+                brand = existing_brand
+            else:
+                brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+                brand = {
+                    "id": brand_id,
+                    "company": sample["company"],
+                    "industry": sample["industry"],
+                    "website": "",
+                    "hq": "",
+                    "primary_contact": "Marketing Team",
+                    "role": "Brand contact",
+                    "email": sample["contact"],
+                    "phone": "",
+                    "status": "Lead - scraped opportunity",
+                    "lead_score": 64,
+                    "last_interaction": "just now",
+                    "engagement_track_default": "paid",
+                    "source": "opportunity_scraper_simulated",
+                }
+                await db.v3_brands.insert_one({**brand})
+                await db.v3_contacts.insert_one({
+                    "id": f"ct-{uuid.uuid4().hex[:8]}",
+                    "brand_id": brand_id,
+                    "name": "Marketing Team",
+                    "role": "Brand contact",
+                    "email": sample["contact"],
+                    "phone": "",
+                    "is_primary": True,
+                    "decision_seniority": "lead",
+                })
+            opportunity = {
+                "id": f"opp-{uuid.uuid4().hex[:8]}",
+                "brand_id": brand["id"],
+                "company": sample["company"],
+                "query": payload.query,
+                "problem": sample["problem"],
+                "status": "new",
+                "created_at": _now_iso(),
+            }
+            await db.v3_opportunities.insert_one({**opportunity})
+            await queue_email(
+                to=brand.get("email", sample["contact"]),
+                subject="TASCK POV: creator strategy opportunity",
+                body=(
+                    f"We spotted a possible marketing challenge for {sample['company']}: {sample['problem']} "
+                    "TASCK can prepare an Alignment Snapshot if your team wants to explore it."
+                ),
+                kind="scraped_opportunity_outreach",
+                brand_id=brand["id"],
+            )
+            created.append({"brand": brand, "opportunity": opportunity})
+        return {"query": payload.query, "created": created}
+
     @router.post("/admin/reset-demo")
     async def reset_demo():
         seed = get_v3_seed_data()

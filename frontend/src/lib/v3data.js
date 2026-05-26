@@ -66,7 +66,7 @@ export const v3Brands = [
     phone: '+234 802 XXX 8891',
     decisionMakers: [
       { name: 'Kemi Adebayo', role: 'GM Brand & Comms', note: 'lead' },
-      { name: 'Olu Akanbi', role: 'CMO', note: 'signed Creative Snapshot' },
+      { name: 'Olu Akanbi', role: 'CMO', note: 'signed Strategy Snapshot' },
       { name: 'Uche Ibekwe', role: 'Sponsorships Manager', note: 'day-to-day' },
     ],
     status: 'Active — in final stages of delivery',
@@ -305,7 +305,7 @@ export const v3Projects = [
     rmId: 'rm-adaeze',
     createdAt: '2026-02-01',
     daysInStage: 10,
-    nextAction: 'Creative Snapshot v1 under internal review',
+    nextAction: 'Strategy Snapshot v1 under internal review',
     health: 'on-track',
   },
   // ===== PROJECT 3: MTN x Burna Boy — DELIVER =====
@@ -524,8 +524,8 @@ export const v3AlignmentSnapshots = {
         items: [
           'Cultural specificity without cultural tokenism. The brand wants Nigerian-rooted creative, not generic Afro-aesthetic wallpaper. The matched creator must have real authority in their cultural context — not just availability.',
           'Timing pressure. In-market by Dec 1. That leaves approximately 7 weeks from Plan stage start to live launch. Tight but achievable if creator is matched by end of week 1 of Plan.',
-          'Creator reliability concerns. The 2024 campaign experience has made the team wary. The Creative Snapshot must be explicit on milestone commitments, deliverable formats, and consequence structures.',
-          'Multi-stakeholder sign-off. Folake, Chidi, and Ngozi each bring different lenses (marketing, commercial, creative). The Creative Snapshot should anticipate and pre-empt each.',
+          'Creator reliability concerns. The 2024 campaign experience has made the team wary. The Strategy Snapshot must be explicit on milestone commitments, deliverable formats, and consequence structures.',
+          'Multi-stakeholder sign-off. Folake, Chidi, and Ngozi each bring different lenses (marketing, commercial, creative). The Strategy Snapshot should anticipate and pre-empt each.',
         ],
       },
       {
@@ -537,7 +537,7 @@ export const v3AlignmentSnapshots = {
         heading: 'Open questions & ambiguities',
         type: 'flags',
         items: [
-          { text: 'KPI numerics — Brand has not committed to specific reach, engagement, or UGC targets. RM to confirm before Creative Snapshot.' },
+          { text: 'KPI numerics — Brand has not committed to specific reach, engagement, or UGC targets. RM to confirm before Strategy Snapshot.' },
           { text: 'Physical activation budget carve-out — Is the physical activation inside the ₦100–150M range, or additive? Material difference.' },
           { text: 'Usage rights duration — Not discussed. Standard TASCK is 12 months; Coca-Cola may want perpetual.' },
           { text: 'Creator preferences — Folake named three creators conversationally. Is this a shortlist we must match, or illustrative of taste?' },
@@ -647,7 +647,7 @@ export const v3Deliverables = {
   ],
 };
 
-// Creative Snapshot for Guinness × Rema (v1 draft)
+// Strategy Snapshot for Guinness x Rema (v1 draft)
 export const v3CreativeSnapshots = {
   'proj-guinness-rema': {
     versions: [
@@ -660,7 +660,7 @@ export const v3CreativeSnapshots = {
         approved: false,
         content: {
           brandHeader: 'GUINNESS × REMA × TASCK',
-          title: '"Made of More: Africa" — Creative Snapshot v1',
+          title: '"Made of More: Africa" — Strategy Snapshot v1',
           meta: 'Drafted by Adaeze Obi, RM | Status: Internal Review | 16 March 2026',
           concept: `Made of More: Africa is a three-part documentary film series authored by Rema, profiling three rising African figures whose lives embody the "Made of More" ethos. The creator serves as director and narrator across all three films; subjects are drawn from Nigeria (a woman working in climate-resilient agriculture — TBD), Kenya (rising figure in tech, TBD), and South Africa (rising figure in design or architecture, TBD).\n\nEach film runs 8 minutes. A connective narrative thread — written and performed by Rema — runs across all three, framing the trilogy as a single meditation on modern African ambition.\n\nThe Guinness brand appears with restraint:\n- Title sequence and end card\n- A single organic moment per film where the drink appears within the subject's life\n- No voiceover endorsement\n- No product shots`,
           deliverables: [
@@ -683,7 +683,7 @@ export const v3CreativeSnapshots = {
             { line: 'Contingency (1.7%)', amount: 3000000, pct: 2 },
           ],
           milestones: [
-            { milestone: 'Creative Snapshot approved by brand', date: '27 March 2026' },
+            { milestone: 'Strategy Snapshot approved by brand', date: '27 March 2026' },
             { milestone: 'Regional approval (Diageo Africa, Nairobi)', date: '10 April 2026' },
             { milestone: 'Contracts executed', date: '17 April 2026' },
             { milestone: 'Project invoice paid — enter DELIVER', date: '24 April 2026' },
@@ -755,6 +755,240 @@ export const getProjectsByStage = (stage) => v3Projects.filter(p => p.stage === 
 export const getProjectsForBrand = (brandId) => v3Projects.filter(p => p.brandId === brandId);
 export const getProjectsForCreator = (creatorId) => v3Projects.filter(p => p.creatorId === creatorId);
 
+const paidStages = ['plan', 'deliver', 'closed'];
+
+export const getMockMarketingIntelligence = (project) => {
+  if (project?.id === 'proj-cocacola-tems') {
+    return {
+      key_marketing_focus: 'Move Share a Coke Nigeria beyond personalised bottles into a culturally specific creator-led storytelling platform for Q4.',
+      primary_target_audience: 'Urban Nigerians aged 18-28, SEC A/B, led by Lagos, Abuja, Port Harcourt, Ibadan, and Enugu.',
+      key_marketing_channels: ['Instagram', 'TikTok', 'YouTube', 'Creator channels', 'Physical activation'],
+      marketing_kpis: [
+        { kpi: 'Reach', target: '8-12M unique impressions across paid and earned media.' },
+        { kpi: 'Engagement rate', target: '6-8% on creator-led content.' },
+        { kpi: 'UGC volume', target: '5,000+ posts using the campaign hashtag.' },
+        { kpi: 'Earned media value', target: 'Minimum N250M EMV.' },
+      ],
+    };
+  }
+  return {
+    key_marketing_focus: project?.nextAction || `Build a creator-led growth opportunity for ${project?.title || 'this brand'}.`,
+    primary_target_audience: 'Priority youth and culture audience to be confirmed from the connector transcript.',
+    key_marketing_channels: ['Instagram', 'TikTok', 'YouTube', 'PR'],
+    marketing_kpis: [
+      { kpi: 'Reach', target: 'Confirm target with brand.' },
+      { kpi: 'Engagement', target: 'Confirm benchmark with brand.' },
+      { kpi: 'Conversion signal', target: 'Define during Frame.' },
+    ],
+  };
+};
+
+export const buildMockBusinessCases = () => v3Projects.map((project) => ({
+  id: project.id,
+  brand_id: project.brandId,
+  creator_id: project.creatorId,
+  title: project.title,
+  stage: project.stage,
+  engagement_track: project.engagement === 'grant' ? 'grant' : 'paid',
+  estimated_value: project.estimatedValue,
+  rm_id: project.rmId,
+  created_at: project.createdAt,
+  days_in_stage: project.daysInStage,
+  next_action: project.nextAction,
+  health: project.health,
+  connect: {
+    status: project.stage === 'connect' ? 'in_discovery' : 'qualified_to_frame',
+    stated_intent: project.nextAction,
+    marketing_intelligence: getMockMarketingIntelligence(project),
+  },
+}));
+
+export const buildMockAdminOverview = () => {
+  const businessCases = buildMockBusinessCases();
+  const byStage = businessCases.reduce((acc, item) => ({ ...acc, [item.stage]: (acc[item.stage] || 0) + 1 }), {});
+  const paid = businessCases.filter((item) => item.engagement_track === 'paid');
+  const grant = businessCases.filter((item) => item.engagement_track === 'grant');
+  return {
+    business_cases_total: businessCases.length,
+    paid_count: paid.length,
+    grant_count: grant.length,
+    paid_total_value: paid.reduce((sum, item) => sum + item.estimated_value, 0),
+    grant_total_value: grant.reduce((sum, item) => sum + item.estimated_value, 0),
+    by_stage: byStage,
+  };
+};
+
+const makeGenericAlignmentSnapshot = (project, brand) => {
+  const mi = getMockMarketingIntelligence(project);
+  return {
+    status: project.stage === 'connect' ? 'draft' : 'under_review',
+    generatedAt: project.createdAt,
+    approvedBy: null,
+    brandHeader: `${brand?.company?.split(' ')[0]?.toUpperCase() || 'BRAND'} x TASCK`,
+    title: `"${project.title}" - Alignment Snapshot`,
+    meta: 'AI-generated from connector phase data | Pending admin review',
+    sections: [
+      { heading: 'Business promotion summary', type: 'prose', content: `TASCK can help ${brand?.company || 'the brand'} turn "${project.title}" into a creator-led campaign anchored on ${mi.key_marketing_focus}` },
+      { heading: 'Key Marketing Focus', type: 'prose', content: mi.key_marketing_focus },
+      { heading: 'Primary Target Audience', type: 'prose', content: mi.primary_target_audience },
+      { heading: 'Key Marketing Channels', type: 'bullets', items: mi.key_marketing_channels },
+      { heading: 'Marketing KPIs', type: 'kpis', items: mi.marketing_kpis },
+      { heading: 'Next steps', type: 'bullets', items: ['Admin reviews this draft.', 'Send Alignment Snapshot to brand.', 'Brand or admin proxy approval moves the project into Frame for creator matching.'] },
+    ],
+    scopeFlags: [
+      { text: 'Confirm KPI numbers', reason: 'The connector phase needs brand-approved targets before Strategy Snapshot.' },
+      { text: 'Confirm budget ceiling', reason: 'Creator matching depends on realistic fee and production assumptions.' },
+    ],
+  };
+};
+
+export const buildMockAlignmentSnapshot = (project) => {
+  const brand = getBrand(project.brandId);
+  const source = v3AlignmentSnapshots[project.id] || makeGenericAlignmentSnapshot(project, brand);
+  return {
+    id: `as-${project.id}`,
+    business_case_id: project.id,
+    status: source.status || 'under_review',
+    generated_at: source.generatedAt,
+    approved_at: null,
+    approved_by: source.approvedBy,
+    approved_by_party: null,
+    brand_header: source.brandHeader,
+    title: source.title,
+    meta: source.meta,
+    marketing_intelligence: getMockMarketingIntelligence(project),
+    sections: source.sections || [],
+    scope_flags: source.scopeFlags || [],
+    brand_comments: project.id === 'proj-cocacola-tems'
+      ? [{
+          id: 'comment-demo-kpi',
+          section_index: 2,
+          quoted_text: 'Urban Nigerians aged 18-28',
+          comment: 'Please confirm whether Abuja is primary or secondary before this goes wider internally.',
+          author: 'Folake Adeniran',
+          status: 'open',
+          created_at: '2026-03-11T10:00:00Z',
+        }]
+      : [],
+  };
+};
+
+export const buildMockBusinessCaseBundle = (id) => {
+  const project = v3Projects.find((item) => item.id === id);
+  if (!project) return null;
+  const brand = getBrand(project.brandId);
+  const creator = getCreator(project.creatorId);
+  const rm = getRM(project.rmId);
+  const businessCase = buildMockBusinessCases().find((item) => item.id === id);
+  const alignment = project.stage === 'connect' ? null : buildMockAlignmentSnapshot(project);
+  const briefResponse = v3BriefResponses[id];
+  const creativeSnapshotVersion = v3CreativeSnapshots[id]?.versions?.[0];
+  const creatorMatch = v3CreatorMatches[id];
+  const invoices = project.engagement === 'retainer' && paidStages.includes(project.stage)
+    ? [{
+        id: `sdf-${project.id}`,
+        business_case_id: project.id,
+        kind: 'strategy_development_fee',
+        amount: Math.max(4000000, Math.round(project.estimatedValue * 0.035)),
+        status: project.stage === 'deliver' ? 'paid' : 'issued',
+        issued_at: project.stage === 'plan' ? '2026-03-16T09:00:00Z' : '2026-04-01T09:00:00Z',
+      }]
+    : [];
+  return {
+    source: 'mock',
+    business_case: {
+      ...businessCase,
+      frame: {
+        alignment_snapshot_id: alignment?.id,
+        alignment_snapshot_status: alignment?.status,
+        scope_flags_total: alignment?.scope_flags?.length || 0,
+        scope_flags_resolved: 0,
+        strategy_development_fee_paid: invoices.some((inv) => inv.status === 'paid'),
+        strategy_development_fee_due_stage: 'after_creator_brief_before_strategy_snapshot',
+      },
+      plan: {
+        creator_shortlist_status: creatorMatch ? 'matched' : 'pending',
+        creative_brief_status: briefResponse ? 'responded' : 'pending',
+        strategy_snapshot_status: creativeSnapshotVersion?.status || 'pending',
+        contract_status: 'draft',
+      },
+      deliver: {
+        budget_planning_status: project.stage === 'deliver' ? 'complete' : 'pending',
+        timeline_planning_status: project.stage === 'deliver' ? 'complete' : 'pending',
+        delivery_status: project.stage === 'deliver' ? 'in_progress' : 'pending',
+        scope_change_log: [],
+      },
+      closure: {
+        report_status: v3FinalReports[id] ? 'generated' : 'pending',
+        brand_feedback_received: false,
+        creator_feedback_received: false,
+      },
+    },
+    brand,
+    creator,
+    rm,
+    interactions: v3Interactions[project.brandId] || [],
+    alignment_snapshot: alignment,
+    invoices,
+    brainstorm_round: creatorMatch ? {
+      id: `brainstorm-${id}`,
+      phases: [
+        { phase: 1, label: 'Audience fit', status: 'complete' },
+        { phase: 2, label: 'Cultural fit', status: 'complete' },
+        { phase: 3, label: 'Reliability', status: 'complete' },
+        { phase: 4, label: 'Commercial fit', status: 'complete' },
+        { phase: 5, label: 'Risk', status: 'complete' },
+        { phase: 6, label: 'Shortlist', status: 'complete' },
+        { phase: 7, label: 'Admin review', status: 'pending' },
+      ],
+      scored_creators: [{
+        creator_id: creatorMatch.creatorId,
+        cultural_fit: 5,
+        conversion_behavior: 5,
+        reliability: 4,
+        reason: creatorMatch.rationale?.[0],
+      }],
+    } : null,
+    creative_brief: briefResponse ? {
+      id: `brief-${id}`,
+      business_case_id: id,
+      creator_id: briefResponse.creatorId,
+      sent_at: briefResponse.sentAt,
+      brief_text: `Brief for ${project.title}\n\nAudience: ${getMockMarketingIntelligence(project).primary_target_audience}\n\nPlease respond with interest, fee, availability, conditions, and creative approach.`,
+      status: 'responded',
+      creator_response: {
+        interest: briefResponse.interest,
+        fee_expectation: briefResponse.feeExpectation,
+        availability: briefResponse.availability,
+        proposed_concept: briefResponse.proposedConcept,
+      },
+    } : null,
+    creative_snapshot: creativeSnapshotVersion ? {
+      id: `cs-${id}`,
+      business_case_id: id,
+        status: creativeSnapshotVersion.status,
+        title: creativeSnapshotVersion.content.title,
+        concept: creativeSnapshotVersion.content.concept,
+        deliverables: creativeSnapshotVersion.content.deliverables,
+        budget: creativeSnapshotVersion.content.budget,
+        milestones: creativeSnapshotVersion.content.milestones,
+        success_metrics: creativeSnapshotVersion.content.successMetrics,
+        brand_comments: [{
+          id: 'comment-strategy-budget',
+          section_index: 2,
+          quoted_text: 'Budget',
+          comment: 'Please clarify whether the production travel line includes all three countries.',
+          author: 'Tunde Adeola',
+          status: 'open',
+          created_at: '2026-03-17T09:00:00Z',
+        }],
+      } : null,
+    contract: null,
+    deliverables: v3Deliverables[id] || [],
+    final_report: v3FinalReports[id] || null,
+  };
+};
+
 // Stage config
 export const v3Stages = [
   { key: 'connect', label: 'Connect', color: '#9B9380' },
@@ -764,6 +998,7 @@ export const v3Stages = [
 ];
 
 export const formatNairaV3 = (amount) => {
+  if (amount == null || Number.isNaN(Number(amount))) return '₦0';
   if (amount >= 1000000000) return `₦${(amount / 1000000000).toFixed(1)}B`;
   if (amount >= 1000000) return `₦${(amount / 1000000).toFixed(0)}M`;
   if (amount >= 1000) return `₦${(amount / 1000).toFixed(0)}K`;

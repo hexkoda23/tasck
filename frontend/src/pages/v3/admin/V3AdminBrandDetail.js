@@ -1,15 +1,33 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { v3Brands, v3Interactions, getProjectsForBrand, v3Stages, formatNairaV3 } from '../../../lib/v3data';
+import { v3GetBrand } from '../../../lib/v3api';
 import { ChevronLeft, Mail, Phone, Globe, Building2, Sparkles } from 'lucide-react';
+
+const normaliseBrand = (b) => ({
+  ...b,
+  primaryContact: b.primaryContact || b.primary_contact,
+  leadScore: b.leadScore || b.lead_score || 0,
+  lastInteraction: b.lastInteraction || b.last_interaction,
+  decisionMakers: b.decisionMakers || [{ name: b.primary_contact || b.primaryContact, role: b.role || 'Primary contact', note: 'primary' }],
+  leadScoreFactors: b.leadScoreFactors || [{ factor: 'CRM intake', detail: b.status || 'Captured in CRM' }],
+});
 
 const V3AdminBrandDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const brand = v3Brands.find(b => b.id === id);
-  if (!brand) return <div className="p-8 text-[#8A8A8A]">Brand not found.</div>;
-  const projects = getProjectsForBrand(id);
-  const interactions = v3Interactions[id] || [];
+  const fallbackBrand = v3Brands.find(b => b.id === id);
+  const [bundle, setBundle] = useState(fallbackBrand ? { brand: fallbackBrand, contacts: [], business_cases: getProjectsForBrand(id), interactions: v3Interactions[id] || [], emails: [] } : null);
+
+  useEffect(() => {
+    v3GetBrand(id).then(setBundle).catch(() => {});
+  }, [id]);
+
+  if (!bundle?.brand) return <div className="p-8 text-[#8A8A8A]">Brand not found.</div>;
+  const brand = normaliseBrand(bundle.brand);
+  const projects = bundle.business_cases || getProjectsForBrand(id);
+  const interactions = bundle.interactions || v3Interactions[id] || [];
+  const emails = bundle.emails || [];
   const scoreColor = brand.leadScore >= 70 ? '#1F4A3A' : brand.leadScore >= 40 ? '#C49B5F' : '#B54A37';
 
   return (
@@ -61,10 +79,24 @@ const V3AdminBrandDetail = () => {
                 return (
                   <button key={proj.id} onClick={() => navigate(`/v3/admin/projects/${proj.id}`)} className="w-full v3-card p-4 text-left flex items-center gap-3 hover:border-[#D4CDBF] transition-colors mb-2">
                     <div className="w-2 h-8 rounded-full" style={{ background: stage?.color }} />
-                    <div className="flex-1"><p className="text-[13px] font-medium text-[#1A1A1A]">{proj.title}</p><p className="text-[11px] text-[#8A8A8A]">{stage?.label} &middot; {formatNairaV3(proj.estimatedValue)}</p></div>
+                    <div className="flex-1"><p className="text-[13px] font-medium text-[#1A1A1A]">{proj.title}</p><p className="text-[11px] text-[#8A8A8A]">{stage?.label || proj.stage} &middot; {formatNairaV3(proj.estimatedValue || proj.estimated_value || 0)}</p></div>
                   </button>
                 );
               })}
+            </div>
+          )}
+          {emails.length > 0 && (
+            <div className="mb-6">
+              <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Queued Emails</h2>
+              {emails.slice(0, 4).map(email => (
+                <div key={email.id} className="v3-card p-4 mb-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[13px] font-medium text-[#1A1A1A]">{email.subject}</p>
+                    <span className="text-[10px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">{email.status}</span>
+                  </div>
+                  <p className="text-[11px] text-[#8A8A8A]">{email.to}</p>
+                </div>
+              ))}
             </div>
           )}
           <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Interaction History</h2>
@@ -72,7 +104,7 @@ const V3AdminBrandDetail = () => {
             <div key={int.id} className="v3-card p-4 mb-2">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#8A8A8A] capitalize">{int.type.replace('_', ' ')}</span>
-                <span className="text-[11px] text-[#8A8A8A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{int.dateISO}</span>
+                <span className="text-[11px] text-[#8A8A8A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{int.dateISO || int.date_iso}</span>
                 <span className="text-[11px] text-[#5C5C5C] ml-auto">{int.author}</span>
               </div>
               <p className="text-[13px] font-medium text-[#1A1A1A] mb-1">{int.title}</p>

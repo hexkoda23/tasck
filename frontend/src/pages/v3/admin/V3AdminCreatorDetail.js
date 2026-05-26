@@ -1,12 +1,50 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { v3Creators, v3Projects, v3Stages, getBrand, getRM, formatNairaV3 } from '../../../lib/v3data';
+import { v3GetCreator } from '../../../lib/v3api';
+import { getStoredDemoCreator } from '../../../lib/v3creatorStore';
 import { ChevronLeft, MapPin, Music, Globe, Star, FolderOpen } from 'lucide-react';
+
+const normaliseCreator = (creator) => creator ? ({
+  ...creator,
+  name: creator.name || creator.full_name || creator.handle || 'Unnamed creator',
+  tier: creator.tier || 'rising',
+  genre: creator.genre || '',
+  location: creator.location || '',
+  fitScore: creator.fitScore ?? creator.fit_score ?? 70,
+  onTimeRate: creator.onTimeRate ?? creator.on_time_rate ?? 0,
+  brandSatisfaction: creator.brandSatisfaction ?? creator.brand_satisfaction ?? 0,
+  repeatBrandCount: creator.repeatBrandCount ?? creator.repeat_brand_count ?? 0,
+  rateCard: creator.rateCard ?? creator.rate_card ?? 'TBD',
+  reliability: creator.reliability ?? 0,
+  platforms: Array.isArray(creator.platforms)
+    ? creator.platforms
+    : String(creator.platforms || '').split(',').map((p) => p.trim()).filter(Boolean),
+  bio: creator.bio || creator.notes || creator.audience || 'Creator profile is ready for admin review.',
+  managerName: creator.managerName || creator.manager_name || '',
+  managerEmail: creator.managerEmail || creator.manager_email || creator.email || '',
+  sourceLinks: Array.isArray(creator.sourceLinks) ? creator.sourceLinks : Array.isArray(creator.source_links) ? creator.source_links : [],
+  discoveryNotes: creator.discoveryNotes || creator.discovery_notes || '',
+  source: creator.source || 'roster',
+}) : null;
 
 const V3AdminCreatorDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const creator = v3Creators.find(c => c.id === id);
+  const [creator, setCreator] = useState(() => normaliseCreator(getStoredDemoCreator(id) || v3Creators.find(c => c.id === id)));
+
+  useEffect(() => {
+    let mounted = true;
+    v3GetCreator(id)
+      .then((live) => {
+        if (mounted) setCreator(normaliseCreator(live?.creator || live));
+      })
+      .catch(() => {
+        if (mounted) setCreator(normaliseCreator(getStoredDemoCreator(id) || v3Creators.find(c => c.id === id)));
+      });
+    return () => { mounted = false; };
+  }, [id]);
+
   if (!creator) return <div className="p-8 text-[#8A8A8A]">Creator not found.</div>;
 
   const projects = v3Projects.filter(p => p.creatorId === id);
@@ -47,6 +85,14 @@ const V3AdminCreatorDetail = () => {
             <p className="text-[14px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{creator.rateCard}</p>
             <p className="text-[10px] text-[#8A8A8A] mt-1">Per campaign (negotiable)</p>
           </div>
+
+          {creator.managerEmail && (
+            <div className="v3-card p-4">
+              <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Contact</p>
+              <p className="text-[13px] text-[#1A1A1A]">{creator.managerName || 'Manager / public contact'}</p>
+              <p className="text-[11px] text-[#6E6657]">{creator.managerEmail}</p>
+            </div>
+          )}
         </div>
 
         {/* Right — Details */}
@@ -54,6 +100,9 @@ const V3AdminCreatorDetail = () => {
           <div className="v3-card p-5">
             <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Bio</h3>
             <p className="text-[14px] text-[#5C5C5C] leading-relaxed">{creator.bio}</p>
+            {creator.discoveryNotes && (
+              <p className="text-[12px] text-[#7A5F23] leading-relaxed mt-3">Discovery note: {creator.discoveryNotes}</p>
+            )}
           </div>
 
           <div className="v3-card p-5">
@@ -100,6 +149,17 @@ const V3AdminCreatorDetail = () => {
             <div className="v3-card p-6 text-center">
               <FolderOpen className="w-5 h-5 text-[#8A8A8A] mx-auto mb-2" />
               <p className="text-[13px] text-[#8A8A8A]">No active projects with this creator.</p>
+            </div>
+          )}
+
+          {creator.sourceLinks.length > 0 && (
+            <div className="v3-card p-5">
+              <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Discovery sources</h3>
+              <div className="space-y-1">
+                {creator.sourceLinks.map((link) => (
+                  <p key={link} className="text-[12px] text-[#1F4A3A]">{link}</p>
+                ))}
+              </div>
             </div>
           )}
         </div>

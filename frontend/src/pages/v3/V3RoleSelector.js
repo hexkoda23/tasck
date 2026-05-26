@@ -18,7 +18,7 @@ const roles = [
     subtitle: 'Track your campaign, approve the work',
     description: 'Curated project view, approvals, documents vault, invoices, and messaging.',
     icon: Building2,
-    path: '/v3/brand',
+    path: '/v3/brand/login',
   },
   {
     id: 'creator',

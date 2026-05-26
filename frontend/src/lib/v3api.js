@@ -4,18 +4,31 @@
 
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const V3 = `${BACKEND_URL}/api/v3`;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+const V3 = BACKEND_URL ? `${BACKEND_URL}/api/v3` : '/api/v3';
 
 const v3 = axios.create({ baseURL: V3, headers: { 'Content-Type': 'application/json' } });
+
+v3.interceptors.response.use((response) => {
+  const data = response.data;
+  if (typeof data === 'string' && data.trim().startsWith('<')) {
+    return Promise.reject(new Error('V3 backend unavailable; using demo workflow data.'));
+  }
+  return response;
+});
 
 // -------- Brands / Contacts / Creators --------
 export const v3GetBrands = (params) => v3.get('/brands', { params }).then(r => r.data);
 export const v3GetBrand = (brandId) => v3.get(`/brands/${brandId}`).then(r => r.data);
 export const v3CreateBrand = (payload) => v3.post('/brands', payload).then(r => r.data);
+export const v3ChangeBrandPassword = (payload) => v3.post('/brand-accounts/change-password', payload).then(r => r.data);
+export const v3ListEmailOutbox = (params) => v3.get('/email-outbox', { params }).then(r => r.data);
 export const v3GetContacts = (brandId) => v3.get('/contacts', { params: { brand_id: brandId } }).then(r => r.data);
 export const v3GetCreators = (tier) => v3.get('/creators', { params: { tier } }).then(r => r.data);
 export const v3GetCreator = (creatorId) => v3.get(`/creators/${creatorId}`).then(r => r.data);
+export const v3CreateCreator = (payload) => v3.post('/creators', payload).then(r => r.data);
+export const v3SearchWebCreators = (payload) => v3.post('/creators/search-web', payload).then(r => r.data);
+export const v3SuggestCreatorMatches = (bcId) => v3.post(`/business-cases/${bcId}/ai/creator-matches`).then(r => r.data);
 
 // -------- Business Cases (the primitive) --------
 export const v3ListBusinessCases = (params) => v3.get('/business-cases', { params }).then(r => r.data);
@@ -26,6 +39,11 @@ export const v3AdvanceBusinessCase = (bcId, payload = { actor: 'rm' }) => v3.pos
 // -------- Frame stage --------
 export const v3GenerateAlignment = (bcId) => v3.post(`/business-cases/${bcId}/ai/alignment`).then(r => r.data);
 export const v3ApproveAlignment = (bcId, approver) => v3.post(`/business-cases/${bcId}/ai/alignment/approve`, { approver }).then(r => r.data);
+export const v3ApproveAlignmentAs = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/ai/alignment/approve`, { approver, approver_party }).then(r => r.data);
+export const v3UpdateAlignment = (snapshotId, payload) => v3.patch(`/alignment-snapshots/${snapshotId}`, payload).then(r => r.data);
+export const v3SendAlignmentToBrand = (bcId) => v3.post(`/business-cases/${bcId}/ai/alignment/send`).then(r => r.data);
+export const v3AddAlignmentComment = (snapshotId, payload) => v3.post(`/alignment-snapshots/${snapshotId}/comments`, payload).then(r => r.data);
+export const v3ResolveAlignmentComment = (snapshotId, commentId) => v3.post(`/alignment-snapshots/${snapshotId}/comments/${commentId}/resolve`).then(r => r.data);
 export const v3ResolveScopeFlag = (bcId, idx) => v3.post(`/business-cases/${bcId}/scope-flags/${idx}/resolve`).then(r => r.data);
 
 // -------- Invoices --------
@@ -36,9 +54,14 @@ export const v3MarkInvoicePaid = (invoiceId) => v3.post(`/invoices/${invoiceId}/
 export const v3CreateBrief = (payload) => v3.post('/creative-briefs', payload).then(r => r.data);
 export const v3ListBriefs = (params) => v3.get('/creative-briefs', { params }).then(r => r.data);
 export const v3SimulateBriefResponse = (briefId) => v3.post(`/creative-briefs/${briefId}/simulate-response`).then(r => r.data);
+export const v3SendBriefReminder = (briefId) => v3.post(`/creative-briefs/${briefId}/remind`).then(r => r.data);
 export const v3ListSnapshots = (bcId) => v3.get('/creative-snapshots', { params: { business_case_id: bcId } }).then(r => r.data);
 export const v3CreateSnapshot = (payload) => v3.post('/creative-snapshots', payload).then(r => r.data);
 export const v3ApproveSnapshot = (bcId, approver) => v3.post(`/business-cases/${bcId}/creative-snapshot/approve`, { approver }).then(r => r.data);
+export const v3UpdateStrategySnapshot = (snapshotId, payload) => v3.patch(`/creative-snapshots/${snapshotId}`, payload).then(r => r.data);
+export const v3SendStrategySnapshotToBrand = (bcId) => v3.post(`/business-cases/${bcId}/creative-snapshot/send`).then(r => r.data);
+export const v3AddStrategySnapshotComment = (snapshotId, payload) => v3.post(`/creative-snapshots/${snapshotId}/comments`, payload).then(r => r.data);
+export const v3ResolveStrategySnapshotComment = (snapshotId, commentId) => v3.post(`/creative-snapshots/${snapshotId}/comments/${commentId}/resolve`).then(r => r.data);
 export const v3CreateBrainstorm = (payload) => v3.post('/brainstorm-rounds', payload).then(r => r.data);
 export const v3ListBrainstorms = (bcId) => v3.get('/brainstorm-rounds', { params: { business_case_id: bcId } }).then(r => r.data);
 
@@ -67,6 +90,8 @@ export const v3SetConnectStatus = (bcId, status) => v3.post(`/business-cases/${b
 export const v3ListInteractions = (params) => v3.get('/interactions', { params }).then(r => r.data);
 export const v3CreateInteraction = (payload) => v3.post('/interactions', payload).then(r => r.data);
 export const v3IngestTranscript = (payload) => v3.post('/interactions/ingest-transcript', payload).then(r => r.data);
+export const v3ScrapeBrandOpportunities = (payload) => v3.post('/opportunities/scrape', payload).then(r => r.data);
+export const v3ListBrandOpportunities = () => v3.get('/opportunities').then(r => r.data);
 
 // -------- Admin --------
 export const v3ResetDemo = () => v3.post('/admin/reset-demo').then(r => r.data);
