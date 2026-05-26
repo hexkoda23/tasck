@@ -1945,6 +1945,8 @@ def make_v3_router(db):
     ]
     NOT_FOUND = "Not found - recommend manual search."
     DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514"
+    DEFAULT_EMERGENT_PROVIDER = "gemini"
+    DEFAULT_EMERGENT_MODEL = "gemini-2.0-flash"
 
     class OpportunityQueryTemplate(BaseModel):
         keywords: str = "brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria"
@@ -2281,14 +2283,68 @@ Produce the opportunity card JSON.
             "reasoning": str(card.get("reasoning") or "No model reasoning provided.")[:500],
         }
 
+    def _emergent_llm_key() -> Optional[str]:
+        return os.getenv("EMERGENT_LLM_KEY") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_LLM_KEY")
+
+    def _opportunity_llm_configured() -> bool:
+        return bool(
+            _emergent_llm_key() or
+            os.getenv("ANTHROPIC_API_KEY") or
+            (os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY") and os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL")) or
+            os.getenv("OPENAI_API_KEY")
+        )
+
+    def _emergent_model_config() -> tuple[str, str]:
+        provider = os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or DEFAULT_EMERGENT_PROVIDER
+        model = os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or DEFAULT_EMERGENT_MODEL
+        return provider, model
+
+    def _response_to_text(response: Any) -> str:
+        if isinstance(response, str):
+            return response
+        for attr in ("text", "content", "message"):
+            value = getattr(response, attr, None)
+            if value:
+                return str(value)
+        return str(response or "")
+
+    def _call_emergent_opportunity_llm(
+        emergent_key: str,
+        system_prompt: str,
+        user_message: str,
+        template: OpportunityQueryTemplate,
+    ) -> Dict[str, Any]:
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+        except Exception as exc:
+            raise RuntimeError("emergentintegrations is not installed in the backend environment") from exc
+
+        provider, emergent_model = _emergent_model_config()
+
+        async def _send() -> str:
+            chat = LlmChat(
+                api_key=emergent_key,
+                session_id=f"opportunity-scanner-{uuid.uuid4()}",
+                system_message=system_prompt,
+            ).with_model(provider, emergent_model)
+            response = await chat.send_message(UserMessage(text=user_message))
+            return _response_to_text(response)
+
+        text = asyncio.run(_send())
+        return _normalise_llm_card(_parse_llm_json(text), template)
+
     def _call_opportunity_llm(item: Dict[str, str], template: OpportunityQueryTemplate) -> Optional[Dict[str, Any]]:
         model = os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or DEFAULT_LLM_MODEL
         system_prompt = _llm_system_prompt(template)
         user_message = _llm_user_message(item, template)
+        emergent_key = _emergent_llm_key()
         anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         custom_key = os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
         custom_base = (os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
         openai_key = os.getenv("OPENAI_API_KEY")
+
+        if emergent_key:
+            return _call_emergent_opportunity_llm(emergent_key, system_prompt, user_message, template)
 
         if anthropic_key:
             response = requests.post(
@@ -2455,11 +2511,7 @@ Produce the opportunity card JSON.
             "status": "running",
             "raw_count": 0,
             "candidate_count": 0,
-            "extraction_method": "llm" if (
-                os.getenv("ANTHROPIC_API_KEY") or
-                (os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY") and os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL")) or
-                os.getenv("OPENAI_API_KEY")
-            ) else "heuristic_fallback",
+            "extraction_method": "llm" if _opportunity_llm_configured() else "heuristic_fallback",
             "fallback_count": 0,
             "created_at": _now_iso(),
             "created_by": payload.created_by,

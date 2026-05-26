@@ -145,11 +145,11 @@ const V3Layout = ({ portal }) => {
       {/* Main content with topbar */}
       <div className="v3-main">
         {/* Topbar */}
-        <div className="sticky top-0 z-20 bg-[#FAFAF7]/80 backdrop-blur-md border-b border-[#E8E4DB] px-6 py-2.5 flex items-center gap-3">
+        <div className="v3-topbar sticky top-0 z-20 bg-[#FAFAF7]/80 backdrop-blur-md border-b border-[#E8E4DB] px-6 py-2.5 flex items-center gap-3 min-w-0 overflow-hidden">
           <button onClick={() => {
             const event = new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true });
             window.dispatchEvent(event);
-          }} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#E8E4DB] bg-white hover:border-[#D4CDBF] transition-colors cursor-text" data-testid="search-trigger">
+          }} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#E8E4DB] bg-white hover:border-[#D4CDBF] transition-colors cursor-text min-w-0" data-testid="search-trigger">
             <Search className="w-3.5 h-3.5 text-[#8A8A8A]" />
             <span className="text-[12px] text-[#D4CDBF]">Search...</span>
             <kbd className="text-[9px] text-[#8A8A8A] bg-[#F4F2EC] px-1 py-0.5 rounded border border-[#E8E4DB] ml-4">⌘K</kbd>

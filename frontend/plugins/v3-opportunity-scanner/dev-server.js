@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { spawn } = require("child_process");
 const express = require("express");
 const fs = require("fs");
 const https = require("https");
@@ -20,6 +21,8 @@ const PARTNERSHIP_SIGNAL_TERMS = [
 ];
 const NOT_FOUND = "Not found - recommend manual search.";
 const DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_EMERGENT_PROVIDER = "gemini";
+const DEFAULT_EMERGENT_MODEL = "gemini-2.0-flash";
 
 const DEFAULT_TEMPLATE = {
   keywords: "brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria",
@@ -253,10 +256,94 @@ const normaliseLlmCard = (card, template) => {
   };
 };
 
+const emergentLlmKey = () => process.env.EMERGENT_LLM_KEY || process.env.OPPORTUNITY_SCANNER_EMERGENT_LLM_KEY || "";
+
+const llmConfigured = () => Boolean(
+  emergentLlmKey() ||
+  process.env.ANTHROPIC_API_KEY ||
+  process.env.OPENAI_API_KEY ||
+  (process.env.OPPORTUNITY_SCANNER_LLM_API_KEY && process.env.OPPORTUNITY_SCANNER_LLM_BASE_URL)
+);
+
+const runPythonJson = (script, payload) => new Promise((resolve, reject) => {
+  const python = process.env.EMERGENT_PYTHON || "python";
+  const child = spawn(python, ["-c", script], {
+    env: { ...process.env, EMERGENT_LLM_KEY: emergentLlmKey() },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  const timeout = setTimeout(() => {
+    child.kill();
+    reject(new Error("Emergent LLM request timed out"));
+  }, 40000);
+  child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+  child.on("error", (error) => {
+    clearTimeout(timeout);
+    reject(error);
+  });
+  child.on("close", (code) => {
+    clearTimeout(timeout);
+    if (code !== 0) {
+      reject(new Error(stderr.trim() || `Emergent LLM exited with code ${code}`));
+      return;
+    }
+    resolve(stdout.trim());
+  });
+  child.stdin.write(JSON.stringify(payload));
+  child.stdin.end();
+});
+
+const callEmergentOpportunityLlm = async (system, user) => {
+  const script = `
+import asyncio
+import json
+import os
+import sys
+import uuid
+
+from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+payload = json.load(sys.stdin)
+
+def response_to_text(response):
+    if isinstance(response, str):
+        return response
+    for attr in ("text", "content", "message"):
+        value = getattr(response, attr, None)
+        if value:
+            return str(value)
+    return str(response or "")
+
+async def main():
+    chat = LlmChat(
+        api_key=os.environ.get("EMERGENT_LLM_KEY"),
+        session_id=f"opportunity-scanner-{uuid.uuid4()}",
+        system_message=payload["system"],
+    ).with_model(payload["provider"], payload["model"])
+    response = await chat.send_message(UserMessage(text=payload["user"]))
+    print(response_to_text(response))
+
+asyncio.run(main())
+`;
+  return runPythonJson(script, {
+    system,
+    user,
+    provider: process.env.OPPORTUNITY_SCANNER_EMERGENT_PROVIDER || DEFAULT_EMERGENT_PROVIDER,
+    model: process.env.OPPORTUNITY_SCANNER_EMERGENT_MODEL || DEFAULT_EMERGENT_MODEL,
+  });
+};
+
 const callOpportunityLlm = async (item, template) => {
   const model = process.env.OPPORTUNITY_SCANNER_LLM_MODEL || DEFAULT_LLM_MODEL;
   const system = llmSystemPrompt(template);
   const user = llmUserMessage(item, template);
+
+  if (emergentLlmKey()) {
+    const text = await callEmergentOpportunityLlm(system, user);
+    return normaliseLlmCard(parseLlmJson(text), template);
+  }
 
   if (process.env.ANTHROPIC_API_KEY) {
     const data = await postJson("https://api.anthropic.com/v1/messages", {
@@ -571,7 +658,7 @@ const setupV3OpportunityScanner = (devServer) => {
     const template = { ...DEFAULT_TEMPLATE, ...(payload.template || {}) };
     const query = buildQuery({ ...payload, template });
     const scanId = makeId("oppscan");
-    const llmConfigured = Boolean(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || (process.env.OPPORTUNITY_SCANNER_LLM_API_KEY && process.env.OPPORTUNITY_SCANNER_LLM_BASE_URL));
+    const hasLlm = llmConfigured();
     const scan = {
       id: scanId,
       query,
@@ -580,7 +667,7 @@ const setupV3OpportunityScanner = (devServer) => {
       status: "running",
       raw_count: 0,
       candidate_count: 0,
-      extraction_method: llmConfigured ? "llm" : "heuristic_fallback",
+      extraction_method: hasLlm ? "llm" : "heuristic_fallback",
       fallback_count: 0,
       created_at: nowIso(),
       created_by: payload.created_by || "admin",
@@ -624,7 +711,7 @@ const setupV3OpportunityScanner = (devServer) => {
       for (const item of items) {
         let llmCard = null;
         let extractionMethod = "heuristic_fallback";
-        if (llmConfigured) {
+        if (hasLlm) {
           llmAttempts += 1;
           try {
             llmCard = await callOpportunityLlm(item, template);
@@ -644,7 +731,7 @@ const setupV3OpportunityScanner = (devServer) => {
         }
       }
       let extractionMethod = "llm";
-      if (!llmConfigured) extractionMethod = "heuristic_fallback";
+      if (!hasLlm) extractionMethod = "heuristic_fallback";
       else if (llmAttempts && llmFailures / Math.max(llmAttempts, 1) > 0.5) extractionMethod = "heuristic_fallback";
       else if (fallbackCount) extractionMethod = "mixed_llm_heuristic";
       const completedScan = { ...scan, status: "completed", raw_count: items.length, candidate_count: candidates.length, extraction_method: extractionMethod, fallback_count: fallbackCount, completed_at: nowIso() };
