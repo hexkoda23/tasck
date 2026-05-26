@@ -45,22 +45,22 @@ const V3AdminContractPreview = () => {
         <p><strong>Campaign Title:</strong> "{project.title}"</p>
         <p><strong>Engagement Model:</strong> {isRetainer ? 'Retainer — strategic advisory + campaign management' : 'Direct — single-project execution'}</p>
         <p><strong>Estimated Value:</strong> {formatNairaV3(project.estimatedValue)}</p>
-        <p>TASCK shall provide campaign strategy, creator matching, creative direction oversight, production management, deliverable quality assurance, and project closure services as detailed in the Creative Snapshot (Appendix A, to be attached upon approval).</p>
+        <p>TASCK shall provide campaign strategy, creator matching, creative direction oversight, production management, deliverable quality assurance, and project closure services as detailed in the Strategy Snapshot (Appendix A, to be attached upon approval).</p>
 
         <h2>3. Fee Structure</h2>
         {isRetainer && (
           <>
-            <p><strong>Consultancy Fee:</strong> {formatNairaV3(managementFee)} (15% of estimated value), payable upon execution of this Agreement. This covers the Frame stage, including Alignment Snapshot generation, scope definition, and strategic recommendation.</p>
-            <p><strong>Management Fee:</strong> 15% of the total approved campaign budget, payable upon Creative Snapshot approval and project commencement into the Deliver stage.</p>
+            <p><strong>Strategy Development Fee:</strong> {formatNairaV3(managementFee)} (15% of estimated value), payable after creator briefing and before the Strategy Snapshot is drafted. Frame, including Alignment Snapshot review, remains fee-free.</p>
+            <p><strong>Management Fee:</strong> 15% of the total approved campaign budget, payable upon Strategy Snapshot approval and project commencement into the Deliver stage.</p>
           </>
         )}
         {!isRetainer && (
-          <p><strong>Management Fee:</strong> {formatNairaV3(managementFee)} (12% of total budget), payable upon Creative Snapshot approval and project commencement.</p>
+          <p><strong>Management Fee:</strong> {formatNairaV3(managementFee)} (12% of total budget), payable upon Strategy Snapshot approval and project commencement.</p>
         )}
 
         <h2>4. Payment Terms</h2>
         <p>All invoices are payable within {isRetainer ? '14' : '21'} days of issuance. Late payments shall incur a 2% monthly surcharge. TASCK reserves the right to pause deliverables if payment is overdue by more than 30 days.</p>
-        <p>Creator payments are held in escrow by TASCK and released upon brand approval of each deliverable milestone, as specified in the Creative Snapshot timeline.</p>
+        <p>Creator payments are held in escrow by TASCK and released upon brand approval of each deliverable milestone, as specified in the Strategy Snapshot timeline.</p>
 
         <h2>5. Usage Rights</h2>
         <p>All content produced under this Agreement is licensed to the Client for a period of <strong>12 months</strong> from the date of final deliverable approval. Usage territory: {brand?.industry?.includes('Alcohol') ? 'Pan-African (Nigeria, Kenya, South Africa, Cameroon)' : 'Nigeria (primary) with option for pan-African extension'}.</p>
@@ -70,7 +70,7 @@ const V3AdminContractPreview = () => {
         <p>The Creator shall have final edit approval on all creative deliverables, subject to a brand safety clause. Brand safety is defined as: no content that could reasonably be interpreted as harmful, offensive, or inconsistent with the Client's public brand guidelines (to be provided by Client within 5 business days of contract execution).</p>
 
         <h2>7. Scope Changes</h2>
-        <p>Any deviation from the agreed scope (as defined in the approved Creative Snapshot) must be submitted as a formal Scope Change Request through the TASCK platform. Scope changes require written approval from both Client and TASCK before execution. Unapproved scope changes will not be invoiced.</p>
+        <p>Any deviation from the agreed scope (as defined in the approved Strategy Snapshot) must be submitted as a formal Scope Change Request through the TASCK platform. Scope changes require written approval from both Client and TASCK before execution. Unapproved scope changes will not be invoiced.</p>
 
         <h2>8. Confidentiality</h2>
         <p>All parties agree to maintain confidentiality of campaign strategies, financial terms, creator rates, and brand-sensitive information for a period of 24 months following project closure. Standard NDA terms apply.</p>

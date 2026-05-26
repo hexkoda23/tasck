@@ -14,7 +14,7 @@ const V3BrandOnboarding = ({ onComplete }) => {
     },
     {
       title: 'Your Document Vault',
-      desc: 'Every document generated for your campaigns — Alignment Snapshots, Creative Snapshots, contracts, and final reports — lives here. Version-controlled and always accessible.',
+      desc: 'Every document generated for your campaigns — Alignment Snapshots, Strategy Snapshots, contracts, and final reports — lives here. Version-controlled and always accessible.',
       icon: FileCheck,
       detail: 'When a document is ready for your review, you\'ll see it in Approvals. Approve or request changes directly from the portal — no email ping-pong.',
     },

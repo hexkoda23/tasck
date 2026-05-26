@@ -3,6 +3,7 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import Logo from '../../components/shared/Logo';
 import V3NotificationCenter from './V3NotificationCenter';
 import V3CommandK from './V3CommandK';
+import { getBrandPortalBrand, getBrandPortalSession } from '../../lib/v3brandPortal';
 import {
   LayoutDashboard, GitBranch, FolderOpen, Building2, Users, FileText,
   BookOpen, BarChart3, Wallet, Settings, Receipt, Layers,
@@ -57,11 +58,42 @@ const navConfig = {
   }
 };
 
+class V3RouteErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="v3-card p-6" data-testid="v3-route-error">
+          <p className="text-[12px] uppercase tracking-wider text-[#B54A37] mb-2">Route error</p>
+          <p className="text-[13px] text-[#1A1A1A]">{this.state.error.message}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const V3Layout = ({ portal }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const config = navConfig[portal];
   const [darkMode, setDarkMode] = useState(false);
+  const brandSession = portal === 'brand' ? getBrandPortalSession() : null;
+  const brand = portal === 'brand' ? getBrandPortalBrand() : null;
 
   const isActive = (item) => {
     if (item.exact) return location.pathname === item.path;
@@ -78,7 +110,9 @@ const V3Layout = ({ portal }) => {
         <div className="p-5 pb-3">
           <div className="cursor-pointer" onClick={() => navigate('/select')}><Logo variant="light" size="sm" /></div>
           <div className="mt-3 px-1">
-            <span className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">{config.label}</span>
+            <span className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">
+              {portal === 'brand' && brand ? brand.company : config.label}
+            </span>
           </div>
         </div>
 
@@ -126,12 +160,14 @@ const V3Layout = ({ portal }) => {
           </button>
           <V3NotificationCenter />
           <div className="w-7 h-7 rounded-full bg-[#DDE7E2] flex items-center justify-center text-[10px] font-bold text-[#1F4A3A]">
-            {portal === 'admin' ? 'TB' : portal === 'brand' ? 'FA' : 'RE'}
+            {portal === 'admin' ? 'TB' : portal === 'brand' ? brandSession?.initials || 'BR' : 'RE'}
           </div>
         </div>
 
         <main className="v3-content">
-          <Outlet />
+          <V3RouteErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </V3RouteErrorBoundary>
         </main>
       </div>
     </div>

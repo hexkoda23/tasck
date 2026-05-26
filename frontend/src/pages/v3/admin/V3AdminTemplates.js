@@ -12,7 +12,7 @@ const templates = [
   },
   {
     id: 'tmpl-creative',
-    name: 'Creative Snapshot',
+    name: 'Strategy Snapshot',
     description: 'Comprehensive campaign plan including concept, deliverables, budget breakdown, timeline, milestones, and success metrics. Up to 3 versions with brand feedback loops.',
     stage: 'Plan',
     lastUsed: '16 March 2026',
@@ -37,7 +37,7 @@ const templates = [
   {
     id: 'tmpl-retainer',
     name: 'Retainer Agreement',
-    description: 'Standard retainer engagement contract template with consultancy fee structure, scope of work, and milestone-based payment terms.',
+    description: 'Standard retainer engagement contract template with Strategy Development Fee timing, scope of work, and milestone-based payment terms.',
     stage: 'Frame → Plan',
     lastUsed: '3 March 2026',
     usageCount: 4,

@@ -44,12 +44,12 @@ const V3AdminWallet = () => {
   });
 
   // Add retainer fees
-  v3Projects.filter(p => p.engagement === 'retainer' && p.stage !== 'connect').forEach(proj => {
+  v3Projects.filter(p => p.engagement === 'retainer' && ['plan', 'deliver', 'closed'].includes(p.stage)).forEach(proj => {
     const brand = getBrand(proj.brandId);
     transactions.push({
       id: `${proj.id}-retainer`,
       type: 'credit',
-      label: 'Consultancy fee — Retainer',
+      label: 'Strategy Development Fee — Retainer',
       counterparty: brand?.company?.split(' ')[0],
       project: proj.title,
       amount: Math.round(proj.estimatedValue * 0.15),

@@ -47,14 +47,14 @@ const V3AdminProjectDetail = () => {
         { label: 'Alignment Snapshot generated', status: snapshot ? 'done' : 'pending' },
         { label: 'RM review complete', status: snapshot?.status === 'under_review' ? 'done' : 'pending' },
         { label: 'Brand confirmation', status: 'pending' },
-        ...(project.engagement === 'retainer' ? [{ label: 'Consultancy Fee paid', status: 'pending' }] : [{ label: 'Consultancy Fee invoice', status: 'na', note: 'N/A for Direct engagement' }]),
       ];
       case 'plan': return [
         { label: 'Creator matched', status: creatorMatch ? 'done' : 'pending' },
         { label: 'Creator Brief sent', status: briefResponse ? 'done' : 'pending' },
         { label: 'Creator response received', status: briefResponse?.interest ? 'done' : 'pending' },
-        { label: 'Creative Snapshot generated', status: creativeSnapshot ? 'done' : 'pending' },
-        { label: 'Brand approved Creative Snapshot', status: 'pending' },
+        ...(project.engagement === 'retainer' ? [{ label: 'Strategy Development Fee paid', status: 'pending' }] : []),
+        { label: 'Strategy Snapshot generated', status: creativeSnapshot ? 'done' : 'pending' },
+        { label: 'Brand approved Strategy Snapshot', status: 'pending' },
         { label: 'Contracts executed', status: 'pending' },
         { label: 'Project invoice paid', status: 'pending' },
       ];
@@ -261,7 +261,7 @@ const V3AdminProjectDetail = () => {
                     <div>
                       <div className="flex items-center gap-2 mb-3">
                         <FileText className="w-3.5 h-3.5 text-[#1F4A3A]" />
-                        <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider">Creative Snapshot</h3>
+                        <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider">Strategy Snapshot</h3>
                         <span className="text-[10px] text-[#8A8A8A]">v{creativeSnapshot.currentVersion} of 3</span>
                         {creativeSnapshot.revisionCount >= 3 && <span className="text-[10px] text-[#C49B5F] bg-[#C49B5F12] px-2 py-0.5 rounded">Final revision</span>}
                       </div>

@@ -9,7 +9,7 @@ const V3AdminFees = () => {
   const retainerFees = retainerProjects.reduce((a, p) => a + Math.round(p.estimatedValue * 0.15), 0);
   const directFees = directProjects.reduce((a, p) => a + Math.round(p.estimatedValue * 0.12), 0);
   const totalFees = retainerFees + directFees;
-  const consultancyFees = retainerProjects.filter(p => p.stage !== 'connect').reduce((a, p) => a + Math.round(p.estimatedValue * 0.15), 0);
+  const strategyDevelopmentFees = retainerProjects.filter(p => ['plan', 'deliver', 'closed'].includes(p.stage)).reduce((a, p) => a + Math.round(p.estimatedValue * 0.15), 0);
   const deliveredFees = v3Projects.filter(p => p.stage === 'deliver').reduce((a, p) => a + Math.round(p.estimatedValue * (p.engagement === 'retainer' ? 0.15 : 0.12)), 0);
   const pendingFees = totalFees - deliveredFees;
 
@@ -32,9 +32,9 @@ const V3AdminFees = () => {
         <div className="v3-card p-5">
           <div className="flex items-center gap-2 mb-3">
             <Receipt className="w-4 h-4 text-[#1F4A3A]" strokeWidth={1.5} />
-            <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">Consultancy Fees</p>
+            <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">Strategy Dev Fees</p>
           </div>
-          <p className="text-2xl font-semibold text-[#1A1A1A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(consultancyFees)}</p>
+          <p className="text-2xl font-semibold text-[#1A1A1A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(strategyDevelopmentFees)}</p>
           <p className="text-[10px] text-[#8A8A8A] mt-1">Retainer projects only</p>
         </div>
         <div className="v3-card p-5">
@@ -63,10 +63,10 @@ const V3AdminFees = () => {
             <h3 className="text-[14px] font-semibold text-[#1A1A1A]">Retainer Engagement</h3>
             <span className="ml-auto v3-badge-retainer">retainer</span>
           </div>
-          <p className="text-[12px] text-[#5C5C5C] mb-4 leading-relaxed">Strategic advisory + campaign management. Consultancy fee invoiced at Frame stage entry; project management fee invoiced at Plan stage approval.</p>
+          <p className="text-[12px] text-[#5C5C5C] mb-4 leading-relaxed">Strategic advisory + campaign management. Frame stays fee-free; the Strategy Development Fee is issued after creator briefing and before Strategy Snapshot drafting.</p>
           <div className="space-y-2 text-[12px] mb-4">
             <div className="flex justify-between py-1.5 border-b border-[#F4F2EC]">
-              <span className="text-[#8A8A8A]">Consultancy fee</span>
+              <span className="text-[#8A8A8A]">Strategy Development Fee</span>
               <span className="text-[#1A1A1A] font-medium" style={{ fontFamily: "'JetBrains Mono', monospace" }}>15% of estimated value</span>
             </div>
             <div className="flex justify-between py-1.5 border-b border-[#F4F2EC]">
@@ -100,10 +100,10 @@ const V3AdminFees = () => {
             <h3 className="text-[14px] font-semibold text-[#1A1A1A]">Direct Engagement</h3>
             <span className="ml-auto v3-badge-direct">direct</span>
           </div>
-          <p className="text-[12px] text-[#5C5C5C] mb-4 leading-relaxed">Single-project execution with a one-time management fee. Simpler structure — no consultancy phase. Best for brands with clear briefs and pre-selected creators.</p>
+          <p className="text-[12px] text-[#5C5C5C] mb-4 leading-relaxed">Single-project execution with a one-time management fee. Simpler structure — no Strategy Development Fee phase. Best for brands with clear briefs and pre-selected creators.</p>
           <div className="space-y-2 text-[12px] mb-4">
             <div className="flex justify-between py-1.5 border-b border-[#F4F2EC]">
-              <span className="text-[#8A8A8A]">Consultancy fee</span>
+              <span className="text-[#8A8A8A]">Strategy Development Fee</span>
               <span className="text-[#8A8A8A] italic">Not applicable</span>
             </div>
             <div className="flex justify-between py-1.5 border-b border-[#F4F2EC]">

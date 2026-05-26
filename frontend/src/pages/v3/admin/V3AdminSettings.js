@@ -37,7 +37,7 @@ const V3AdminSettings = () => {
               { label: 'Stage model', value: '4-stage (Connect → Frame → Plan → Deliver)' },
               { label: 'Default engagement', value: 'Retainer' },
               { label: 'Default usage rights', value: '12 months' },
-              { label: 'Max Creative Snapshot revisions', value: '3' },
+              { label: 'Max Strategy Snapshot revisions', value: '3' },
             ].map((item, i) => (
               <div key={i} className="flex items-center justify-between py-1.5 border-b border-[#F4F2EC] last:border-0">
                 <span className="text-[13px] text-[#8A8A8A]">{item.label}</span>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v3Brands as fallbackBrands, getProjectsForBrand } from '../../../lib/v3data';
-import { v3GetBrands, v3CreateBrand } from '../../../lib/v3api';
+import { v3GetBrands, v3CreateBrand, v3ScrapeBrandOpportunities } from '../../../lib/v3api';
 import { useV3Resource } from '../../../lib/useV3Resource';
 import V3Modal from '../../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles } from 'lucide-react';
@@ -10,8 +10,8 @@ import { Search, Plus, ArrowUpDown, Sparkles } from 'lucide-react';
 // of the source.
 const normaliseBrand = (b) => ({
   id: b.id,
-  company: b.company,
-  industry: b.industry,
+  company: b.company || b.brand_name || 'Unnamed brand',
+  industry: b.industry || 'Uncategorised',
   primaryContact: b.primary_contact || b.primaryContact,
   role: b.role,
   leadScore: b.lead_score || b.leadScore,
@@ -26,11 +26,14 @@ const V3AdminCRM = () => {
   const [trackFilter, setTrackFilter] = useState('all');
 
   const { data: brands, source, setData } = useV3Resource(() => v3GetBrands(), fallbackBrands);
-  const normalised = (brands || []).map(normaliseBrand);
+  const brandList = Array.isArray(brands) ? brands : [];
+  const normalised = brandList.map(normaliseBrand);
 
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ company: '', industry: '', primary_contact: '', role: '', email: '', engagement_track_default: 'paid' });
   const [submitting, setSubmitting] = useState(false);
+  const [createdAccount, setCreatedAccount] = useState(null);
+  const [scraping, setScraping] = useState(false);
 
   const submitBrand = async () => {
     if (!form.company || !form.industry || !form.primary_contact) return;
@@ -40,6 +43,7 @@ const V3AdminCRM = () => {
       // Refresh list and navigate to detail
       const updated = await v3GetBrands();
       setData(updated);
+      setCreatedAccount(created.account || null);
       setAddOpen(false);
       navigate(`/v3/admin/crm/${created.id}`);
     } catch (e) {
@@ -81,6 +85,22 @@ const V3AdminCRM = () => {
         </div>
         <button className="v3-btn-primary" data-testid="add-brand-btn" onClick={() => setAddOpen(true)}>
           <Plus className="w-4 h-4" /> Add Brand
+        </button>
+        <button
+          className="v3-btn-secondary"
+          data-testid="scrape-opportunities-btn"
+          disabled={scraping}
+          onClick={async () => {
+            setScraping(true);
+            try {
+              await v3ScrapeBrandOpportunities({ query: 'Nigerian brands with creator marketing needs', limit: 3 });
+              setData(await v3GetBrands());
+            } finally {
+              setScraping(false);
+            }
+          }}
+        >
+          <Sparkles className="w-4 h-4" /> {scraping ? 'Scanning...' : 'Scan Opportunities'}
         </button>
       </div>
 
@@ -173,6 +193,15 @@ const V3AdminCRM = () => {
       </div>
     </div>
 
+      {createdAccount && (
+        <div className="fixed bottom-5 right-5 z-50 v3-card p-4 max-w-sm shadow-lg" data-testid="brand-account-created">
+          <p className="text-[12px] font-semibold text-[#1A1A1A] mb-1">Brand portal account created</p>
+          <p className="text-[11px] text-[#6E6657]">Welcome email queued with login details.</p>
+          <p className="text-[11px] mt-2" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{createdAccount.username}</p>
+          <button onClick={() => setCreatedAccount(null)} className="v3-btn-secondary text-[11px] mt-3">Dismiss</button>
+        </div>
+      )}
+
       <V3Modal
         open={addOpen}
         onClose={() => setAddOpen(false)}
@@ -225,7 +254,7 @@ const V3AdminCRM = () => {
             <p className="text-[11px] text-[#8A8A8A] mt-1">
               {form.engagement_track_default === 'grant'
                 ? 'No Strategy Development Fee will be invoiced. Funder pays creator directly.'
-                : 'Strategy Development Fee invoiced on Alignment Snapshot approval.'}
+                : 'Strategy Development Fee is issued after the creator brief, before the Strategy Snapshot.'}
             </p>
           </div>
         </div>

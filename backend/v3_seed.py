@@ -828,4 +828,7 @@ def get_v3_seed_data():
         "v3_final_reports": V3_FINAL_REPORTS,
         "v3_brainstorm_rounds": V3_BRAINSTORM_ROUNDS,
         "v3_interactions": V3_INTERACTIONS,
+        "v3_brand_accounts": [],
+        "v3_email_outbox": [],
+        "v3_opportunities": [],
     }

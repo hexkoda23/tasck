@@ -3,11 +3,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   v3ListBusinessCases, v3AdminOverview, v3GetBrands, v3GetCreators,
-  v3CreateBusinessCase, v3ResetDemo,
+  v3CreateBusinessCase,
 } from '../../../lib/v3api';
-import { formatNairaV3, v3Stages } from '../../../lib/v3data';
+import {
+  formatNairaV3, v3Stages, v3Brands as fallbackBrands, v3Creators as fallbackCreators,
+  buildMockBusinessCases, buildMockAdminOverview, getRM,
+} from '../../../lib/v3data';
+import { applyStoredDemoRows, saveStoredDemoBundle } from '../../../lib/v3demoStore';
 import V3Modal from '../../../components/v3/V3Modal';
-import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, RotateCcw } from 'lucide-react';
+import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search } from 'lucide-react';
 
 const stageMeta = {
   connect: { label: 'Connect', color: '#9B9380' },
@@ -27,6 +31,124 @@ const healthBadge = (h) => {
   return map[h] || map.new;
 };
 
+const demoOverviewFromRows = (rows) => {
+  const base = buildMockAdminOverview();
+  const byStage = rows.reduce((acc, row) => ({ ...acc, [row.stage]: (acc[row.stage] || 0) + 1 }), {});
+  const paid = rows.filter((row) => row.engagement_track !== 'grant');
+  const grants = rows.filter((row) => row.engagement_track === 'grant');
+  return {
+    ...base,
+    business_cases_total: rows.length,
+    paid_count: paid.length,
+    paid_total_value: paid.reduce((sum, row) => sum + (Number(row.estimated_value) || 0), 0),
+    grant_count: grants.length,
+    grant_total_value: grants.reduce((sum, row) => sum + (Number(row.estimated_value) || 0), 0),
+    by_stage: byStage,
+  };
+};
+
+const demoGrantOpportunities = [
+  {
+    id: 'grant-african-creative-economy',
+    title: 'African Creative Economy Growth Fund',
+    funder: 'Pan-African Culture & Innovation Facility',
+    amount: 75000000,
+    deadline: '2026-07-18',
+    source: 'culturefund.africa/opportunities/creative-economy-growth',
+    fit_score: 94,
+    angle: 'Supports TASCK creator infrastructure, talent discovery, and reporting tools for youth culture campaigns.',
+    status: 'new',
+  },
+  {
+    id: 'grant-youth-digital-jobs',
+    title: 'Youth Digital Jobs & Media Skills Grant',
+    funder: 'West Africa Digital Skills Alliance',
+    amount: 48000000,
+    deadline: '2026-08-02',
+    source: 'wadsa.org/grants/youth-digital-media',
+    fit_score: 89,
+    angle: 'Good fit for creator onboarding, production training, campaign operations, and measurable employment outcomes.',
+    status: 'new',
+  },
+  {
+    id: 'grant-women-culture-commerce',
+    title: 'Women In Culture Commerce Accelerator',
+    funder: 'Global Inclusive Markets Lab',
+    amount: 62000000,
+    deadline: '2026-06-29',
+    source: 'inclusivemarkets.example/apply/women-culture-commerce',
+    fit_score: 86,
+    angle: 'Can fund campaigns and creator partnerships led by women, plus brand access for women-owned creative businesses.',
+    status: 'new',
+  },
+  {
+    id: 'grant-climate-storytelling',
+    title: 'Climate Storytelling For African Cities',
+    funder: 'Green Futures Media Trust',
+    amount: 35000000,
+    deadline: '2026-09-10',
+    source: 'greenfuturemedia.org/open-calls/african-cities',
+    fit_score: 81,
+    angle: 'Useful for TASCK documentary briefs, creator-led climate storytelling, and brand-funded impact reporting.',
+    status: 'new',
+  },
+];
+
+const demoBusinessOpportunities = [
+  {
+    id: 'opp-cocacola-campus-share',
+    brand_id: 'brand-cocacola',
+    company: 'Coca-Cola Nigeria Limited',
+    title: 'Campus Share Moments',
+    pain_point: 'Public social listening shows students are sharing “Detty December on campus” content, but beverage brands are not owning the moment with a structured creator-led mechanic.',
+    source: 'AI web discovery: culture calendars, student creator posts, retail activation mentions',
+    contact: 'Folake Adeniran - folake.adeniran@coca-cola.com',
+    estimated_value: 85000000,
+    fit_score: 94,
+    suggested_angle: 'Generate an Alignment Snapshot around campus storytelling, personalized sharing moments, and retail-to-social UGC.',
+    status: 'new',
+  },
+  {
+    id: 'opp-mtn-data-youth',
+    brand_id: 'brand-mtn',
+    company: 'MTN Nigeria Communications PLC',
+    title: 'Data For Creators Push',
+    pain_point: 'Creator economy conversations are highlighting high data spend as a barrier to consistent posting, especially among student creators and micro-influencers.',
+    source: 'AI web discovery: creator forums, X posts, student tech blogs, telco campaign mentions',
+    contact: 'Kemi Adebayo - kemi.adebayo@mtn.com',
+    estimated_value: 120000000,
+    fit_score: 91,
+    suggested_angle: 'Position MTN as the network powering the next wave of Nigerian creators with a creator challenge and data-led conversion KPI.',
+    status: 'new',
+  },
+  {
+    id: 'opp-star-nightlife-reboot',
+    brand_id: 'brand-star',
+    company: 'Nigerian Breweries PLC (Star Lager)',
+    title: 'Nightlife Reboot',
+    pain_point: 'Lagos nightlife content is fragmenting across TikTok, Instagram, and event pages; beer brands need cleaner cultural ownership and safer event-to-content reporting.',
+    source: 'AI web discovery: nightlife event listings, creator content, venue pages, entertainment blogs',
+    contact: 'Funke Adebiyi - funke.adebiyi@heineken.com',
+    estimated_value: 98000000,
+    fit_score: 88,
+    suggested_angle: 'Build a Star-led nightlife content system with approved venues, creators, responsible-drinking controls, and measurable event attendance lift.',
+    status: 'new',
+  },
+  {
+    id: 'opp-access-finance-culture',
+    brand_id: 'brand-access',
+    company: 'Access Bank PLC',
+    title: 'Creator Finance Trust Gap',
+    pain_point: 'Young creators are discussing inconsistent payment cycles and limited access to structured financial products for production, tax, and savings.',
+    source: 'AI web discovery: creator newsletters, finance forums, LinkedIn posts, SME program pages',
+    contact: 'Obi Nwosu - obi.nwosu@accessbankplc.com',
+    estimated_value: 64000000,
+    fit_score: 83,
+    suggested_angle: 'Create an Alignment Snapshot for a creator-finance education campaign with measurable account/product adoption signals.',
+    status: 'new',
+  },
+];
+
 const V3AdminBusinessCases = () => {
   const navigate = useNavigate();
   const [cases, setCases] = useState([]);
@@ -40,6 +162,10 @@ const V3AdminBusinessCases = () => {
   const [brands, setBrands] = useState([]);
   const [creators, setCreators] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [grantAgentRan, setGrantAgentRan] = useState(false);
+  const [grantOpportunities, setGrantOpportunities] = useState(demoGrantOpportunities);
+  const [businessAgentOpen, setBusinessAgentOpen] = useState(false);
+  const [businessOpportunities, setBusinessOpportunities] = useState(demoBusinessOpportunities);
   const [form, setForm] = useState({
     brand_id: '', creator_id: '', title: '', engagement_track: 'paid',
     estimated_value: 100000000, rm_id: 'rm-temi',
@@ -48,8 +174,14 @@ const V3AdminBusinessCases = () => {
 
   const reload = () =>
     Promise.all([v3ListBusinessCases(), v3AdminOverview()]).then(([cs, ov]) => {
-      setCases(cs);
-      setOverview(ov);
+      setCases(Array.isArray(cs) ? cs : buildMockBusinessCases());
+      setOverview(ov && typeof ov === 'object' && !Array.isArray(ov) ? ov : buildMockAdminOverview());
+      setError(null);
+    }).catch(() => {
+      const rows = applyStoredDemoRows(buildMockBusinessCases());
+      setCases(rows);
+      setOverview(demoOverviewFromRows(rows));
+      setError(null);
     });
 
   useEffect(() => {
@@ -57,10 +189,18 @@ const V3AdminBusinessCases = () => {
   }, []);
 
   const openNew = async () => {
-    const [b, c] = await Promise.all([v3GetBrands(), v3GetCreators()]);
-    setBrands(b);
-    setCreators(c);
-    setForm((f) => ({ ...f, brand_id: b[0]?.id || '', creator_id: '' }));
+    let b = fallbackBrands;
+    let c = fallbackCreators;
+    try {
+      [b, c] = await Promise.all([v3GetBrands(), v3GetCreators()]);
+    } catch (e) {
+      // Demo fallback keeps the workflow visible when the API is not running.
+    }
+    const brandList = Array.isArray(b) ? b : [];
+    const creatorList = Array.isArray(c) ? c : [];
+    setBrands(brandList);
+    setCreators(creatorList);
+    setForm((f) => ({ ...f, brand_id: brandList[0]?.id || '', creator_id: '' }));
     setNewOpen(true);
   };
 
@@ -82,26 +222,111 @@ const V3AdminBusinessCases = () => {
     }
   };
 
-  const resetDemo = async () => {
-    if (!window.confirm('Reset all demo data? This will wipe and reseed the v3 collections.')) return;
-    setBusy(true);
-    try {
-      await v3ResetDemo();
-      await reload();
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const filtered = useMemo(
     () =>
-      cases.filter(
+      (Array.isArray(cases) ? cases : []).filter(
         (c) =>
           (stage === 'all' || c.stage === stage) &&
           (track === 'all' || c.engagement_track === track)
       ),
     [cases, stage, track]
   );
+  const byStage = overview?.by_stage || {};
+
+  const runGrantAgent = () => {
+    setBusy(true);
+    setTimeout(() => {
+      setGrantAgentRan(true);
+      setGrantOpportunities(demoGrantOpportunities);
+      setBusy(false);
+    }, 350);
+  };
+
+  const setGrantStatus = (id, status) => {
+    setGrantOpportunities((items) => items.map((item) => (item.id === id ? { ...item, status } : item)));
+  };
+
+  const runBusinessOpportunityAgent = () => {
+    setBusinessAgentOpen(true);
+    setBusy(true);
+    setTimeout(() => {
+      setBusinessOpportunities(demoBusinessOpportunities);
+      setBusy(false);
+    }, 300);
+  };
+
+  const createBusinessCaseFromOpportunity = (opportunity) => {
+    const brand = fallbackBrands.find((item) => item.id === opportunity.brand_id);
+    const row = {
+      id: `ai-bc-${opportunity.id}`,
+      brand_id: opportunity.brand_id,
+      creator_id: null,
+      title: opportunity.title,
+      stage: 'connect',
+      engagement_track: 'paid',
+      estimated_value: opportunity.estimated_value,
+      rm_id: 'rm-temi',
+      created_at: '2026-05-26',
+      days_in_stage: 0,
+      next_action: 'Review AI-scraped opportunity, schedule connector call, and generate Alignment Snapshot.',
+      health: 'new',
+      connect: {
+        status: 'in_discovery',
+        connect_status: 'in_discovery',
+        source: opportunity.source,
+        stated_intent: opportunity.pain_point,
+        marketing_intelligence: {
+          key_marketing_focus: opportunity.suggested_angle,
+          primary_target_audience: 'Priority audience inferred from the scraped business opportunity; admin to confirm on connector call.',
+          key_marketing_channels: ['Instagram', 'TikTok', 'YouTube', 'PR'],
+          marketing_kpis: [
+            { kpi: 'Reach', target: 'Confirm with brand during connector call.' },
+            { kpi: 'Engagement', target: 'Confirm channel benchmark with brand.' },
+            { kpi: 'Conversion signal', target: 'Define from the scraped pain point and brand objective.' },
+          ],
+          source: 'ai_business_opportunity_agent',
+        },
+      },
+    };
+    const bundle = {
+      source: 'demo',
+      business_case: {
+        ...row,
+        frame: {},
+        plan: {},
+        deliver: { scope_change_log: [] },
+        closure: { report_status: 'pending', brand_feedback_received: false, creator_feedback_received: false },
+      },
+      brand,
+      creator: null,
+      rm: getRM('rm-temi'),
+      interactions: [{
+        id: `int-${opportunity.id}`,
+        type: 'ai_discovery',
+        title: 'AI-scraped business opportunity',
+        author: 'TASCK AI Opportunity Agent',
+        date_iso: new Date().toISOString(),
+        content: `${opportunity.pain_point}\n\nSuggested angle: ${opportunity.suggested_angle}\n\nSource: ${opportunity.source}\nContact: ${opportunity.contact}`,
+      }],
+      alignment_snapshot: null,
+      invoices: [],
+      brainstorm_round: null,
+      creative_brief: null,
+      creative_snapshot: null,
+      contract: null,
+      deliverables: [],
+      final_report: null,
+    };
+    saveStoredDemoBundle(bundle);
+    setCases((current) => {
+      const withoutDuplicate = current.filter((item) => item.id !== row.id);
+      const next = [row, ...withoutDuplicate];
+      setOverview(demoOverviewFromRows(next));
+      return next;
+    });
+    setBusinessOpportunities((items) => items.map((item) => (item.id === opportunity.id ? { ...item, status: 'converted' } : item)));
+    navigate(`/v3/admin/business-cases/${row.id}`);
+  };
 
   return (
     <>
@@ -120,8 +345,8 @@ const V3AdminBusinessCases = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={resetDemo} disabled={busy} className="v3-btn-secondary" data-testid="bc-reset-demo" title="Reset all v3 demo data to seeded state">
-            <RotateCcw className="w-3.5 h-3.5" /> Reset demo
+          <button onClick={runBusinessOpportunityAgent} disabled={busy} className="v3-btn-secondary" data-testid="bc-ai-business-agent" title="Show AI-scraped business opportunities">
+            <Sparkles className="w-3.5 h-3.5" /> AI-generated business cases
           </button>
           <button onClick={openNew} className="v3-btn-primary" data-testid="bc-new">
             <Plus className="w-4 h-4" /> New Business Case
@@ -133,6 +358,69 @@ const V3AdminBusinessCases = () => {
         <div className="v3-card p-4 mb-6 flex items-center gap-3 border-[#F5D9D2]" data-testid="bc-error">
           <AlertOctagon className="w-4 h-4 text-[#B54A37]" />
           <span className="text-[13px] text-[#B54A37]">Backend unreachable: {error}</span>
+        </div>
+      )}
+
+      {businessAgentOpen && (
+        <div className="v3-card p-5 mb-6 border-[#1F4A3A]" data-testid="bc-ai-business-opportunities">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">AI business opportunity agent</p>
+              <h2 className="text-lg font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                Scraped opportunities ready for Business Case creation
+              </h2>
+              <p className="text-[12px] text-[#6E6657] mt-1">
+                Demo agent output from public web signals: brand pain point, source, contact route, suggested angle, fit score, and one-click conversion into a Connector-stage Business Case.
+              </p>
+            </div>
+            <button onClick={() => setBusinessAgentOpen(false)} className="v3-btn-secondary text-[11px]">
+              Hide
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {businessOpportunities.map((opportunity) => (
+              <div key={opportunity.id} className="rounded border border-[#E8E4DB] bg-[#FAFAF7] p-4" data-testid={`bc-ai-opportunity-${opportunity.id}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[13px] font-semibold text-[#1A1A1A]">{opportunity.title}</p>
+                    <p className="text-[11px] text-[#8A8A8A]">{opportunity.company}</p>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wider ${
+                    opportunity.status === 'converted' ? 'bg-[#DDE7E2] text-[#1F4A3A]' : 'bg-[#F4F2EC] text-[#6E6657]'
+                  }`}>
+                    {opportunity.status}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 my-3">
+                  <div>
+                    <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Value</p>
+                    <p className="text-[12px] font-medium" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(opportunity.estimated_value)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Fit</p>
+                    <p className="text-[12px] font-medium text-[#1F4A3A]">{opportunity.fit_score}%</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Track</p>
+                    <p className="text-[12px] font-medium">Paid</p>
+                  </div>
+                </div>
+                <p className="text-[12px] text-[#6E6657] mb-2">{opportunity.pain_point}</p>
+                <p className="text-[12px] text-[#1F4A3A] mb-2">{opportunity.suggested_angle}</p>
+                <p className="text-[10px] text-[#8A8A8A] mb-1">Contact: {opportunity.contact}</p>
+                <p className="text-[10px] text-[#8A8A8A] mb-3">Source: {opportunity.source}</p>
+                <button
+                  onClick={() => createBusinessCaseFromOpportunity(opportunity)}
+                  disabled={opportunity.status === 'converted'}
+                  className="v3-btn-primary text-[11px]"
+                  data-testid={`bc-create-ai-business-case-${opportunity.id}`}
+                >
+                  <Plus className="w-3.5 h-3.5" /> {opportunity.status === 'converted' ? 'Business Case created' : 'Create Business Case'}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -169,7 +457,7 @@ const V3AdminBusinessCases = () => {
                     className="font-semibold"
                     style={{ fontFamily: "'JetBrains Mono', monospace", color: s.color }}
                   >
-                    {overview.by_stage[s.key] || 0}
+                    {byStage[s.key] || 0}
                   </span>
                 </div>
               ))}
@@ -210,6 +498,69 @@ const V3AdminBusinessCases = () => {
           ))}
         </div>
       </div>
+
+      {track === 'grant' && (
+        <div className="v3-card p-5 mb-6 border-[#C49B5F]" data-testid="bc-grant-agent">
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div>
+              <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Grant web discovery agent</p>
+              <h2 className="text-lg font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                AI grant scraper for TASCK
+              </h2>
+              <p className="text-[12px] text-[#6E6657] mt-1">
+                Demo agent scans public grant portals, funder calls, creative economy programs, and impact funding pages, then ranks opportunities TASCK can pursue.
+              </p>
+            </div>
+            <button onClick={runGrantAgent} disabled={busy} className="v3-btn-primary" data-testid="bc-run-grant-agent">
+              <Search className="w-3.5 h-3.5" /> {grantAgentRan ? 'Refresh grant scrape' : 'Scrape web for grants'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {grantOpportunities.map((grant) => (
+              <div key={grant.id} className="rounded border border-[#E8E4DB] bg-[#FAFAF7] p-4" data-testid={`bc-grant-${grant.id}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[13px] font-semibold text-[#1A1A1A]">{grant.title}</p>
+                    <p className="text-[11px] text-[#8A8A8A]">{grant.funder}</p>
+                  </div>
+                  <span className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wider ${
+                    grant.status === 'approved' ? 'bg-[#DDE7E2] text-[#1F4A3A]' :
+                    grant.status === 'rejected' ? 'bg-[#F5D9D2] text-[#B54A37]' :
+                    'bg-[#F4F2EC] text-[#6E6657]'
+                  }`}>
+                    {grant.status}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 my-3">
+                  <div>
+                    <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Amount</p>
+                    <p className="text-[12px] font-medium" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(grant.amount)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Deadline</p>
+                    <p className="text-[12px] font-medium">{grant.deadline}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Fit</p>
+                    <p className="text-[12px] font-medium text-[#1F4A3A]">{grant.fit_score}%</p>
+                  </div>
+                </div>
+                <p className="text-[12px] text-[#6E6657] mb-2">{grant.angle}</p>
+                <p className="text-[10px] text-[#8A8A8A] mb-3">Source: {grant.source}</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setGrantStatus(grant.id, 'approved')} className="v3-btn-primary text-[11px]" data-testid={`bc-approve-grant-${grant.id}`}>
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                  </button>
+                  <button onClick={() => setGrantStatus(grant.id, 'rejected')} className="v3-btn-secondary text-[11px]" data-testid={`bc-reject-grant-${grant.id}`}>
+                    <XCircle className="w-3.5 h-3.5" /> Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* List */}
       <div className="space-y-2">
@@ -310,7 +661,7 @@ const V3AdminBusinessCases = () => {
             data-testid="new-bc-brand"
           >
             {brands.map((b) => (
-              <option key={b.id} value={b.id}>{b.company} ({b.engagement_track_default})</option>
+              <option key={b.id} value={b.id}>{b.company} ({b.engagement_track_default || 'paid'})</option>
             ))}
           </select>
         </div>
