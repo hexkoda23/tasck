@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
+from pathlib import Path
+from dotenv import load_dotenv
 import asyncio
 import os
 import re
@@ -2111,6 +2113,9 @@ def make_v3_router(db):
 
     async def run_opportunity_scan(payload: OpportunityScanPayload) -> Dict[str, Any]:
         api_key = os.getenv("SERPAPI_API_KEY")
+        if not api_key:
+            load_dotenv(Path(__file__).with_name(".env"))
+            api_key = os.getenv("SERPAPI_API_KEY")
         if not api_key:
             raise HTTPException(503, "SERPAPI_API_KEY is not configured. Add it to backend deployment secrets before running the live scanner.")
 
