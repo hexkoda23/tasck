@@ -136,7 +136,11 @@ const V3AdminOpportunityScanner = () => {
       setCandidates((current) => current.map((item) => (
         item.id === candidate.id ? { ...item, ...result.candidate, status: 'accepted' } : item
       )));
-      setActiveTab('accepted');
+      if (result.business_case?.id) {
+        navigate(`/v3/admin/business-cases/${result.business_case.id}`);
+      } else {
+        setActiveTab('accepted');
+      }
     } catch (e) {
       if (demoMode) {
         setCandidates((current) => current.map((item) => (
@@ -439,14 +443,24 @@ const V3AdminOpportunityScanner = () => {
                         </>
                       )}
                       {activeTab === 'accepted' && (
-                        <button
-                          onClick={() => candidate.accepted_brand_id && navigate(`/v3/admin/crm/${candidate.accepted_brand_id}`)}
-                          disabled={!candidate.accepted_brand_id}
-                          className="v3-btn-primary text-[11px]"
-                          data-testid={`opps-open-brand-${candidate.id}`}
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Open CRM brand
-                        </button>
+                        <>
+                          <button
+                            onClick={() => candidate.business_case_id && navigate(`/v3/admin/business-cases/${candidate.business_case_id}`)}
+                            disabled={!candidate.business_case_id}
+                            className="v3-btn-primary text-[11px]"
+                            data-testid={`opps-open-business-case-${candidate.id}`}
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Open Business Case
+                          </button>
+                          <button
+                            onClick={() => candidate.accepted_brand_id && navigate(`/v3/admin/crm/${candidate.accepted_brand_id}`)}
+                            disabled={!candidate.accepted_brand_id}
+                            className="v3-btn-secondary text-[11px]"
+                            data-testid={`opps-open-brand-${candidate.id}`}
+                          >
+                            Open CRM brand
+                          </button>
+                        </>
                       )}
                       {activeTab === 'rejected' && (
                         <span className="inline-flex items-center gap-1 text-[11px] text-[#8A8A8A]">

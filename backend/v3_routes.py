@@ -2597,7 +2597,7 @@ Produce the opportunity card JSON.
             brand = {
                 "id": brand_id,
                 "company": candidate.get("brand_name") or "Discovered Brand",
-                "industry": candidate.get("industry") or "Brand / Consumer Marketing",
+                "industry": candidate.get("industry") or "Other",
                 "website": f"https://{candidate.get('source_domain')}" if candidate.get("source_domain") else candidate.get("source_url", ""),
                 "hq": candidate.get("country") or "Nigeria",
                 "primary_contact": "Marketing Team",
@@ -2662,6 +2662,96 @@ Produce the opportunity card JSON.
             }
             await db.v3_opportunities.insert_one({**opportunity})
 
+        business_case = await db.v3_business_cases.find_one({"connect.source_candidate_id": candidate_id}, {"_id": 0})
+        if not business_case:
+            bc_id = f"bc-{uuid.uuid4().hex[:8]}"
+            rm_id = payload.reviewed_by or "admin"
+            source_title = candidate.get("source_title") or "Scanned source article"
+            source_url = candidate.get("source_url") or ""
+            detected_keywords = candidate.get("detected_keywords") or []
+            business_case = {
+                "id": bc_id,
+                "brand_id": brand["id"],
+                "creator_id": None,
+                "title": candidate.get("campaign_name") or f"{brand.get('company', 'Discovered Brand')} creator partnership opportunity",
+                "stage": "connect",
+                "engagement_track": brand.get("engagement_track_default") or "paid",
+                "estimated_value": opportunity.get("estimated_value", 75000000),
+                "rm_id": rm_id,
+                "created_at": _now_iso(),
+                "days_in_stage": 0,
+                "next_action": "Schedule connector call and validate marketing focus, target audience, channels, and KPIs.",
+                "health": "new",
+                "scope_creep_locked": False,
+                "connect": {
+                    "source": "serpapi_opportunity_scanner",
+                    "source_candidate_id": candidate_id,
+                    "source_opportunity_id": opportunity["id"],
+                    "source_url": source_url,
+                    "source_title": source_title,
+                    "connect_status": "new_lead",
+                    "stated_intent": candidate.get("pain_point") or "",
+                    "marketing_intelligence": {
+                        "key_marketing_focus": candidate.get("suggested_opportunity_angle") or candidate.get("pain_point") or "",
+                        "primary_target_audience": "To confirm during connector call.",
+                        "key_marketing_channels": [],
+                        "marketing_kpis": [],
+                        "detected_keywords": detected_keywords,
+                        "confidence_score": candidate.get("confidence_score", 65),
+                        "reasoning": candidate.get("reasoning") or "",
+                        "generated_at": _now_iso(),
+                        "source": candidate.get("extraction_method") or "opportunity_scanner",
+                    },
+                },
+                "frame": {},
+                "plan": {},
+                "deliver": {},
+                "closure": {},
+                "timeline": [
+                    {"at": _now_iso(), "event": "scanner_candidate_accepted", "candidate_id": candidate_id, "actor": rm_id},
+                    {"at": _now_iso(), "event": "business_case_created", "actor": rm_id},
+                ],
+                "updated_at": _now_iso(),
+            }
+            await db.v3_business_cases.insert_one({**business_case})
+
+            interaction = {
+                "id": f"int-{uuid.uuid4().hex[:8]}",
+                "brand_id": brand["id"],
+                "business_case_id": bc_id,
+                "type": "note",
+                "title": "Opportunity scanner source article",
+                "author": "Opportunity Scanner",
+                "date_iso": _now_iso(),
+                "content": (
+                    f"Source title: {source_title}\n"
+                    f"Source URL: {source_url}\n\n"
+                    f"Pain point: {candidate.get('pain_point') or ''}\n\n"
+                    f"Suggested angle: {candidate.get('suggested_opportunity_angle') or ''}\n\n"
+                    f"Detected keywords: {', '.join([str(item) for item in detected_keywords])}\n"
+                    f"Reasoning: {candidate.get('reasoning') or ''}"
+                ),
+            }
+            await db.v3_interactions.insert_one({**interaction})
+            await db.v3_business_cases.update_one(
+                {"id": bc_id},
+                {"$push": {"timeline": {"at": _now_iso(), "event": "source_article_logged", "interaction_id": interaction["id"]}}},
+            )
+            business_case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        else:
+            await db.v3_business_cases.update_one(
+                {"id": business_case["id"]},
+                {"$set": {"updated_at": _now_iso()},
+                 "$push": {"timeline": {"at": _now_iso(), "event": "scanner_candidate_reaccepted", "candidate_id": candidate_id, "actor": payload.reviewed_by}}},
+            )
+            business_case = await db.v3_business_cases.find_one({"id": business_case["id"]}, {"_id": 0})
+
+        await db.v3_opportunities.update_one(
+            {"id": opportunity["id"]},
+            {"$set": {"business_case_id": business_case["id"]}},
+        )
+        opportunity = await db.v3_opportunities.find_one({"id": opportunity["id"]}, {"_id": 0})
+
         await db.v3_opportunity_candidates.update_one(
             {"id": candidate_id},
             {"$set": {
@@ -2670,10 +2760,11 @@ Produce the opportunity card JSON.
                 "reviewed_by": payload.reviewed_by,
                 "accepted_brand_id": brand["id"],
                 "opportunity_id": opportunity["id"],
+                "business_case_id": business_case["id"],
             }},
         )
         updated = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
-        return {"candidate": updated, "brand": brand, "account": account, "opportunity": opportunity}
+        return {"candidate": updated, "brand": brand, "account": account, "opportunity": opportunity, "business_case": business_case}
 
     @router.post("/opportunities/candidates/{candidate_id}/reject")
     async def reject_opportunity_candidate(candidate_id: str, payload: OpportunityReviewPayload):

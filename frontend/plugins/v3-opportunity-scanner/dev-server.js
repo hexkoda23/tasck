@@ -35,6 +35,8 @@ const defaultStore = () => ({
   candidates: [],
   opportunities: [],
   brands: [],
+  business_cases: [],
+  interactions: [],
 });
 
 const nowIso = () => new Date().toISOString();
@@ -669,7 +671,7 @@ const setupV3OpportunityScanner = (devServer) => {
       brand = {
         id: makeId("brand"),
         company: candidate.brand_name || "Discovered Brand",
-        industry: candidate.industry || "Brand / Consumer Marketing",
+        industry: candidate.industry || "Other",
         website: candidate.source_domain ? `https://${candidate.source_domain}` : candidate.source_url,
         hq: candidate.country || "Nigeria",
         primary_contact: "Marketing Team",
@@ -708,15 +710,88 @@ const setupV3OpportunityScanner = (devServer) => {
       store.opportunities.push(opportunity);
     }
 
+    let businessCase = store.business_cases.find((item) => item.connect?.source_candidate_id === candidate.id);
+    if (!businessCase) {
+      const businessCaseId = makeId("bc");
+      const detectedKeywords = candidate.detected_keywords || [];
+      businessCase = {
+        id: businessCaseId,
+        brand_id: brand.id,
+        creator_id: null,
+        title: candidate.campaign_name || `${brand.company} creator partnership opportunity`,
+        stage: "connect",
+        engagement_track: "paid",
+        estimated_value: opportunity.estimated_value,
+        rm_id: req.body?.reviewed_by || "admin",
+        created_at: nowIso(),
+        days_in_stage: 0,
+        next_action: "Schedule connector call and validate marketing focus, target audience, channels, and KPIs.",
+        health: "new",
+        scope_creep_locked: false,
+        connect: {
+          source: "serpapi_opportunity_scanner_dev_proxy",
+          source_candidate_id: candidate.id,
+          source_opportunity_id: opportunity.id,
+          source_url: candidate.source_url,
+          source_title: candidate.source_title,
+          connect_status: "new_lead",
+          stated_intent: candidate.pain_point || "",
+          marketing_intelligence: {
+            key_marketing_focus: candidate.suggested_opportunity_angle || candidate.pain_point || "",
+            primary_target_audience: "To confirm during connector call.",
+            key_marketing_channels: [],
+            marketing_kpis: [],
+            detected_keywords: detectedKeywords,
+            confidence_score: candidate.confidence_score || 65,
+            reasoning: candidate.reasoning || "",
+            generated_at: nowIso(),
+            source: candidate.extraction_method || "opportunity_scanner",
+          },
+        },
+        frame: {},
+        plan: {},
+        deliver: {},
+        closure: {},
+        timeline: [
+          { at: nowIso(), event: "scanner_candidate_accepted", candidate_id: candidate.id, actor: req.body?.reviewed_by || "admin" },
+          { at: nowIso(), event: "business_case_created", actor: req.body?.reviewed_by || "admin" },
+        ],
+        updated_at: nowIso(),
+      };
+      store.business_cases.push(businessCase);
+      store.interactions.push({
+        id: makeId("int"),
+        brand_id: brand.id,
+        business_case_id: businessCaseId,
+        type: "note",
+        title: "Opportunity scanner source article",
+        author: "Opportunity Scanner",
+        date_iso: nowIso(),
+        content: [
+          `Source title: ${candidate.source_title || "Scanned source article"}`,
+          `Source URL: ${candidate.source_url || ""}`,
+          "",
+          `Pain point: ${candidate.pain_point || ""}`,
+          "",
+          `Suggested angle: ${candidate.suggested_opportunity_angle || ""}`,
+          "",
+          `Detected keywords: ${detectedKeywords.join(", ")}`,
+          `Reasoning: ${candidate.reasoning || ""}`,
+        ].join("\n"),
+      });
+    }
+
+    opportunity.business_case_id = businessCase.id;
     Object.assign(candidate, {
       status: "accepted",
       reviewed_at: nowIso(),
       reviewed_by: req.body?.reviewed_by || "admin",
       accepted_brand_id: brand.id,
       opportunity_id: opportunity.id,
+      business_case_id: businessCase.id,
     });
     writeStore(store);
-    res.json({ candidate, brand, account: { status: "dev_proxy_logged", brand_id: brand.id }, opportunity });
+    res.json({ candidate, brand, account: { status: "dev_proxy_logged", brand_id: brand.id }, opportunity, business_case: businessCase });
   });
 
   devServer.app.post("/api/v3/opportunities/candidates/:candidateId/reject", (req, res) => {
