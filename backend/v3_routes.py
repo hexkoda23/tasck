@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
+import json
 import os
 import re
 import requests
@@ -1943,6 +1944,7 @@ def make_v3_router(db):
         "rfp", "signed", "unveils", "announces", "partnered with",
     ]
     NOT_FOUND = "Not found - recommend manual search."
+    DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514"
 
     class OpportunityQueryTemplate(BaseModel):
         keywords: str = "brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria"
@@ -1971,7 +1973,15 @@ def make_v3_router(db):
     @router.get("/opportunities/candidates")
     async def list_opportunity_candidates(status: Optional[str] = None):
         query = {"status": status} if status else {}
-        return await db.v3_opportunity_candidates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+        rows = await db.v3_opportunity_candidates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+        return sorted(
+            rows,
+            key=lambda item: (
+                item.get("brand_name") is None or int(item.get("confidence_score") or 0) < 55,
+                -int(item.get("confidence_score") or 0),
+                str(item.get("created_at") or ""),
+            ),
+        )
 
     def _build_opportunity_query(payload: OpportunityScanPayload) -> str:
         template = payload.template
@@ -2167,16 +2177,205 @@ def make_v3_router(db):
                     "title": item.get("title") or item.get("name") or "",
                     "link": item.get("link") or item.get("source_link") or item.get("url") or "",
                     "snippet": item.get("snippet") or item.get("description") or item.get("source") or "",
+                    "displayed_link": item.get("displayed_link") or item.get("source") or "",
                 })
         return [item for item in buckets if item["title"] and item["link"]]
 
-    def _candidate_from_result(item: Dict[str, str], payload: OpportunityScanPayload, scan_id: str) -> Dict[str, Any]:
+    def _llm_system_prompt(template: OpportunityQueryTemplate) -> str:
+        industries_list = ", ".join(template.industries + ["Other"])
+        campaign_types_list = ", ".join(template.campaign_types + ["marketing campaign"])
+        return f"""
+You are an opportunity-extraction analyst for The TASCK Agency (TTA), a Nigerian creator campaign engine. Your job is to read a single news/web search result about a brand and produce a structured opportunity card that the TTA team can decide to pursue.
+
+You write in three voices simultaneously:
+- HEADLINE voice (the brand name, campaign name, industry tags): punchy, decisive, internal-memo style. No hedging.
+- REASONING voice (the pain point, the source context): measured, evidence-backed. Cite what the source actually says.
+- COMMERCIAL voice (the suggested opportunity angle): action-ready, ROI-aware. Written as if you are seeding the next AI stage that drafts a full Alignment Snapshot.
+
+CRITICAL RULES:
+1. Brand name must be a REAL CONSUMER OR ENTERPRISE BRAND, not a person, government body, regulator, or institution. If the headline subject is a person, agency, or non-commercial entity, return brand_name as null and confidence_score below 50. Do not invent a brand.
+2. If the snippet is too thin to confidently extract a brand, set confidence_score below 55 and explain in the pain_point why context was insufficient.
+3. The suggested_opportunity_angle must be generative, not descriptive. It must be written in this form: "TTA could approach [brand] with [specific creator-led concept] anchored on [specific cultural moment or audience truth] - the brief would lead with [specific creative direction]."
+4. Confidence score (0-100) must reflect honest signal strength:
+   - 85-96: Brand named explicitly, campaign or activation named, clear creator/marketing angle, recent
+   - 70-84: Brand clear, campaign hinted but not named, plausible angle inferrable
+   - 55-69: Brand clear but campaign vague, angle requires assumption
+   - Below 55: Subject is not a brand, snippet too thin, or signal is non-commercial
+   No score above 90 unless every signal is unambiguous.
+5. Pain point must reference something in the source text. Quote or paraphrase a concrete signal. Never write a generic statement like "the brand may benefit from creator marketing."
+6. Industry must be one of: {industries_list}. If none fit, use "Other".
+7. Campaign type must be one of: {campaign_types_list}. If none fit, use "marketing campaign".
+8. Detected keywords: extract 3-7 specific terms from the source. These are diagnostic tags, not opinions.
+9. TTA tone:
+   - Audience is Nigerian; assume local cultural context.
+   - TTA's value proposition is creator-led campaigns, not generic marketing.
+   - The angle should reflect matching brands to creators for cultural translation, not media buying or PR.
+   - Use Naira (NGN) for any monetary references.
+   - Write in clear, professional Nigerian English.
+10. Output is JSON only. No preamble, no markdown, no code fences. If you cannot produce a valid opportunity, still output JSON with brand_name: null, confidence_score: 30, and an honest pain_point explaining why.
+
+OUTPUT SCHEMA, return exactly these fields and no others:
+{{
+  "brand_name": string or null,
+  "campaign_name": string or null,
+  "industry": string,
+  "campaign_type": string,
+  "country": "{template.country}",
+  "confidence_score": integer,
+  "pain_point": string,
+  "suggested_opportunity_angle": string,
+  "detected_keywords": array of 3-7 strings,
+  "reasoning": string
+}}
+""".strip()
+
+    def _llm_user_message(item: Dict[str, str], template: OpportunityQueryTemplate) -> str:
+        return f"""
+SCAN TEMPLATE:
+- Keywords used in search: {template.keywords}
+- Country: {template.country}
+- Allowed industries: {", ".join(template.industries)}
+- Allowed campaign_types: {", ".join(template.campaign_types)}
+- Recency window: {template.recency}
+
+SEARCH RESULT TO ANALYZE:
+- Headline: {item.get("title", "")}
+- Snippet: {item.get("snippet", "")}
+- Source: {item.get("displayed_link") or item.get("source") or _domain_from_url(item.get("link", ""))}
+- URL: {item.get("link", "")}
+
+Produce the opportunity card JSON.
+""".strip()
+
+    def _parse_llm_json(text: str) -> Dict[str, Any]:
+        cleaned = (text or "").strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+            cleaned = re.sub(r"```$", "", cleaned).strip()
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start >= 0 and end > start:
+            cleaned = cleaned[start:end + 1]
+        return json.loads(cleaned)
+
+    def _normalise_llm_card(card: Dict[str, Any], template: OpportunityQueryTemplate) -> Dict[str, Any]:
+        allowed_industries = set(template.industries + ["Other"])
+        allowed_campaigns = set(template.campaign_types + ["marketing campaign"])
+        industry = card.get("industry") if card.get("industry") in allowed_industries else "Other"
+        campaign_type = card.get("campaign_type") if card.get("campaign_type") in allowed_campaigns else "marketing campaign"
+        try:
+            confidence = int(card.get("confidence_score", 30))
+        except Exception:
+            confidence = 30
+        keywords = card.get("detected_keywords") if isinstance(card.get("detected_keywords"), list) else []
+        keywords = [str(item)[:80] for item in keywords if str(item).strip()][:7]
+        if len(keywords) < 3:
+            keywords = (keywords + [card.get("brand_name") or "low signal", campaign_type, template.country])[:7]
+        return {
+            "brand_name": card.get("brand_name") if card.get("brand_name") else None,
+            "campaign_name": card.get("campaign_name") if card.get("campaign_name") else None,
+            "industry": industry,
+            "campaign_type": campaign_type,
+            "country": template.country,
+            "confidence_score": max(0, min(confidence, 100)),
+            "pain_point": str(card.get("pain_point") or "Source context was insufficient to extract a confident brand opportunity.")[:800],
+            "suggested_opportunity_angle": str(card.get("suggested_opportunity_angle") or "No actionable angle - recommend manual review before pursuing this result.")[:900],
+            "detected_keywords": keywords,
+            "reasoning": str(card.get("reasoning") or "No model reasoning provided.")[:500],
+        }
+
+    def _call_opportunity_llm(item: Dict[str, str], template: OpportunityQueryTemplate) -> Optional[Dict[str, Any]]:
+        model = os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or DEFAULT_LLM_MODEL
+        system_prompt = _llm_system_prompt(template)
+        user_message = _llm_user_message(item, template)
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        custom_key = os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
+        custom_base = (os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
+        openai_key = os.getenv("OPENAI_API_KEY")
+
+        if anthropic_key:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": anthropic_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 700,
+                    "temperature": 0.3,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_message}],
+                },
+                timeout=35,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+            return _normalise_llm_card(_parse_llm_json(text), template)
+
+        if custom_key and custom_base:
+            response = requests.post(
+                f"{custom_base}/chat/completions",
+                headers={"Authorization": f"Bearer {custom_key}", "content-type": "application/json"},
+                json={
+                    "model": model,
+                    "temperature": 0.3,
+                    "max_tokens": 700,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=35,
+            )
+            response.raise_for_status()
+            text = response.json()["choices"][0]["message"]["content"]
+            return _normalise_llm_card(_parse_llm_json(text), template)
+
+        if openai_key:
+            openai_model = os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "gpt-4o-mini"
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {openai_key}", "content-type": "application/json"},
+                json={
+                    "model": openai_model,
+                    "temperature": 0.3,
+                    "max_tokens": 700,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=35,
+            )
+            response.raise_for_status()
+            text = response.json()["choices"][0]["message"]["content"]
+            return _normalise_llm_card(_parse_llm_json(text), template)
+
+        return None
+
+    def _candidate_from_result(
+        item: Dict[str, str],
+        payload: OpportunityScanPayload,
+        scan_id: str,
+        llm_card: Optional[Dict[str, Any]] = None,
+        extraction_method: str = "heuristic_fallback",
+    ) -> Dict[str, Any]:
         text = f"{item['title']} {item['snippet']}"
-        brand_name = _extract_brand_name(item["title"], item["snippet"])
-        campaign_name = _extract_campaign_name(item["title"], item["snippet"], brand_name)
-        industry = _infer_industry(text, payload.template.industries)
-        campaign_type = _infer_campaign_type(text, payload.template.campaign_types)
-        confidence = _score_candidate(text, payload.template)
+        brand_name = (llm_card or {}).get("brand_name") if llm_card else _extract_brand_name(item["title"], item["snippet"])
+        campaign_name = (llm_card or {}).get("campaign_name") if llm_card else _extract_campaign_name(item["title"], item["snippet"], brand_name or "")
+        industry = (llm_card or {}).get("industry") if llm_card else _infer_industry(text, payload.template.industries)
+        campaign_type = (llm_card or {}).get("campaign_type") if llm_card else _infer_campaign_type(text, payload.template.campaign_types)
+        confidence = (llm_card or {}).get("confidence_score") if llm_card else _score_candidate(text, payload.template)
+        low_signal_fallback = not llm_card and not _has_partnership_signal(text)
+        if low_signal_fallback:
+            brand_name = None
+            campaign_name = None
+            industry = "Other"
+            campaign_type = "marketing campaign"
+            confidence = min(int(confidence or 45), 45)
         detected_keywords = [
             token for token in [
                 "brand ambassador", "celebrity partnership", "celebrity endorsement", "endorsement",
@@ -2185,10 +2384,12 @@ def make_v3_router(db):
             ]
             if token.lower() in text.lower()
         ]
+        if llm_card:
+            detected_keywords = llm_card.get("detected_keywords") or detected_keywords
         source_url = item["link"]
         source_snippet = item["snippet"][:420]
         partnership_profile = _build_partnership_profile(
-            brand_name,
+            brand_name or "Low signal result",
             source_url,
             item["title"][:220],
             source_snippet,
@@ -2205,12 +2406,16 @@ def make_v3_router(db):
             "industry": industry,
             "campaign_name": campaign_name,
             "campaign_type": campaign_type,
-            "pain_point": (
-                f"Public search signal suggests {brand_name} has celebrity, ambassador, endorsement, or influencer partnership activity. "
+            "pain_point": (llm_card or {}).get("pain_point") or (
+                f"Source context is too thin or non-commercial for a confident brand opportunity. Headline: {item['title']}"
+                if low_signal_fallback else
+                f"Public search signal suggests {brand_name or 'this result'} has celebrity, ambassador, endorsement, or influencer partnership activity. "
                 f"Source context: {source_snippet or item['title']}"
             ),
-            "suggested_opportunity_angle": (
-                f"Prepare a celebrity partnership outreach angle for {brand_name} around {campaign_name}, "
+            "suggested_opportunity_angle": (llm_card or {}).get("suggested_opportunity_angle") or (
+                "No actionable angle - recommend discarding or manually reviewing this result before CRM acceptance."
+                if low_signal_fallback else
+                f"Prepare a celebrity partnership outreach angle for {brand_name or 'this brand'} around {campaign_name or 'this signal'}, "
                 "then validate budget, decision maker, talent category, usage rights, and measurable KPI fit."
             ),
             "source_url": source_url,
@@ -2220,6 +2425,8 @@ def make_v3_router(db):
             "detected_keywords": detected_keywords,
             "confidence_score": confidence,
             "contact_email": _extract_email(text),
+            "reasoning": (llm_card or {}).get("reasoning") or "Extracted with deterministic fallback rules.",
+            "extraction_method": extraction_method,
             "brand_profile": partnership_profile["brand_profile"],
             "celebrity_partnership_status": partnership_profile["celebrity_partnership_status"],
             "partnership_signals": partnership_profile["partnership_signals"],
@@ -2251,6 +2458,12 @@ def make_v3_router(db):
             "status": "running",
             "raw_count": 0,
             "candidate_count": 0,
+            "extraction_method": "llm" if (
+                os.getenv("ANTHROPIC_API_KEY") or
+                (os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY") and os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL")) or
+                os.getenv("OPENAI_API_KEY")
+            ) else "heuristic_fallback",
+            "fallback_count": 0,
             "created_at": _now_iso(),
             "created_by": payload.created_by,
             "error": None,
@@ -2296,11 +2509,25 @@ def make_v3_router(db):
             )
             raise HTTPException(502, message)
 
+        llm_configured = scan["extraction_method"] == "llm"
+        llm_attempts = 0
+        llm_failures = 0
+        fallback_count = 0
         candidates = []
         for item in items:
-            if not _has_partnership_signal(f"{item.get('title', '')} {item.get('snippet', '')}"):
-                continue
-            candidate = _candidate_from_result(item, payload, scan_id)
+            llm_card = None
+            extraction_method = "heuristic_fallback"
+            if llm_configured:
+                llm_attempts += 1
+                try:
+                    llm_card = await asyncio.to_thread(_call_opportunity_llm, item, payload.template)
+                    if llm_card:
+                        extraction_method = "llm"
+                except Exception:
+                    llm_failures += 1
+            if not llm_card:
+                fallback_count += 1
+            candidate = _candidate_from_result(item, payload, scan_id, llm_card=llm_card, extraction_method=extraction_method)
             existing = await db.v3_opportunity_candidates.find_one(
                 {"$or": [{"source_url": candidate["source_url"]}, {"dedupe_key": candidate["dedupe_key"]}]},
                 {"_id": 0},
@@ -2310,17 +2537,35 @@ def make_v3_router(db):
             await db.v3_opportunity_candidates.insert_one({**candidate})
             candidates.append(candidate)
 
+        extraction_method = "llm"
+        if not llm_configured:
+            extraction_method = "heuristic_fallback"
+        elif llm_attempts and llm_failures / max(llm_attempts, 1) > 0.5:
+            extraction_method = "heuristic_fallback"
+        elif fallback_count:
+            extraction_method = "mixed_llm_heuristic"
+
         await db.v3_opportunity_scans.update_one(
             {"id": scan_id},
             {"$set": {
                 "status": "completed",
                 "raw_count": len(items),
                 "candidate_count": len(candidates),
+                "extraction_method": extraction_method,
+                "fallback_count": fallback_count,
                 "completed_at": _now_iso(),
             }},
         )
         return {
-            "scan": {**scan, "status": "completed", "raw_count": len(items), "candidate_count": len(candidates), "completed_at": _now_iso()},
+            "scan": {
+                **scan,
+                "status": "completed",
+                "raw_count": len(items),
+                "candidate_count": len(candidates),
+                "extraction_method": extraction_method,
+                "fallback_count": fallback_count,
+                "completed_at": _now_iso(),
+            },
             "candidates": candidates,
         }
 

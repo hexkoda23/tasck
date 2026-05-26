@@ -56,7 +56,14 @@ const V3AdminOpportunityScanner = () => {
   const [demoMode, setDemoMode] = useState(false);
 
   const filtered = useMemo(
-    () => candidates.filter((candidate) => candidate.status === activeTab),
+    () => candidates
+      .filter((candidate) => candidate.status === activeTab)
+      .sort((a, b) => {
+        const aLow = !a.brand_name || Number(a.confidence_score || 0) < 55;
+        const bLow = !b.brand_name || Number(b.confidence_score || 0) < 55;
+        if (aLow !== bLow) return aLow ? 1 : -1;
+        return Number(b.confidence_score || 0) - Number(a.confidence_score || 0);
+      }),
     [candidates, activeTab]
   );
 
@@ -201,6 +208,14 @@ const V3AdminOpportunityScanner = () => {
         </div>
       )}
 
+      {scan?.extraction_method && scan.extraction_method !== 'llm' && (
+        <div className="v3-card p-4 mb-5 border-[#F2EAD8]" data-testid="opps-fallback-banner">
+          <p className="text-[13px] text-[#7A5F23]">
+            Some candidates were extracted via fallback method. Review confidence and low-signal labels before accepting to CRM.
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-[360px_1fr] gap-5">
         <div className="space-y-4">
           <div className="v3-card p-5" data-testid="opps-query-template">
@@ -330,9 +345,15 @@ const V3AdminOpportunityScanner = () => {
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-[15px] font-semibold text-[#1A1A1A]">{candidate.brand_name}</h3>
+                        <h3 className="text-[15px] font-semibold text-[#1A1A1A]">{candidate.brand_name || 'Low signal result'}</h3>
                         <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657]">{candidate.industry}</span>
                         <span className="text-[10px] px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]">{candidate.country}</span>
+                        {(!candidate.brand_name || Number(candidate.confidence_score || 0) < 55) && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#F5D9D2] text-[#B54A37]">Low signal - likely skip</span>
+                        )}
+                        {candidate.extraction_method === 'heuristic_fallback' && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#F2EAD8] text-[#7A5F23]">fallback extraction</span>
+                        )}
                       </div>
                       <p className="text-[13px] text-[#6E6657] mt-1">{candidate.campaign_name} - {candidate.campaign_type}</p>
                       <a

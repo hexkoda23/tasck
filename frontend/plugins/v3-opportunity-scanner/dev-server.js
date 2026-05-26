@@ -19,6 +19,7 @@ const PARTNERSHIP_SIGNAL_TERMS = [
   "rfp", "signed", "unveils", "announces", "partnered with",
 ];
 const NOT_FOUND = "Not found - recommend manual search.";
+const DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514";
 
 const DEFAULT_TEMPLATE = {
   keywords: "brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria",
@@ -116,6 +117,175 @@ const requestJson = (url) => new Promise((resolve, reject) => {
   });
   req.on("error", reject);
 });
+
+const postJson = (urlString, headers, payload) => new Promise((resolve, reject) => {
+  const url = new URL(urlString);
+  const body = JSON.stringify(payload);
+  const req = https.request({
+    hostname: url.hostname,
+    path: `${url.pathname}${url.search}`,
+    method: "POST",
+    timeout: 35000,
+    headers: {
+      ...headers,
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(body),
+    },
+  }, (res) => {
+    let raw = "";
+    res.on("data", (chunk) => {
+      raw += chunk;
+    });
+    res.on("end", () => {
+      try {
+        const data = JSON.parse(raw || "{}");
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(data.error?.message || data.error || data.detail || `LLM returned ${res.statusCode}`));
+          return;
+        }
+        resolve(data);
+      } catch (error) {
+        reject(new Error("LLM returned invalid JSON"));
+      }
+    });
+  });
+  req.on("timeout", () => req.destroy(new Error("LLM request timed out")));
+  req.on("error", reject);
+  req.write(body);
+  req.end();
+});
+
+const llmSystemPrompt = (template) => {
+  const industriesList = [...(template.industries || []), "Other"].join(", ");
+  const campaignTypesList = [...(template.campaign_types || []), "marketing campaign"].join(", ");
+  return `You are an opportunity-extraction analyst for The TASCK Agency (TTA), a Nigerian creator campaign engine. Your job is to read a single news/web search result about a brand and produce a structured opportunity card that the TTA team can decide to pursue.
+
+You write in three voices simultaneously:
+- HEADLINE voice (the brand name, campaign name, industry tags): punchy, decisive, internal-memo style. No hedging.
+- REASONING voice (the pain point, the source context): measured, evidence-backed. Cite what the source actually says.
+- COMMERCIAL voice (the suggested opportunity angle): action-ready, ROI-aware. Written as if you are seeding the next AI stage that drafts a full Alignment Snapshot.
+
+CRITICAL RULES:
+1. Brand name must be a REAL CONSUMER OR ENTERPRISE BRAND, not a person, government body, regulator, or institution. If the headline subject is a person, agency, or non-commercial entity, return brand_name as null and confidence_score below 50. Do not invent a brand.
+2. If the snippet is too thin to confidently extract a brand, set confidence_score below 55 and explain in the pain_point why context was insufficient.
+3. The suggested_opportunity_angle must be generative, not descriptive. It must be written in this form: "TTA could approach [brand] with [specific creator-led concept] anchored on [specific cultural moment or audience truth] - the brief would lead with [specific creative direction]."
+4. Confidence score (0-100) must reflect honest signal strength. No score above 90 unless every signal is unambiguous.
+5. Pain point must reference something in the source text. Quote or paraphrase a concrete signal.
+6. Industry must be one of: ${industriesList}. If none fit, use "Other".
+7. Campaign type must be one of: ${campaignTypesList}. If none fit, use "marketing campaign".
+8. Detected keywords: extract 3-7 specific terms from the source.
+9. TTA tone: Nigerian cultural context, creator-led campaigns, cultural translation, clear professional Nigerian English.
+10. Output is JSON only. No preamble, no markdown, no code fences.
+
+OUTPUT SCHEMA, return exactly these fields and no others:
+{
+  "brand_name": string or null,
+  "campaign_name": string or null,
+  "industry": string,
+  "campaign_type": string,
+  "country": "${template.country}",
+  "confidence_score": integer,
+  "pain_point": string,
+  "suggested_opportunity_angle": string,
+  "detected_keywords": array of 3-7 strings,
+  "reasoning": string
+}`;
+};
+
+const llmUserMessage = (item, template) => `SCAN TEMPLATE:
+- Keywords used in search: ${template.keywords}
+- Country: ${template.country}
+- Allowed industries: ${(template.industries || []).join(", ")}
+- Allowed campaign_types: ${(template.campaign_types || []).join(", ")}
+- Recency window: ${template.recency}
+
+SEARCH RESULT TO ANALYZE:
+- Headline: ${item.title || ""}
+- Snippet: ${item.snippet || ""}
+- Source: ${item.displayed_link || item.source || domainFromUrl(item.link || "")}
+- URL: ${item.link || ""}
+
+Produce the opportunity card JSON.`;
+
+const parseLlmJson = (text) => {
+  let cleaned = String(text || "").trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```(?:json)?/, "").replace(/```$/, "").trim();
+  }
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start >= 0 && end > start) cleaned = cleaned.slice(start, end + 1);
+  return JSON.parse(cleaned);
+};
+
+const normaliseLlmCard = (card, template) => {
+  const allowedIndustries = new Set([...(template.industries || []), "Other"]);
+  const allowedCampaigns = new Set([...(template.campaign_types || []), "marketing campaign"]);
+  const keywords = Array.isArray(card.detected_keywords) ? card.detected_keywords.filter(Boolean).map((item) => String(item).slice(0, 80)).slice(0, 7) : [];
+  while (keywords.length < 3) keywords.push(card.brand_name || card.campaign_type || template.country || "low signal");
+  return {
+    brand_name: card.brand_name || null,
+    campaign_name: card.campaign_name || null,
+    industry: allowedIndustries.has(card.industry) ? card.industry : "Other",
+    campaign_type: allowedCampaigns.has(card.campaign_type) ? card.campaign_type : "marketing campaign",
+    country: template.country,
+    confidence_score: Math.max(0, Math.min(Number.parseInt(card.confidence_score, 10) || 30, 100)),
+    pain_point: String(card.pain_point || "Source context was insufficient to extract a confident brand opportunity.").slice(0, 800),
+    suggested_opportunity_angle: String(card.suggested_opportunity_angle || "No actionable angle - recommend manual review before pursuing this result.").slice(0, 900),
+    detected_keywords: keywords,
+    reasoning: String(card.reasoning || "No model reasoning provided.").slice(0, 500),
+  };
+};
+
+const callOpportunityLlm = async (item, template) => {
+  const model = process.env.OPPORTUNITY_SCANNER_LLM_MODEL || DEFAULT_LLM_MODEL;
+  const system = llmSystemPrompt(template);
+  const user = llmUserMessage(item, template);
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    const data = await postJson("https://api.anthropic.com/v1/messages", {
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    }, {
+      model,
+      max_tokens: 700,
+      temperature: 0.3,
+      system,
+      messages: [{ role: "user", content: user }],
+    });
+    const text = (data.content || []).filter((part) => part.type === "text").map((part) => part.text).join("\n");
+    return normaliseLlmCard(parseLlmJson(text), template);
+  }
+
+  const customKey = process.env.OPPORTUNITY_SCANNER_LLM_API_KEY;
+  const customBase = (process.env.OPPORTUNITY_SCANNER_LLM_BASE_URL || "").replace(/\/$/, "");
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (customKey && customBase) {
+    const data = await postJson(`${customBase}/chat/completions`, {
+      Authorization: `Bearer ${customKey}`,
+    }, {
+      model,
+      temperature: 0.3,
+      max_tokens: 700,
+      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+    });
+    return normaliseLlmCard(parseLlmJson(data.choices?.[0]?.message?.content), template);
+  }
+
+  if (openaiKey) {
+    const data = await postJson("https://api.openai.com/v1/chat/completions", {
+      Authorization: `Bearer ${openaiKey}`,
+    }, {
+      model: process.env.OPPORTUNITY_SCANNER_LLM_MODEL || "gpt-4o-mini",
+      temperature: 0.3,
+      max_tokens: 700,
+      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+    });
+    return normaliseLlmCard(parseLlmJson(data.choices?.[0]?.message?.content), template);
+  }
+
+  return null;
+};
 
 const extractEmail = (text) => {
   const match = String(text || "").match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
@@ -262,20 +432,31 @@ const resultItems = (raw) => {
         title: item.title || item.name || "",
         link: item.link || item.source_link || item.url || "",
         snippet: item.snippet || item.description || item.source || "",
+        displayed_link: item.displayed_link || item.source || "",
       });
     });
   });
   return buckets.filter((item) => item.title && item.link);
 };
 
-const candidateFromResult = (item, payload, scanId, query) => {
+const candidateFromResult = (item, payload, scanId, query, llmCard = null, extractionMethod = "heuristic_fallback") => {
   const template = { ...DEFAULT_TEMPLATE, ...(payload.template || {}) };
   const text = `${item.title} ${item.snippet}`;
-  const brandName = extractBrandName(item.title, item.snippet);
-  const campaignName = extractCampaignName(item.title, item.snippet, brandName);
-  const campaignType = inferCampaignType(text, template.campaign_types);
+  let brandName = llmCard ? llmCard.brand_name : extractBrandName(item.title, item.snippet);
+  let campaignName = llmCard ? llmCard.campaign_name : extractCampaignName(item.title, item.snippet, brandName || "");
+  let industry = llmCard ? llmCard.industry : inferIndustry(text, template.industries);
+  let campaignType = llmCard ? llmCard.campaign_type : inferCampaignType(text, template.campaign_types);
+  let confidence = llmCard ? llmCard.confidence_score : scoreCandidate(text, template);
+  const lowSignalFallback = !llmCard && !hasPartnershipSignal(text);
+  if (lowSignalFallback) {
+    brandName = null;
+    campaignName = null;
+    industry = "Other";
+    campaignType = "marketing campaign";
+    confidence = Math.min(Number(confidence) || 45, 45);
+  }
   const sourceSnippet = String(item.snippet || "").slice(0, 420);
-  const detectedKeywords = [
+  const detectedKeywords = llmCard?.detected_keywords || [
     "brand ambassador", "celebrity partnership", "celebrity endorsement", "endorsement",
     "influencer campaign", "brand partnership", "open application", "casting call",
     "campaign", "launch", "advertising", "creator", "influencer", "Nigeria", "marketing", "brand",
@@ -283,12 +464,12 @@ const candidateFromResult = (item, payload, scanId, query) => {
     text.toLowerCase().includes(token.toLowerCase())
   );
   const partnershipProfile = buildPartnershipProfile({
-    brandName,
+    brandName: brandName || "Low signal result",
     sourceUrl: item.link,
     sourceTitle: String(item.title).slice(0, 220),
     sourceSnippet,
     text,
-    industry: inferIndustry(text, template.industries),
+    industry,
     campaignType,
   });
   return {
@@ -300,15 +481,21 @@ const candidateFromResult = (item, payload, scanId, query) => {
     industry: partnershipProfile.brand_profile.industry_category,
     campaign_name: campaignName,
     campaign_type: campaignType,
-    pain_point: `Public search signal suggests ${brandName} has celebrity, ambassador, endorsement, or influencer partnership activity. Source context: ${sourceSnippet || item.title}`,
-    suggested_opportunity_angle: `Prepare a celebrity partnership outreach angle for ${brandName} around ${campaignName}, then validate budget, decision maker, talent category, usage rights, and measurable KPI fit.`,
+    pain_point: llmCard?.pain_point || (lowSignalFallback
+      ? `Source context is too thin or non-commercial for a confident brand opportunity. Headline: ${item.title}`
+      : `Public search signal suggests ${brandName || "this result"} has celebrity, ambassador, endorsement, or influencer partnership activity. Source context: ${sourceSnippet || item.title}`),
+    suggested_opportunity_angle: llmCard?.suggested_opportunity_angle || (lowSignalFallback
+      ? "No actionable angle - recommend discarding or manually reviewing this result before CRM acceptance."
+      : `Prepare a celebrity partnership outreach angle for ${brandName || "this brand"} around ${campaignName || "this signal"}, then validate budget, decision maker, talent category, usage rights, and measurable KPI fit.`),
     source_url: item.link,
     source_domain: domainFromUrl(item.link),
     source_title: String(item.title).slice(0, 220),
     source_snippet: sourceSnippet,
     detected_keywords: detectedKeywords,
-    confidence_score: scoreCandidate(text, template),
+    confidence_score: confidence,
     contact_email: extractEmail(text),
+    reasoning: llmCard?.reasoning || "Extracted with deterministic fallback rules.",
+    extraction_method: extractionMethod,
     brand_profile: partnershipProfile.brand_profile,
     celebrity_partnership_status: partnershipProfile.celebrity_partnership_status,
     partnership_signals: partnershipProfile.partnership_signals,
@@ -336,7 +523,12 @@ const setupV3OpportunityScanner = (devServer) => {
     const { status } = req.query;
     const rows = readStore().candidates
       .filter((candidate) => !status || candidate.status === status)
-      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+      .sort((a, b) => {
+        const aLow = !a.brand_name || Number(a.confidence_score || 0) < 55;
+        const bLow = !b.brand_name || Number(b.confidence_score || 0) < 55;
+        if (aLow !== bLow) return aLow ? 1 : -1;
+        return Number(b.confidence_score || 0) - Number(a.confidence_score || 0);
+      });
     res.json(rows);
   });
 
@@ -351,6 +543,7 @@ const setupV3OpportunityScanner = (devServer) => {
     const template = { ...DEFAULT_TEMPLATE, ...(payload.template || {}) };
     const query = buildQuery({ ...payload, template });
     const scanId = makeId("oppscan");
+    const llmConfigured = Boolean(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || (process.env.OPPORTUNITY_SCANNER_LLM_API_KEY && process.env.OPPORTUNITY_SCANNER_LLM_BASE_URL));
     const scan = {
       id: scanId,
       query,
@@ -359,6 +552,8 @@ const setupV3OpportunityScanner = (devServer) => {
       status: "running",
       raw_count: 0,
       candidate_count: 0,
+      extraction_method: llmConfigured ? "llm" : "heuristic_fallback",
+      fallback_count: 0,
       created_at: nowIso(),
       created_by: payload.created_by || "admin",
       error: null,
@@ -395,9 +590,23 @@ const setupV3OpportunityScanner = (devServer) => {
       }
       const nextStore = readStore();
       const candidates = [];
-      items.forEach((item) => {
-        if (!hasPartnershipSignal(`${item.title} ${item.snippet}`)) return;
-        const candidate = candidateFromResult(item, { ...payload, template }, scanId, query);
+      let llmAttempts = 0;
+      let llmFailures = 0;
+      let fallbackCount = 0;
+      for (const item of items) {
+        let llmCard = null;
+        let extractionMethod = "heuristic_fallback";
+        if (llmConfigured) {
+          llmAttempts += 1;
+          try {
+            llmCard = await callOpportunityLlm(item, template);
+            if (llmCard) extractionMethod = "llm";
+          } catch (error) {
+            llmFailures += 1;
+          }
+        }
+        if (!llmCard) fallbackCount += 1;
+        const candidate = candidateFromResult(item, { ...payload, template }, scanId, query, llmCard, extractionMethod);
         const exists = nextStore.candidates.some((existing) =>
           existing.source_url === candidate.source_url || existing.dedupe_key === candidate.dedupe_key
         );
@@ -405,8 +614,12 @@ const setupV3OpportunityScanner = (devServer) => {
           nextStore.candidates.push(candidate);
           candidates.push(candidate);
         }
-      });
-      const completedScan = { ...scan, status: "completed", raw_count: items.length, candidate_count: candidates.length, completed_at: nowIso() };
+      }
+      let extractionMethod = "llm";
+      if (!llmConfigured) extractionMethod = "heuristic_fallback";
+      else if (llmAttempts && llmFailures / Math.max(llmAttempts, 1) > 0.5) extractionMethod = "heuristic_fallback";
+      else if (fallbackCount) extractionMethod = "mixed_llm_heuristic";
+      const completedScan = { ...scan, status: "completed", raw_count: items.length, candidate_count: candidates.length, extraction_method: extractionMethod, fallback_count: fallbackCount, completed_at: nowIso() };
       nextStore.scans = nextStore.scans.map((item) => (item.id === scanId ? completedScan : item));
       writeStore(nextStore);
       res.json({ scan: completedScan, candidates });
