@@ -118,6 +118,15 @@ const requestJson = (url) => new Promise((resolve, reject) => {
   req.on("error", reject);
 });
 
+const errorMessage = (error, fallback = "Unknown error") => {
+  if (!error) return fallback;
+  if (error.message) return error.message;
+  if (error.code) return error.code;
+  if (error.name) return error.name;
+  const text = String(error);
+  return text && text !== "[object Object]" ? text : fallback;
+};
+
 const postJson = (urlString, headers, payload) => new Promise((resolve, reject) => {
   const url = new URL(urlString);
   const body = JSON.stringify(payload);
@@ -322,11 +331,20 @@ const inferIndustry = (text, industries) => {
   for (const industry of industries || []) {
     if (lower.includes(String(industry).toLowerCase())) return industry;
   }
-  if (["bank", "fintech", "payment", "wallet"].some((word) => lower.includes(word))) return "Fintech / Financial Services";
-  if (["telco", "data", "network", "mobile", "internet"].some((word) => lower.includes(word))) return "Telecommunications";
-  if (["beer", "beverage", "drink", "coca", "lager", "food"].some((word) => lower.includes(word))) return "FMCG / Beverages";
-  if (["beauty", "skincare", "fashion", "retail"].some((word) => lower.includes(word))) return "Beauty / Retail";
-  return "Brand / Consumer Marketing";
+  if (["bank", "fintech", "payment", "wallet"].some((word) => lower.includes(word))) return industries.includes("Fintech") ? "Fintech" : "Other";
+  if (["telco", "data", "network", "mobile", "internet"].some((word) => lower.includes(word))) {
+    if (industries.includes("Telco")) return "Telco";
+    return industries.includes("Tech") ? "Tech" : "Other";
+  }
+  if (["beer", "beverage", "drink", "coca", "lager", "food"].some((word) => lower.includes(word))) {
+    if (industries.includes("Food & Beverage")) return "Food & Beverage";
+    return industries.includes("FMCG") ? "FMCG" : "Other";
+  }
+  if (["beauty", "skincare", "fashion", "retail"].some((word) => lower.includes(word))) {
+    if (industries.includes("Beauty")) return "Beauty";
+    return industries.includes("Fashion") ? "Fashion" : "Other";
+  }
+  return "Other";
 };
 
 const inferCampaignType = (text, campaignTypes) => {
@@ -337,9 +355,11 @@ const inferCampaignType = (text, campaignTypes) => {
   if (lower.includes("endorsement")) return "celebrity endorsement deal";
   if (lower.includes("ambassador")) return "brand ambassador program";
   if (lower.includes("partnership") || lower.includes("partnered")) return "celebrity partnership";
-  if (lower.includes("creator") || lower.includes("influencer")) return "creator campaign";
-  if (lower.includes("launch") || lower.includes("unveil")) return "brand launch";
-  if (lower.includes("advert") || lower.includes("ad ") || lower.includes("advertising")) return "advertising";
+  if (lower.includes("creator") || lower.includes("influencer")) {
+    return campaignTypes.includes("influencer campaign open application") ? "influencer campaign open application" : "marketing campaign";
+  }
+  if (lower.includes("launch") || lower.includes("unveil")) return "marketing campaign";
+  if (lower.includes("advert") || lower.includes("ad ") || lower.includes("advertising")) return "marketing campaign";
   return "marketing campaign";
 };
 
@@ -625,7 +645,7 @@ const setupV3OpportunityScanner = (devServer) => {
       res.json({ scan: completedScan, candidates });
     } catch (error) {
       const failedStore = readStore();
-      const failedScan = { ...scan, status: "failed", error: `SerpAPI scan failed: ${error.message}` };
+      const failedScan = { ...scan, status: "failed", error: `SerpAPI scan failed: ${errorMessage(error, "Unable to reach SerpAPI from the local scanner proxy.")}` };
       failedStore.scans = failedStore.scans.map((item) => (item.id === scanId ? failedScan : item));
       writeStore(failedStore);
       res.status(502).json({ detail: failedScan.error });

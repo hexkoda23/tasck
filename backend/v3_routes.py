@@ -2041,14 +2041,14 @@ def make_v3_router(db):
             if industry.lower() in lower:
                 return industry
         if any(word in lower for word in ["bank", "fintech", "payment", "wallet"]):
-            return "Fintech / Financial Services"
+            return "Fintech" if "Fintech" in industries else "Other"
         if any(word in lower for word in ["telco", "data", "network", "mobile", "internet"]):
-            return "Telecommunications"
+            return "Telco" if "Telco" in industries else "Tech" if "Tech" in industries else "Other"
         if any(word in lower for word in ["beer", "beverage", "drink", "coca", "lager", "food"]):
-            return "FMCG / Beverages"
+            return "Food & Beverage" if "Food & Beverage" in industries else "FMCG" if "FMCG" in industries else "Other"
         if any(word in lower for word in ["beauty", "skincare", "fashion", "retail"]):
-            return "Beauty / Retail"
-        return "Brand / Consumer Marketing"
+            return "Beauty" if "Beauty" in industries else "Fashion" if "Fashion" in industries else "Other"
+        return "Other"
 
     def _infer_campaign_type(text: str, campaign_types: List[str]) -> str:
         lower = (text or "").lower()
@@ -2062,11 +2062,11 @@ def make_v3_router(db):
         if "partnership" in lower or "partnered" in lower:
             return "celebrity partnership"
         if "creator" in lower or "influencer" in lower:
-            return "creator campaign"
+            return "influencer campaign open application" if "influencer campaign open application" in campaign_types else "marketing campaign"
         if "launch" in lower or "unveil" in lower:
-            return "brand launch"
+            return "marketing campaign"
         if "advert" in lower or "ad " in lower or "advertising" in lower:
-            return "advertising"
+            return "marketing campaign"
         return "marketing campaign"
 
     def _score_candidate(text: str, template: OpportunityQueryTemplate) -> int:
@@ -2502,7 +2502,8 @@ Produce the opportunity card JSON.
                     raise RuntimeError(str(raw["error"]))
                 items = _result_items(raw)
         except Exception as exc:
-            message = f"SerpAPI scan failed: {exc}"
+            detail = str(exc) or exc.__class__.__name__ or "Unable to reach SerpAPI from this environment."
+            message = f"SerpAPI scan failed: {detail}"
             await db.v3_opportunity_scans.update_one(
                 {"id": scan_id},
                 {"$set": {"status": "failed", "error": message}},
