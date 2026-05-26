@@ -24,7 +24,7 @@ const defaultTemplate = {
   keywords: 'brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria',
   country: 'Nigeria',
   industries: 'Fashion, Food & Beverage, Tech, Beauty, Sports, FMCG, Telco, Fintech',
-  campaign_types: 'brand ambassador program, celebrity partnership, celebrity endorsement deal, brand partnership opportunity, influencer campaign open application',
+  campaign_types: 'brand ambassador program, celebrity partnership, celebrity endorsement deal, brand partnership opportunity, influencer campaign open application, creator campaign',
   recency: 'past_year',
   result_limit: 10,
 };

@@ -1950,7 +1950,7 @@ def make_v3_router(db):
         keywords: str = "brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria"
         country: str = "Nigeria"
         industries: List[str] = Field(default_factory=lambda: ["Fashion", "Food & Beverage", "Tech", "Beauty", "Sports", "FMCG", "Telco", "Fintech"])
-        campaign_types: List[str] = Field(default_factory=lambda: ["brand ambassador program", "celebrity partnership", "celebrity endorsement deal", "brand partnership opportunity", "influencer campaign open application"])
+        campaign_types: List[str] = Field(default_factory=lambda: ["brand ambassador program", "celebrity partnership", "celebrity endorsement deal", "brand partnership opportunity", "influencer campaign open application", "creator campaign"])
         recency: str = "past_year"
         result_limit: int = 10
 
@@ -2061,6 +2061,8 @@ def make_v3_router(db):
             return "brand ambassador program"
         if "partnership" in lower or "partnered" in lower:
             return "celebrity partnership"
+        if "creator" in lower and "creator campaign" in campaign_types:
+            return "creator campaign"
         if "creator" in lower or "influencer" in lower:
             return "influencer campaign open application" if "influencer campaign open application" in campaign_types else "marketing campaign"
         if "launch" in lower or "unveil" in lower:
@@ -2185,36 +2187,21 @@ def make_v3_router(db):
         industries_list = ", ".join(template.industries + ["Other"])
         campaign_types_list = ", ".join(template.campaign_types + ["marketing campaign"])
         return f"""
-You are an opportunity-extraction analyst for The TASCK Agency (TTA), a Nigerian creator campaign engine. Your job is to read a single news/web search result about a brand and produce a structured opportunity card that the TTA team can decide to pursue.
-
-You write in three voices simultaneously:
-- HEADLINE voice (the brand name, campaign name, industry tags): punchy, decisive, internal-memo style. No hedging.
-- REASONING voice (the pain point, the source context): measured, evidence-backed. Cite what the source actually says.
-- COMMERCIAL voice (the suggested opportunity angle): action-ready, ROI-aware. Written as if you are seeding the next AI stage that drafts a full Alignment Snapshot.
+You are the TTA Brand Opportunity Scanner. Read one SerpAPI web/news result and convert it into one clean opportunity card for admin review.
 
 CRITICAL RULES:
-1. Brand name must be a REAL CONSUMER OR ENTERPRISE BRAND, not a person, government body, regulator, or institution. If the headline subject is a person, agency, or non-commercial entity, return brand_name as null and confidence_score below 50. Do not invent a brand.
-2. If the snippet is too thin to confidently extract a brand, set confidence_score below 55 and explain in the pain_point why context was insufficient.
-3. The suggested_opportunity_angle must be generative, not descriptive. It must be written in this form: "TTA could approach [brand] with [specific creator-led concept] anchored on [specific cultural moment or audience truth] - the brief would lead with [specific creative direction]."
-4. Confidence score (0-100) must reflect honest signal strength:
-   - 85-96: Brand named explicitly, campaign or activation named, clear creator/marketing angle, recent
-   - 70-84: Brand clear, campaign hinted but not named, plausible angle inferrable
-   - 55-69: Brand clear but campaign vague, angle requires assumption
-   - Below 55: Subject is not a brand, snippet too thin, or signal is non-commercial
-   No score above 90 unless every signal is unambiguous.
-5. Pain point must reference something in the source text. Quote or paraphrase a concrete signal. Never write a generic statement like "the brand may benefit from creator marketing."
+1. Brand name must be a REAL CONSUMER OR ENTERPRISE BRAND, not a person, government body, regulator, institution, NGO, or vague news subject. If it is not a commercial brand, return brand_name null and confidence_score below 50. Do not invent a brand.
+2. If the snippet is too thin to confidently extract a brand, set confidence_score below 55 and explain why in pain_point.
+3. suggested_opportunity_angle must be generative, creator-led, and in this form: "TTA could approach [brand] with [specific creator-led concept] anchored on [specific cultural moment or audience truth] - the brief would lead with [specific creative direction]."
+4. Score honestly: 85-96 strong explicit brand/campaign/creator/recent signal; 70-84 clear brand with hinted campaign; 55-69 clear brand but vague campaign; below 55 non-brand, thin snippet, or non-commercial signal. No score above 90 unless every signal is unambiguous.
+5. Pain point must reference the source text. Quote or paraphrase a concrete signal. Never use generic marketing language.
 6. Industry must be one of: {industries_list}. If none fit, use "Other".
 7. Campaign type must be one of: {campaign_types_list}. If none fit, use "marketing campaign".
-8. Detected keywords: extract 3-7 specific terms from the source. These are diagnostic tags, not opinions.
-9. TTA tone:
-   - Audience is Nigerian; assume local cultural context.
-   - TTA's value proposition is creator-led campaigns, not generic marketing.
-   - The angle should reflect matching brands to creators for cultural translation, not media buying or PR.
-   - Use Naira (NGN) for any monetary references.
-   - Write in clear, professional Nigerian English.
-10. Output is JSON only. No preamble, no markdown, no code fences. If you cannot produce a valid opportunity, still output JSON with brand_name: null, confidence_score: 30, and an honest pain_point explaining why.
+8. detected_keywords must contain 3-7 specific source terms: brand, campaign, product, cultural moment, season, creator, audience, or KPI.
+9. Tone: professional Nigerian English. Assume Nigerian cultural context. TTA matches brands to creators for cultural translation, not media buying or PR. Use Naira/NGN for money.
+10. Output is JSON only. No preamble, no markdown, no code fences. If invalid, still output JSON with brand_name null, confidence_score 30, and an honest pain_point.
 
-OUTPUT SCHEMA, return exactly these fields and no others:
+Return exactly this schema and no other fields:
 {{
   "brand_name": string or null,
   "campaign_name": string or null,
@@ -2227,6 +2214,16 @@ OUTPUT SCHEMA, return exactly these fields and no others:
   "detected_keywords": array of 3-7 strings,
   "reasoning": string
 }}
+
+EXAMPLES:
+Strong input: Guinness Nigeria launches "Made of More" Africa campaign with Rema. Snippet says the Q4 activation is fronted by Rema and uses creator-led documentary content for 25-34 males.
+Strong output: {{"brand_name":"Guinness Nigeria","campaign_name":"Made of More: Africa","industry":"Beverage","campaign_type":"creator campaign","country":"{template.country}","confidence_score":92,"pain_point":"Guinness is anchoring its Q4 activation on Rema and creator-led documentary content for 25-34 males, so campaign performance depends on whether that creator format converts the stated audience.","suggested_opportunity_angle":"TTA could approach Guinness Nigeria with a Lagos-rooted supporting creator slate anchored on Detty December cultural moments - the brief would lead with extending Rema's documentary into city-specific creator stories that drive Made of More deeper into local conversation.","detected_keywords":["Guinness Nigeria","Made of More","Rema","Q4 activation","Afrobeats","documentary","25-34 male"],"reasoning":"Brand, campaign, creator, audience, and activation are all explicit, so this is a strong opportunity."}}
+
+Weak input: EFCC Chairman warns banks against marketing fraud.
+Weak output: {{"brand_name":null,"campaign_name":null,"industry":"Other","campaign_type":"marketing campaign","country":"{template.country}","confidence_score":28,"pain_point":"The source subject is a regulator addressing the banking sector broadly. No specific brand or campaign is named, so this is regulatory commentary, not a commercial opportunity.","suggested_opportunity_angle":"No actionable angle - this is regulatory news, not a brand activation signal. Recommend discarding this result.","detected_keywords":["EFCC","regulatory","banking sector","marketing fraud"],"reasoning":"Subject is non-commercial and no brand is available to pursue."}}
+
+Medium input: MTN Nigeria boosts Q4 marketing spend, but no specific campaign or creator partnership is announced.
+Medium output: {{"brand_name":"MTN Nigeria","campaign_name":null,"industry":"Telco","campaign_type":"marketing campaign","country":"{template.country}","confidence_score":68,"pain_point":"MTN has signaled increased Q4 marketing investment, but no campaign, creator, or partnership has been announced. The opportunity is real but still undefined.","suggested_opportunity_angle":"TTA could approach MTN Nigeria with a proactive 5G-tier creator campaign anchored on urban Gen Z mobile behavior - the brief would lead with culturally-led acquisition content that positions creators as the trust layer for tier upgrades.","detected_keywords":["MTN Nigeria","Q4 marketing","mobile data","5G","acquisition"],"reasoning":"Brand and marketing intent are clear, but the campaign and creator angle require assumption."}}
 """.strip()
 
     def _llm_user_message(item: Dict[str, str], template: OpportunityQueryTemplate) -> str:
