@@ -96,6 +96,10 @@ frontend/node_modules/.cache/default-development/25.pack
 .env
 .env.*
 *.env
+SERPAPI_API_KEY*
+.serpapi-key
+serpapi.key
+serpapi_api_key.txt
 credentials.json
 *.key
 .credentials

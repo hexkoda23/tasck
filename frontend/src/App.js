@@ -29,6 +29,7 @@ import V3AdminProjects from './pages/v3/admin/V3AdminProjects';
 import V3AdminProjectDetail from './pages/v3/admin/V3AdminProjectDetail';
 import V3AdminCRM from './pages/v3/admin/V3AdminCRM';
 import V3AdminBrandDetail from './pages/v3/admin/V3AdminBrandDetail';
+import V3AdminOpportunityScanner from './pages/v3/admin/V3AdminOpportunityScanner';
 import V3AdminCreators from './pages/v3/admin/V3AdminCreators';
 import V3AdminCreatorDetail from './pages/v3/admin/V3AdminCreatorDetail';
 import V3AdminContracts from './pages/v3/admin/V3AdminContracts';
@@ -333,6 +334,7 @@ function AppRoutes() {
         <Route path="projects/:id/scope-changes" element={<V3AdminScopeChange />} />
         <Route path="projects/:id/contract" element={<V3AdminContractPreview />} />
         <Route path="crm" element={<V3AdminCRM />} />
+        <Route path="crm/opportunities" element={<V3AdminOpportunityScanner />} />
         <Route path="crm/:id" element={<V3AdminBrandDetail />} />
         <Route path="business-cases" element={<V3AdminBusinessCases />} />
         <Route path="business-cases/:id" element={<V3AdminBusinessCaseDetail />} />

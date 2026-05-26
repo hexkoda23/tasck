@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v3Brands as fallbackBrands, getProjectsForBrand } from '../../../lib/v3data';
-import { v3GetBrands, v3CreateBrand, v3ScrapeBrandOpportunities } from '../../../lib/v3api';
+import { v3GetBrands, v3CreateBrand } from '../../../lib/v3api';
 import { useV3Resource } from '../../../lib/useV3Resource';
 import V3Modal from '../../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles } from 'lucide-react';
@@ -33,7 +33,6 @@ const V3AdminCRM = () => {
   const [form, setForm] = useState({ company: '', industry: '', primary_contact: '', role: '', email: '', engagement_track_default: 'paid' });
   const [submitting, setSubmitting] = useState(false);
   const [createdAccount, setCreatedAccount] = useState(null);
-  const [scraping, setScraping] = useState(false);
 
   const submitBrand = async () => {
     if (!form.company || !form.industry || !form.primary_contact) return;
@@ -89,18 +88,9 @@ const V3AdminCRM = () => {
         <button
           className="v3-btn-secondary"
           data-testid="scrape-opportunities-btn"
-          disabled={scraping}
-          onClick={async () => {
-            setScraping(true);
-            try {
-              await v3ScrapeBrandOpportunities({ query: 'Nigerian brands with creator marketing needs', limit: 3 });
-              setData(await v3GetBrands());
-            } finally {
-              setScraping(false);
-            }
-          }}
+          onClick={() => navigate('/v3/admin/crm/opportunities')}
         >
-          <Sparkles className="w-4 h-4" /> {scraping ? 'Scanning...' : 'Scan Opportunities'}
+          <Sparkles className="w-4 h-4" /> Scan Opportunities
         </button>
       </div>
 

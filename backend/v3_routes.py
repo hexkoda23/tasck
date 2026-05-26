@@ -15,6 +15,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
+import asyncio
+import os
+import re
+import requests
 import uuid
 
 from v3_seed import get_v3_seed_data
@@ -32,6 +36,25 @@ def _slug(value: str) -> str:
 
 def _temporary_password() -> str:
     return f"TASCK-{uuid.uuid4().hex[:4].upper()}-{uuid.uuid4().hex[:4].upper()}"
+
+
+def _domain_from_url(value: str) -> str:
+    match = re.search(r"https?://([^/]+)", value or "")
+    return match.group(1).replace("www.", "") if match else ""
+
+
+def _country_to_gl(country: str) -> str:
+    value = (country or "Nigeria").strip().lower()
+    if len(value) == 2:
+        return value
+    return {
+        "nigeria": "ng",
+        "ghana": "gh",
+        "kenya": "ke",
+        "south africa": "za",
+        "united kingdom": "uk",
+        "united states": "us",
+    }.get(value, "ng")
 
 
 def _fallback_creator_email(creator: Dict[str, Any]) -> str:
@@ -276,6 +299,51 @@ def make_v3_router(db):
                 "temporary_password": temp_password,
                 "must_change_password": True,
             },
+            "welcome_email_id": welcome["id"],
+        }
+
+    async def ensure_brand_account(brand: Dict[str, Any]) -> Dict[str, Any]:
+        existing = await db.v3_brand_accounts.find_one({"brand_id": brand["id"]}, {"_id": 0})
+        if existing:
+            return {
+                "username": existing.get("username"),
+                "temporary_password": existing.get("temporary_password"),
+                "must_change_password": existing.get("must_change_password", False),
+            }
+
+        username = (brand.get("email") or f"{_slug(brand.get('company'))}@brand.tasck.demo").lower()
+        temp_password = _temporary_password()
+        account_doc = {
+            "id": f"acct-{uuid.uuid4().hex[:8]}",
+            "brand_id": brand["id"],
+            "role": "brand",
+            "username": username,
+            "temporary_password": temp_password,
+            "password": temp_password,
+            "must_change_password": True,
+            "status": "active",
+            "created_at": _now_iso(),
+            "last_login_at": None,
+            "password_changed_at": None,
+        }
+        await db.v3_brand_accounts.insert_one({**account_doc})
+        welcome = await queue_email(
+            to=username,
+            subject="Welcome to TASCK OS - your brand portal access",
+            body=(
+                f"Welcome to TASCK OS, {brand.get('primary_contact') or 'Marketing Team'}.\n\n"
+                f"Your brand account for {brand.get('company')} is ready.\n"
+                f"Username: {username}\n"
+                f"Temporary password: {temp_password}\n\n"
+                "On first login, please change your password from the brand portal."
+            ),
+            kind="brand_welcome",
+            brand_id=brand["id"],
+        )
+        return {
+            "username": username,
+            "temporary_password": temp_password,
+            "must_change_password": True,
             "welcome_email_id": welcome["id"],
         }
 
@@ -1864,97 +1932,372 @@ def make_v3_router(db):
         return report
 
     # ------------------------------------------------------------------------
-    # ADMIN — Reset demo data (wipe v3 collections and re-seed)
+    # OPPORTUNITY SCANNER - SerpAPI-powered CRM intake with admin review
     # ------------------------------------------------------------------------
-    # ------------------------------------------------------------------------
-    # OPPORTUNITY SCRAPER (simulated connector for demo CRM intake)
-    # ------------------------------------------------------------------------
+    class OpportunityQueryTemplate(BaseModel):
+        keywords: str = "Brands running new marketing campaigns in Nigeria"
+        country: str = "Nigeria"
+        industries: List[str] = Field(default_factory=lambda: ["FMCG", "Telco", "Fintech", "Beverage", "Beauty"])
+        campaign_types: List[str] = Field(default_factory=lambda: ["marketing campaign", "advertising", "creator campaign", "brand launch"])
+        recency: str = "past_month"
+        result_limit: int = 10
+
+    class OpportunityScanPayload(BaseModel):
+        query: Optional[str] = None
+        template: OpportunityQueryTemplate = Field(default_factory=OpportunityQueryTemplate)
+        created_by: str = "admin"
+
     class OpportunityScrapePayload(BaseModel):
         query: str = "brand marketing opportunities Nigeria"
         limit: int = 3
+
+    class OpportunityReviewPayload(BaseModel):
+        reviewed_by: str = "admin"
 
     @router.get("/opportunities")
     async def list_opportunities():
         return await db.v3_opportunities.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
+    @router.get("/opportunities/candidates")
+    async def list_opportunity_candidates(status: Optional[str] = None):
+        query = {"status": status} if status else {}
+        return await db.v3_opportunity_candidates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+    def _build_opportunity_query(payload: OpportunityScanPayload) -> str:
+        template = payload.template
+        if payload.query and payload.query.strip():
+            return payload.query.strip()
+        industries = " OR ".join([item.strip() for item in template.industries if item.strip()])
+        campaign_types = " OR ".join([item.strip() for item in template.campaign_types if item.strip()])
+        pieces = [template.keywords.strip(), template.country.strip()]
+        if industries:
+            pieces.append(f"({industries})")
+        if campaign_types:
+            pieces.append(f"({campaign_types})")
+        return " ".join([piece for piece in pieces if piece])
+
+    def _recency_to_tbs(value: str) -> Optional[str]:
+        return {
+            "past_day": "qdr:d",
+            "past_week": "qdr:w",
+            "past_month": "qdr:m",
+            "past_year": "qdr:y",
+        }.get((value or "").strip())
+
+    def _extract_email(text: str) -> str:
+        match = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text or "")
+        return match.group(0) if match else ""
+
+    def _extract_brand_name(title: str, snippet: str) -> str:
+        text = (title or snippet or "Discovered Brand").strip()
+        text = re.sub(r"^[^A-Za-z0-9]+", "", text)
+        splitters = [
+            " launches ", " launch ", " unveils ", " announces ", " introduces ",
+            " partners ", " partners with ", " campaign", " advertising", " advert",
+            " rolls out ", " debuts ", " celebrates ",
+        ]
+        lower = text.lower()
+        cut = len(text)
+        for splitter in splitters:
+            pos = lower.find(splitter)
+            if pos > 1:
+                cut = min(cut, pos)
+        candidate = text[:cut].split(" - ")[0].split(" | ")[0].split(":")[0].strip(" '\".,")
+        words = candidate.split()
+        if len(words) > 5:
+            candidate = " ".join(words[:5])
+        return candidate or "Discovered Brand"
+
+    def _extract_campaign_name(title: str, snippet: str, brand_name: str) -> str:
+        quoted = re.findall(r"[\"']([^\"']{4,80})[\"']", f"{title} {snippet}")
+        if quoted:
+            return quoted[0]
+        cleaned = re.sub(re.escape(brand_name), "", title or "", flags=re.IGNORECASE).strip(" -:|")
+        return cleaned[:90] or "New marketing opportunity"
+
+    def _infer_industry(text: str, industries: List[str]) -> str:
+        lower = (text or "").lower()
+        for industry in industries:
+            if industry.lower() in lower:
+                return industry
+        if any(word in lower for word in ["bank", "fintech", "payment", "wallet"]):
+            return "Fintech / Financial Services"
+        if any(word in lower for word in ["telco", "data", "network", "mobile", "internet"]):
+            return "Telecommunications"
+        if any(word in lower for word in ["beer", "beverage", "drink", "coca", "lager", "food"]):
+            return "FMCG / Beverages"
+        if any(word in lower for word in ["beauty", "skincare", "fashion", "retail"]):
+            return "Beauty / Retail"
+        return "Brand / Consumer Marketing"
+
+    def _infer_campaign_type(text: str, campaign_types: List[str]) -> str:
+        lower = (text or "").lower()
+        for campaign_type in campaign_types:
+            if campaign_type.lower() in lower:
+                return campaign_type
+        if "creator" in lower or "influencer" in lower:
+            return "creator campaign"
+        if "launch" in lower or "unveil" in lower:
+            return "brand launch"
+        if "advert" in lower or "ad " in lower or "advertising" in lower:
+            return "advertising"
+        return "marketing campaign"
+
+    def _score_candidate(text: str, template: OpportunityQueryTemplate) -> int:
+        lower = (text or "").lower()
+        score = 55
+        for token in ["campaign", "launch", "advert", "marketing", "brand", "creator", "influencer", "nigeria", "lagos"]:
+            if token in lower:
+                score += 4
+        for token in template.industries + template.campaign_types:
+            if token.lower() in lower:
+                score += 3
+        return max(50, min(score, 96))
+
+    def _result_items(raw: Dict[str, Any]) -> List[Dict[str, str]]:
+        buckets = []
+        for key in ["organic_results", "news_results", "top_stories"]:
+            for item in raw.get(key, []) or []:
+                buckets.append({
+                    "title": item.get("title") or item.get("name") or "",
+                    "link": item.get("link") or item.get("source_link") or item.get("url") or "",
+                    "snippet": item.get("snippet") or item.get("description") or item.get("source") or "",
+                })
+        return [item for item in buckets if item["title"] and item["link"]]
+
+    def _candidate_from_result(item: Dict[str, str], payload: OpportunityScanPayload, scan_id: str) -> Dict[str, Any]:
+        text = f"{item['title']} {item['snippet']}"
+        brand_name = _extract_brand_name(item["title"], item["snippet"])
+        campaign_name = _extract_campaign_name(item["title"], item["snippet"], brand_name)
+        industry = _infer_industry(text, payload.template.industries)
+        campaign_type = _infer_campaign_type(text, payload.template.campaign_types)
+        confidence = _score_candidate(text, payload.template)
+        detected_keywords = [
+            token for token in ["campaign", "launch", "advertising", "creator", "influencer", "Nigeria", "marketing", "brand"]
+            if token.lower() in text.lower()
+        ]
+        source_url = item["link"]
+        source_snippet = item["snippet"][:420]
+        return {
+            "id": f"oppcand-{uuid.uuid4().hex[:8]}",
+            "scan_id": scan_id,
+            "query": _build_opportunity_query(payload),
+            "brand_name": brand_name,
+            "country": payload.template.country or "Nigeria",
+            "industry": industry,
+            "campaign_name": campaign_name,
+            "campaign_type": campaign_type,
+            "pain_point": (
+                f"Public search signal suggests {brand_name} has recent {campaign_type} activity. "
+                f"Source context: {source_snippet or item['title']}"
+            ),
+            "suggested_opportunity_angle": (
+                f"Prepare an Alignment Snapshot around {brand_name}'s {campaign_name}, using creator-led storytelling, "
+                "audience fit, channel KPIs, and measurable conversion signals."
+            ),
+            "source_url": source_url,
+            "source_domain": _domain_from_url(source_url),
+            "source_title": item["title"][:220],
+            "source_snippet": source_snippet,
+            "detected_keywords": detected_keywords,
+            "confidence_score": confidence,
+            "contact_email": _extract_email(text),
+            "status": "pending",
+            "created_at": _now_iso(),
+            "reviewed_at": None,
+            "reviewed_by": None,
+            "dedupe_key": f"{_slug(brand_name)}::{_slug(campaign_name)}",
+        }
+
+    async def run_opportunity_scan(payload: OpportunityScanPayload) -> Dict[str, Any]:
+        api_key = os.getenv("SERPAPI_API_KEY")
+        if not api_key:
+            raise HTTPException(503, "SERPAPI_API_KEY is not configured. Add it to backend deployment secrets before running the live scanner.")
+
+        query = _build_opportunity_query(payload)
+        scan_id = f"oppscan-{uuid.uuid4().hex[:8]}"
+        scan = {
+            "id": scan_id,
+            "query": query,
+            "template": payload.template.model_dump(),
+            "provider": "serpapi_google",
+            "status": "running",
+            "raw_count": 0,
+            "candidate_count": 0,
+            "created_at": _now_iso(),
+            "created_by": payload.created_by,
+            "error": None,
+        }
+        await db.v3_opportunity_scans.insert_one({**scan})
+
+        params = {
+            "engine": "google",
+            "q": query,
+            "api_key": api_key,
+            "hl": "en",
+            "gl": _country_to_gl(payload.template.country),
+            "num": max(1, min(payload.template.result_limit, 20)),
+        }
+        tbs = _recency_to_tbs(payload.template.recency)
+        if tbs:
+            params["tbs"] = tbs
+
+        try:
+            response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=25)
+            response.raise_for_status()
+            raw = response.json()
+            if raw.get("error"):
+                raise RuntimeError(str(raw["error"]))
+        except Exception as exc:
+            message = f"SerpAPI scan failed: {exc}"
+            await db.v3_opportunity_scans.update_one(
+                {"id": scan_id},
+                {"$set": {"status": "failed", "error": message}},
+            )
+            raise HTTPException(502, message)
+
+        items = _result_items(raw)
+        candidates = []
+        for item in items:
+            candidate = _candidate_from_result(item, payload, scan_id)
+            existing = await db.v3_opportunity_candidates.find_one(
+                {"$or": [{"source_url": candidate["source_url"]}, {"dedupe_key": candidate["dedupe_key"]}]},
+                {"_id": 0},
+            )
+            if existing:
+                continue
+            await db.v3_opportunity_candidates.insert_one({**candidate})
+            candidates.append(candidate)
+
+        await db.v3_opportunity_scans.update_one(
+            {"id": scan_id},
+            {"$set": {
+                "status": "completed",
+                "raw_count": len(items),
+                "candidate_count": len(candidates),
+                "completed_at": _now_iso(),
+            }},
+        )
+        return {
+            "scan": {**scan, "status": "completed", "raw_count": len(items), "candidate_count": len(candidates), "completed_at": _now_iso()},
+            "candidates": candidates,
+        }
+
+    @router.post("/opportunities/scans")
+    async def create_opportunity_scan(payload: OpportunityScanPayload):
+        return await run_opportunity_scan(payload)
+
     @router.post("/opportunities/scrape")
     async def scrape_opportunities(payload: OpportunityScrapePayload):
-        samples = [
-            {
-                "company": "NovaPay Africa",
-                "industry": "Fintech",
-                "problem": "Needs youth trust after a competitor campaign dominated social conversation.",
-                "contact": "marketing@novapay.demo",
-            },
-            {
-                "company": "GlowUp Beauty NG",
-                "industry": "Beauty / Retail",
-                "problem": "Looking for creator-led launch ideas for a Gen-Z skincare range.",
-                "contact": "partnerships@glowup.demo",
-            },
-            {
-                "company": "Verde Energy Drinks",
-                "industry": "FMCG - Beverages",
-                "problem": "Searching for music and nightlife partnerships ahead of dry-season activations.",
-                "contact": "brand@verde.demo",
-            },
-        ][: max(1, min(payload.limit, 3))]
-        created = []
-        for sample in samples:
-            existing_brand = await db.v3_brands.find_one({"company": sample["company"]}, {"_id": 0})
-            if existing_brand:
-                brand = existing_brand
-            else:
-                brand_id = f"brand-{uuid.uuid4().hex[:8]}"
-                brand = {
-                    "id": brand_id,
-                    "company": sample["company"],
-                    "industry": sample["industry"],
-                    "website": "",
-                    "hq": "",
-                    "primary_contact": "Marketing Team",
-                    "role": "Brand contact",
-                    "email": sample["contact"],
-                    "phone": "",
-                    "status": "Lead - scraped opportunity",
-                    "lead_score": 64,
-                    "last_interaction": "just now",
-                    "engagement_track_default": "paid",
-                    "source": "opportunity_scraper_simulated",
-                }
-                await db.v3_brands.insert_one({**brand})
+        scan_payload = OpportunityScanPayload(
+            query=payload.query,
+            template=OpportunityQueryTemplate(result_limit=payload.limit),
+            created_by="legacy_scrape_button",
+        )
+        return await run_opportunity_scan(scan_payload)
+
+    @router.post("/opportunities/candidates/{candidate_id}/accept")
+    async def accept_opportunity_candidate(candidate_id: str, payload: OpportunityReviewPayload):
+        candidate = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
+        if not candidate:
+            raise HTTPException(404, "Opportunity candidate not found")
+
+        all_brands = await db.v3_brands.find({}, {"_id": 0}).to_list(1000)
+        brand = next((item for item in all_brands if _slug(item.get("company")) == _slug(candidate.get("brand_name"))), None)
+        contact_email = candidate.get("contact_email") or ""
+        if not brand:
+            brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+            brand = {
+                "id": brand_id,
+                "company": candidate.get("brand_name") or "Discovered Brand",
+                "industry": candidate.get("industry") or "Brand / Consumer Marketing",
+                "website": f"https://{candidate.get('source_domain')}" if candidate.get("source_domain") else candidate.get("source_url", ""),
+                "hq": candidate.get("country") or "Nigeria",
+                "primary_contact": "Marketing Team",
+                "role": "Brand contact",
+                "email": contact_email,
+                "phone": "",
+                "status": "Lead - accepted scanned opportunity",
+                "lead_score": candidate.get("confidence_score", 65),
+                "last_interaction": "just now",
+                "engagement_track_default": "paid",
+                "source": "serpapi_opportunity_scanner",
+            }
+            await db.v3_brands.insert_one({**brand})
+            await db.v3_contacts.insert_one({
+                "id": f"ct-{uuid.uuid4().hex[:8]}",
+                "brand_id": brand_id,
+                "name": "Marketing Team",
+                "role": "Brand contact",
+                "email": contact_email,
+                "phone": "",
+                "is_primary": True,
+                "decision_seniority": "lead",
+            })
+        else:
+            has_contact = await db.v3_contacts.find_one({"brand_id": brand["id"]}, {"_id": 0})
+            if not has_contact:
                 await db.v3_contacts.insert_one({
                     "id": f"ct-{uuid.uuid4().hex[:8]}",
-                    "brand_id": brand_id,
-                    "name": "Marketing Team",
-                    "role": "Brand contact",
-                    "email": sample["contact"],
-                    "phone": "",
+                    "brand_id": brand["id"],
+                    "name": brand.get("primary_contact") or "Marketing Team",
+                    "role": brand.get("role") or "Brand contact",
+                    "email": brand.get("email") or contact_email,
+                    "phone": brand.get("phone") or "",
                     "is_primary": True,
                     "decision_seniority": "lead",
                 })
+
+        account = await ensure_brand_account(brand)
+        existing_opp = await db.v3_opportunities.find_one({"candidate_id": candidate_id}, {"_id": 0})
+        if existing_opp:
+            opportunity = existing_opp
+        else:
             opportunity = {
                 "id": f"opp-{uuid.uuid4().hex[:8]}",
+                "candidate_id": candidate_id,
+                "scan_id": candidate.get("scan_id"),
                 "brand_id": brand["id"],
-                "company": sample["company"],
-                "query": payload.query,
-                "problem": sample["problem"],
-                "status": "new",
+                "company": brand.get("company"),
+                "title": candidate.get("campaign_name") or "Scanned marketing opportunity",
+                "query": candidate.get("query", ""),
+                "problem": candidate.get("pain_point"),
+                "pain_point": candidate.get("pain_point"),
+                "suggested_angle": candidate.get("suggested_opportunity_angle"),
+                "suggested_opportunity_angle": candidate.get("suggested_opportunity_angle"),
+                "source": candidate.get("source_url"),
+                "source_url": candidate.get("source_url"),
+                "contact": brand.get("email") or contact_email or "Marketing Team",
+                "estimated_value": 75000000,
+                "fit_score": candidate.get("confidence_score", 65),
+                "status": "accepted",
                 "created_at": _now_iso(),
             }
             await db.v3_opportunities.insert_one({**opportunity})
-            await queue_email(
-                to=brand.get("email", sample["contact"]),
-                subject="TASCK POV: creator strategy opportunity",
-                body=(
-                    f"We spotted a possible marketing challenge for {sample['company']}: {sample['problem']} "
-                    "TASCK can prepare an Alignment Snapshot if your team wants to explore it."
-                ),
-                kind="scraped_opportunity_outreach",
-                brand_id=brand["id"],
-            )
-            created.append({"brand": brand, "opportunity": opportunity})
-        return {"query": payload.query, "created": created}
+
+        await db.v3_opportunity_candidates.update_one(
+            {"id": candidate_id},
+            {"$set": {
+                "status": "accepted",
+                "reviewed_at": _now_iso(),
+                "reviewed_by": payload.reviewed_by,
+                "accepted_brand_id": brand["id"],
+                "opportunity_id": opportunity["id"],
+            }},
+        )
+        updated = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
+        return {"candidate": updated, "brand": brand, "account": account, "opportunity": opportunity}
+
+    @router.post("/opportunities/candidates/{candidate_id}/reject")
+    async def reject_opportunity_candidate(candidate_id: str, payload: OpportunityReviewPayload):
+        candidate = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
+        if not candidate:
+            raise HTTPException(404, "Opportunity candidate not found")
+        await db.v3_opportunity_candidates.update_one(
+            {"id": candidate_id},
+            {"$set": {"status": "rejected", "reviewed_at": _now_iso(), "reviewed_by": payload.reviewed_by}},
+        )
+        return await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
 
     @router.post("/admin/reset-demo")
     async def reset_demo():

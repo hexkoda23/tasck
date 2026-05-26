@@ -3,13 +3,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   v3ListBusinessCases, v3AdminOverview, v3GetBrands, v3GetCreators,
-  v3CreateBusinessCase,
+  v3CreateBusinessCase, v3ListOpportunityCandidates,
 } from '../../../lib/v3api';
 import {
   formatNairaV3, v3Stages, v3Brands as fallbackBrands, v3Creators as fallbackCreators,
   buildMockBusinessCases, buildMockAdminOverview, getRM,
 } from '../../../lib/v3data';
 import { applyStoredDemoRows, saveStoredDemoBundle } from '../../../lib/v3demoStore';
+import { candidateToBusinessOpportunity, demoOpportunityCandidates } from '../../../lib/v3opportunityDemo';
 import V3Modal from '../../../components/v3/V3Modal';
 import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search } from 'lucide-react';
 
@@ -246,20 +247,77 @@ const V3AdminBusinessCases = () => {
     setGrantOpportunities((items) => items.map((item) => (item.id === id ? { ...item, status } : item)));
   };
 
-  const runBusinessOpportunityAgent = () => {
+  const runBusinessOpportunityAgent = async () => {
     setBusinessAgentOpen(true);
     setBusy(true);
-    setTimeout(() => {
-      setBusinessOpportunities(demoBusinessOpportunities);
+    try {
+      const accepted = await v3ListOpportunityCandidates({ status: 'accepted' });
+      if (Array.isArray(accepted) && accepted.length) {
+        setBusinessOpportunities(accepted.map((candidate) => ({
+          ...candidateToBusinessOpportunity(candidate),
+          source_type: 'scanner',
+        })));
+      } else {
+        const pending = await v3ListOpportunityCandidates({ status: 'pending' });
+        setBusinessOpportunities((Array.isArray(pending) && pending.length ? pending : demoOpportunityCandidates)
+          .map((candidate) => ({
+            ...candidateToBusinessOpportunity(candidate),
+            source_type: 'scanner',
+          })));
+      }
+    } catch (e) {
+      const demoAccepted = demoOpportunityCandidates.filter((candidate) => candidate.status === 'accepted');
+      setBusinessOpportunities(demoAccepted.length ? demoAccepted.map((candidate) => ({
+        ...candidateToBusinessOpportunity(candidate),
+        source_type: 'scanner_demo',
+      })) : demoBusinessOpportunities);
+    } finally {
       setBusy(false);
-    }, 300);
+    }
   };
 
-  const createBusinessCaseFromOpportunity = (opportunity) => {
-    const brand = fallbackBrands.find((item) => item.id === opportunity.brand_id);
+  const createBusinessCaseFromOpportunity = async (opportunity) => {
+    if (opportunity.source_type === 'scanner' && opportunity.status !== 'accepted') {
+      navigate('/v3/admin/crm/opportunities');
+      return;
+    }
+    setBusy(true);
+    try {
+      if (opportunity.source_type === 'scanner' && opportunity.brand_id) {
+        const created = await v3CreateBusinessCase({
+          brand_id: opportunity.brand_id,
+          creator_id: null,
+          title: opportunity.title,
+          engagement_track: 'paid',
+          estimated_value: Number(opportunity.estimated_value) || 75000000,
+          rm_id: 'rm-temi',
+          connect_status: 'in_discovery',
+          stated_intent: opportunity.pain_point,
+          source: opportunity.source || 'SerpAPI opportunity scanner',
+        });
+        setBusinessOpportunities((items) => items.map((item) => (item.id === opportunity.id ? { ...item, status: 'converted' } : item)));
+        navigate(`/v3/admin/business-cases/${created.id}`);
+        return;
+      }
+    } catch (e) {
+      // Demo/local fallback below keeps the presentation usable.
+    } finally {
+      setBusy(false);
+    }
+
+    const brand = fallbackBrands.find((item) => item.id === opportunity.brand_id) || {
+      id: opportunity.brand_id || `brand-${opportunity.id}`,
+      company: opportunity.company,
+      industry: opportunity.industry || 'Brand / Consumer Marketing',
+      primaryContact: 'Marketing Team',
+      primary_contact: 'Marketing Team',
+      role: 'Brand contact',
+      email: '',
+      leadScore: opportunity.fit_score || 70,
+    };
     const row = {
       id: `ai-bc-${opportunity.id}`,
-      brand_id: opportunity.brand_id,
+      brand_id: opportunity.brand_id || brand.id,
       creator_id: null,
       title: opportunity.title,
       stage: 'connect',
@@ -370,16 +428,28 @@ const V3AdminBusinessCases = () => {
                 Scraped opportunities ready for Business Case creation
               </h2>
               <p className="text-[12px] text-[#6E6657] mt-1">
-                Demo agent output from public web signals: brand pain point, source, contact route, suggested angle, fit score, and one-click conversion into a Connector-stage Business Case.
+                Accepted scanner results from public web signals: brand pain point, source, contact route, suggested angle, fit score, and one-click conversion into a Connector-stage Business Case.
               </p>
             </div>
-            <button onClick={() => setBusinessAgentOpen(false)} className="v3-btn-secondary text-[11px]">
-              Hide
-            </button>
+            <div className="flex gap-2">
+              <button onClick={() => navigate('/v3/admin/crm/opportunities')} className="v3-btn-primary text-[11px]" data-testid="bc-open-opportunity-scanner">
+                <Search className="w-3.5 h-3.5" /> Open scanner
+              </button>
+              <button onClick={() => setBusinessAgentOpen(false)} className="v3-btn-secondary text-[11px]">
+                Hide
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            {businessOpportunities.map((opportunity) => (
+            {businessOpportunities.map((opportunity) => {
+              const needsAcceptance = String(opportunity.source_type || '').startsWith('scanner') && !['accepted', 'converted'].includes(opportunity.status);
+              const buttonLabel = opportunity.status === 'converted'
+                ? 'Business Case created'
+                : needsAcceptance
+                  ? 'Accept in scanner first'
+                  : 'Create Business Case';
+              return (
               <div key={opportunity.id} className="rounded border border-[#E8E4DB] bg-[#FAFAF7] p-4" data-testid={`bc-ai-opportunity-${opportunity.id}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -416,10 +486,10 @@ const V3AdminBusinessCases = () => {
                   className="v3-btn-primary text-[11px]"
                   data-testid={`bc-create-ai-business-case-${opportunity.id}`}
                 >
-                  <Plus className="w-3.5 h-3.5" /> {opportunity.status === 'converted' ? 'Business Case created' : 'Create Business Case'}
+                  <Plus className="w-3.5 h-3.5" /> {buttonLabel}
                 </button>
               </div>
-            ))}
+            );})}
           </div>
         </div>
       )}
