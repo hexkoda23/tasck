@@ -15,10 +15,15 @@ const config = {
 // Conditionally load visual edits modules only in dev mode
 let setupDevServer;
 let babelMetadataPlugin;
+let setupV3OpportunityScanner;
 
 if (config.enableVisualEdits) {
   setupDevServer = require("./plugins/visual-edits/dev-server-setup");
   babelMetadataPlugin = require("./plugins/visual-edits/babel-metadata-plugin");
+}
+
+if (isDevServer) {
+  setupV3OpportunityScanner = require("./plugins/v3-opportunity-scanner/dev-server");
 }
 
 // Conditionally load health check modules only if enabled
@@ -83,22 +88,23 @@ webpackConfig.devServer = (devServerConfig) => {
     devServerConfig = setupDevServer(devServerConfig);
   }
 
-  // Add health check endpoints if enabled
-  if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
-    const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
+  const originalSetupMiddlewares = devServerConfig.setupMiddlewares;
 
-    devServerConfig.setupMiddlewares = (middlewares, devServer) => {
-      // Call original setup if exists
-      if (originalSetupMiddlewares) {
-        middlewares = originalSetupMiddlewares(middlewares, devServer);
-      }
+  devServerConfig.setupMiddlewares = (middlewares, devServer) => {
+    if (originalSetupMiddlewares) {
+      middlewares = originalSetupMiddlewares(middlewares, devServer);
+    }
 
-      // Setup health endpoints
+    if (setupV3OpportunityScanner) {
+      setupV3OpportunityScanner(devServer);
+    }
+
+    if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
       setupHealthEndpoints(devServer, healthPluginInstance);
+    }
 
-      return middlewares;
-    };
-  }
+    return middlewares;
+  };
 
   return devServerConfig;
 };

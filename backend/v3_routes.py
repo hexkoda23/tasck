@@ -2147,12 +2147,25 @@ def make_v3_router(db):
         if tbs:
             params["tbs"] = tbs
 
-        try:
-            response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=25)
+        async def _serpapi_request(request_params: Dict[str, Any]) -> Dict[str, Any]:
+            response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=request_params, timeout=25)
             response.raise_for_status()
-            raw = response.json()
+            return response.json()
+
+        try:
+            raw = await _serpapi_request(params)
+            if "hasn't returned" in str(raw.get("error", "")).lower() and "tbs" in params:
+                retry_params = {key: value for key, value in params.items() if key != "tbs"}
+                raw = await _serpapi_request(retry_params)
             if raw.get("error"):
                 raise RuntimeError(str(raw["error"]))
+            items = _result_items(raw)
+            if not items and "tbs" in params:
+                retry_params = {key: value for key, value in params.items() if key != "tbs"}
+                raw = await _serpapi_request(retry_params)
+                if raw.get("error"):
+                    raise RuntimeError(str(raw["error"]))
+                items = _result_items(raw)
         except Exception as exc:
             message = f"SerpAPI scan failed: {exc}"
             await db.v3_opportunity_scans.update_one(
@@ -2161,7 +2174,6 @@ def make_v3_router(db):
             )
             raise HTTPException(502, message)
 
-        items = _result_items(raw)
         candidates = []
         for item in items:
             candidate = _candidate_from_result(item, payload, scan_id)

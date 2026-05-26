@@ -100,6 +100,8 @@ SERPAPI_API_KEY*
 .serpapi-key
 serpapi.key
 serpapi_api_key.txt
+frontend/.v3-opportunity-store.json
+.v3-opportunity-store.json
 credentials.json
 *.key
 .credentials
