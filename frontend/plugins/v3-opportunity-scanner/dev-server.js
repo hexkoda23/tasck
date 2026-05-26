@@ -12,12 +12,20 @@ const BACKEND_ENV_PATH = path.resolve(WORKSPACE_ROOT, "backend", ".env");
 
 dotenv.config({ path: BACKEND_ENV_PATH });
 
+const PARTNERSHIP_SIGNAL_TERMS = [
+  "brand ambassador", "ambassador", "celebrity partnership", "celebrity endorsement",
+  "endorsement", "influencer campaign", "influencer partnership", "brand partnership",
+  "partnership opportunity", "open application", "casting call", "agency brief",
+  "rfp", "signed", "unveils", "announces", "partnered with",
+];
+const NOT_FOUND = "Not found - recommend manual search.";
+
 const DEFAULT_TEMPLATE = {
-  keywords: "Brands running new marketing campaigns in Nigeria",
+  keywords: "brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria",
   country: "Nigeria",
-  industries: ["FMCG", "Telco", "Fintech", "Beverage", "Beauty"],
-  campaign_types: ["marketing campaign", "advertising", "creator campaign", "brand launch"],
-  recency: "past_month",
+  industries: ["Fashion", "Food & Beverage", "Tech", "Beauty", "Sports", "FMCG", "Telco", "Fintech"],
+  campaign_types: ["brand ambassador program", "celebrity partnership", "celebrity endorsement deal", "brand partnership opportunity", "influencer campaign open application"],
+  recency: "past_year",
   result_limit: 10,
 };
 
@@ -156,6 +164,9 @@ const inferCampaignType = (text, campaignTypes) => {
   for (const campaignType of campaignTypes || []) {
     if (lower.includes(String(campaignType).toLowerCase())) return campaignType;
   }
+  if (lower.includes("endorsement")) return "celebrity endorsement deal";
+  if (lower.includes("ambassador")) return "brand ambassador program";
+  if (lower.includes("partnership") || lower.includes("partnered")) return "celebrity partnership";
   if (lower.includes("creator") || lower.includes("influencer")) return "creator campaign";
   if (lower.includes("launch") || lower.includes("unveil")) return "brand launch";
   if (lower.includes("advert") || lower.includes("ad ") || lower.includes("advertising")) return "advertising";
@@ -171,7 +182,76 @@ const scoreCandidate = (text, template) => {
   [...(template.industries || []), ...(template.campaign_types || [])].forEach((token) => {
     if (lower.includes(String(token).toLowerCase())) score += 3;
   });
+  PARTNERSHIP_SIGNAL_TERMS.forEach((token) => {
+    if (lower.includes(token)) score += 5;
+  });
   return Math.max(50, Math.min(score, 96));
+};
+
+const hasPartnershipSignal = (text) => {
+  const lower = String(text || "").toLowerCase();
+  return PARTNERSHIP_SIGNAL_TERMS.some((token) => lower.includes(token));
+};
+
+const websiteFromSource = (sourceUrl) => {
+  const domain = domainFromUrl(sourceUrl);
+  return domain ? `https://${domain}` : sourceUrl;
+};
+
+const sourceNote = (value, sourceUrl) => (
+  value && value !== NOT_FOUND ? `${value} Source: ${sourceUrl}` : NOT_FOUND
+);
+
+const buildPartnershipProfile = ({ brandName, sourceUrl, sourceTitle, sourceSnippet, text, industry, campaignType }) => {
+  const lower = String(text || "").toLowerCase();
+  const evidence = sourceSnippet || sourceTitle || NOT_FOUND;
+  const signalTerms = PARTNERSHIP_SIGNAL_TERMS.filter((term) => lower.includes(term));
+  const hasActiveSignal = ["announces", "unveils", "signed", "partners", "partnered", "ambassador"].some((term) => lower.includes(term));
+  const hasPastSignal = ["past", "previous", "former", "historical", "history"].some((term) => lower.includes(term));
+  const hasOpenSignal = ["open application", "casting call", "rfp", "request for proposal", "looking for"].some((term) => lower.includes(term));
+  const hasGrowthSignal = ["launch", "expansion", "growth", "raises", "funding", "new market", "campaign"].some((term) => lower.includes(term));
+
+  return {
+    brand_profile: {
+      official_brand_name: brandName,
+      website: websiteFromSource(sourceUrl),
+      industry_category: industry,
+    },
+    celebrity_partnership_status: {
+      current_active_partnerships: hasActiveSignal ? sourceNote(evidence, sourceUrl) : NOT_FOUND,
+      past_partnerships: hasPastSignal ? sourceNote(evidence, sourceUrl) : NOT_FOUND,
+      upcoming_or_open_calls: hasOpenSignal ? sourceNote(evidence, sourceUrl) : NOT_FOUND,
+    },
+    partnership_signals: {
+      influencer_or_celebrity_marketing_evidence: sourceNote(evidence, sourceUrl),
+      marketing_budget_or_growth_signal: hasGrowthSignal ? sourceNote(evidence, sourceUrl) : NOT_FOUND,
+      public_rfp_or_agency_brief: hasOpenSignal ? sourceNote(evidence, sourceUrl) : NOT_FOUND,
+      detected_signal_terms: signalTerms.length ? signalTerms : ["partnership signal"],
+    },
+    social_media_presence: {
+      instagram: NOT_FOUND,
+      tiktok: NOT_FOUND,
+      x_twitter: NOT_FOUND,
+      youtube: NOT_FOUND,
+      linkedin: NOT_FOUND,
+      estimated_followers_or_engagement: NOT_FOUND,
+      content_style: hasPartnershipSignal(text) ? "Influencer/celebrity-led or partnership-led signal detected from search result." : NOT_FOUND,
+    },
+    contact_outreach: {
+      marketing_or_partnerships_email: extractEmail(text) || NOT_FOUND,
+      pr_or_talent_agency: NOT_FOUND,
+      cmo_head_partnerships_or_brand_manager_linkedin: NOT_FOUND,
+      press_or_media_inquiry_contact: extractEmail(text) || NOT_FOUND,
+    },
+    citations: [
+      {
+        field: "partnership_signal",
+        source_url: sourceUrl,
+        source_title: sourceTitle,
+        evidence,
+      },
+    ],
+  };
 };
 
 const resultItems = (raw) => {
@@ -195,20 +275,33 @@ const candidateFromResult = (item, payload, scanId, query) => {
   const campaignName = extractCampaignName(item.title, item.snippet, brandName);
   const campaignType = inferCampaignType(text, template.campaign_types);
   const sourceSnippet = String(item.snippet || "").slice(0, 420);
-  const detectedKeywords = ["campaign", "launch", "advertising", "creator", "influencer", "Nigeria", "marketing", "brand"].filter((token) =>
+  const detectedKeywords = [
+    "brand ambassador", "celebrity partnership", "celebrity endorsement", "endorsement",
+    "influencer campaign", "brand partnership", "open application", "casting call",
+    "campaign", "launch", "advertising", "creator", "influencer", "Nigeria", "marketing", "brand",
+  ].filter((token) =>
     text.toLowerCase().includes(token.toLowerCase())
   );
+  const partnershipProfile = buildPartnershipProfile({
+    brandName,
+    sourceUrl: item.link,
+    sourceTitle: String(item.title).slice(0, 220),
+    sourceSnippet,
+    text,
+    industry: inferIndustry(text, template.industries),
+    campaignType,
+  });
   return {
     id: makeId("oppcand"),
     scan_id: scanId,
     query,
     brand_name: brandName,
     country: template.country || "Nigeria",
-    industry: inferIndustry(text, template.industries),
+    industry: partnershipProfile.brand_profile.industry_category,
     campaign_name: campaignName,
     campaign_type: campaignType,
-    pain_point: `Public search signal suggests ${brandName} has recent ${campaignType} activity. Source context: ${sourceSnippet || item.title}`,
-    suggested_opportunity_angle: `Prepare an Alignment Snapshot around ${brandName}'s ${campaignName}, using creator-led storytelling, audience fit, channel KPIs, and measurable conversion signals.`,
+    pain_point: `Public search signal suggests ${brandName} has celebrity, ambassador, endorsement, or influencer partnership activity. Source context: ${sourceSnippet || item.title}`,
+    suggested_opportunity_angle: `Prepare a celebrity partnership outreach angle for ${brandName} around ${campaignName}, then validate budget, decision maker, talent category, usage rights, and measurable KPI fit.`,
     source_url: item.link,
     source_domain: domainFromUrl(item.link),
     source_title: String(item.title).slice(0, 220),
@@ -216,6 +309,12 @@ const candidateFromResult = (item, payload, scanId, query) => {
     detected_keywords: detectedKeywords,
     confidence_score: scoreCandidate(text, template),
     contact_email: extractEmail(text),
+    brand_profile: partnershipProfile.brand_profile,
+    celebrity_partnership_status: partnershipProfile.celebrity_partnership_status,
+    partnership_signals: partnershipProfile.partnership_signals,
+    social_media_presence: partnershipProfile.social_media_presence,
+    contact_outreach: partnershipProfile.contact_outreach,
+    citations: partnershipProfile.citations,
     status: "pending",
     created_at: nowIso(),
     reviewed_at: null,
@@ -297,6 +396,7 @@ const setupV3OpportunityScanner = (devServer) => {
       const nextStore = readStore();
       const candidates = [];
       items.forEach((item) => {
+        if (!hasPartnershipSignal(`${item.title} ${item.snippet}`)) return;
         const candidate = candidateFromResult(item, { ...payload, template }, scanId, query);
         const exists = nextStore.candidates.some((existing) =>
           existing.source_url === candidate.source_url || existing.dedupe_key === candidate.dedupe_key

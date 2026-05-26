@@ -1,4 +1,4 @@
-export const demoOpportunityCandidates = [
+const baseDemoOpportunityCandidates = [
   {
     id: 'oppcand-demo-coke-campus',
     scan_id: 'oppscan-demo',
@@ -78,6 +78,53 @@ export const demoOpportunityCandidates = [
     created_at: '2026-05-26T06:00:00.000Z',
   },
 ];
+
+const NOT_FOUND = 'Not found - recommend manual search.';
+
+const enrichPartnershipCandidate = (candidate) => ({
+  ...candidate,
+  brand_profile: {
+    official_brand_name: candidate.brand_name,
+    website: candidate.source_url,
+    industry_category: candidate.industry,
+  },
+  celebrity_partnership_status: {
+    current_active_partnerships: candidate.source_snippet ? `${candidate.source_snippet} Source: ${candidate.source_url}` : NOT_FOUND,
+    past_partnerships: NOT_FOUND,
+    upcoming_or_open_calls: NOT_FOUND,
+  },
+  partnership_signals: {
+    influencer_or_celebrity_marketing_evidence: candidate.source_snippet ? `${candidate.source_snippet} Source: ${candidate.source_url}` : NOT_FOUND,
+    marketing_budget_or_growth_signal: candidate.pain_point || NOT_FOUND,
+    public_rfp_or_agency_brief: NOT_FOUND,
+    detected_signal_terms: candidate.detected_keywords || ['brand ambassador', 'influencer campaign'],
+  },
+  social_media_presence: {
+    instagram: NOT_FOUND,
+    tiktok: NOT_FOUND,
+    x_twitter: NOT_FOUND,
+    youtube: NOT_FOUND,
+    linkedin: NOT_FOUND,
+    estimated_followers_or_engagement: NOT_FOUND,
+    content_style: 'Influencer/celebrity-led or partnership-led signal detected from demo source.',
+  },
+  contact_outreach: {
+    marketing_or_partnerships_email: candidate.contact_email || NOT_FOUND,
+    pr_or_talent_agency: NOT_FOUND,
+    cmo_head_partnerships_or_brand_manager_linkedin: NOT_FOUND,
+    press_or_media_inquiry_contact: candidate.contact_email || NOT_FOUND,
+  },
+  citations: [
+    {
+      field: 'partnership_signal',
+      source_url: candidate.source_url,
+      source_title: candidate.source_title,
+      evidence: candidate.source_snippet,
+    },
+  ],
+});
+
+export const demoOpportunityCandidates = baseDemoOpportunityCandidates.map(enrichPartnershipCandidate);
 
 export const candidateToBusinessOpportunity = (candidate) => ({
   id: candidate.opportunity_id || candidate.id,

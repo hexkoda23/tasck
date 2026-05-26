@@ -1936,12 +1936,20 @@ def make_v3_router(db):
     # ------------------------------------------------------------------------
     # OPPORTUNITY SCANNER - SerpAPI-powered CRM intake with admin review
     # ------------------------------------------------------------------------
+    PARTNERSHIP_SIGNAL_TERMS = [
+        "brand ambassador", "ambassador", "celebrity partnership", "celebrity endorsement",
+        "endorsement", "influencer campaign", "influencer partnership", "brand partnership",
+        "partnership opportunity", "open application", "casting call", "agency brief",
+        "rfp", "signed", "unveils", "announces", "partnered with",
+    ]
+    NOT_FOUND = "Not found - recommend manual search."
+
     class OpportunityQueryTemplate(BaseModel):
-        keywords: str = "Brands running new marketing campaigns in Nigeria"
+        keywords: str = "brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria"
         country: str = "Nigeria"
-        industries: List[str] = Field(default_factory=lambda: ["FMCG", "Telco", "Fintech", "Beverage", "Beauty"])
-        campaign_types: List[str] = Field(default_factory=lambda: ["marketing campaign", "advertising", "creator campaign", "brand launch"])
-        recency: str = "past_month"
+        industries: List[str] = Field(default_factory=lambda: ["Fashion", "Food & Beverage", "Tech", "Beauty", "Sports", "FMCG", "Telco", "Fintech"])
+        campaign_types: List[str] = Field(default_factory=lambda: ["brand ambassador program", "celebrity partnership", "celebrity endorsement deal", "brand partnership opportunity", "influencer campaign open application"])
+        recency: str = "past_year"
         result_limit: int = 10
 
     class OpportunityScanPayload(BaseModel):
@@ -1950,7 +1958,7 @@ def make_v3_router(db):
         created_by: str = "admin"
 
     class OpportunityScrapePayload(BaseModel):
-        query: str = "brand marketing opportunities Nigeria"
+        query: str = "brand ambassador celebrity endorsement opportunities Nigeria"
         limit: int = 3
 
     class OpportunityReviewPayload(BaseModel):
@@ -2037,6 +2045,12 @@ def make_v3_router(db):
         for campaign_type in campaign_types:
             if campaign_type.lower() in lower:
                 return campaign_type
+        if "endorsement" in lower:
+            return "celebrity endorsement deal"
+        if "ambassador" in lower:
+            return "brand ambassador program"
+        if "partnership" in lower or "partnered" in lower:
+            return "celebrity partnership"
         if "creator" in lower or "influencer" in lower:
             return "creator campaign"
         if "launch" in lower or "unveil" in lower:
@@ -2054,7 +2068,96 @@ def make_v3_router(db):
         for token in template.industries + template.campaign_types:
             if token.lower() in lower:
                 score += 3
+        for token in PARTNERSHIP_SIGNAL_TERMS:
+            if token in lower:
+                score += 5
         return max(50, min(score, 96))
+
+    def _has_partnership_signal(text: str) -> bool:
+        lower = (text or "").lower()
+        return any(token in lower for token in PARTNERSHIP_SIGNAL_TERMS)
+
+    def _extract_website(source_url: str) -> str:
+        domain = _domain_from_url(source_url)
+        return f"https://{domain}" if domain else source_url
+
+    def _source_note(value: str, source_url: str) -> str:
+        return f"{value} Source: {source_url}" if value and value != NOT_FOUND else NOT_FOUND
+
+    def _build_partnership_profile(
+        brand_name: str,
+        source_url: str,
+        source_title: str,
+        source_snippet: str,
+        text: str,
+        industry: str,
+        campaign_type: str,
+    ) -> Dict[str, Any]:
+        lower = (text or "").lower()
+        signal_terms = [term for term in PARTNERSHIP_SIGNAL_TERMS if term in lower]
+        evidence = source_snippet or source_title or NOT_FOUND
+        active_status = NOT_FOUND
+        past_status = NOT_FOUND
+        upcoming_status = NOT_FOUND
+        if any(term in lower for term in ["announces", "unveils", "signed", "partners", "partnered", "ambassador"]):
+            active_status = _source_note(evidence, source_url)
+        if any(term in lower for term in ["past", "previous", "former", "historical", "history"]):
+            past_status = _source_note(evidence, source_url)
+        if any(term in lower for term in ["open application", "casting call", "rfp", "request for proposal", "looking for"]):
+            upcoming_status = _source_note(evidence, source_url)
+
+        public_rfp = NOT_FOUND
+        if any(term in lower for term in ["rfp", "request for proposal", "agency brief", "open application", "casting call"]):
+            public_rfp = _source_note(evidence, source_url)
+
+        budget_signal = NOT_FOUND
+        if any(term in lower for term in ["launch", "expansion", "growth", "raises", "funding", "new market", "campaign"]):
+            budget_signal = _source_note(evidence, source_url)
+
+        return {
+            "brand_profile": {
+                "official_brand_name": brand_name,
+                "website": _extract_website(source_url),
+                "industry_category": industry,
+            },
+            "celebrity_partnership_status": {
+                "current_active_partnerships": active_status,
+                "past_partnerships": past_status,
+                "upcoming_or_open_calls": upcoming_status,
+            },
+            "partnership_signals": {
+                "influencer_or_celebrity_marketing_evidence": _source_note(evidence, source_url),
+                "marketing_budget_or_growth_signal": budget_signal,
+                "public_rfp_or_agency_brief": public_rfp,
+                "detected_signal_terms": signal_terms or ["partnership signal"],
+            },
+            "social_media_presence": {
+                "instagram": NOT_FOUND,
+                "tiktok": NOT_FOUND,
+                "x_twitter": NOT_FOUND,
+                "youtube": NOT_FOUND,
+                "linkedin": NOT_FOUND,
+                "estimated_followers_or_engagement": NOT_FOUND,
+                "content_style": (
+                    "Influencer/celebrity-led or partnership-led signal detected from search result."
+                    if _has_partnership_signal(text) else NOT_FOUND
+                ),
+            },
+            "contact_outreach": {
+                "marketing_or_partnerships_email": _extract_email(text) or NOT_FOUND,
+                "pr_or_talent_agency": NOT_FOUND,
+                "cmo_head_partnerships_or_brand_manager_linkedin": NOT_FOUND,
+                "press_or_media_inquiry_contact": _extract_email(text) or NOT_FOUND,
+            },
+            "citations": [
+                {
+                    "field": "partnership_signal",
+                    "source_url": source_url,
+                    "source_title": source_title,
+                    "evidence": evidence,
+                }
+            ],
+        }
 
     def _result_items(raw: Dict[str, Any]) -> List[Dict[str, str]]:
         buckets = []
@@ -2075,11 +2178,24 @@ def make_v3_router(db):
         campaign_type = _infer_campaign_type(text, payload.template.campaign_types)
         confidence = _score_candidate(text, payload.template)
         detected_keywords = [
-            token for token in ["campaign", "launch", "advertising", "creator", "influencer", "Nigeria", "marketing", "brand"]
+            token for token in [
+                "brand ambassador", "celebrity partnership", "celebrity endorsement", "endorsement",
+                "influencer campaign", "brand partnership", "open application", "casting call",
+                "campaign", "launch", "advertising", "creator", "influencer", "Nigeria", "marketing", "brand"
+            ]
             if token.lower() in text.lower()
         ]
         source_url = item["link"]
         source_snippet = item["snippet"][:420]
+        partnership_profile = _build_partnership_profile(
+            brand_name,
+            source_url,
+            item["title"][:220],
+            source_snippet,
+            text,
+            industry,
+            campaign_type,
+        )
         return {
             "id": f"oppcand-{uuid.uuid4().hex[:8]}",
             "scan_id": scan_id,
@@ -2090,12 +2206,12 @@ def make_v3_router(db):
             "campaign_name": campaign_name,
             "campaign_type": campaign_type,
             "pain_point": (
-                f"Public search signal suggests {brand_name} has recent {campaign_type} activity. "
+                f"Public search signal suggests {brand_name} has celebrity, ambassador, endorsement, or influencer partnership activity. "
                 f"Source context: {source_snippet or item['title']}"
             ),
             "suggested_opportunity_angle": (
-                f"Prepare an Alignment Snapshot around {brand_name}'s {campaign_name}, using creator-led storytelling, "
-                "audience fit, channel KPIs, and measurable conversion signals."
+                f"Prepare a celebrity partnership outreach angle for {brand_name} around {campaign_name}, "
+                "then validate budget, decision maker, talent category, usage rights, and measurable KPI fit."
             ),
             "source_url": source_url,
             "source_domain": _domain_from_url(source_url),
@@ -2104,6 +2220,12 @@ def make_v3_router(db):
             "detected_keywords": detected_keywords,
             "confidence_score": confidence,
             "contact_email": _extract_email(text),
+            "brand_profile": partnership_profile["brand_profile"],
+            "celebrity_partnership_status": partnership_profile["celebrity_partnership_status"],
+            "partnership_signals": partnership_profile["partnership_signals"],
+            "social_media_presence": partnership_profile["social_media_presence"],
+            "contact_outreach": partnership_profile["contact_outreach"],
+            "citations": partnership_profile["citations"],
             "status": "pending",
             "created_at": _now_iso(),
             "reviewed_at": None,
@@ -2176,6 +2298,8 @@ def make_v3_router(db):
 
         candidates = []
         for item in items:
+            if not _has_partnership_signal(f"{item.get('title', '')} {item.get('snippet', '')}"):
+                continue
             candidate = _candidate_from_result(item, payload, scan_id)
             existing = await db.v3_opportunity_candidates.find_one(
                 {"$or": [{"source_url": candidate["source_url"]}, {"dedupe_key": candidate["dedupe_key"]}]},

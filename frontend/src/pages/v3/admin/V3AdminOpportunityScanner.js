@@ -21,19 +21,20 @@ import {
 
 const defaultTemplate = {
   query: '',
-  keywords: 'Brands running new marketing campaigns in Nigeria',
+  keywords: 'brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria',
   country: 'Nigeria',
-  industries: 'FMCG, Telco, Fintech, Beverage, Beauty',
-  campaign_types: 'marketing campaign, advertising, creator campaign, brand launch',
-  recency: 'past_month',
+  industries: 'Fashion, Food & Beverage, Tech, Beauty, Sports, FMCG, Telco, Fintech',
+  campaign_types: 'brand ambassador program, celebrity partnership, celebrity endorsement deal, brand partnership opportunity, influencer campaign open application',
+  recency: 'past_year',
   result_limit: 10,
 };
 
 const examples = [
-  'Brands running new marketing campaigns in Nigeria',
-  'Nigerian brands advertising in Nigeria',
-  'Nigerian-owned brands launching new products',
-  'Lagos brands influencer marketing campaign',
+  '"brand ambassador" "Nigeria" "celebrity"',
+  '"celebrity endorsement" "Nigeria" brand',
+  '"influencer campaign" "Nigeria" "brand ambassador"',
+  '"brand partnership opportunity" "Nigeria"',
+  '"open application" "brand ambassador" Africa',
 ];
 
 const splitList = (value) => String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -41,6 +42,8 @@ const splitList = (value) => String(value || '').split(',').map((item) => item.t
 const scoreColor = (score) => (score >= 85 ? '#1F4A3A' : score >= 70 ? '#C49B5F' : '#B54A37');
 
 const isMissingKeyError = (error) => /SERPAPI_API_KEY/i.test(error?.response?.data?.detail || error?.message || '');
+
+const valueOrManual = (value) => value || 'Not found - recommend manual search.';
 
 const V3AdminOpportunityScanner = () => {
   const navigate = useNavigate();
@@ -178,7 +181,7 @@ const V3AdminOpportunityScanner = () => {
           <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">CRM intelligence</p>
           <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>Brand Opportunity Scanner</h1>
           <p className="text-[#8A8A8A] text-sm mt-1">
-            Search API to raw web results to rules-based extraction to admin review.
+            Finds brands with celebrity, endorsement, ambassador, and influencer partnership signals.
           </p>
         </div>
         <button onClick={runScan} disabled={busy} className="v3-btn-primary" data-testid="opps-run-scan">
@@ -221,7 +224,7 @@ const V3AdminOpportunityScanner = () => {
                 ['keywords', 'Keywords'],
                 ['country', 'Country'],
                 ['industries', 'Industries'],
-                ['campaign_types', 'Campaign types'],
+                ['campaign_types', 'Partnership signals'],
               ].map(([key, label]) => (
                 <div key={key}>
                   <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">{label}</label>
@@ -332,6 +335,14 @@ const V3AdminOpportunityScanner = () => {
                         <span className="text-[10px] px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]">{candidate.country}</span>
                       </div>
                       <p className="text-[13px] text-[#6E6657] mt-1">{candidate.campaign_name} - {candidate.campaign_type}</p>
+                      <a
+                        href={candidate.brand_profile?.website || candidate.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] text-[#1F4A3A] mt-2 hover:underline"
+                      >
+                        <ExternalLink className="w-3 h-3" /> {candidate.brand_profile?.website || candidate.source_domain || 'Brand website'}
+                      </a>
                     </div>
                     <div className="text-right">
                       <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Confidence</p>
@@ -343,12 +354,45 @@ const V3AdminOpportunityScanner = () => {
 
                   <div className="grid grid-cols-[1fr_1fr] gap-4 my-4">
                     <div className="p-3 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
-                      <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Pain point</p>
+                      <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Partnership status</p>
+                      <p className="text-[12px] text-[#1A1A1A]"><strong>Current:</strong> {valueOrManual(candidate.celebrity_partnership_status?.current_active_partnerships)}</p>
+                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>Past:</strong> {valueOrManual(candidate.celebrity_partnership_status?.past_partnerships)}</p>
+                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>Open calls:</strong> {valueOrManual(candidate.celebrity_partnership_status?.upcoming_or_open_calls)}</p>
+                    </div>
+                    <div className="p-3 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
+                      <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Partnership signals</p>
+                      <p className="text-[12px] text-[#1A1A1A]">{valueOrManual(candidate.partnership_signals?.influencer_or_celebrity_marketing_evidence)}</p>
+                      <p className="text-[12px] text-[#6E6657] mt-1"><strong>Budget/growth:</strong> {valueOrManual(candidate.partnership_signals?.marketing_budget_or_growth_signal)}</p>
+                      <p className="text-[12px] text-[#6E6657] mt-1"><strong>RFP/brief:</strong> {valueOrManual(candidate.partnership_signals?.public_rfp_or_agency_brief)}</p>
+                    </div>
+                    <div className="p-3 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
+                      <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">TASCK opportunity angle</p>
                       <p className="text-[12px] text-[#1A1A1A]">{candidate.pain_point}</p>
                     </div>
                     <div className="p-3 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
                       <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Suggested angle</p>
                       <p className="text-[12px] text-[#1F4A3A]">{candidate.suggested_opportunity_angle}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-[1fr_1fr] gap-4 mb-4">
+                    <div className="p-3 rounded border border-[#E8E4DB] bg-white">
+                      <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Social media presence</p>
+                      <p className="text-[12px] text-[#1A1A1A]"><strong>Instagram:</strong> {valueOrManual(candidate.social_media_presence?.instagram)}</p>
+                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>TikTok:</strong> {valueOrManual(candidate.social_media_presence?.tiktok)}</p>
+                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>X / YouTube / LinkedIn:</strong> {[
+                        valueOrManual(candidate.social_media_presence?.x_twitter),
+                        valueOrManual(candidate.social_media_presence?.youtube),
+                        valueOrManual(candidate.social_media_presence?.linkedin),
+                      ].join(' | ')}</p>
+                      <p className="text-[12px] text-[#6E6657] mt-1"><strong>Style:</strong> {valueOrManual(candidate.social_media_presence?.content_style)}</p>
+                    </div>
+                    <div className="p-3 rounded border border-[#E8E4DB] bg-white">
+                      <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Contact & outreach</p>
+                      <p className="text-[12px] text-[#1A1A1A]"><strong>Email:</strong> {valueOrManual(candidate.contact_outreach?.marketing_or_partnerships_email || candidate.contact_email)}</p>
+                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>PR / talent agency:</strong> {valueOrManual(candidate.contact_outreach?.pr_or_talent_agency)}</p>
+                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>Decision-maker LinkedIn:</strong> {valueOrManual(candidate.contact_outreach?.cmo_head_partnerships_or_brand_manager_linkedin)}</p>
+                      <p className="text-[12px] text-[#6E6657] mt-1"><strong>Press contact:</strong> {valueOrManual(candidate.contact_outreach?.press_or_media_inquiry_contact)}</p>
                     </div>
                   </div>
 
