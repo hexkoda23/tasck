@@ -2608,8 +2608,6 @@ Produce the opportunity card JSON.
         extraction_method = "llm"
         if not llm_configured:
             extraction_method = "heuristic_fallback"
-        elif llm_attempts and llm_failures / max(llm_attempts, 1) > 0.5:
-            extraction_method = "heuristic_fallback"
         elif fallback_count:
             extraction_method = "mixed_llm_heuristic"
 
