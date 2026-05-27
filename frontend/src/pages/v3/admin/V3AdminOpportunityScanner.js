@@ -34,7 +34,18 @@ const defaultTemplate = {
   campaign_types: 'brand ambassador program, celebrity partnership, celebrity endorsement deal, brand partnership opportunity, influencer campaign open application, creator campaign',
   recency: 'past_year',
   result_limit: 10,
+  // v3.3 Addendum — multi-source fan-out controls
+  enabled_sources: ['google_web', 'google_news', 'linkedin', 'trade_press'],
+  hot_ratio: 0.6,
+  per_source_limit: 10,
 };
+
+const ALL_SOURCES = [
+  { key: 'google_web', label: 'Google Web' },
+  { key: 'google_news', label: 'Google News' },
+  { key: 'linkedin', label: 'LinkedIn' },
+  { key: 'trade_press', label: 'Nigerian Trade' },
+];
 
 const examples = [
   '"brand ambassador" "Nigeria" "celebrity"',
@@ -76,6 +87,9 @@ const V3AdminOpportunityScanner = () => {
   const [error, setError] = useState('');
   const [demoMode, setDemoMode] = useState(false);
   const [pipelineCounts, setPipelineCounts] = useState({});
+  // v3.3 Addendum — UI filters
+  const [sourceFilter, setSourceFilter] = useState('all'); // 'all' | source_key
+  const [freshnessFilter, setFreshnessFilter] = useState('all'); // 'all' | 'hot' | 'pipeline'
 
   // v3.3 pipeline states drive the counter tabs. Legacy `status` field is
   // mirrored to pipeline_state so old records (status: 'pending') surface
@@ -89,19 +103,26 @@ const V3AdminOpportunityScanner = () => {
             : candidate.status === 'rejected' ? 'dismissed'
             : 'new'
         );
-        return state === activeTab;
+        if (state !== activeTab) return false;
+        if (sourceFilter !== 'all' && candidate.source_key !== sourceFilter) return false;
+        if (freshnessFilter !== 'all' && (candidate.freshness_bucket || 'pipeline') !== freshnessFilter) return false;
+        return true;
       })
       .sort((a, b) => {
         // Real-brand cards first (partner_name populated)
         const aNoBrand = !(a.partner_name || a.brand_name);
         const bNoBrand = !(b.partner_name || b.brand_name);
         if (aNoBrand !== bNoBrand) return aNoBrand ? 1 : -1;
+        // HOT before PIPELINE
+        const aHot = (a.freshness_bucket || 'pipeline') === 'hot';
+        const bHot = (b.freshness_bucket || 'pipeline') === 'hot';
+        if (aHot !== bHot) return aHot ? -1 : 1;
         const aSig = Number(a.signal_strength ?? a.confidence_score ?? 0);
         const bSig = Number(b.signal_strength ?? b.confidence_score ?? 0);
         if (bSig !== aSig) return bSig - aSig;
         return Number(b.brand_confidence ?? 0) - Number(a.brand_confidence ?? 0);
       }),
-    [candidates, activeTab]
+    [candidates, activeTab, sourceFilter, freshnessFilter]
   );
 
   const loadCandidates = async () => {
@@ -166,6 +187,10 @@ const V3AdminOpportunityScanner = () => {
           campaign_types: splitList(template.campaign_types),
           recency: template.recency,
           result_limit: Number(template.result_limit) || 10,
+          // v3.3 Addendum — multi-source fan-out
+          enabled_sources: template.enabled_sources,
+          hot_ratio: Number(template.hot_ratio) || 0.6,
+          per_source_limit: Number(template.per_source_limit) || 10,
         },
         created_by: 'admin',
       };
@@ -265,7 +290,9 @@ const V3AdminOpportunityScanner = () => {
         </div>
         <button onClick={runScan} disabled={busy} className="v3-btn-primary self-start xl:self-auto shrink-0" data-testid="opps-run-scan">
           {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-          {busy ? 'Scanning...' : 'Run web scan'}
+          {busy
+            ? `Fanning out ${(template.enabled_sources || []).length * 4} parallel calls…`
+            : `Run web scan (${(template.enabled_sources || []).length * 4} calls)`}
         </button>
       </div>
 
@@ -319,32 +346,64 @@ const V3AdminOpportunityScanner = () => {
               ))}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Recency</label>
-                  <select
-                    value={template.recency}
-                    onChange={(e) => setTemplate({ ...template, recency: e.target.value })}
-                    className="w-full min-w-0 px-3 py-2 text-[12px] rounded-lg border border-[#E8E4DB] bg-white"
-                    data-testid="opps-template-recency"
-                  >
-                    <option value="past_day">Past day</option>
-                    <option value="past_week">Past week</option>
-                    <option value="past_month">Past month</option>
-                    <option value="past_year">Past year</option>
-                    <option value="">Any time</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Limit</label>
+                  <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Per-source limit</label>
                   <input
                     type="number"
                     min="1"
                     max="20"
-                    value={template.result_limit}
-                    onChange={(e) => setTemplate({ ...template, result_limit: e.target.value })}
+                    value={template.per_source_limit}
+                    onChange={(e) => setTemplate({ ...template, per_source_limit: e.target.value })}
                     className="w-full min-w-0 px-3 py-2 text-[12px] rounded-lg border border-[#E8E4DB] bg-white"
-                    data-testid="opps-template-limit"
+                    data-testid="opps-template-per-source-limit"
                   />
                 </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+                    HOT mix: {Math.round((Number(template.hot_ratio) || 0.6) * 100)}%
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="10"
+                    value={Math.round((Number(template.hot_ratio) || 0.6) * 100)}
+                    onChange={(e) => setTemplate({ ...template, hot_ratio: Number(e.target.value) / 100 })}
+                    className="w-full"
+                    data-testid="opps-template-hot-ratio"
+                  />
+                </div>
+              </div>
+
+              {/* v3.3 Addendum — Source toggles */}
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-2">Sources to scan</label>
+                <div className="flex flex-wrap gap-2" data-testid="opps-template-sources">
+                  {ALL_SOURCES.map((source) => {
+                    const enabled = (template.enabled_sources || []).includes(source.key);
+                    return (
+                      <button
+                        key={source.key}
+                        type="button"
+                        onClick={() => {
+                          const current = new Set(template.enabled_sources || []);
+                          if (enabled) current.delete(source.key); else current.add(source.key);
+                          setTemplate({ ...template, enabled_sources: Array.from(current) });
+                        }}
+                        className={`text-[11px] px-2.5 py-1 rounded border transition-colors ${
+                          enabled
+                            ? 'border-[#1F4A3A] bg-[#DDE7E2] text-[#1F4A3A]'
+                            : 'border-[#E8E4DB] bg-white text-[#6E6657] hover:border-[#C49B5F]'
+                        }`}
+                        data-testid={`opps-source-toggle-${source.key}`}
+                      >
+                        {source.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-[10px] text-[#8A8A8A] mt-2">
+                  Fan-out: {(template.enabled_sources || []).length * 4} parallel SerpAPI calls per scan
+                </p>
               </div>
             </div>
           </div>
@@ -374,7 +433,20 @@ const V3AdminOpportunityScanner = () => {
             <div className="v3-card p-4 min-w-0 overflow-hidden" data-testid="opps-scan-summary">
               <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Last scan</p>
               <p className="text-[12px] text-[#1A1A1A] break-words">{scan.query}</p>
-              <p className="text-[11px] text-[#6E6657] mt-2">{scan.raw_count} raw results - {scan.candidate_count} new candidates</p>
+              <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] text-[#6E6657]" data-testid="opps-scan-stats">
+                <span>Fan-out: <b className="text-[#1A1A1A]">{scan.fan_out ?? '—'}</b> calls</span>
+                <span>Raw: <b className="text-[#1A1A1A]">{scan.raw_count}</b></span>
+                <span>Hot/Pipe: <b className="text-[#1A1A1A]">{scan.hot_count ?? 0}/{scan.pipeline_count ?? 0}</b></span>
+                <span>Pass-1 reject: <b className="text-[#1A1A1A]">{scan.pass1_rejected ?? 0}</b></span>
+                <span>Auto-dismiss: <b className="text-[#1A1A1A]">{scan.auto_dismissed ?? 0}</b></span>
+                <span>Candidates: <b className="text-[#1F4A3A]">{scan.candidate_count}</b></span>
+              </div>
+              {scan.cost_estimate && (
+                <div className="mt-2 pt-2 border-t border-[#E8E4DB] text-[10px] text-[#8A8A8A]" data-testid="opps-cost-telemetry">
+                  Est. cost: <b className="text-[#1A1A1A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>${scan.cost_estimate.total_usd?.toFixed(3)}</b>
+                  {' '}({scan.cost_estimate.serpapi_calls} SerpAPI · {scan.cost_estimate.llm_calls} LLM)
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -418,6 +490,44 @@ const V3AdminOpportunityScanner = () => {
             </button>
           </div>
 
+          {/* v3.3 Addendum — Source + Freshness filter chips */}
+          <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="opps-filter-chips">
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Source:</span>
+            {[{ key: 'all', label: 'All' }, ...ALL_SOURCES].map((source) => (
+              <button
+                key={source.key}
+                onClick={() => setSourceFilter(source.key)}
+                className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                  sourceFilter === source.key
+                    ? 'border-[#1F4A3A] bg-[#DDE7E2] text-[#1F4A3A]'
+                    : 'border-[#E8E4DB] bg-white text-[#6E6657] hover:border-[#C49B5F]'
+                }`}
+                data-testid={`opps-filter-source-${source.key}`}
+              >
+                {source.label}
+              </button>
+            ))}
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] ml-2">Freshness:</span>
+            {[
+              { key: 'all', label: 'All' },
+              { key: 'hot', label: 'Hot' },
+              { key: 'pipeline', label: 'Pipeline' },
+            ].map((bucket) => (
+              <button
+                key={bucket.key}
+                onClick={() => setFreshnessFilter(bucket.key)}
+                className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                  freshnessFilter === bucket.key
+                    ? 'border-[#7A5F23] bg-[#FDF7E3] text-[#7A5F23]'
+                    : 'border-[#E8E4DB] bg-white text-[#6E6657] hover:border-[#C49B5F]'
+                }`}
+                data-testid={`opps-filter-freshness-${bucket.key}`}
+              >
+                {bucket.label}
+              </button>
+            ))}
+          </div>
+
           {filtered.length === 0 ? (
             <div className="v3-card p-10 text-center" data-testid="opps-empty">
               <Search className="w-7 h-7 mx-auto mb-3 text-[#C49B5F]" />
@@ -458,6 +568,18 @@ const SIGNAL_PILL = {
   unknown: { label: 'Signal', bg: '#F4F2EC', fg: '#6E6657' },
 };
 
+const FRESHNESS_PILL = {
+  hot: { label: 'HOT', bg: '#FBE6DE', fg: '#B54A37' },        // past month — burnt orange
+  pipeline: { label: 'PIPELINE', bg: '#E6EEF3', fg: '#1F4A6E' }, // past 6 months — steel blue
+};
+
+const SOURCE_LABEL = {
+  google_web: 'Google',
+  google_news: 'News',
+  linkedin: 'LinkedIn',
+  trade_press: 'Trade',
+};
+
 const LIKELIHOOD_BG = {
   Likely: { bg: '#DDE7E2', fg: '#1F4A3A' },
   Confirmed: { bg: '#FDF7E3', fg: '#7A5F23' },
@@ -496,12 +618,33 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
 
   return (
     <div className="v3-card p-4 lg:p-5 min-w-0 overflow-hidden" data-testid={`opps-candidate-${candidate.id}`}>
-      {/* Top row: signal pill + two-score badge + source */}
+      {/* Top row: signal pill + freshness + two-score badge + source */}
       <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
         <div className="flex flex-wrap items-center gap-2 min-w-0">
           <span className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider" style={{ background: pill.bg, color: pill.fg }} data-testid={`opps-signal-pill-${candidate.id}`}>
             {pill.label}
           </span>
+          {candidate.freshness_bucket && FRESHNESS_PILL[candidate.freshness_bucket] && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider font-semibold"
+              style={{
+                background: FRESHNESS_PILL[candidate.freshness_bucket].bg,
+                color: FRESHNESS_PILL[candidate.freshness_bucket].fg,
+              }}
+              title={candidate.freshness_bucket === 'hot' ? 'Past month' : 'Past 6 months'}
+              data-testid={`opps-freshness-${candidate.id}`}
+            >
+              {FRESHNESS_PILL[candidate.freshness_bucket].label}
+            </span>
+          )}
+          {candidate.source_key && SOURCE_LABEL[candidate.source_key] && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider border border-[#E8E4DB] bg-white text-[#6E6657]"
+              data-testid={`opps-source-key-${candidate.id}`}
+            >
+              {SOURCE_LABEL[candidate.source_key]}
+            </span>
+          )}
           <span
             className="text-[10px] px-2 py-0.5 rounded font-semibold"
             style={{ fontFamily: "'JetBrains Mono', monospace", background: '#F4F2EC', color: '#1A1A1A' }}

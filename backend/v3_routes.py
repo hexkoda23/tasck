@@ -13,7 +13,7 @@ Stage advancement rules:
 """
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -1959,6 +1959,10 @@ def make_v3_router(db):
         campaign_types: List[str] = Field(default_factory=lambda: ["brand ambassador program", "celebrity partnership", "celebrity endorsement deal", "brand partnership opportunity", "influencer campaign open application", "creator campaign"])
         recency: str = "past_year"
         result_limit: int = 10
+        # v3.3 Addendum — multi-source fan-out controls
+        enabled_sources: Optional[List[str]] = None  # e.g. ["google_web", "google_news", "linkedin", "trade_press"]
+        hot_ratio: float = 0.6  # fraction of the 16 calls that should use HOT (past-month) recency
+        per_source_limit: int = 10  # results per SerpAPI call
 
     class OpportunityScanPayload(BaseModel):
         query: Optional[str] = None
@@ -2519,6 +2523,10 @@ Produce the opportunity card JSON.
             "dedupe_key": f"{_slug(brand_name)}::{_slug(campaign_name)}",
         }
 
+    # v3.3 Addendum — cost telemetry constants
+    SERPAPI_USD_PER_CALL = 0.01      # SerpAPI Developer plan: $50 / 5000 = $0.01/call
+    LLM_USD_PER_CALL = 0.003          # Claude Sonnet 4.5: avg 1500 input + 500 output tokens
+
     async def run_opportunity_scan(payload: OpportunityScanPayload) -> Dict[str, Any]:
         api_key = os.getenv("SERPAPI_API_KEY")
         if not api_key:
@@ -2529,109 +2537,185 @@ Produce the opportunity card JSON.
 
         query = _build_opportunity_query(payload)
         scan_id = f"oppscan-{uuid.uuid4().hex[:8]}"
+
+        # ------- v3.3 Addendum: build the multi-source query plan ----------
+        plans = v3_tracker_v33.build_query_plans(
+            base_query=query,
+            country=payload.template.country,
+            hot_ratio=payload.template.hot_ratio,
+        )
+        # Optional source filtering (UI chips)
+        if payload.template.enabled_sources:
+            allowed = set(payload.template.enabled_sources)
+            plans = [p for p in plans if p["source_key"] in allowed]
+
         scan = {
             "id": scan_id,
             "query": query,
             "template": payload.template.model_dump(),
-            "provider": "serpapi_google",
+            "provider": "serpapi_google_multisource",
             "status": "running",
             "raw_count": 0,
             "candidate_count": 0,
             "extraction_method": "llm" if _opportunity_llm_configured() else "heuristic_fallback",
             "fallback_count": 0,
+            "fan_out": len(plans),
+            "sources_used": sorted({p["source_key"] for p in plans}),
+            "hot_count": sum(1 for p in plans if p["freshness_bucket"] == "hot"),
+            "pipeline_count": sum(1 for p in plans if p["freshness_bucket"] == "pipeline"),
             "created_at": _now_iso(),
             "created_by": payload.created_by,
             "error": None,
         }
         await db.v3_opportunity_scans.insert_one({**scan})
 
-        params = {
-            "engine": "google",
-            "q": query,
-            "api_key": api_key,
-            "hl": "en",
-            "gl": _country_to_gl(payload.template.country),
-            "num": max(1, min(payload.template.result_limit, 20)),
-        }
-        tbs = _recency_to_tbs(payload.template.recency)
-        if tbs:
-            params["tbs"] = tbs
+        per_call_limit = max(1, min(int(payload.template.per_source_limit or 10), 20))
+        gl = _country_to_gl(payload.template.country)
 
-        async def _serpapi_request(request_params: Dict[str, Any]) -> Dict[str, Any]:
-            # Redact the API key before logging the request params
-            redacted = {k: ("***REDACTED***" if k == "api_key" else v) for k, v in request_params.items()}
-            logger.info("[SerpAPI] >> GET serpapi.com/search.json params=%s", redacted)
-            response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=request_params, timeout=25)
-            response.raise_for_status()
-            data = response.json()
-            # Log a structural summary + the full raw payload so you can grep / inspect
+        # ---- Single-call helper (used by gather) --------------------------
+        async def _serpapi_one(plan: Dict[str, Any]) -> Dict[str, Any]:
+            params = {
+                "engine": "google",
+                "q": plan["q"],
+                "api_key": api_key,
+                "hl": "en",
+                "gl": gl,
+                "num": per_call_limit,
+                "tbs": plan["tbs"],
+                **plan.get("engine_kwargs", {}),
+            }
+            redacted = {k: ("***REDACTED***" if k == "api_key" else v) for k, v in params.items()}
             logger.info(
-                "[SerpAPI] << status=%s search_metadata.id=%s organic=%d news=%d top_stories=%d error=%s",
-                response.status_code,
-                (data.get("search_metadata") or {}).get("id"),
-                len(data.get("organic_results") or []),
-                len(data.get("news_results") or []),
-                len(data.get("top_stories") or []),
-                data.get("error"),
+                "[SerpAPI fan-out] source=%s signal=%s bucket=%s params=%s",
+                plan["source_key"], plan["signal_type"], plan["freshness_bucket"], redacted,
             )
-            logger.info("[SerpAPI] RAW RESPONSE = %s", data)
-            return data
+            try:
+                response = await asyncio.to_thread(
+                    requests.get, "https://serpapi.com/search.json", params=params, timeout=25,
+                )
+                response.raise_for_status()
+                data = response.json()
+                logger.info(
+                    "[SerpAPI fan-out] << %s/%s/%s organic=%d news=%d top=%d error=%s",
+                    plan["source_key"], plan["signal_type"], plan["freshness_bucket"],
+                    len(data.get("organic_results") or []),
+                    len(data.get("news_results") or []),
+                    len(data.get("top_stories") or []),
+                    data.get("error"),
+                )
+                return {"plan": plan, "raw": data, "error": data.get("error")}
+            except Exception as exc:
+                logger.warning("[SerpAPI fan-out] call failed: %s — %s", plan["source_key"], exc)
+                return {"plan": plan, "raw": {}, "error": str(exc)}
 
-        try:
-            raw = await _serpapi_request(params)
-            if "hasn't returned" in str(raw.get("error", "")).lower() and "tbs" in params:
-                retry_params = {key: value for key, value in params.items() if key != "tbs"}
-                raw = await _serpapi_request(retry_params)
-            if raw.get("error"):
-                raise RuntimeError(str(raw["error"]))
-            items = _result_items(raw)
-            if not items and "tbs" in params:
-                retry_params = {key: value for key, value in params.items() if key != "tbs"}
-                raw = await _serpapi_request(retry_params)
-                if raw.get("error"):
-                    raise RuntimeError(str(raw["error"]))
-                items = _result_items(raw)
-        except Exception as exc:
-            detail = str(exc) or exc.__class__.__name__ or "Unable to reach SerpAPI from this environment."
-            message = f"SerpAPI scan failed: {detail}"
+        # ---- Fan-out: all 16 calls in parallel ----------------------------
+        fanout_results = await asyncio.gather(*[_serpapi_one(p) for p in plans])
+
+        # ---- Pool + tag every item with provenance ------------------------
+        all_items: List[Dict[str, Any]] = []
+        seen_urls: set = set()
+        for result in fanout_results:
+            plan = result["plan"]
+            raw = result["raw"] or {}
+            for item in _result_items(raw):
+                url = (item.get("link") or "").strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                all_items.append({
+                    **item,
+                    "_source_key": plan["source_key"],
+                    "_source_label": plan["source_label"],
+                    "_signal_type_targeted": plan["signal_type"],
+                    "_freshness_bucket": plan["freshness_bucket"],
+                })
+
+        if not all_items:
+            # Fail-soft: surface the worst error so the UI can show it
+            first_error = next((r["error"] for r in fanout_results if r.get("error")), None)
+            message = f"Multi-source SerpAPI fan-out returned no results. Last error: {first_error}" if first_error else "Multi-source SerpAPI fan-out returned no results."
             await db.v3_opportunity_scans.update_one(
                 {"id": scan_id},
-                {"$set": {"status": "failed", "error": message}},
+                {"$set": {"status": "failed", "error": message, "raw_count": 0}},
             )
             raise HTTPException(502, message)
 
-        llm_configured = scan["extraction_method"] == "llm"
-        llm_attempts = 0
-        llm_failures = 0
-        fallback_count = 0
+        # ---- Pass 1 — source-aware deterministic filter (sync, fast) -----
+        survivors: List[Dict[str, Any]] = []
         pass1_rejected = 0
-        auto_dismissed = 0
-        candidates = []
-        for item in items:
-            # ----- v3.3 Pass 1 — deterministic filter -----
-            gate = v3_tracker_v33.pass1_keep(item.get("title", ""), item.get("snippet", ""))
+        for item in all_items:
+            gate = v3_tracker_v33.pass1_keep(
+                item.get("title", ""), item.get("snippet", ""),
+                source_key=item.get("_source_key"),
+            )
             if not gate["keep"]:
                 pass1_rejected += 1
-                logger.info("[Tracker v3.3] Pass-1 reject (%s): %s", gate["reason"], (item.get("title") or "")[:80])
+                logger.info(
+                    "[Tracker v3.3] Pass-1 reject %s (%s): %s",
+                    item.get("_source_key"), gate["reason"], (item.get("title") or "")[:80],
+                )
                 continue
+            survivors.append(item)
 
-            # ----- v3.3 Pass 2 — Claude Sonnet 4.5 enrichment -----
-            v33_card = None
-            if llm_configured:
-                llm_attempts += 1
+        # Cap LLM volume per scan to keep total scan time bounded (~60s budget)
+        # Spread across (source, freshness) buckets so we keep diversity.
+        MAX_LLM_CALLS = 40
+        if len(survivors) > MAX_LLM_CALLS:
+            # Round-robin pick across source_key + freshness_bucket
+            buckets: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+            for s in survivors:
+                key = (s.get("_source_key") or "unknown", s.get("_freshness_bucket") or "pipeline")
+                buckets.setdefault(key, []).append(s)
+            balanced: List[Dict[str, Any]] = []
+            while len(balanced) < MAX_LLM_CALLS and any(buckets.values()):
+                for k in list(buckets.keys()):
+                    if not buckets[k]:
+                        continue
+                    balanced.append(buckets[k].pop(0))
+                    if len(balanced) >= MAX_LLM_CALLS:
+                        break
+            llm_skipped_overflow = len(survivors) - len(balanced)
+            survivors = balanced
+            logger.info("[Tracker v3.3] Capped LLM volume: %d skipped (over %d limit)", llm_skipped_overflow, MAX_LLM_CALLS)
+
+        # ---- Pass 2 — parallel Claude Sonnet 4.5 (bounded concurrency) -----
+        llm_configured = scan["extraction_method"] == "llm"
+        llm_concurrency = 6
+        sem = asyncio.Semaphore(llm_concurrency)
+
+        async def _enrich(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            if not llm_configured:
+                return None
+            async with sem:
                 try:
-                    v33_card = await v3_tracker_v33.call_llm_enricher(
+                    return await v3_tracker_v33.call_llm_enricher(
                         title=item.get("title", ""),
                         snippet=item.get("snippet", ""),
                         source_url=item.get("link", ""),
                         source_domain=_domain_from_url(item.get("link", "")),
-                        signal_type_targeted="creator_signing,campaign_launch,rfp_open,spend_signal",
+                        signal_type_targeted=item.get("_signal_type_targeted") or "unknown",
+                        freshness_bucket=item.get("_freshness_bucket") or "pipeline",
+                        source_label=item.get("_source_label"),
                     )
                 except Exception as exc:
-                    llm_failures += 1
                     logger.warning("[Tracker v3.3] enrichment exception: %s", exc)
+                    return None
 
-            # Fallback to legacy heuristic if Pass 2 didn't return
+        enriched_cards = await asyncio.gather(*[_enrich(item) for item in survivors])
+        llm_attempts = len(survivors) if llm_configured else 0
+        llm_failures = sum(1 for c in enriched_cards if c is None) if llm_configured else 0
+
+        # ---- Assemble candidates --------------------------------------------
+        fallback_count = 0
+        auto_dismissed = 0
+        candidates: List[Dict[str, Any]] = []
+
+        for item, v33_card in zip(survivors, enriched_cards):
+            source_key = item.get("_source_key")
+            signal_type_targeted = item.get("_signal_type_targeted") or "unknown"
+            freshness_bucket = item.get("_freshness_bucket") or "pipeline"
+            source_label = item.get("_source_label")
+
             llm_card = None  # legacy field, kept for back-compat
             extraction_method = "heuristic_fallback"
             if v33_card is None:
@@ -2641,10 +2725,9 @@ Produce the opportunity card JSON.
 
             candidate = _candidate_from_result(item, payload, scan_id, llm_card=llm_card, extraction_method=extraction_method)
 
-            # Layer v3.3 fields on top — these are the canonical fields going forward
+            # Layer v3.3 fields + provenance
             if v33_card:
                 candidate.update({
-                    # Family A — Brand context (survives into CRM)
                     "partner_name": v33_card["partner_name"],
                     "brand_type": v33_card["brand_type"],
                     "industry": v33_card["industry"] or candidate.get("industry") or "Other",
@@ -2660,7 +2743,6 @@ Produce the opportunity card JSON.
                     "key_marketing_channels": v33_card["key_marketing_channels"],
                     "marketing_kpis": v33_card["marketing_kpis"],
                     "likelihood_to_work_with_tta": v33_card["likelihood_to_work_with_tta"],
-                    # Family B — Discovery-only
                     "signal_type": v33_card["signal_type"],
                     "signal_summary": v33_card["signal_summary"],
                     "signal_strength": v33_card["signal_strength"],
@@ -2670,10 +2752,8 @@ Produce the opportunity card JSON.
                     "outreach_draft": v33_card["outreach_draft"],
                     "detected_keywords": v33_card["detected_keywords"],
                     "dismissal_reason": v33_card["dismissal_reason"],
-                    # Mirror partner_name to brand_name for back-compat with existing UI
                     "brand_name": v33_card["partner_name"] or candidate.get("brand_name"),
                 })
-                # Auto-dismiss low brand_confidence per spec §5
                 if (v33_card["brand_confidence"] or 0) < 40:
                     candidate["pipeline_state"] = "dismissed_auto"
                     auto_dismissed += 1
@@ -2682,6 +2762,10 @@ Produce the opportunity card JSON.
             else:
                 candidate["pipeline_state"] = "new"
 
+            candidate["source_key"] = source_key
+            candidate["source_label"] = source_label
+            candidate["signal_type_targeted"] = signal_type_targeted
+            candidate["freshness_bucket"] = freshness_bucket
             candidate.setdefault("scanned_at", _now_iso())
 
             existing = await db.v3_opportunity_candidates.find_one(
@@ -2691,26 +2775,40 @@ Produce the opportunity card JSON.
             if existing:
                 continue
             await db.v3_opportunity_candidates.insert_one({**candidate})
-            # Only surface non-auto-dismissed candidates to the caller
             if candidate.get("pipeline_state") != "dismissed_auto":
                 candidates.append(candidate)
 
+        # ---- Extraction-method summary ------------------------------------
         extraction_method = "llm"
         if not llm_configured:
             extraction_method = "heuristic_fallback"
         elif fallback_count:
             extraction_method = "mixed_llm_heuristic"
 
+        # ---- Cost telemetry (Phase 5) -------------------------------------
+        serpapi_cost = round(len(plans) * SERPAPI_USD_PER_CALL, 4)
+        llm_cost = round(llm_attempts * LLM_USD_PER_CALL, 4)
+        total_cost = round(serpapi_cost + llm_cost, 4)
+
         await db.v3_opportunity_scans.update_one(
             {"id": scan_id},
             {"$set": {
                 "status": "completed",
-                "raw_count": len(items),
+                "raw_count": len(all_items),
                 "candidate_count": len(candidates),
                 "pass1_rejected": pass1_rejected,
                 "auto_dismissed": auto_dismissed,
                 "extraction_method": extraction_method,
                 "fallback_count": fallback_count,
+                "llm_attempts": llm_attempts,
+                "llm_failures": llm_failures,
+                "cost_estimate": {
+                    "serpapi_calls": len(plans),
+                    "serpapi_usd": serpapi_cost,
+                    "llm_calls": llm_attempts,
+                    "llm_usd": llm_cost,
+                    "total_usd": total_cost,
+                },
                 "completed_at": _now_iso(),
             }},
         )
@@ -2718,12 +2816,21 @@ Produce the opportunity card JSON.
             "scan": {
                 **scan,
                 "status": "completed",
-                "raw_count": len(items),
+                "raw_count": len(all_items),
                 "candidate_count": len(candidates),
                 "pass1_rejected": pass1_rejected,
                 "auto_dismissed": auto_dismissed,
                 "extraction_method": extraction_method,
                 "fallback_count": fallback_count,
+                "llm_attempts": llm_attempts,
+                "llm_failures": llm_failures,
+                "cost_estimate": {
+                    "serpapi_calls": len(plans),
+                    "serpapi_usd": serpapi_cost,
+                    "llm_calls": llm_attempts,
+                    "llm_usd": llm_cost,
+                    "total_usd": total_cost,
+                },
                 "completed_at": _now_iso(),
             },
             "candidates": candidates,

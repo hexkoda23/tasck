@@ -5,14 +5,137 @@ think-pieces, and freelancer ads BEFORE any LLM call is made.
 
 Pass 2: single Claude Sonnet 4.5 call per survivor that returns the v3.3 JSON
 card (Family A brand-context fields + Family B discovery-only fields).
+
+v3.3 Addendum (Broadening & Recency): adds a multi-source query planner that
+fans out across Google Web, Google News, LinkedIn, and Nigerian trade press
+with a 60/40 HOT/PIPELINE recency mix. Source-aware Pass-1 filters strip
+LinkedIn "open to work" noise while preserving trade-press signal.
 """
 import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("tasck.v3.tracker")
+
+# ---------------------------------------------------------------------------
+# Multi-source query planner (v3.3 Addendum)
+# ---------------------------------------------------------------------------
+
+# 5 Nigerian trade-press allowlist (user-confirmed: marketingedge, brandcom,
+# thecable, businessday, premiumtimesng).
+TRADE_PRESS_SITE_FILTER = (
+    "(site:marketingedge.com.ng OR site:brandcom.ng OR site:thecable.ng "
+    "OR site:businessday.ng OR site:premiumtimesng.com)"
+)
+
+SOURCES: List[Dict[str, Any]] = [
+    {"key": "google_web",   "label": "Google Web",     "engine_kwargs": {},                          "site_filter": None},
+    {"key": "google_news",  "label": "Google News",    "engine_kwargs": {"tbm": "nws"},              "site_filter": None},
+    {"key": "linkedin",     "label": "LinkedIn",       "engine_kwargs": {},                          "site_filter": "site:linkedin.com"},
+    {"key": "trade_press",  "label": "Nigerian Trade", "engine_kwargs": {},                          "site_filter": TRADE_PRESS_SITE_FILTER},
+]
+
+SIGNAL_QUERIES: List[Dict[str, str]] = [
+    {"key": "creator_signing", "label": "Creator signings",
+     "terms": '("brand ambassador" OR "signs" OR endorsement OR "partners with" OR "named ambassador")'},
+    {"key": "campaign_launch", "label": "Campaign launches",
+     "terms": '("launches campaign" OR "unveils campaign" OR "new campaign" OR "marketing campaign" OR activation)'},
+    {"key": "rfp_open", "label": "RFPs & briefs",
+     "terms": '(RFP OR "pitch invitation" OR "agency review" OR "open brief" OR "creative pitch" OR "request for proposal")'},
+    {"key": "spend_signal", "label": "Spend signals",
+     "terms": '("marketing spend" OR "marketing investment" OR "ad spend" OR sponsorship OR "media budget")'},
+]
+
+# Recency buckets: HOT = past month (qdr:m), PIPELINE = past 6 months (qdr:m6)
+RECENCY_TBS: Dict[str, str] = {
+    "hot": "qdr:m",
+    "pipeline": "qdr:m6",
+}
+
+# Default 60/40 mix across 16 calls -> 10 HOT, 6 PIPELINE.
+# Indices are (source_idx, signal_idx) where signal_idx maps:
+# 0=creator_signing, 1=campaign_launch, 2=rfp_open, 3=spend_signal.
+# rfp_open and spend_signal lean pipeline (longer-cycle); creator_signing
+# and campaign_launch lean hot (time-sensitive announcements).
+_DEFAULT_BUCKET_MATRIX: List[List[str]] = [
+    # creator_signing, campaign_launch, rfp_open, spend_signal
+    ["hot",  "hot",  "pipeline", "hot"],       # google_web   (3 hot, 1 pipeline)
+    ["hot",  "hot",  "pipeline", "hot"],       # google_news  (3 hot, 1 pipeline)
+    ["hot",  "hot",  "pipeline", "pipeline"],  # linkedin     (2 hot, 2 pipeline)
+    ["hot",  "pipeline", "pipeline", "pipeline"],  # trade_press (1 hot, 3 pipeline)
+]  # Totals: 9 hot + 7 pipeline = 56% hot / 44% pipeline ≈ 60/40 target
+
+
+def build_query_plans(
+    base_query: str,
+    country: str = "Nigeria",
+    hot_ratio: float = 0.6,
+) -> List[Dict[str, Any]]:
+    """Return up to 16 SerpAPI query plans (4 sources × 4 signal types).
+
+    Each plan contains:
+      - source_key, source_label
+      - signal_type
+      - freshness_bucket ("hot" | "pipeline")
+      - q (query string)
+      - engine_kwargs (e.g. {"tbm": "nws"} for news)
+      - tbs (recency filter)
+    """
+    geo = (country or "Nigeria").strip()
+    base = (base_query or "").strip()
+
+    plans: List[Dict[str, Any]] = []
+    for s_idx, source in enumerate(SOURCES):
+        for sig_idx, signal in enumerate(SIGNAL_QUERIES):
+            bucket = _DEFAULT_BUCKET_MATRIX[s_idx][sig_idx]
+            tbs = RECENCY_TBS[bucket]
+
+            # Compose the query: <signal_terms> <geo> <site_filter> [<base hints>]
+            parts: List[str] = [signal["terms"], geo]
+            if source["site_filter"]:
+                parts.append(source["site_filter"])
+            if base:
+                # Keep user's custom keywords as soft hints (last position)
+                parts.append(base)
+            q = " ".join(parts)
+
+            plans.append({
+                "source_key": source["key"],
+                "source_label": source["label"],
+                "signal_type": signal["key"],
+                "signal_label": signal["label"],
+                "freshness_bucket": bucket,
+                "q": q,
+                "engine_kwargs": dict(source["engine_kwargs"]),
+                "tbs": tbs,
+            })
+
+    # Best-effort tilt toward `hot_ratio` if caller overrides default.
+    if hot_ratio is not None and abs(hot_ratio - 0.6) > 0.05:
+        target_hot = max(0, min(len(plans), round(hot_ratio * len(plans))))
+        current_hot = sum(1 for p in plans if p["freshness_bucket"] == "hot")
+        if current_hot < target_hot:
+            # Promote pipeline → hot from the head of the list
+            for p in plans:
+                if current_hot >= target_hot:
+                    break
+                if p["freshness_bucket"] == "pipeline":
+                    p["freshness_bucket"] = "hot"
+                    p["tbs"] = RECENCY_TBS["hot"]
+                    current_hot += 1
+        elif current_hot > target_hot:
+            # Demote hot → pipeline from the tail
+            for p in reversed(plans):
+                if current_hot <= target_hot:
+                    break
+                if p["freshness_bucket"] == "hot":
+                    p["freshness_bucket"] = "pipeline"
+                    p["tbs"] = RECENCY_TBS["pipeline"]
+                    current_hot -= 1
+
+    return plans
 
 # ---------------------------------------------------------------------------
 # Pass 1 — deterministic filter
@@ -57,28 +180,55 @@ _TEMPORAL_SIGNAL = re.compile(
 )
 
 
-def pass1_keep(title: str, snippet: str) -> Dict[str, Any]:
+def pass1_keep(title: str, snippet: str, source_key: Optional[str] = None) -> Dict[str, Any]:
     """Returns {'keep': bool, 'reason': str}. Pure stdlib; ~10ms per call.
 
-    Note: temporal/recency is already enforced by Google's `tbs=qdr:*` filter
-    at the search layer, so we don't re-check it in snippet text (would over-filter).
+    Source-aware (v3.3 Addendum):
+      - linkedin: rejects "open to work", freelance, hire-me posts.
+      - trade_press: allowlisted — skip the reject patterns since these outlets
+        publish legitimate brand news that sometimes triggers our generic
+        "industry think-piece" gate (e.g. "Guide to FMCG marketing").
+      - google_web / google_news / None: original v3.3 behaviour.
+
+    Note: temporal/recency is enforced by Google's `tbs=qdr:*` filter at the
+    search layer, so we don't re-check it in snippet text (would over-filter).
     """
     text = f"{title or ''} {snippet or ''}".strip()
     if not text:
         return {"keep": False, "reason": "Empty result"}
 
-    for pat in _REJECT_PATTERNS:
-        m = pat.search(text)
-        if m:
-            return {"keep": False, "reason": f"Matches reject pattern: {m.group(0)!r}"}
+    # LinkedIn-specific extra rejects (job seekers / freelancers / open-to-work)
+    if source_key == "linkedin":
+        for pat in _LINKEDIN_REJECT_PATTERNS:
+            m = pat.search(text)
+            if m:
+                return {"keep": False, "reason": f"LinkedIn job-seeker pattern: {m.group(0)!r}"}
+
+    # Trade press: skip the generic reject gate (these outlets *are* the source
+    # of legitimate Nigerian brand news) but still require commercial intent +
+    # geo signal so "Guide to FMCG" doesn't slip through.
+    if source_key != "trade_press":
+        for pat in _REJECT_PATTERNS:
+            m = pat.search(text)
+            if m:
+                return {"keep": False, "reason": f"Matches reject pattern: {m.group(0)!r}"}
 
     if not _COMMERCIAL_INTENT.search(text):
         return {"keep": False, "reason": "No commercial intent verb"}
 
-    if not _GEO_SIGNAL.search(text):
+    # Geo signal — relaxed for trade press (every result is Nigerian by domain).
+    if source_key != "trade_press" and not _GEO_SIGNAL.search(text):
         return {"keep": False, "reason": "No Nigeria geo signal"}
 
     return {"keep": True, "reason": "Passed all gates"}
+
+
+# LinkedIn-specific reject patterns (job seekers, freelancers, portfolios)
+_LINKEDIN_REJECT_PATTERNS = [
+    re.compile(r"\b(open\s+to\s+work|opentowork|seeking\s+(?:role|opportunit|position)|looking\s+for\s+(?:role|opportunit|position|job|work)|available\s+for\s+(?:hire|projects?|freelance))\b", re.I),
+    re.compile(r"\b(my\s+portfolio|view\s+my\s+profile|connect\s+with\s+me|let'?s\s+connect|hire\s+me|i'?m\s+a\s+(?:freelance|content\s+creator|videographer|photographer))\b", re.I),
+    re.compile(r"\b(certified|certificate)\s+(?:in|of)\s+\w+|\b(course|bootcamp|workshop|training\s+programme?)\b", re.I),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +415,8 @@ async def call_llm_enricher(
     source_url: str,
     source_domain: str,
     signal_type_targeted: str,
+    freshness_bucket: Optional[str] = None,
+    source_label: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Single Claude Sonnet 4.5 call via Emergent LLM Key. Returns v3.3 card."""
     key = os.getenv("EMERGENT_LLM_KEY")
@@ -272,11 +424,21 @@ async def call_llm_enricher(
         logger.warning("[Tracker v3.3] EMERGENT_LLM_KEY not set — falling back to heuristics")
         return None
 
+    freshness_hint = ""
+    if freshness_bucket == "hot":
+        freshness_hint = "- Freshness: HOT (past month) — treat this as a fresh, time-sensitive signal.\n"
+    elif freshness_bucket == "pipeline":
+        freshness_hint = "- Freshness: PIPELINE (past 6 months) — treat this as a longer-cycle opportunity worth nurturing, not breaking news.\n"
+
+    source_hint = f"- Source channel: {source_label}\n" if source_label else ""
+
     user_msg = (
         f"SCAN CONTEXT\n"
         f"- Signal type targeted: {signal_type_targeted}\n"
         f"- Source: {source_domain}\n"
-        f"- Source URL: {source_url}\n\n"
+        f"- Source URL: {source_url}\n"
+        f"{source_hint}"
+        f"{freshness_hint}\n"
         f"SEARCH RESULT\n"
         f"- Headline: {title}\n"
         f"- Snippet: {snippet}\n\n"
@@ -286,6 +448,7 @@ async def call_llm_enricher(
     try:
         # Lazy import so the module loads even if emergentintegrations isn't ready
         from emergentintegrations.llm.chat import LlmChat, UserMessage
+        import asyncio as _asyncio
         import uuid as _uuid
 
         chat = LlmChat(
@@ -293,7 +456,18 @@ async def call_llm_enricher(
             session_id=f"tracker-v33-{_uuid.uuid4().hex[:8]}",
             system_message=LLM_SYSTEM_PROMPT,
         ).with_model("anthropic", "claude-sonnet-4-6")
-        response = await chat.send_message(UserMessage(text=user_msg))
+
+        # LlmChat.send_message is declared `async` but calls the sync
+        # `litellm.completion()` internally, which blocks the event loop and
+        # forces asyncio.gather to serialize all concurrent calls. Running
+        # the coroutine inside its own event loop on a worker thread restores
+        # real parallelism.
+        def _run() -> str:
+            return _asyncio.new_event_loop().run_until_complete(
+                chat.send_message(UserMessage(text=user_msg))
+            )
+
+        response = await _asyncio.to_thread(_run)
         text = response if isinstance(response, str) else str(response)
         logger.info("[Tracker v3.3] LLM raw response (first 240 chars) = %s", text[:240])
         return normalise_card(_parse_json_strict(text))

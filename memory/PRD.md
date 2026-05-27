@@ -87,6 +87,15 @@ Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admi
 - **Pipeline state model**: new → reviewing → outreach_sent → meeting_booked → won. brand_confidence < 40 stored as `dismissed_auto` (audit-only, never surfaced).
 - **Accept-to-CRM**: populates brand with all Family A fields (whether new or existing brand). Contact defaults to `connect_status: "Stranger"`. Brand defaults to `desired_relationship_status: "Project Identified - Move to Framing"`. Business Case `connect.intelligence` + `connect.suggested_outreach` + `connect.outreach_angle` (Alignment Snapshot seed) populated. UI auto-navigates to the new BC.
 
+### Opportunity Tracker v3.3 Addendum — Broadening & Recency (28 May 2026)
+- **Multi-source fan-out** (`v3_tracker_v33.build_query_plans`): up to 16 parallel SerpAPI calls per scan (4 sources × 4 signal types). Sources: Google Web, Google News, LinkedIn (`site:linkedin.com`), Nigerian Trade Press (`site:marketingedge.com.ng OR site:brandcom.ng OR site:thecable.ng OR site:businessday.ng OR site:premiumtimesng.com`). Signal types: creator_signing, campaign_launch, rfp_open, spend_signal. All fanned out concurrently via `asyncio.gather`.
+- **Recency mix** — default 60% HOT (`qdr:m`, past month) / 40% PIPELINE (`qdr:m6`, past 6 months). Configurable via `hot_ratio` slider in the UI (0-100%). Every candidate carries a `freshness_bucket: "hot" | "pipeline"` field.
+- **Source-aware Pass 1** — LinkedIn rejects "open to work / freelance / hire me / portfolio / certified course". Trade press skips the generic reject gate and geo check (every result is implicitly Nigerian by domain). Google web / news retain original v3.3 behaviour.
+- **Parallel Pass 2 LLM** — bounded concurrency=6 via `asyncio.Semaphore`. `LlmChat.send_message` is wrapped in `asyncio.to_thread` because the underlying `litellm.completion` is synchronous and would otherwise serialize on the event loop. Max 40 LLM calls per scan (round-robin across source × freshness buckets).
+- **UI updates** (`V3AdminOpportunityScanner.js`): Freshness badge (HOT / PIPELINE) on every card, Source filter chips + Freshness filter chips above the result list, Source toggle buttons + HOT-mix slider in the query template panel, "Run web scan (N calls)" button with fan-out count, parallel-call progress indicator while busy.
+- **Cost telemetry** — every scan persists `cost_estimate: {serpapi_calls, serpapi_usd, llm_calls, llm_usd, total_usd}` to `v3_opportunity_scans`. Surfaced on the "Last scan" summary card. Default 16-call scan costs ≈ $0.21.
+- **Pytest coverage** — `/app/backend/tests/test_tracker_v33_addendum.py` (14 tests) validates fan-out shape, recency mix, site filters, source-aware Pass 1, and backwards compatibility.
+
 ### Remaining P2 / Future
 - Wire Brand + Creator portals to `/api/v3/*` (still on `v3data.js` fallback)
 - Mobile responsiveness pass

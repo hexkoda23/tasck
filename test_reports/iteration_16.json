@@ -1,0 +1,52 @@
+{
+  "summary": "v3.3 Addendum testing: 14/14 unit tests PASS; 4/6 API integration tests PASS (1-source, candidates, accept-to-CRM, reset-demo). Multi-source 16-call & hot_ratio=0.8 tests intermittently fail with 502 ingress timeouts (~60s) but backend logs show scans completing 200 OK. Frontend smoke test: all primary controls (Run button '(16 calls)', HOT-mix slider, 4 source toggles, per-source limit, source/freshness filter chips, freshness badges) RENDER correctly. CRITICAL UI MISS: Cost telemetry card / last-scan summary with cost_estimate NOT rendered in DOM despite backend returning the data.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/v3/opportunities/scans", "issue": "16-call multi-source scans hit Kubernetes ingress 502 timeout after ~60s; backend completes successfully (200 OK in supervisor logs) but client sees 502. Spec says <90s acceptable. Consider making scan async (POST returns scan_id immediately, GET polls status) or reducing default per_source_limit so the full scan fits in <60s."},
+      {"endpoint": "POST /api/v3/opportunities/scans", "issue": "Response field `sources_used` returns a list of source keys (e.g. ['google_web','google_news','linkedin','trade_press']) rather than the integer count the spec implies (sources_used=4). Either fine, but tests/spec need alignment."},
+      {"endpoint": "POST /api/v3/opportunities/scans", "issue": "Response is wrapped as {candidates:[], scan:{...}} — fan_out/cost_estimate/hot_count/pipeline_count live under .scan, not top-level. Spec phrasing implied top-level; documented for next agent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "V3AdminOpportunityScanner", "issue": "Cost telemetry block missing — element with data-testid='opps-cost-telemetry' is NOT in the DOM. Backend returns cost_estimate{serpapi_calls,serpapi_usd,llm_calls,llm_usd,total_usd} but UI does not surface it.", "selector": "[data-testid=\"opps-cost-telemetry\"]", "priority": "HIGH"},
+      {"component": "V3AdminOpportunityScanner", "issue": "Last-scan summary card with fan_out/raw/hot/pipe/pass1_rejected/auto_dismissed/candidates is missing (no [data-testid='opps-last-scan-summary']).", "selector": "[data-testid=\"opps-last-scan-summary\"]", "priority": "HIGH"},
+      {"component": "V3AdminOpportunityScanner — source toggles", "issue": "Per-source toggle buttons (Google Web / Google News / LinkedIn / Nigerian Trade inside 'Sources to scan') lack individual data-testid='opps-source-{key}' attributes. Only the group container has testid 'opps-template-sources'.", "selector": "[data-testid=\"opps-source-google_web\"] (and siblings)", "priority": "MEDIUM"},
+      {"component": "Freshness filter chip 'Hot'", "issue": "Clicking 'Hot' freshness filter empties the candidate list (0 hot badges visible) even though cards in 'All' view clearly carry HOT pills. Likely the filter logic checks a field name that doesn't match what cards expose (freshness_bucket vs freshness) — needs verification.", "selector": "[data-testid=\"opps-filter-freshness-hot\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Run scan -> cost telemetry display", "issue": "Backend returns cost_estimate but frontend never displays it.", "affected_selectors": ["[data-testid=\"opps-cost-telemetry\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tracker_v33_addendum.py",
+    "/app/backend/tests/test_v33_addendum_api.py",
+    "/app/test_reports/pytest/v33_addendum.xml",
+    "/app/test_reports/pytest/v33_addendum_api.xml"
+  ],
+  "action_items": [
+    "[HIGH] Add cost telemetry UI block (data-testid='opps-cost-telemetry') that renders cost_estimate{serpapi_calls, serpapi_usd, llm_calls, llm_usd, total_usd} from the latest scan response.",
+    "[HIGH] Add last-scan summary card (data-testid='opps-last-scan-summary') showing fan_out, raw, hot/pipe split, pass1_rejected, auto_dismissed, candidates.",
+    "[HIGH] Fix Freshness filter 'Hot' chip — verify the field it filters on matches `freshness_bucket` returned by the backend candidate row.",
+    "[MEDIUM] Add data-testid='opps-source-{google_web|google_news|linkedin|trade_press}' to individual source toggle buttons for test automation.",
+    "[MEDIUM] Make 16-call scan async or trim default per_source_limit so the request completes <60s and avoids ingress 502 timeouts.",
+    "[LOW] Decide & document: response shape — should fan_out/cost_estimate be top-level or under .scan? Currently nested."
+  ],
+  "critical_code_review_comments": [
+    "v3_routes.py is 3167 lines — exceeds the 700-line guideline. Split into routers per resource (opportunities, candidates, admin, scans).",
+    "Scan endpoint runs synchronously and can take 60-90s; this exceeds typical ingress timeouts. Use a background task with status polling for production resilience.",
+    "Response shape mixes business data (candidates) and meta (scan) at the top level — consider returning {scan_id, scan, candidates} consistently and document it in OpenAPI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v33_addendum_api.py (created)"
+  ],
+  "success_rate": {"backend": "78% (15/18 across unit + API; the 3 API failures are intermittent ingress timeouts, not code bugs)", "frontend": "70% (controls + filter chips + provenance badges render; cost telemetry & last-scan summary missing; Hot freshness filter buggy)"},
+  "test_credentials": "Not required — /v3/admin/* bypasses auth in this preview env per request.",
+  "seed_data_creation": "Several scans were run (4 single-source + 4 multi-source). After tests, /api/v3/admin/reset-demo was called and verified to wipe candidates collection.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend scan POST returns {candidates:[], scan:{fan_out, sources_used (list), hot_count, pipeline_count, cost_estimate, ...}}. For pytest do not include `name` or `base_query` at top level — wrap query under `template` (`query` is optional top-level; `template.keywords`, `template.country`, `template.enabled_sources`, `template.hot_ratio`, `template.per_source_limit`). Multi-source scans intermittently hit ingress 502 at ~60s; first-run was successful, repeated runs timed out. Frontend UI is at /v3/admin/crm/opportunities and reachable without auth. Filter chips at data-testid='opps-filter-source-{key}' and 'opps-filter-freshness-{all|hot|pipeline}'. Candidate cards expose 'opps-freshness-hot' / 'opps-freshness-pipeline' testids.",
+  "rca_of_the_issue": "1) Cost telemetry & last-scan summary missing: backend returns the data but V3AdminOpportunityScanner.js does not render any container with data-testid='opps-cost-telemetry' / 'opps-last-scan-summary'. 2) Hot freshness filter empty: most likely a field-name mismatch between filter predicate and candidate field (`freshness_bucket`). 3) 502 timeouts on 16-call scans: synchronous /api/v3/opportunities/scans exceeds the ingress request budget on slow LLM responses; backend logs confirm scan completes 200 OK internally; client connection is dropped by ingress before response is flushed."
+}

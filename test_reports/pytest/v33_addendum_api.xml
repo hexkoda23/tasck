@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="6" time="166.784" timestamp="2026-05-27T18:08:10.720379+00:00" hostname="agent-env-ccc17138-ffca-488c-aece-517ac1a5920a"><testcase classname="backend.tests.test_v33_addendum_api" name="test_scan_one_source_returns_fan_out_4" time="46.221" /><testcase classname="backend.tests.test_v33_addendum_api" name="test_scan_multi_source_returns_fan_out_16_and_cost" time="60.072"><failure message="AssertionError: The preview environment is not responding. It may be starting up.&#10;  &#10;assert 502 == 200&#10; +  where 502 = &lt;Response [502]&gt;.status_code">backend/tests/test_v33_addendum_api.py:59: in test_scan_multi_source_returns_fan_out_16_and_cost
+    assert r.status_code == 200, r.text
+E   AssertionError: The preview environment is not responding. It may be starting up.
+E     
+E   assert 502 == 200
+E    +  where 502 = &lt;Response [502]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_v33_addendum_api" name="test_scan_hot_ratio_tilt" time="60.073"><failure message="AssertionError: The preview environment is not responding. It may be starting up.&#10;  &#10;assert 502 == 200&#10; +  where 502 = &lt;Response [502]&gt;.status_code">backend/tests/test_v33_addendum_api.py:83: in test_scan_hot_ratio_tilt
+    assert r.status_code == 200, r.text
+E   AssertionError: The preview environment is not responding. It may be starting up.
+E     
+E   assert 502 == 200
+E    +  where 502 = &lt;Response [502]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_v33_addendum_api" name="test_candidates_have_provenance_fields" time="0.105" /><testcase classname="backend.tests.test_v33_addendum_api" name="test_accept_candidate_to_crm_regression" time="0.123" /><testcase classname="backend.tests.test_v33_addendum_api" name="test_reset_demo_regression" time="0.113" /></testsuite></testsuites>
