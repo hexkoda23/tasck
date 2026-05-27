@@ -2527,7 +2527,7 @@ Produce the opportunity card JSON.
     SERPAPI_USD_PER_CALL = 0.01      # SerpAPI Developer plan: $50 / 5000 = $0.01/call
     LLM_USD_PER_CALL = 0.003          # Claude Sonnet 4.5: avg 1500 input + 500 output tokens
 
-    async def run_opportunity_scan(payload: OpportunityScanPayload) -> Dict[str, Any]:
+    async def run_opportunity_scan(payload: OpportunityScanPayload, prebuilt_scan_id: Optional[str] = None) -> Dict[str, Any]:
         api_key = os.getenv("SERPAPI_API_KEY")
         if not api_key:
             load_dotenv(Path(__file__).with_name(".env"))
@@ -2536,7 +2536,7 @@ Produce the opportunity card JSON.
             raise HTTPException(503, "SERPAPI_API_KEY is not configured. Add it to backend deployment secrets before running the live scanner.")
 
         query = _build_opportunity_query(payload)
-        scan_id = f"oppscan-{uuid.uuid4().hex[:8]}"
+        scan_id = prebuilt_scan_id or f"oppscan-{uuid.uuid4().hex[:8]}"
 
         # ------- v3.3 Addendum: build the multi-source query plan ----------
         plans = v3_tracker_v33.build_query_plans(
@@ -2567,7 +2567,11 @@ Produce the opportunity card JSON.
             "created_by": payload.created_by,
             "error": None,
         }
-        await db.v3_opportunity_scans.insert_one({**scan})
+        if prebuilt_scan_id:
+            # Async path — row already exists, just update with the running shape
+            await db.v3_opportunity_scans.update_one({"id": scan_id}, {"$set": scan})
+        else:
+            await db.v3_opportunity_scans.insert_one({**scan})
 
         per_call_limit = max(1, min(int(payload.template.per_source_limit or 10), 20))
         gl = _country_to_gl(payload.template.country)
@@ -2837,8 +2841,80 @@ Produce the opportunity card JSON.
         }
 
     @router.post("/opportunities/scans")
-    async def create_opportunity_scan(payload: OpportunityScanPayload):
-        return await run_opportunity_scan(payload)
+    async def create_opportunity_scan(payload: OpportunityScanPayload, wait: bool = False):
+        """Trigger a new multi-source scan.
+
+        - Default (async): returns immediately with `scan_id` + status='running'. The
+          scan continues in the background. Poll `GET /opportunities/scans/{scan_id}`
+          for completion. This avoids the 60s Kubernetes ingress timeout on slower
+          full-fan-out runs.
+        - `?wait=true`: legacy synchronous mode — blocks until the scan completes
+          and returns the full {scan, candidates} payload. Used by pytest.
+        """
+        if wait:
+            return await run_opportunity_scan(payload)
+
+        # Async mode — pre-create the scan row so the caller can poll immediately.
+        api_key = os.getenv("SERPAPI_API_KEY")
+        if not api_key:
+            load_dotenv(Path(__file__).with_name(".env"))
+            api_key = os.getenv("SERPAPI_API_KEY")
+        if not api_key:
+            raise HTTPException(503, "SERPAPI_API_KEY is not configured. Add it to backend deployment secrets before running the live scanner.")
+
+        scan_id = f"oppscan-{uuid.uuid4().hex[:8]}"
+        query = _build_opportunity_query(payload)
+        scan_row = {
+            "id": scan_id,
+            "query": query,
+            "template": payload.template.model_dump(),
+            "provider": "serpapi_google_multisource",
+            "status": "queued",
+            "raw_count": 0,
+            "candidate_count": 0,
+            "extraction_method": "llm" if _opportunity_llm_configured() else "heuristic_fallback",
+            "fallback_count": 0,
+            "fan_out": 0,
+            "sources_used": [],
+            "hot_count": 0,
+            "pipeline_count": 0,
+            "created_at": _now_iso(),
+            "created_by": payload.created_by,
+            "error": None,
+        }
+        await db.v3_opportunity_scans.insert_one({**scan_row})
+
+        async def _run_in_background():
+            try:
+                await run_opportunity_scan(payload, prebuilt_scan_id=scan_id)
+            except HTTPException as exc:
+                await db.v3_opportunity_scans.update_one(
+                    {"id": scan_id},
+                    {"$set": {"status": "failed", "error": exc.detail, "completed_at": _now_iso()}},
+                )
+            except Exception as exc:
+                logger.exception("[Tracker v3.3] Background scan crashed: %s", exc)
+                await db.v3_opportunity_scans.update_one(
+                    {"id": scan_id},
+                    {"$set": {"status": "failed", "error": str(exc) or exc.__class__.__name__, "completed_at": _now_iso()}},
+                )
+
+        asyncio.create_task(_run_in_background())
+        # Return the queued shell — frontend polls /opportunities/scans/{scan_id}
+        return {"scan": scan_row, "candidates": [], "async": True}
+
+    @router.get("/opportunities/scans/{scan_id}")
+    async def get_opportunity_scan(scan_id: str):
+        """Poll endpoint for async scan progress. Returns scan + candidates so
+        far (so the UI can stream them in as Pass 2 finishes)."""
+        scan = await db.v3_opportunity_scans.find_one({"id": scan_id}, {"_id": 0})
+        if not scan:
+            raise HTTPException(404, "Scan not found")
+        candidates = await db.v3_opportunity_candidates.find(
+            {"scan_id": scan_id, "pipeline_state": {"$ne": "dismissed_auto"}},
+            {"_id": 0},
+        ).to_list(500)
+        return {"scan": scan, "candidates": candidates}
 
     @router.post("/opportunities/scrape")
     async def scrape_opportunities(payload: OpportunityScrapePayload):

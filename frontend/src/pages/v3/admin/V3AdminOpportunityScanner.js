@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   v3AcceptOpportunityCandidate,
+  v3GetOpportunityScan,
   v3ListOpportunityCandidates,
   v3RejectOpportunityCandidate,
   v3RunOpportunityScan,
@@ -59,8 +60,6 @@ const splitList = (value) => String(value || '').split(',').map((item) => item.t
 
 const scoreColor = (score) => (score >= 85 ? '#1F4A3A' : score >= 70 ? '#C49B5F' : '#B54A37');
 
-const isMissingKeyError = (error) => /SERPAPI_API_KEY/i.test(error?.response?.data?.detail || error?.message || '');
-
 const valueOrManual = (value) => value || 'Not found - recommend manual search.';
 
 const InfoPanel = ({ icon: Icon, title, children, accent = '#1F4A3A' }) => (
@@ -90,6 +89,9 @@ const V3AdminOpportunityScanner = () => {
   // v3.3 Addendum — UI filters
   const [sourceFilter, setSourceFilter] = useState('all'); // 'all' | source_key
   const [freshnessFilter, setFreshnessFilter] = useState('all'); // 'all' | 'hot' | 'pipeline'
+  // Async scan polling
+  const [pollingScanId, setPollingScanId] = useState(null);
+  const [scanProgress, setScanProgress] = useState('');
 
   // v3.3 pipeline states drive the counter tabs. Legacy `status` field is
   // mirrored to pipeline_state so old records (status: 'pending') surface
@@ -179,9 +181,28 @@ const V3AdminOpportunityScanner = () => {
     }
   };
 
+  // Surface the *actual* error so production scan failures are debuggable
+  // (e.g. "503 SERPAPI_API_KEY not configured", "504 Gateway Timeout").
+  const describeError = (e) => {
+    const status = e?.response?.status;
+    const detail = e?.response?.data?.detail || e?.response?.statusText;
+    if (status === 503 && /SERPAPI/i.test(detail || '')) {
+      return 'SERPAPI_API_KEY is not configured on this backend. Add it to deployment secrets and redeploy.';
+    }
+    if (status) return `Scanner backend returned HTTP ${status}: ${detail || e.message}`;
+    if (/Network Error|Failed to fetch/i.test(e?.message || '')) {
+      return 'Cannot reach the scanner backend (network error or CORS). Check the deployment URL and that the backend is running.';
+    }
+    if (/timeout/i.test(e?.message || '')) {
+      return 'Scanner backend timed out. Try fewer sources or rerun.';
+    }
+    return e?.message || 'Unknown scanner error';
+  };
+
   const runScan = async () => {
     setBusy(true);
     setError('');
+    setScanProgress('Submitting scan request…');
     try {
       const payload = {
         query: template.query,
@@ -199,12 +220,69 @@ const V3AdminOpportunityScanner = () => {
         },
         created_by: 'admin',
       };
-      const result = await v3RunOpportunityScan(payload);
+      const initial = await v3RunOpportunityScan(payload);
       // eslint-disable-next-line no-console
-      console.log('[SerpAPI Scan] response from /api/v3/opportunities/scans →', result);
-      setScan(result.scan);
+      console.log('[SerpAPI Scan] initial response →', initial);
+
+      // ---- Async (default) — poll for completion ----
+      if (initial?.async && initial?.scan?.id) {
+        const scanId = initial.scan.id;
+        setPollingScanId(scanId);
+        setScanProgress(`Scan ${scanId} queued · fanning out ${(template.enabled_sources || []).length * 4} parallel calls…`);
+
+        const startedAt = Date.now();
+        const MAX_WAIT_MS = 180_000;
+        let lastStatus = 'queued';
+        while (Date.now() - startedAt < MAX_WAIT_MS) {
+          await new Promise((r) => setTimeout(r, 2500));
+          let snap;
+          try {
+            snap = await v3GetOpportunityScan(scanId);
+          } catch (pollErr) {
+            // Transient ingress hiccup — keep polling
+            // eslint-disable-next-line no-console
+            console.warn('[Scanner poll] transient error', pollErr);
+            continue;
+          }
+          const sc = snap?.scan || {};
+          lastStatus = sc.status || lastStatus;
+          const liveCandidates = Array.isArray(snap.candidates) ? snap.candidates.length : 0;
+          setScanProgress(
+            sc.status === 'running'
+              ? `Scanning · ${liveCandidates} candidates so far · ${Math.round((Date.now() - startedAt) / 1000)}s elapsed`
+              : `${sc.status} · ${liveCandidates} candidates`
+          );
+          if (sc.status === 'completed' || sc.status === 'failed') {
+            setScan(sc);
+            if (sc.status === 'failed') {
+              setError(`Scan failed: ${sc.error || 'unknown'}`);
+            }
+            if (Array.isArray(snap.candidates)) {
+              setCandidates((current) => {
+                const byId = new Map(current.map((item) => [item.id, item]));
+                snap.candidates.forEach((item) => byId.set(item.id, item));
+                return Array.from(byId.values());
+              });
+            }
+            setActiveTab('new');
+            setDemoMode(false);
+            await loadCounts();
+            setPollingScanId(null);
+            setScanProgress('');
+            return;
+          }
+        }
+        // Timed out polling — surface a clear timeout message
+        setError(`Scan ${scanId} is still ${lastStatus} after ${Math.round(MAX_WAIT_MS / 1000)}s. Open it from the DB or rerun.`);
+        setPollingScanId(null);
+        setScanProgress('');
+        return;
+      }
+
+      // ---- Sync (wait=true) fallback — for legacy/tests ----
+      setScan(initial.scan);
       setCandidates((current) => {
-        const next = Array.isArray(result.candidates) ? result.candidates : [];
+        const next = Array.isArray(initial.candidates) ? initial.candidates : [];
         const byId = new Map(current.map((item) => [item.id, item]));
         next.forEach((item) => byId.set(item.id, item));
         return Array.from(byId.values());
@@ -213,16 +291,18 @@ const V3AdminOpportunityScanner = () => {
       setDemoMode(false);
       await loadCounts();
     } catch (e) {
-      const message = e.response?.data?.detail || e.message;
-      if (isMissingKeyError(e)) {
-        setError(message);
-      } else {
-        setCandidates(demoOpportunityCandidates);
+      const message = describeError(e);
+      setError(message);
+      // Only fall back to demo data when the backend is genuinely unreachable
+      // (NOT for 4xx/5xx with a real response — those are diagnosable).
+      const noResponse = !e?.response;
+      if (noResponse) {
+        setCandidates((current) => (current.length ? current : demoOpportunityCandidates));
         setDemoMode(true);
-        setError('Backend unavailable. Showing demo scanner candidates for presentation.');
       }
     } finally {
       setBusy(false);
+      setScanProgress('');
     }
   };
 
@@ -296,7 +376,7 @@ const V3AdminOpportunityScanner = () => {
         <button onClick={runScan} disabled={busy} className="v3-btn-primary self-start xl:self-auto shrink-0" data-testid="opps-run-scan">
           {busy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
           {busy
-            ? `Fanning out ${(template.enabled_sources || []).length * 4} parallel calls…`
+            ? (scanProgress || `Fanning out ${(template.enabled_sources || []).length * 4} parallel calls…`)
             : `Run web scan (${(template.enabled_sources || []).length * 4} calls)`}
         </button>
       </div>
@@ -309,6 +389,16 @@ const V3AdminOpportunityScanner = () => {
               Add `SERPAPI_API_KEY` to backend deployment secrets, then rerun the scan.
             </p>
           )}
+        </div>
+      )}
+
+      {busy && scanProgress && !error && (
+        <div className="v3-card p-3 mb-5 border-[#DDE7E2]" data-testid="opps-progress">
+          <p className="text-[12px] text-[#1F4A3A] flex items-center gap-2">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            {scanProgress}
+            {pollingScanId && <span className="text-[#8A8A8A]">· {pollingScanId}</span>}
+          </p>
         </div>
       )}
 

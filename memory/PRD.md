@@ -82,6 +82,13 @@ Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admi
 - **SerpAPI** (server-side only via `SERPAPI_API_KEY` env). Powers the Brand Opportunity Tracker scan endpoint. Live on preview AND production (`thcodemo.space`).
 - **Emergent LLM Key — Claude Sonnet 4.5** (server-side only via `EMERGENT_LLM_KEY`). Powers Tracker v3.3 Pass-2 enrichment. Returns the v3.3 structured JSON card (Family A + Family B).
 
+### Opportunity Tracker v3.3 Async Scan (28 May 2026 — production-ready)
+- **`POST /api/v3/opportunities/scans`** is now non-blocking by default: returns `{scan: {id, status:'queued',...}, candidates:[], async:true}` in ~13ms. The actual fan-out runs in a background `asyncio.create_task`.
+- **`GET /api/v3/opportunities/scans/{scan_id}`** — new poll endpoint. Returns the live scan row + any candidates persisted so far (UI streams them as Pass-2 completes). `status` transitions queued → running → completed | failed.
+- **`?wait=true`** query param keeps the legacy synchronous behaviour for pytest and tooling that wants the full payload back in one call.
+- **Frontend**: `runScan` polls every 2.5s up to 180s, surfaces a progress banner with the scan_id + elapsed time + live candidate count, and disambiguates errors (503 SERPAPI key missing, 4xx/5xx with body, network/CORS, timeout) instead of swallowing them as "Backend unavailable".
+- **Eliminates** Kubernetes ingress 60s timeout risk on production (the original bug behind "Backend unavailable. Showing demo scanner candidates").
+
 ### Opportunity Tracker v3.3 (27 May 2026)
 - **Pass 1 — deterministic filter** (`v3_tracker_v33.pass1_keep`): silently rejects creator self-promos, freelancer ads, awards listicles, industry think-pieces, anything without commercial intent + Nigeria geo + temporal anchor. ~10ms per result.
 - **Pass 2 — Claude Sonnet 4.5 enrichment** (`call_llm_enricher`): one structured-JSON call per Pass-1 survivor. Family A: partner_name, brand_type, industry, contact fields, Key Marketing Focus, Primary Target Audience, Key Marketing Channels, Marketing KPIs, Likelihood to Work with TTA. Family B: signal_type pill, brand_confidence + signal_strength (two scores), why_this_matters, outreach_angle, outreach_draft (3-sentence email).
