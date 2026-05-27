@@ -127,6 +127,8 @@ const V3AdminOpportunityScanner = () => {
         created_by: 'admin',
       };
       const result = await v3RunOpportunityScan(payload);
+      // eslint-disable-next-line no-console
+      console.log('[SerpAPI Scan] response from /api/v3/opportunities/scans →', result);
       setScan(result.scan);
       setCandidates((current) => {
         const next = Array.isArray(result.candidates) ? result.candidates : [];

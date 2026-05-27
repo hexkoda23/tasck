@@ -19,12 +19,15 @@ from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
 import json
+import logging
 import os
 import re
 import requests
 import uuid
 
 from v3_seed import get_v3_seed_data
+
+logger = logging.getLogger("tasck.v3")
 
 
 def _now_iso():
@@ -2532,9 +2535,24 @@ Produce the opportunity card JSON.
             params["tbs"] = tbs
 
         async def _serpapi_request(request_params: Dict[str, Any]) -> Dict[str, Any]:
+            # Redact the API key before logging the request params
+            redacted = {k: ("***REDACTED***" if k == "api_key" else v) for k, v in request_params.items()}
+            logger.info("[SerpAPI] >> GET serpapi.com/search.json params=%s", redacted)
             response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=request_params, timeout=25)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            # Log a structural summary + the full raw payload so you can grep / inspect
+            logger.info(
+                "[SerpAPI] << status=%s search_metadata.id=%s organic=%d news=%d top_stories=%d error=%s",
+                response.status_code,
+                (data.get("search_metadata") or {}).get("id"),
+                len(data.get("organic_results") or []),
+                len(data.get("news_results") or []),
+                len(data.get("top_stories") or []),
+                data.get("error"),
+            )
+            logger.info("[SerpAPI] RAW RESPONSE = %s", data)
+            return data
 
         try:
             raw = await _serpapi_request(params)
