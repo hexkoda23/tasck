@@ -105,7 +105,12 @@ const V3AdminOpportunityScanner = () => {
         );
         if (state !== activeTab) return false;
         if (sourceFilter !== 'all' && candidate.source_key !== sourceFilter) return false;
-        if (freshnessFilter !== 'all' && (candidate.freshness_bucket || 'pipeline') !== freshnessFilter) return false;
+        // Freshness filter: cards without freshness_bucket (legacy/pre-addendum)
+        // show in BOTH hot and pipeline views so old data isn't hidden.
+        if (freshnessFilter !== 'all') {
+          const bucket = candidate.freshness_bucket;
+          if (bucket && bucket !== freshnessFilter) return false;
+        }
         return true;
       })
       .sort((a, b) => {
@@ -394,7 +399,7 @@ const V3AdminOpportunityScanner = () => {
                             ? 'border-[#1F4A3A] bg-[#DDE7E2] text-[#1F4A3A]'
                             : 'border-[#E8E4DB] bg-white text-[#6E6657] hover:border-[#C49B5F]'
                         }`}
-                        data-testid={`opps-source-toggle-${source.key}`}
+                        data-testid={`opps-source-${source.key}`}
                       >
                         {source.label}
                       </button>
@@ -431,6 +436,7 @@ const V3AdminOpportunityScanner = () => {
 
           {scan && (
             <div className="v3-card p-4 min-w-0 overflow-hidden" data-testid="opps-scan-summary">
+              <div data-testid="opps-last-scan-summary">
               <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Last scan</p>
               <p className="text-[12px] text-[#1A1A1A] break-words">{scan.query}</p>
               <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] text-[#6E6657]" data-testid="opps-scan-stats">
@@ -447,6 +453,7 @@ const V3AdminOpportunityScanner = () => {
                   {' '}({scan.cost_estimate.serpapi_calls} SerpAPI · {scan.cost_estimate.llm_calls} LLM)
                 </div>
               )}
+              </div>
             </div>
           )}
         </div>
