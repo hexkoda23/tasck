@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { v3Projects, v3Stages, v3AlignmentSnapshots, v3FinalReports, v3CreativeSnapshots, v3BriefResponses, v3CreatorMatches, v3Deliverables, v3Interactions, getBrand, getCreator, getRM, formatNairaV3 } from '../../../lib/v3data';
+import { v3Projects, v3Stages, v3AlignmentSnapshots, v3FinalReports, v3CreativeSnapshots, v3BriefResponses, v3CreatorMatches, v3Deliverables, v3Interactions, v3Creators, getBrand, getCreator, getRM, formatNairaV3, buildMockAlignmentSnapshot, getMockMarketingIntelligence } from '../../../lib/v3data';
+import { v3GenerateAlignment, v3SuggestCreatorMatches } from '../../../lib/v3api';
 import V3DocumentSurface from '../../../components/v3/V3DocumentSurface';
 import V3StageGate from '../../../components/v3/V3StageGate';
 import { ChevronLeft, Clock, FileText, Sparkles, Users, AlertTriangle, CheckCircle, Circle, MessageSquare } from 'lucide-react';
@@ -16,25 +17,206 @@ const tabs = [
   { key: 'closure', label: 'Closure' },
 ];
 
+const normaliseAlignmentSnapshot = (snapshot, project) => ({
+  ...snapshot,
+  status: snapshot.status || 'under_review',
+  generatedAt: snapshot.generatedAt || snapshot.generated_at,
+  brandHeader: snapshot.brandHeader || snapshot.brand_header,
+  scopeFlags: snapshot.scopeFlags || snapshot.scope_flags || [],
+  sections: snapshot.sections || [],
+  meta: snapshot.meta || 'AI-generated from connector phase data | Pending admin review',
+  title: snapshot.title || `"${project.title}" - Alignment Snapshot`,
+});
+
+const buildCreatorMatches = (project, brand, alignmentSnapshot) => {
+  const intelligence = getMockMarketingIntelligence(project);
+  const searchable = [
+    project.title,
+    brand?.industry,
+    intelligence.key_marketing_focus,
+    intelligence.primary_target_audience,
+    ...(intelligence.key_marketing_channels || []),
+    ...(alignmentSnapshot?.sections || []).map((section) => section.content || (section.items || []).join(' ')),
+  ].join(' ').toLowerCase();
+
+  const scored = v3Creators.map((creator, index) => {
+    let score = 70 + Math.round((creator.reliability || 7.5) * 2);
+    if (creator.tier === 'super') score += 8;
+    if (project.creatorId === creator.id) score += 5;
+    if (/beverage|fmcg|coke|guinness|lager|share/.test(searchable) && /afrobeats|r&b|pop|producer/i.test(creator.genre)) score += 5;
+    if (/gen[- ]?z|18|youth|urban|tiktok|instagram/.test(searchable) && creator.platforms?.some((p) => ['TikTok', 'Instagram'].includes(p))) score += 4;
+    if (/pan-african|africa|documentary|youtube/.test(searchable) && creator.platforms?.includes('YouTube')) score += 3;
+    score = Math.max(68, Math.min(96, score - index));
+    return {
+      creator,
+      score,
+      confidence: Number((score / 100).toFixed(2)),
+      reasons: [
+        `${creator.name} fits the core audience and channel mix for ${project.title}.`,
+        `${creator.genre} gives the brand a credible cultural translation route, not a generic endorsement.`,
+        `Reliability ${creator.reliability || '8.0'}/10, on-time rate ${creator.onTimeRate || 90}%, and rate card ${creator.rateCard || 'to confirm'} support planning confidence.`,
+      ],
+      risks: creator.reliability < 8 ? ['Requires tighter manager follow-up and delivery milestones.'] : [],
+    };
+  }).sort((a, b) => b.score - a.score);
+
+  const best = scored[0];
+  return {
+    creatorId: best.creator.id,
+    fitScore: best.score,
+    rationale: best.reasons,
+    risks: best.risks,
+    matches: scored.slice(0, 5),
+  };
+};
+
+const normaliseCreatorMatches = (result, project, brand, alignmentSnapshot) => {
+  const matches = Array.isArray(result?.matches) ? result.matches : [];
+  if (!matches.length) return buildCreatorMatches(project, brand, alignmentSnapshot);
+  const normalised = matches.map((match) => ({
+    creator: match.creator || getCreator(match.creator_id),
+    score: Math.round(match.score || (match.confidence ? match.confidence * 100 : 80)),
+    confidence: match.confidence || Number(((match.score || 80) / 100).toFixed(2)),
+    reasons: match.reasons || match.rationale || ['AI recommended this creator for the approved Alignment Snapshot.'],
+    risks: match.risks || [],
+  })).filter((match) => match.creator);
+  const best = normalised[0];
+  return best ? {
+    creatorId: best.creator.id,
+    fitScore: best.score,
+    rationale: best.reasons,
+    risks: best.risks,
+    matches: normalised.slice(0, 5),
+  } : buildCreatorMatches(project, brand, alignmentSnapshot);
+};
+
+const buildStrategySnapshot = (project, brand, creator, alignmentSnapshot) => {
+  const intelligence = getMockMarketingIntelligence(project);
+  const channels = intelligence.key_marketing_channels || ['Instagram', 'TikTok', 'YouTube'];
+  const kpis = intelligence.marketing_kpis || [];
+  const creatorName = creator?.name || 'Selected Creator';
+  return {
+    currentVersion: 1,
+    revisionCount: 0,
+    versions: [{
+      version: 1,
+      status: 'draft',
+      generatedAt: new Date().toISOString().slice(0, 10),
+      sharedAt: null,
+      brandFeedback: null,
+      approved: false,
+      content: {
+        brandHeader: `${brand?.company?.split(' ')[0]?.toUpperCase() || 'BRAND'} x ${creatorName.toUpperCase()} x TASCK`,
+        title: `"${project.title}" - Strategy Snapshot v1`,
+        meta: 'AI-generated from Alignment Snapshot, creator fit, and project requirements | Admin review required',
+        concept: `${project.title} becomes a creator-led campaign authored with ${creatorName}. The strategy keeps ${brand?.company || 'the brand'} as the strategic owner while using ${creatorName}'s cultural authority to translate the approved Alignment Snapshot into content that can travel across ${channels.join(', ')}.\n\nThe campaign should lead with ${intelligence.key_marketing_focus} and convert it into a practical creative system: hero content, social cutdowns, audience participation, and a clear brand approval path before launch.`,
+        deliverables: [
+          { num: 1, title: `${creatorName} hero campaign film`, format: 'Hero content', duration: '60-90 sec', purpose: 'Launch narrative and cultural positioning' },
+          { num: 2, title: `Channel-specific content plan for ${channels.join(', ')}`, format: 'Social content plan', duration: 'Launch window', purpose: 'Drive reach, engagement, and shareability' },
+          { num: 3, title: 'Creator fee, conditions, usage guardrails, and availability summary', format: 'Commercial plan', duration: 'Pre-contract', purpose: 'Prepare contract and budget planning' },
+        ],
+        budget: [
+          { line: `Creator fee (${creatorName})`, amount: Math.round(project.estimatedValue * 0.45), pct: 45 },
+          { line: 'Production and content capture', amount: Math.round(project.estimatedValue * 0.28), pct: 28 },
+          { line: 'Post-production and cutdowns', amount: Math.round(project.estimatedValue * 0.1), pct: 10 },
+          { line: 'Activation logistics and contingency', amount: Math.round(project.estimatedValue * 0.07), pct: 7 },
+          { line: 'TTA management fee', amount: Math.round(project.estimatedValue * 0.1), pct: 10 },
+        ],
+        milestones: [
+          { milestone: 'Brand approves Strategy Snapshot', date: 'Within 3 business days' },
+          { milestone: 'Contracts issued to brand and creator', date: 'Within 5 business days' },
+          { milestone: 'Budget and timeline planning opens', date: 'Delivery phase' },
+          { milestone: 'Campaign launch window confirmed', date: 'Post-contract' },
+        ],
+        successMetrics: kpis.length ? kpis.map((item) => ({ kpi: item.kpi, metric: item.kpi, target: item.target })) : [
+          { kpi: 'Reach', metric: 'Unique impressions', target: 'Confirm with brand' },
+          { kpi: 'Engagement', metric: 'Engagement rate', target: 'Confirm benchmark with brand' },
+          { kpi: 'Conversion signal', metric: 'Campaign action', target: 'Define before launch' },
+        ],
+      },
+    }],
+  };
+};
+
 const V3AdminProjectDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('overview');
+  const [generatedSnapshot, setGeneratedSnapshot] = useState(null);
+  const [generatedCreatorMatch, setGeneratedCreatorMatch] = useState(null);
+  const [generatedCreativeSnapshot, setGeneratedCreativeSnapshot] = useState(null);
+  const [busyAction, setBusyAction] = useState(null);
+  const [notice, setNotice] = useState('');
+  const [aiActivity, setAiActivity] = useState([]);
 
   const project = v3Projects.find(p => p.id === id);
   if (!project) return <div className="p-8 text-[#8A8A8A]">Project not found.</div>;
 
   const brand = getBrand(project.brandId);
-  const creator = getCreator(project.creatorId);
   const rm = getRM(project.rmId);
   const stage = v3Stages.find(s => s.key === project.stage);
-  const snapshot = v3AlignmentSnapshots[id];
+  const snapshot = generatedSnapshot || v3AlignmentSnapshots[id];
   const finalReport = v3FinalReports[id];
-  const creativeSnapshot = v3CreativeSnapshots[id];
+  const creativeSnapshot = generatedCreativeSnapshot || v3CreativeSnapshots[id];
   const briefResponse = v3BriefResponses[id];
-  const creatorMatch = v3CreatorMatches[id];
+  const creatorMatch = generatedCreatorMatch || v3CreatorMatches[id];
+  const matchedCreatorFromList = creatorMatch?.matches?.find((match) => match.creator?.id === creatorMatch.creatorId)?.creator;
+  const creator = matchedCreatorFromList || getCreator(creatorMatch?.creatorId || project.creatorId);
   const deliverables = v3Deliverables[id] || [];
   const interactions = v3Interactions[project.brandId] || [];
+
+  const flash = (message) => setNotice(message);
+  const pushActivity = (message) => setAiActivity((prev) => [message, ...prev.filter((item) => item !== message)].slice(0, 5));
+
+  const generateAlignmentSnapshot = async () => {
+    setBusyAction('alignment');
+    try {
+      let nextSnapshot;
+      try {
+        nextSnapshot = normaliseAlignmentSnapshot(await v3GenerateAlignment(project.id), project);
+      } catch (e) {
+        nextSnapshot = normaliseAlignmentSnapshot(buildMockAlignmentSnapshot(project), project);
+      }
+      setGeneratedSnapshot(nextSnapshot);
+      setActiveTab('alignment');
+      pushActivity(`Alignment Snapshot generated (${nextSnapshot.scopeFlags?.length || 0} flags)`);
+      flash('Alignment Snapshot generated from brand, connector notes, marketing focus, audience, channels, and KPIs.');
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const findCreators = async () => {
+    setBusyAction('creators');
+    try {
+      const alignmentForMatch = normaliseAlignmentSnapshot(snapshot || buildMockAlignmentSnapshot(project), project);
+      if (!snapshot) setGeneratedSnapshot(alignmentForMatch);
+      let nextMatch;
+      try {
+        nextMatch = normaliseCreatorMatches(await v3SuggestCreatorMatches(project.id), project, brand, alignmentForMatch);
+      } catch (e) {
+        nextMatch = buildCreatorMatches(project, brand, alignmentForMatch);
+      }
+      setGeneratedCreatorMatch(nextMatch);
+      setActiveTab('plan');
+      pushActivity(`Creator matching completed (${nextMatch.matches?.length || 1} ranked)`);
+      flash(`${nextMatch.matches?.[0]?.creator?.name || getCreator(nextMatch.creatorId)?.name || 'Creator'} selected as the best-fit creative with a ${nextMatch.fitScore} match score.`);
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const generateStrategySnapshot = () => {
+    const alignmentForStrategy = normaliseAlignmentSnapshot(snapshot || buildMockAlignmentSnapshot(project), project);
+    const matchForStrategy = creatorMatch || buildCreatorMatches(project, brand, alignmentForStrategy);
+    const selectedCreator = matchForStrategy.matches?.[0]?.creator || getCreator(matchForStrategy.creatorId || project.creatorId);
+    setGeneratedSnapshot((prev) => prev || alignmentForStrategy);
+    setGeneratedCreatorMatch((prev) => prev || matchForStrategy);
+    setGeneratedCreativeSnapshot(buildStrategySnapshot(project, brand, selectedCreator, alignmentForStrategy));
+    setActiveTab('plan');
+    pushActivity('Strategy Snapshot generated');
+    flash('Strategy Snapshot drafted from the Alignment Snapshot and selected creative fit.');
+  };
 
   const getStageConditions = () => {
     switch (project.stage) {
@@ -74,6 +256,14 @@ const V3AdminProjectDetail = () => {
       <button onClick={() => navigate('/v3/admin/projects')} className="inline-flex items-center gap-1.5 text-[#8A8A8A] text-[12px] mb-6 hover:text-[#5C5C5C] transition-colors">
         <ChevronLeft className="w-3.5 h-3.5" /> All projects
       </button>
+
+      {notice && (
+        <div className="v3-card p-3 mb-5 border-[#DDE7E2] bg-[#FAFAF7]" data-testid="project-ai-notice">
+          <p className="text-[12px] text-[#1F4A3A] flex items-center gap-2">
+            <Sparkles className="w-3.5 h-3.5" /> {notice}
+          </p>
+        </div>
+      )}
 
       <div className="flex gap-8">
         {/* LEFT RAIL — Project summary + Stage Gate */}
@@ -216,7 +406,9 @@ const V3AdminProjectDetail = () => {
                       <Sparkles className="w-6 h-6 text-[#1F4A3A] mx-auto mb-3" />
                       <p className="text-[14px] text-[#1A1A1A] font-medium mb-1">Generate Alignment Snapshot</p>
                       <p className="text-[12px] text-[#8A8A8A] mb-4">AI will read all inputs on this Business Case and produce a structured document.</p>
-                      <button className="v3-btn-primary" data-testid="generate-alignment"><Sparkles className="w-3.5 h-3.5" /> Generate Alignment Snapshot</button>
+                      <button onClick={generateAlignmentSnapshot} disabled={busyAction === 'alignment'} className="v3-btn-primary" data-testid="generate-alignment">
+                        <Sparkles className="w-3.5 h-3.5" /> {busyAction === 'alignment' ? 'Generating...' : 'Generate Alignment Snapshot'}
+                      </button>
                     </div>
                   )}
                 </div>
@@ -232,15 +424,45 @@ const V3AdminProjectDetail = () => {
                         <div className="flex-1">
                           <p className="text-[14px] font-medium text-[#1A1A1A]">{creator?.name}</p>
                           <p className="text-[11px] text-[#8A8A8A] mb-2">{creator?.genre} &middot; {creator?.location}</p>
-                          <ul className="space-y-1">{creatorMatch.rationale.map((r, i) => <li key={i} className="text-[12px] text-[#5C5C5C]">&bull; {r}</li>)}</ul>
-                          {creatorMatch.risks.length > 0 && (
+                          <ul className="space-y-1">{(creatorMatch.rationale || []).map((r, i) => <li key={i} className="text-[12px] text-[#5C5C5C]">&bull; {r}</li>)}</ul>
+                          {(creatorMatch.risks || []).length > 0 && (
                             <div className="mt-3 pt-3 border-t border-[#E8E4DB]">
                               <p className="text-[10px] text-[#C49B5F] uppercase tracking-wider mb-1">Risks</p>
-                              {creatorMatch.risks.map((r, i) => <p key={i} className="text-[12px] text-[#8A8A8A]">&bull; {r}</p>)}
+                              {(creatorMatch.risks || []).map((r, i) => <p key={i} className="text-[12px] text-[#8A8A8A]">&bull; {r}</p>)}
+                            </div>
+                          )}
+                          {creatorMatch.matches?.length > 1 && (
+                            <div className="mt-4 pt-3 border-t border-[#E8E4DB]">
+                              <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider mb-2">AI ranked shortlist</p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {creatorMatch.matches.slice(0, 4).map((match) => (
+                                  <div key={match.creator.id} className="p-2 rounded-lg bg-[#FAFAF7] border border-[#E8E4DB] flex items-center justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <p className="text-[12px] text-[#1A1A1A] font-medium truncate">{match.creator.name}</p>
+                                      <p className="text-[10px] text-[#8A8A8A] truncate">{match.creator.genre}</p>
+                                    </div>
+                                    <span className="text-[12px] text-[#1F4A3A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{match.score}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           )}
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {creatorMatch && !creativeSnapshot && (
+                    <div className="v3-card p-6 border-[#C49B5F]">
+                      <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-2 flex items-center gap-2">
+                        <Sparkles className="w-3.5 h-3.5 text-[#C49B5F]" /> Next: Generate Strategy Snapshot
+                      </h3>
+                      <p className="text-[12px] text-[#6E6657] mb-4">
+                        AI will use the Alignment Snapshot, selected creator fit, channels, KPI targets, fee assumptions, and delivery risks to draft a brand-facing Strategy Snapshot for admin review.
+                      </p>
+                      <button onClick={generateStrategySnapshot} disabled={busyAction === 'strategy'} className="v3-btn-primary" data-testid="generate-creative-snapshot">
+                        <Sparkles className="w-3.5 h-3.5" /> {busyAction === 'strategy' ? 'Generating...' : 'Generate Strategy Snapshot'}
+                      </button>
                     </div>
                   )}
 
@@ -295,7 +517,9 @@ const V3AdminProjectDetail = () => {
                       <Users className="w-6 h-6 text-[#1F4A3A] mx-auto mb-3" />
                       <p className="text-[14px] text-[#1A1A1A] font-medium mb-1">Find Creators</p>
                       <p className="text-[12px] text-[#8A8A8A] mb-4">AI-assisted matching based on the Alignment Snapshot and project requirements.</p>
-                      <button className="v3-btn-primary" data-testid="find-creators"><Sparkles className="w-3.5 h-3.5" /> Find Creators</button>
+                      <button onClick={findCreators} disabled={busyAction === 'creators'} className="v3-btn-primary" data-testid="find-creators">
+                        <Sparkles className="w-3.5 h-3.5" /> {busyAction === 'creators' ? 'Finding...' : 'Find Creators'}
+                      </button>
                     </div>
                   )}
                 </div>
@@ -386,18 +610,30 @@ const V3AdminProjectDetail = () => {
                   <Sparkles className="w-3.5 h-3.5 text-[#1F4A3A]" />
                   <span className="text-[11px] font-semibold text-[#1A1A1A] uppercase tracking-wider">AI Assist</span>
                 </div>
-                {activeTab === 'alignment' && !snapshot && <button className="v3-btn-primary w-full justify-center mb-3"><Sparkles className="w-3.5 h-3.5" /> Generate Snapshot</button>}
-                {activeTab === 'plan' && !creatorMatch && <button className="v3-btn-primary w-full justify-center mb-3"><Sparkles className="w-3.5 h-3.5" /> Find Creators</button>}
-                {activeTab === 'plan' && creatorMatch && !creativeSnapshot && <button className="v3-btn-primary w-full justify-center mb-3"><Sparkles className="w-3.5 h-3.5" /> Generate Snapshot</button>}
+                {activeTab === 'alignment' && !snapshot && (
+                  <button onClick={generateAlignmentSnapshot} disabled={busyAction === 'alignment'} className="v3-btn-primary w-full justify-center mb-3" data-testid="ai-panel-generate-alignment">
+                    <Sparkles className="w-3.5 h-3.5" /> {busyAction === 'alignment' ? 'Generating...' : 'Generate Snapshot'}
+                  </button>
+                )}
+                {activeTab === 'plan' && !creatorMatch && (
+                  <button onClick={findCreators} disabled={busyAction === 'creators'} className="v3-btn-primary w-full justify-center mb-3" data-testid="ai-panel-find-creators">
+                    <Sparkles className="w-3.5 h-3.5" /> {busyAction === 'creators' ? 'Finding...' : 'Find Creators'}
+                  </button>
+                )}
+                {activeTab === 'plan' && creatorMatch && !creativeSnapshot && (
+                  <button onClick={generateStrategySnapshot} disabled={busyAction === 'strategy'} className="v3-btn-primary w-full justify-center mb-3" data-testid="ai-panel-generate-strategy">
+                    <Sparkles className="w-3.5 h-3.5" /> {busyAction === 'strategy' ? 'Generating...' : 'Generate Snapshot'}
+                  </button>
+                )}
                 {activeTab === 'closure' && !finalReport && <button className="v3-btn-primary w-full justify-center mb-3"><Sparkles className="w-3.5 h-3.5" /> Generate Report</button>}
 
                 <div className="space-y-2 mt-4">
                   <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Recent AI activity</p>
-                  {[
+                  {[...aiActivity, ...[
                     'Alignment Snapshot generated',
                     'Scope ambiguity flags detected (4)',
                     'Creator matching completed',
-                  ].slice(0, project.stage === 'connect' ? 0 : project.stage === 'frame' ? 2 : 3).map((a, i) => (
+                  ].slice(0, project.stage === 'connect' ? 0 : project.stage === 'frame' ? 2 : 3)].slice(0, 5).map((a, i) => (
                     <div key={i} className="flex items-center gap-2 py-1">
                       <CheckCircle className="w-3 h-3 text-[#1F4A3A]/50" />
                       <span className="text-[11px] text-[#5C5C5C]">{a}</span>

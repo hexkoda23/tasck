@@ -20,7 +20,6 @@ import {
   RefreshCw,
   Search,
   Settings2,
-  ShieldAlert,
   Sparkles,
   Target,
   Users,
@@ -234,15 +233,6 @@ const V3AdminOpportunityScanner = () => {
         </div>
       )}
 
-      {scan?.extraction_method && scan.extraction_method !== 'llm' && (
-        <div className="v3-card p-4 border-[#F2EAD8] flex items-start gap-3" data-testid="opps-fallback-banner">
-          <ShieldAlert className="w-4 h-4 text-[#7A5F23] mt-0.5 shrink-0" />
-          <p className="text-[13px] text-[#7A5F23]">
-            Some candidates were extracted via fallback method. Review confidence and low-signal labels before accepting to CRM.
-          </p>
-        </div>
-      )}
-
       <div className="grid grid-cols-1 2xl:grid-cols-[320px_minmax(0,1fr)] gap-5 items-start">
         <div className="space-y-4 min-w-0">
           <div className="v3-card p-5 min-w-0 overflow-hidden" data-testid="opps-query-template">
@@ -364,7 +354,6 @@ const V3AdminOpportunityScanner = () => {
               <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white border border-[#E8E4DB]">
                 <ListFilter className="w-3.5 h-3.5" /> {activeTab}
               </span>
-              {demoMode && <span className="px-2 py-0.5 rounded bg-[#F2EAD8] text-[#7A5F23]">demo fallback</span>}
               <span>{filtered.length} result{filtered.length === 1 ? '' : 's'}</span>
             </div>
           </div>
@@ -387,9 +376,6 @@ const V3AdminOpportunityScanner = () => {
                         <span className="text-[10px] px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]">{candidate.country}</span>
                         {(!candidate.brand_name || Number(candidate.confidence_score || 0) < 55) && (
                           <span className="text-[10px] px-2 py-0.5 rounded bg-[#F5D9D2] text-[#B54A37]">Low signal - likely skip</span>
-                        )}
-                        {candidate.extraction_method === 'heuristic_fallback' && (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#F2EAD8] text-[#7A5F23]">fallback extraction</span>
                         )}
                       </div>
                       <p className="text-[13px] text-[#6E6657] mt-1 break-words">
