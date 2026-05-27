@@ -1,0 +1,69 @@
+{
+  "summary": "Iteration 14 - TASCK Opportunity Tracker v3.3 backend + frontend regression. Backend: 9/10 pytest cases PASS (pipeline-counts shape, candidate filter, default hide of dismissed_auto, scan response shape with pass1_rejected/auto_dismissed/candidate_count, candidate v3.3 schema fields, transitions reviewing -> outreach_sent -> meeting_booked with timestamps, won-count update after accept). 1 FAILED: accept against an EXISTING seeded brand does NOT populate Family A fields (key_marketing_focus, primary_target_audience, key_marketing_channels, marketing_kpis, desired_relationship_status='Project Identified - Move to Framing', brand_type, likelihood_to_work_with_tta). The handler creates these only on the new-brand branch (lines 2761-2784 of v3_routes.py); the else-branch (existing brand match by slug) just optionally inserts a contact. Frontend: counter bar with all 4 tabs + Won toggle, default 'new' active, V33Card with signal pill, two-score 'N / N' badge, source link, no 'Not found' text anywhere, Brand Context only shows the four CRM-named rows, forbidden invented sections (Partnership Status / Open calls / PR contact / Press contact) absent, View draft email toggle expands the draft block, action buttons per tab correct, accept auto-navigates to /v3/admin/business-cases/{bc_id} showing Connector AI Extraction section with the Pass-2 intelligence (Key Marketing Focus + Primary Target Audience populated; Key Marketing Channels + Marketing KPIs render as 'Pending' as a direct visible consequence of the existing-brand merge bug above). Lineage / stated intent text is populated. No regressions observed on BC detail Connector tab.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/v3/opportunities/candidates/{id}/accept", "issue": "Existing-brand merge path does not apply Family A fields. When the candidate's partner_name slug matches an existing brand (e.g. seeded 'Coca-Cola Nigeria Limited'), the brand record is reused unchanged - key_marketing_focus, primary_target_audience, key_marketing_channels, marketing_kpis, desired_relationship_status, likelihood_to_work_with_tta, brand_type are never written. Spec requires Family A on the brand record regardless of new/existing.", "priority": "HIGH"},
+      {"endpoint": "POST /api/v3/admin/reset-demo", "issue": "Does NOT wipe v3_opportunity_candidates or v3_opportunity_scans collections (they are not in get_v3_seed_data()). After repeated scans the Tracker page becomes stale and 'won' counts persist across resets. Add these two collections to the reset list (or include empty seed lists).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/v3/opportunities/candidates/{id}/accept (existing brand path)", "issue": "When existing brand already has a contact, no new 'Stranger' contact is inserted. Spec implies each accepted opportunity should mark the discovered point-of-contact as Stranger - consider always adding/updating connect_status='Stranger' on the matched contact."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Accept opportunity -> BC detail Connector AI Extraction", "issue": "Key Marketing Channels and Marketing KPIs render 'Pending' for existing-brand accepts because the backend skipped Family A propagation. Root cause is the backend bug above; UI is correctly displaying whatever the brand record contains.", "affected_selectors": ["Connector AI Extraction section on BC detail"]}
+    ],
+    "design_issues": []
+  },
+  "feature_test_results": {
+    "GET /api/v3/opportunities/pipeline-counts shape": "PASS",
+    "GET /api/v3/opportunities/candidates default hides dismissed_auto": "PASS",
+    "GET /api/v3/opportunities/candidates?pipeline_state=new filter": "PASS",
+    "POST /api/v3/opportunities/scans returns pass1_rejected/auto_dismissed/candidate_count": "PASS (Coca-Cola Nigeria query: pass1_rejected=8, candidate_count=1)",
+    "Candidate carries v3.3 fields (partner_name, signal_type, brand_confidence, signal_strength, key_marketing_focus, primary_target_audience, key_marketing_channels, marketing_kpis, likelihood_to_work_with_tta, why_this_matters, outreach_angle, outreach_draft)": "PASS",
+    "Transition new->reviewing": "PASS",
+    "Transition ->outreach_sent sets outreach_sent_at": "PASS",
+    "Transition ->meeting_booked sets meeting_booked_at": "PASS",
+    "Accept creates brand + contact (Stranger) + BC (connect stage, intelligence+suggested_outreach) - NEW brand path": "NOT EXERCISED (slug matched existing seed brand)",
+    "Accept Family A on EXISTING brand match": "FAIL - fields not applied (see backend_issues.critical)",
+    "Accept moves candidate to 'won' (pipeline-counts.won >=1)": "PASS",
+    "Frontend counter bar opps-counters + 4 tabs + opps-tab-won": "PASS",
+    "Frontend signal-type pill (opps-signal-pill-{id})": "PASS - 'CAMPAIGN LAUNCH'",
+    "Frontend two-score badge (opps-score-{id}) in 'N / N' format": "PASS - '99 / 82'",
+    "Frontend source link (opps-source-{id}) with valid href": "PASS",
+    "Frontend hides empty rows (no 'Not found' anywhere)": "PASS",
+    "Frontend Brand Context shows only the 4 CRM-named rows; no invented sections (Partnership Status, Open calls, PR contact, Press contact)": "PASS",
+    "Frontend Outreach Suggested Angle + View draft email toggle (opps-toggle-draft / opps-draft)": "PASS - draft hidden by default, expands on click",
+    "Frontend action buttons per tab (new: mark-reviewing/accept/reject; reviewing: mark-outreach; outreach: mark-meeting; won: open-business-case)": "PASS",
+    "Frontend accept auto-navigates to /v3/admin/business-cases/{bc_id}": "PASS",
+    "BC detail Connect tab shows stated intent + Connector AI Extraction populated from Pass-2": "PARTIAL - Key Marketing Focus & Primary Target Audience populated; Key Marketing Channels & Marketing KPIs render 'Pending' due to existing-brand Family-A skip bug"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v3_iter14_opportunities.py",
+    "/app/test_reports/pytest/v3_iter14.xml"
+  ],
+  "action_items": [
+    "[HIGH] In /app/backend/v3_routes.py accept_opportunity_candidate, mirror the Family A field block (key_marketing_focus, primary_target_audience, key_marketing_channels, marketing_kpis, likelihood_to_work_with_tta, brand_type, desired_relationship_status='Project Identified - Move to Framing') into the existing-brand else-branch via a db.v3_brands.update_one($set=...). Optionally only overwrite when current value is empty/null so manual edits stick.",
+    "[HIGH] In reset_demo, also wipe v3_opportunity_candidates and v3_opportunity_scans (and any other tracker-side collections) - either add them to get_v3_seed_data() with empty lists or hard-code an extra delete_many for them. Otherwise repeated runs leave stale candidates and the 'won' counter never returns to 0.",
+    "[MED] On existing-brand accept, set connect_status='Stranger' on the primary contact (even if a contact already exists) so the spec invariant 'every freshly-accepted opportunity surfaces a Stranger contact' holds."
+  ],
+  "critical_code_review_comments": [
+    "v3_routes.py:2745 accept_opportunity_candidate spans ~200 lines and forks heavily on new-vs-existing brand. Consider refactoring into _upsert_brand_from_candidate() so Family A propagation cannot silently diverge between branches (this is the root cause of the current bug).",
+    "reset_demo iterates seed.keys() only; safer pattern is an explicit list of all v3_* collections (or db.list_collection_names with a prefix) so future tracker collections cannot be forgotten.",
+    "Pass-1 deterministic filter rejected 8/9 of a Coca-Cola query - correct behaviour per spec but worth surfacing the rejection reasons (e.g. in scan summary) so an RM can sanity-check the filter isn't too aggressive when scans return 0 candidates.",
+    "OpportunityTransitionPayload regex allows 'new' but the route doesn't strip outreach_sent_at/meeting_booked_at timestamps when stepping back to 'new' or 'reviewing'. Minor - in practice nobody walks backward, but timestamps become misleading if they do.",
+    "Frontend uses fetch() directly (not v3api.js wrapper) for pipeline-counts and transition - works but inconsistent with the rest of the codebase, harder to mock in unit tests later."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v3_iter14_opportunities.py",
+    "/app/test_reports/iteration_14.json"
+  ],
+  "success_rate": {"backend": "90% (9/10 pytest)", "frontend": "100% of v3.3 Tracker UI flows; BC detail shows known Pending rows due to backend bug"},
+  "test_credentials": "Not required - /v3/admin/* bypasses auth. /app/memory/test_credentials.md does not exist.",
+  "seed_data_creation": "Test fixtures call reset-demo before/after the module. Note: reset-demo does NOT wipe v3_opportunity_candidates or v3_opportunity_scans (bug, see action_items). The test file is idempotent because it scans Coca-Cola Nigeria which is deduped by source_url - safe to re-run.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 14 v3.3 Tracker. Backend regression file: /app/backend/tests/test_v3_iter14_opportunities.py (10 tests, 1 known FAIL = existing-brand Family A propagation bug). To clear stale tracker state between runs, run: python -c 'import asyncio,os; from motor.motor_asyncio import AsyncIOMotorClient; c=AsyncIOMotorClient(os.environ[\"MONGO_URL\"]); db=c[os.environ[\"DB_NAME\"]]; asyncio.run(db.v3_opportunity_candidates.delete_many({})); asyncio.run(db.v3_opportunity_scans.delete_many({}))' (or fix the reset-demo per action items). UI testids verified: opps-counters, opps-tab-{new,reviewing,outreach,meeting,won}, opps-candidate-{id}, opps-signal-pill-{id}, opps-score-{id}, opps-source-{id}, opps-toggle-draft-{id}, opps-draft-{id}, opps-mark-reviewing-{id}, opps-mark-outreach-{id}, opps-mark-meeting-{id}, opps-accept-{id}, opps-reject-{id}, opps-open-business-case-{id}.",
+  "rca of the issue": "accept_opportunity_candidate (v3_routes.py:2745-2812) has two branches: (1) NEW brand - lines 2759-2797 build the brand dict with all Family A fields, insert it, and create a Stranger contact; (2) EXISTING brand - lines 2798-2812 only optionally add a contact if none exists, and never updates the brand record. So whenever a scanned candidate's partner_name slug matches a seeded brand (very likely in this demo since Coca-Cola Nigeria, Guinness, MTN etc. are all seeded), the discovery Pass-2 enrichment never lands on the brand record. Reproduction: reset-demo -> POST /opportunities/scans with query 'Coca-Cola Nigeria campaign launch' -> accept the returned candidate -> GET /brands -> 'Coca-Cola Nigeria Limited' has no key_marketing_focus / primary_target_audience / key_marketing_channels / marketing_kpis / desired_relationship_status. Mitigation: after `brand = next(...)` lookup, when found, run `await db.v3_brands.update_one({'id': brand['id']}, {'$set': {Family A fields, only overwriting when None/empty}})` and refetch brand before continuing to BC creation."
+}

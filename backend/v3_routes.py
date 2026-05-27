@@ -26,6 +26,7 @@ import requests
 import uuid
 
 from v3_seed import get_v3_seed_data
+import v3_tracker_v33
 
 logger = logging.getLogger("tasck.v3")
 
@@ -1976,17 +1977,39 @@ def make_v3_router(db):
         return await db.v3_opportunities.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
     @router.get("/opportunities/candidates")
-    async def list_opportunity_candidates(status: Optional[str] = None):
-        query = {"status": status} if status else {}
+    async def list_opportunity_candidates(
+        status: Optional[str] = None,
+        pipeline_state: Optional[str] = None,
+        include_dismissed_auto: bool = False,
+    ):
+        query: Dict[str, Any] = {}
+        if status:
+            query["status"] = status
+        if pipeline_state:
+            query["pipeline_state"] = pipeline_state
+        if not include_dismissed_auto and not pipeline_state:
+            # Hide auto-dismissed candidates from the default queue
+            query["pipeline_state"] = {"$ne": "dismissed_auto"}
         rows = await db.v3_opportunity_candidates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
         return sorted(
             rows,
             key=lambda item: (
-                item.get("brand_name") is None or int(item.get("confidence_score") or 0) < 55,
-                -int(item.get("confidence_score") or 0),
+                # v3.3: prefer real-brand cards (partner_name set); rank by signal_strength
+                (item.get("partner_name") is None and item.get("brand_name") is None),
+                -int(item.get("signal_strength") or item.get("confidence_score") or 0),
+                -int(item.get("brand_confidence") or 0),
                 str(item.get("created_at") or ""),
             ),
         )
+
+    @router.get("/opportunities/pipeline-counts")
+    async def opportunity_pipeline_counts():
+        """v3.3 — counters bar at top of Tracker page."""
+        states = ["new", "reviewing", "outreach_sent", "meeting_booked", "won", "dismissed", "dismissed_auto"]
+        result: Dict[str, int] = {}
+        for s in states:
+            result[s] = await db.v3_opportunity_candidates.count_documents({"pipeline_state": s})
+        return result
 
     def _build_opportunity_query(payload: OpportunityScanPayload) -> str:
         template = payload.template
@@ -2581,21 +2604,86 @@ Produce the opportunity card JSON.
         llm_attempts = 0
         llm_failures = 0
         fallback_count = 0
+        pass1_rejected = 0
+        auto_dismissed = 0
         candidates = []
         for item in items:
-            llm_card = None
-            extraction_method = "heuristic_fallback"
+            # ----- v3.3 Pass 1 — deterministic filter -----
+            gate = v3_tracker_v33.pass1_keep(item.get("title", ""), item.get("snippet", ""))
+            if not gate["keep"]:
+                pass1_rejected += 1
+                logger.info("[Tracker v3.3] Pass-1 reject (%s): %s", gate["reason"], (item.get("title") or "")[:80])
+                continue
+
+            # ----- v3.3 Pass 2 — Claude Sonnet 4.5 enrichment -----
+            v33_card = None
             if llm_configured:
                 llm_attempts += 1
                 try:
-                    llm_card = await asyncio.to_thread(_call_opportunity_llm, item, payload.template)
-                    if llm_card:
-                        extraction_method = "llm"
-                except Exception:
+                    v33_card = await v3_tracker_v33.call_llm_enricher(
+                        title=item.get("title", ""),
+                        snippet=item.get("snippet", ""),
+                        source_url=item.get("link", ""),
+                        source_domain=_domain_from_url(item.get("link", "")),
+                        signal_type_targeted="creator_signing,campaign_launch,rfp_open,spend_signal",
+                    )
+                except Exception as exc:
                     llm_failures += 1
-            if not llm_card:
+                    logger.warning("[Tracker v3.3] enrichment exception: %s", exc)
+
+            # Fallback to legacy heuristic if Pass 2 didn't return
+            llm_card = None  # legacy field, kept for back-compat
+            extraction_method = "heuristic_fallback"
+            if v33_card is None:
                 fallback_count += 1
+            else:
+                extraction_method = "llm_pass_2"
+
             candidate = _candidate_from_result(item, payload, scan_id, llm_card=llm_card, extraction_method=extraction_method)
+
+            # Layer v3.3 fields on top — these are the canonical fields going forward
+            if v33_card:
+                candidate.update({
+                    # Family A — Brand context (survives into CRM)
+                    "partner_name": v33_card["partner_name"],
+                    "brand_type": v33_card["brand_type"],
+                    "industry": v33_card["industry"] or candidate.get("industry") or "Other",
+                    "country": v33_card["country"] or candidate.get("country") or "Nigeria",
+                    "website": v33_card["website"],
+                    "primary_contact_name": v33_card["primary_contact_name"],
+                    "primary_contact_role": v33_card["primary_contact_role"],
+                    "primary_contact_email": v33_card["primary_contact_email"],
+                    "primary_contact_phone": v33_card["primary_contact_phone"],
+                    "primary_contact_linkedin": v33_card["primary_contact_linkedin"],
+                    "key_marketing_focus": v33_card["key_marketing_focus"],
+                    "primary_target_audience": v33_card["primary_target_audience"],
+                    "key_marketing_channels": v33_card["key_marketing_channels"],
+                    "marketing_kpis": v33_card["marketing_kpis"],
+                    "likelihood_to_work_with_tta": v33_card["likelihood_to_work_with_tta"],
+                    # Family B — Discovery-only
+                    "signal_type": v33_card["signal_type"],
+                    "signal_summary": v33_card["signal_summary"],
+                    "signal_strength": v33_card["signal_strength"],
+                    "brand_confidence": v33_card["brand_confidence"],
+                    "why_this_matters": v33_card["why_this_matters"],
+                    "outreach_angle": v33_card["outreach_angle"],
+                    "outreach_draft": v33_card["outreach_draft"],
+                    "detected_keywords": v33_card["detected_keywords"],
+                    "dismissal_reason": v33_card["dismissal_reason"],
+                    # Mirror partner_name to brand_name for back-compat with existing UI
+                    "brand_name": v33_card["partner_name"] or candidate.get("brand_name"),
+                })
+                # Auto-dismiss low brand_confidence per spec §5
+                if (v33_card["brand_confidence"] or 0) < 40:
+                    candidate["pipeline_state"] = "dismissed_auto"
+                    auto_dismissed += 1
+                else:
+                    candidate["pipeline_state"] = "new"
+            else:
+                candidate["pipeline_state"] = "new"
+
+            candidate.setdefault("scanned_at", _now_iso())
+
             existing = await db.v3_opportunity_candidates.find_one(
                 {"$or": [{"source_url": candidate["source_url"]}, {"dedupe_key": candidate["dedupe_key"]}]},
                 {"_id": 0},
@@ -2603,7 +2691,9 @@ Produce the opportunity card JSON.
             if existing:
                 continue
             await db.v3_opportunity_candidates.insert_one({**candidate})
-            candidates.append(candidate)
+            # Only surface non-auto-dismissed candidates to the caller
+            if candidate.get("pipeline_state") != "dismissed_auto":
+                candidates.append(candidate)
 
         extraction_method = "llm"
         if not llm_configured:
@@ -2617,6 +2707,8 @@ Produce the opportunity card JSON.
                 "status": "completed",
                 "raw_count": len(items),
                 "candidate_count": len(candidates),
+                "pass1_rejected": pass1_rejected,
+                "auto_dismissed": auto_dismissed,
                 "extraction_method": extraction_method,
                 "fallback_count": fallback_count,
                 "completed_at": _now_iso(),
@@ -2628,6 +2720,8 @@ Produce the opportunity card JSON.
                 "status": "completed",
                 "raw_count": len(items),
                 "candidate_count": len(candidates),
+                "pass1_rejected": pass1_rejected,
+                "auto_dismissed": auto_dismissed,
                 "extraction_method": extraction_method,
                 "fallback_count": fallback_count,
                 "completed_at": _now_iso(),
@@ -2655,36 +2749,51 @@ Produce the opportunity card JSON.
             raise HTTPException(404, "Opportunity candidate not found")
 
         all_brands = await db.v3_brands.find({}, {"_id": 0}).to_list(1000)
-        brand = next((item for item in all_brands if _slug(item.get("company")) == _slug(candidate.get("brand_name"))), None)
-        contact_email = candidate.get("contact_email") or ""
+        partner_name = candidate.get("partner_name") or candidate.get("brand_name")
+        brand = next((item for item in all_brands if _slug(item.get("company")) == _slug(partner_name)), None)
+        contact_email = candidate.get("primary_contact_email") or candidate.get("contact_email") or ""
+        contact_name = candidate.get("primary_contact_name") or "Marketing Team"
+        contact_role = candidate.get("primary_contact_role") or "Brand contact"
+        contact_phone = candidate.get("primary_contact_phone") or ""
+        contact_linkedin = candidate.get("primary_contact_linkedin") or ""
         if not brand:
             brand_id = f"brand-{uuid.uuid4().hex[:8]}"
             brand = {
                 "id": brand_id,
-                "company": candidate.get("brand_name") or "Discovered Brand",
+                "company": partner_name or "Discovered Brand",
                 "industry": candidate.get("industry") or "Other",
-                "website": f"https://{candidate.get('source_domain')}" if candidate.get("source_domain") else candidate.get("source_url", ""),
+                "website": candidate.get("website") or (f"https://{candidate.get('source_domain')}" if candidate.get("source_domain") else candidate.get("source_url", "")),
                 "hq": candidate.get("country") or "Nigeria",
-                "primary_contact": "Marketing Team",
-                "role": "Brand contact",
+                "primary_contact": contact_name,
+                "role": contact_role,
                 "email": contact_email,
-                "phone": "",
+                "phone": contact_phone,
                 "status": "Lead - accepted scanned opportunity",
-                "lead_score": candidate.get("confidence_score", 65),
+                "lead_score": candidate.get("brand_confidence") or candidate.get("confidence_score", 65),
                 "last_interaction": "just now",
                 "engagement_track_default": "paid",
                 "source": "serpapi_opportunity_scanner",
+                # v3.3 Family A — brand context fields
+                "key_marketing_focus": candidate.get("key_marketing_focus"),
+                "primary_target_audience": candidate.get("primary_target_audience"),
+                "key_marketing_channels": candidate.get("key_marketing_channels"),
+                "marketing_kpis": candidate.get("marketing_kpis"),
+                "likelihood_to_work_with_tta": candidate.get("likelihood_to_work_with_tta"),
+                "desired_relationship_status": "Project Identified - Move to Framing",
+                "brand_type": candidate.get("brand_type"),
             }
             await db.v3_brands.insert_one({**brand})
             await db.v3_contacts.insert_one({
                 "id": f"ct-{uuid.uuid4().hex[:8]}",
                 "brand_id": brand_id,
-                "name": "Marketing Team",
-                "role": "Brand contact",
+                "name": contact_name,
+                "role": contact_role,
                 "email": contact_email,
-                "phone": "",
+                "phone": contact_phone,
+                "linkedin": contact_linkedin,
                 "is_primary": True,
                 "decision_seniority": "lead",
+                "connect_status": "Stranger",  # v3.3 default per spec §2
             })
         else:
             has_contact = await db.v3_contacts.find_one({"brand_id": brand["id"]}, {"_id": 0})
@@ -2692,12 +2801,14 @@ Produce the opportunity card JSON.
                 await db.v3_contacts.insert_one({
                     "id": f"ct-{uuid.uuid4().hex[:8]}",
                     "brand_id": brand["id"],
-                    "name": brand.get("primary_contact") or "Marketing Team",
-                    "role": brand.get("role") or "Brand contact",
-                    "email": brand.get("email") or contact_email,
-                    "phone": brand.get("phone") or "",
+                    "name": contact_name,
+                    "role": contact_role,
+                    "email": contact_email,
+                    "phone": contact_phone,
+                    "linkedin": contact_linkedin,
                     "is_primary": True,
                     "decision_seniority": "lead",
+                    "connect_status": "Stranger",
                 })
 
         account = await ensure_brand_account(brand)
@@ -2755,15 +2866,31 @@ Produce the opportunity card JSON.
                     "source_url": source_url,
                     "source_title": source_title,
                     "connect_status": "new_lead",
-                    "stated_intent": candidate.get("pain_point") or "",
+                    "stated_intent": candidate.get("why_this_matters") or candidate.get("pain_point") or "",
+                    # v3.3 — seed Frame Alignment Snapshot and pre-load outreach
+                    "outreach_angle": candidate.get("outreach_angle") or candidate.get("suggested_opportunity_angle") or "",
+                    "suggested_outreach": candidate.get("outreach_draft") or "",
+                    "intelligence": {
+                        "candidate_id": candidate_id,
+                        "opportunity_id": opportunity["id"],
+                        "headline": source_title,
+                        "snippet": candidate.get("source_snippet") or "",
+                        "source_url": source_url,
+                        "source_domain": candidate.get("source_domain"),
+                        "confidence_score": candidate.get("brand_confidence") or candidate.get("confidence_score", 65),
+                        "signal_strength": candidate.get("signal_strength"),
+                        "brand_confidence": candidate.get("brand_confidence"),
+                        "signal_type": candidate.get("signal_type"),
+                        "suggested_angle": candidate.get("outreach_angle") or candidate.get("suggested_opportunity_angle") or "",
+                    },
                     "marketing_intelligence": {
-                        "key_marketing_focus": candidate.get("suggested_opportunity_angle") or candidate.get("pain_point") or "",
-                        "primary_target_audience": "To confirm during connector call.",
-                        "key_marketing_channels": [],
-                        "marketing_kpis": [],
+                        "key_marketing_focus": candidate.get("key_marketing_focus") or candidate.get("suggested_opportunity_angle") or candidate.get("pain_point") or "",
+                        "primary_target_audience": candidate.get("primary_target_audience") or "To confirm during connector call.",
+                        "key_marketing_channels": candidate.get("key_marketing_channels") or [],
+                        "marketing_kpis": candidate.get("marketing_kpis") or [],
                         "detected_keywords": detected_keywords,
-                        "confidence_score": candidate.get("confidence_score", 65),
-                        "reasoning": candidate.get("reasoning") or "",
+                        "confidence_score": candidate.get("brand_confidence") or candidate.get("confidence_score", 65),
+                        "reasoning": candidate.get("why_this_matters") or candidate.get("reasoning") or "",
                         "generated_at": _now_iso(),
                         "source": candidate.get("extraction_method") or "opportunity_scanner",
                     },
@@ -2821,6 +2948,7 @@ Produce the opportunity card JSON.
             {"id": candidate_id},
             {"$set": {
                 "status": "accepted",
+                "pipeline_state": "won",
                 "reviewed_at": _now_iso(),
                 "reviewed_by": payload.reviewed_by,
                 "accepted_brand_id": brand["id"],
@@ -2829,7 +2957,34 @@ Produce the opportunity card JSON.
             }},
         )
         updated = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
-        return {"candidate": updated, "brand": brand, "account": account, "opportunity": opportunity, "business_case": business_case}
+        return {"candidate": updated, "brand": brand, "account": account, "opportunity": opportunity, "business_case": business_case, "business_case_id": business_case["id"]}
+
+    class OpportunityTransitionPayload(BaseModel):
+        to_state: str = Field(..., pattern="^(reviewing|outreach_sent|meeting_booked|new)$")
+        note: Optional[str] = None
+        actor: Optional[str] = None
+
+    @router.post("/opportunities/candidates/{candidate_id}/transition")
+    async def transition_opportunity_candidate(candidate_id: str, payload: OpportunityTransitionPayload):
+        """v3.3 — move a candidate through the Tracker's internal pipeline."""
+        candidate = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
+        if not candidate:
+            raise HTTPException(404, "Opportunity candidate not found")
+        if candidate.get("status") in {"accepted", "rejected"}:
+            raise HTTPException(400, f"Candidate already {candidate.get('status')} — cannot transition.")
+        ts = _now_iso()
+        set_fields = {"pipeline_state": payload.to_state, "updated_at": ts}
+        if payload.to_state == "outreach_sent":
+            set_fields["outreach_sent_at"] = ts
+        if payload.to_state == "meeting_booked":
+            set_fields["meeting_booked_at"] = ts
+        update_doc: Dict[str, Any] = {"$set": set_fields}
+        if payload.note:
+            update_doc["$push"] = {
+                "rm_notes": {"note": payload.note, "created_at": ts, "created_by": payload.actor or "admin"},
+            }
+        await db.v3_opportunity_candidates.update_one({"id": candidate_id}, update_doc)
+        return await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
 
     @router.post("/opportunities/candidates/{candidate_id}/reject")
     async def reject_opportunity_candidate(candidate_id: str, payload: OpportunityReviewPayload):

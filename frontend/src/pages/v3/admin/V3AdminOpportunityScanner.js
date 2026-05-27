@@ -69,32 +69,45 @@ const InfoPanel = ({ icon: Icon, title, children, accent = '#1F4A3A' }) => (
 const V3AdminOpportunityScanner = () => {
   const navigate = useNavigate();
   const [template, setTemplate] = useState(defaultTemplate);
-  const [activeTab, setActiveTab] = useState('pending');
+  const [activeTab, setActiveTab] = useState('new');
   const [candidates, setCandidates] = useState([]);
   const [scan, setScan] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [demoMode, setDemoMode] = useState(false);
+  const [pipelineCounts, setPipelineCounts] = useState({});
 
+  // v3.3 pipeline states drive the counter tabs. Legacy `status` field is
+  // mirrored to pipeline_state so old records (status: 'pending') surface
+  // under the 'new' tab during the demo transition.
   const filtered = useMemo(
     () => candidates
-      .filter((candidate) => candidate.status === activeTab)
+      .filter((candidate) => {
+        const state = candidate.pipeline_state || (
+          candidate.status === 'pending' ? 'new'
+            : candidate.status === 'accepted' ? 'won'
+            : candidate.status === 'rejected' ? 'dismissed'
+            : 'new'
+        );
+        return state === activeTab;
+      })
       .sort((a, b) => {
-        const aLow = !a.brand_name || Number(a.confidence_score || 0) < 55;
-        const bLow = !b.brand_name || Number(b.confidence_score || 0) < 55;
-        if (aLow !== bLow) return aLow ? 1 : -1;
-        return Number(b.confidence_score || 0) - Number(a.confidence_score || 0);
+        // Real-brand cards first (partner_name populated)
+        const aNoBrand = !(a.partner_name || a.brand_name);
+        const bNoBrand = !(b.partner_name || b.brand_name);
+        if (aNoBrand !== bNoBrand) return aNoBrand ? 1 : -1;
+        const aSig = Number(a.signal_strength ?? a.confidence_score ?? 0);
+        const bSig = Number(b.signal_strength ?? b.confidence_score ?? 0);
+        if (bSig !== aSig) return bSig - aSig;
+        return Number(b.brand_confidence ?? 0) - Number(a.brand_confidence ?? 0);
       }),
     [candidates, activeTab]
   );
 
-  const loadCandidates = async (status = activeTab) => {
+  const loadCandidates = async () => {
     try {
-      const rows = await v3ListOpportunityCandidates({ status });
-      setCandidates((current) => {
-        const others = current.filter((item) => item.status !== status);
-        return [...others, ...(Array.isArray(rows) ? rows : [])];
-      });
+      const rows = await v3ListOpportunityCandidates({});
+      setCandidates(Array.isArray(rows) ? rows : []);
       setDemoMode(false);
       setError('');
     } catch (e) {
@@ -104,10 +117,41 @@ const V3AdminOpportunityScanner = () => {
     }
   };
 
+  const loadCounts = async () => {
+    try {
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/v3/opportunities/pipeline-counts`);
+      const data = await r.json();
+      setPipelineCounts(data || {});
+    } catch (e) {
+      // silent — counters are non-essential
+    }
+  };
+
   useEffect(() => {
-    loadCandidates(activeTab);
+    loadCandidates();
+    loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  }, []);
+
+  const transitionCandidate = async (candidate, toState) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/v3/opportunities/candidates/${candidate.id}/transition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to_state: toState }),
+      });
+      if (!r.ok) throw new Error(`Transition failed (${r.status})`);
+      const updated = await r.json();
+      setCandidates((current) => current.map((item) => (item.id === candidate.id ? { ...item, ...updated } : item)));
+      await loadCounts();
+      setActiveTab(toState);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const runScan = async () => {
     setBusy(true);
@@ -135,8 +179,9 @@ const V3AdminOpportunityScanner = () => {
         next.forEach((item) => byId.set(item.id, item));
         return Array.from(byId.values());
       });
-      setActiveTab('pending');
+      setActiveTab('new');
       setDemoMode(false);
+      await loadCounts();
     } catch (e) {
       const message = e.response?.data?.detail || e.message;
       if (isMissingKeyError(e)) {
@@ -157,12 +202,13 @@ const V3AdminOpportunityScanner = () => {
     try {
       const result = await v3AcceptOpportunityCandidate(candidate.id, { reviewed_by: 'admin' });
       setCandidates((current) => current.map((item) => (
-        item.id === candidate.id ? { ...item, ...result.candidate, status: 'accepted' } : item
+        item.id === candidate.id ? { ...item, ...result.candidate, status: 'accepted', pipeline_state: 'won', business_case_id: result.business_case_id } : item
       )));
-      if (result.business_case?.id) {
-        navigate(`/v3/admin/business-cases/${result.business_case.id}`);
+      await loadCounts();
+      if (result.business_case_id) {
+        navigate(`/v3/admin/business-cases/${result.business_case_id}`);
       } else {
-        setActiveTab('accepted');
+        setActiveTab('won');
       }
     } catch (e) {
       if (demoMode) {
@@ -186,17 +232,16 @@ const V3AdminOpportunityScanner = () => {
     try {
       const result = await v3RejectOpportunityCandidate(candidate.id, { reviewed_by: 'admin' });
       setCandidates((current) => current.map((item) => (
-        item.id === candidate.id ? { ...item, ...result, status: 'rejected' } : item
+        item.id === candidate.id ? { ...item, ...result, status: 'rejected', pipeline_state: 'dismissed' } : item
       )));
-      setActiveTab('rejected');
+      await loadCounts();
     } catch (e) {
       if (demoMode) {
         setCandidates((current) => current.map((item) => (
           item.id === candidate.id
-            ? { ...item, status: 'rejected', reviewed_at: new Date().toISOString(), reviewed_by: 'admin' }
+            ? { ...item, status: 'rejected', pipeline_state: 'dismissed', reviewed_at: new Date().toISOString(), reviewed_by: 'admin' }
             : item
         )));
-        setActiveTab('rejected');
       } else {
         setError(e.response?.data?.detail || e.message);
       }
@@ -335,162 +380,64 @@ const V3AdminOpportunityScanner = () => {
         </div>
 
         <div className="min-w-0">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mb-4 min-w-0">
-            <div className="flex flex-wrap gap-1 p-1 bg-[#F4F2EC] rounded-lg self-start" data-testid="opps-tabs">
-              {[
-                ['pending', 'Pending'],
-                ['accepted', 'Accepted'],
-                ['rejected', 'Archive'],
-              ].map(([key, label]) => (
+          {/* v3.3 — Counters bar (replaces 3-tab Pending/Accepted/Archive) */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4" data-testid="opps-counters">
+            {[
+              { key: 'new', label: 'New', testid: 'opps-tab-new' },
+              { key: 'reviewing', label: 'Reviewing', testid: 'opps-tab-reviewing' },
+              { key: 'outreach_sent', label: 'Outreach Sent', testid: 'opps-tab-outreach' },
+              { key: 'meeting_booked', label: 'Meetings Booked', testid: 'opps-tab-meeting' },
+            ].map((tab) => {
+              const isActive = activeTab === tab.key;
+              const count = pipelineCounts[tab.key] ?? 0;
+              return (
                 <button
-                  key={key}
-                  onClick={() => setActiveTab(key)}
-                  className={`text-[11px] px-3 py-1 rounded transition-colors ${activeTab === key ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
-                  data-testid={`opps-tab-${key}`}
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`v3-card p-3 text-left transition-colors ${isActive ? 'border-[#1F4A3A] bg-[#DDE7E2]' : 'hover:border-[#D4CDBF]'}`}
+                  data-testid={tab.testid}
                 >
-                  {label}
+                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{tab.label}</p>
+                  <p className="text-xl font-semibold text-[#1A1A1A] mt-1" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{count}</p>
                 </button>
-              ))}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-[#8A8A8A]">
-              <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white border border-[#E8E4DB]">
-                <ListFilter className="w-3.5 h-3.5" /> {activeTab}
-              </span>
-              <span>{filtered.length} result{filtered.length === 1 ? '' : 's'}</span>
-            </div>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2 text-[11px] text-[#8A8A8A] mb-3">
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-white border border-[#E8E4DB]">
+              <ListFilter className="w-3.5 h-3.5" /> {activeTab.replace('_', ' ')}
+            </span>
+            <span>{filtered.length} card{filtered.length === 1 ? '' : 's'}</span>
+            <button
+              onClick={() => setActiveTab(activeTab === 'won' ? 'new' : 'won')}
+              className="ml-auto text-[10px] uppercase tracking-wider text-[#6E6657] hover:text-[#1F4A3A]"
+              data-testid="opps-tab-won"
+            >
+              {activeTab === 'won' ? '← Back to live queue' : 'View accepted (won) →'}
+            </button>
           </div>
 
           {filtered.length === 0 ? (
             <div className="v3-card p-10 text-center" data-testid="opps-empty">
               <Search className="w-7 h-7 mx-auto mb-3 text-[#C49B5F]" />
-              <p className="text-[14px] text-[#1A1A1A]">No {activeTab} candidates</p>
-              <p className="text-[12px] text-[#8A8A8A] mt-1">Run a scan or switch tabs to review archived results.</p>
+              <p className="text-[14px] text-[#1A1A1A]">No {activeTab.replace('_', ' ')} cards</p>
+              <p className="text-[12px] text-[#8A8A8A] mt-1">Run a scan or switch tabs to review other states.</p>
             </div>
           ) : (
             <div className="space-y-3">
               {filtered.map((candidate) => (
-                <div key={candidate.id} className="v3-card p-4 lg:p-5 min-w-0 overflow-hidden" data-testid={`opps-candidate-${candidate.id}`}>
-                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap min-w-0">
-                        <h3 className="text-[15px] font-semibold text-[#1A1A1A] break-words min-w-0">{candidate.brand_name || 'Low signal result'}</h3>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657]">{candidate.industry}</span>
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]">{candidate.country}</span>
-                        {(!candidate.brand_name || Number(candidate.confidence_score || 0) < 55) && (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#F5D9D2] text-[#B54A37]">Low signal - likely skip</span>
-                        )}
-                      </div>
-                      <p className="text-[13px] text-[#6E6657] mt-1 break-words">
-                        {[candidate.campaign_name || 'Campaign not named', candidate.campaign_type].filter(Boolean).join(' - ')}
-                      </p>
-                      <a
-                        href={candidate.brand_profile?.website || candidate.source_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-[11px] text-[#1F4A3A] mt-2 hover:underline max-w-full"
-                      >
-                        <Globe2 className="w-3 h-3 shrink-0" />
-                        <span className="truncate">{candidate.brand_profile?.website || candidate.source_domain || 'Brand website'}</span>
-                      </a>
-                    </div>
-                    <div className="rounded-lg border border-[#E8E4DB] bg-white px-4 py-3 lg:text-right self-start">
-                      <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] flex items-center gap-1 lg:justify-end">
-                        <Target className="w-3.5 h-3.5" /> Confidence
-                      </p>
-                      <p className="text-lg font-semibold" style={{ color: scoreColor(candidate.confidence_score), fontFamily: "'JetBrains Mono', monospace" }}>
-                        {candidate.confidence_score || 0}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 my-4 min-w-0">
-                    <InfoPanel icon={Users} title="Partnership status">
-                      <p className="text-[12px] text-[#1A1A1A]"><strong>Current:</strong> {valueOrManual(candidate.celebrity_partnership_status?.current_active_partnerships)}</p>
-                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>Past:</strong> {valueOrManual(candidate.celebrity_partnership_status?.past_partnerships)}</p>
-                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>Open calls:</strong> {valueOrManual(candidate.celebrity_partnership_status?.upcoming_or_open_calls)}</p>
-                    </InfoPanel>
-                    <InfoPanel icon={Megaphone} title="Partnership signals" accent="#C49B5F">
-                      <p className="text-[12px] text-[#1A1A1A]">{valueOrManual(candidate.partnership_signals?.influencer_or_celebrity_marketing_evidence)}</p>
-                      <p className="text-[12px] text-[#6E6657] mt-1"><strong>Budget/growth:</strong> {valueOrManual(candidate.partnership_signals?.marketing_budget_or_growth_signal)}</p>
-                      <p className="text-[12px] text-[#6E6657] mt-1"><strong>RFP/brief:</strong> {valueOrManual(candidate.partnership_signals?.public_rfp_or_agency_brief)}</p>
-                    </InfoPanel>
-                    <InfoPanel icon={FileSearch} title="TASCK opportunity angle">
-                      <p className="text-[12px] text-[#1A1A1A]">{candidate.pain_point}</p>
-                    </InfoPanel>
-                    <InfoPanel icon={Sparkles} title="Suggested angle" accent="#C49B5F">
-                      <p className="text-[12px] text-[#1F4A3A]">{candidate.suggested_opportunity_angle}</p>
-                    </InfoPanel>
-                  </div>
-
-                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mb-4 min-w-0">
-                    <InfoPanel icon={Globe2} title="Social media presence">
-                      <p className="text-[12px] text-[#1A1A1A]"><strong>Instagram:</strong> {valueOrManual(candidate.social_media_presence?.instagram)}</p>
-                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>TikTok:</strong> {valueOrManual(candidate.social_media_presence?.tiktok)}</p>
-                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>X / YouTube / LinkedIn:</strong> {[
-                        valueOrManual(candidate.social_media_presence?.x_twitter),
-                        valueOrManual(candidate.social_media_presence?.youtube),
-                        valueOrManual(candidate.social_media_presence?.linkedin),
-                      ].join(' | ')}</p>
-                      <p className="text-[12px] text-[#6E6657] mt-1"><strong>Style:</strong> {valueOrManual(candidate.social_media_presence?.content_style)}</p>
-                    </InfoPanel>
-                    <InfoPanel icon={Mail} title="Contact & outreach" accent="#C49B5F">
-                      <p className="text-[12px] text-[#1A1A1A]"><strong>Email:</strong> {valueOrManual(candidate.contact_outreach?.marketing_or_partnerships_email || candidate.contact_email)}</p>
-                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>PR / talent agency:</strong> {valueOrManual(candidate.contact_outreach?.pr_or_talent_agency)}</p>
-                      <p className="text-[12px] text-[#1A1A1A] mt-1"><strong>Decision-maker LinkedIn:</strong> {valueOrManual(candidate.contact_outreach?.cmo_head_partnerships_or_brand_manager_linkedin)}</p>
-                      <p className="text-[12px] text-[#6E6657] mt-1"><strong>Press contact:</strong> {valueOrManual(candidate.contact_outreach?.press_or_media_inquiry_contact)}</p>
-                    </InfoPanel>
-                  </div>
-
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between min-w-0">
-                    <a
-                      href={candidate.source_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="min-w-0 inline-flex items-center gap-1 text-[11px] text-[#6E6657] hover:text-[#1F4A3A] max-w-full"
-                      data-testid={`opps-source-${candidate.id}`}
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                      <span className="truncate">{candidate.source_title || candidate.source_url}</span>
-                    </a>
-                    <div className="flex flex-wrap gap-2 shrink-0">
-                      {activeTab === 'pending' && (
-                        <>
-                          <button onClick={() => rejectCandidate(candidate)} disabled={busy} className="v3-btn-secondary text-[11px]" data-testid={`opps-reject-${candidate.id}`}>
-                            <XCircle className="w-3.5 h-3.5" /> Reject
-                          </button>
-                          <button onClick={() => acceptCandidate(candidate)} disabled={busy} className="v3-btn-primary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Accept to CRM
-                          </button>
-                        </>
-                      )}
-                      {activeTab === 'accepted' && (
-                        <>
-                          <button
-                            onClick={() => candidate.business_case_id && navigate(`/v3/admin/business-cases/${candidate.business_case_id}`)}
-                            disabled={!candidate.business_case_id}
-                            className="v3-btn-primary text-[11px]"
-                            data-testid={`opps-open-business-case-${candidate.id}`}
-                          >
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Open Business Case
-                          </button>
-                          <button
-                            onClick={() => candidate.accepted_brand_id && navigate(`/v3/admin/crm/${candidate.accepted_brand_id}`)}
-                            disabled={!candidate.accepted_brand_id}
-                            className="v3-btn-secondary text-[11px]"
-                            data-testid={`opps-open-brand-${candidate.id}`}
-                          >
-                            Open CRM brand
-                          </button>
-                        </>
-                      )}
-                      {activeTab === 'rejected' && (
-                        <span className="inline-flex items-center gap-1 text-[11px] text-[#8A8A8A]">
-                          <Archive className="w-3.5 h-3.5" /> Archived
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <V33Card
+                  key={candidate.id}
+                  candidate={candidate}
+                  busy={busy}
+                  activeTab={activeTab}
+                  onAccept={() => acceptCandidate(candidate)}
+                  onReject={() => rejectCandidate(candidate)}
+                  onTransition={(toState) => transitionCandidate(candidate, toState)}
+                  onOpenBC={() => candidate.business_case_id && navigate(`/v3/admin/business-cases/${candidate.business_case_id}`)}
+                  onOpenBrand={() => candidate.accepted_brand_id && navigate(`/v3/admin/crm/${candidate.accepted_brand_id}`)}
+                />
               ))}
             </div>
           )}
@@ -500,4 +447,218 @@ const V3AdminOpportunityScanner = () => {
   );
 };
 
+// ============================================================================
+// v3.3 Card — TASCK CRM-aligned, empty fields hidden, two-score badge
+// ============================================================================
+const SIGNAL_PILL = {
+  creator_signing: { label: 'Creator signing', bg: '#EFE3F5', fg: '#6B3E92' },
+  campaign_launch: { label: 'Campaign launch', bg: '#DDE7E2', fg: '#1F4A3A' },
+  rfp_open: { label: 'RFP open', bg: '#FDF7E3', fg: '#7A5F23' },
+  spend_signal: { label: 'Spend signal', bg: '#DCE3F5', fg: '#1F2BEE' },
+  unknown: { label: 'Signal', bg: '#F4F2EC', fg: '#6E6657' },
+};
+
+const LIKELIHOOD_BG = {
+  Likely: { bg: '#DDE7E2', fg: '#1F4A3A' },
+  Confirmed: { bg: '#FDF7E3', fg: '#7A5F23' },
+  Unclear: { bg: '#F4F2EC', fg: '#6E6657' },
+  Unlikely: { bg: '#F5D9D2', fg: '#B54A37' },
+};
+
+const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition, onOpenBC, onOpenBrand }) => {
+  const [showDraft, setShowDraft] = React.useState(false);
+
+  const partnerName = candidate.partner_name || candidate.brand_name || 'Unknown brand';
+  const signalType = candidate.signal_type || 'unknown';
+  const pill = SIGNAL_PILL[signalType] || SIGNAL_PILL.unknown;
+  const brandConf = candidate.brand_confidence ?? candidate.confidence_score ?? 0;
+  const signalStr = candidate.signal_strength ?? candidate.confidence_score ?? 0;
+
+  // Build the "Brand Context" rows — omit any null/empty value
+  const brandContextRows = [
+    ['Key Marketing Focus', candidate.key_marketing_focus],
+    ['Primary Target Audience', candidate.primary_target_audience],
+    ['Key Marketing Channels', candidate.key_marketing_channels],
+    ['Marketing KPIs', candidate.marketing_kpis],
+  ].filter(([, v]) => v && String(v).trim());
+
+  // Contact line — appears only if at least one contact field is populated
+  const contactParts = [
+    candidate.primary_contact_name,
+    candidate.primary_contact_role,
+    candidate.primary_contact_email,
+    candidate.primary_contact_phone,
+    candidate.primary_contact_linkedin,
+  ].filter((v) => v && String(v).trim());
+
+  const likelihood = candidate.likelihood_to_work_with_tta;
+  const likelihoodStyle = likelihood && LIKELIHOOD_BG[likelihood];
+
+  return (
+    <div className="v3-card p-4 lg:p-5 min-w-0 overflow-hidden" data-testid={`opps-candidate-${candidate.id}`}>
+      {/* Top row: signal pill + two-score badge + source */}
+      <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <span className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider" style={{ background: pill.bg, color: pill.fg }} data-testid={`opps-signal-pill-${candidate.id}`}>
+            {pill.label}
+          </span>
+          <span
+            className="text-[10px] px-2 py-0.5 rounded font-semibold"
+            style={{ fontFamily: "'JetBrains Mono', monospace", background: '#F4F2EC', color: '#1A1A1A' }}
+            title={`Brand certainty ${brandConf} · Signal actionability ${signalStr}`}
+            data-testid={`opps-score-${candidate.id}`}
+          >
+            {brandConf} / {signalStr}
+          </span>
+          {likelihood && likelihoodStyle && (
+            <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: likelihoodStyle.bg, color: likelihoodStyle.fg }}>
+              Likelihood: {likelihood}
+            </span>
+          )}
+        </div>
+        <a
+          href={candidate.source_url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[11px] text-[#6E6657] hover:text-[#1F4A3A] inline-flex items-center gap-1 max-w-[40%] truncate"
+          data-testid={`opps-source-${candidate.id}`}
+        >
+          {candidate.source_domain || 'source'} · {candidate.source_date || '↗'}
+          <ExternalLink className="w-3 h-3 shrink-0" />
+        </a>
+      </div>
+
+      {/* Title + campaign */}
+      <h3 className="text-[16px] font-semibold text-[#1A1A1A] mb-1 break-words" style={{ fontFamily: "'Fraunces', serif" }}>{partnerName}</h3>
+      {candidate.industry && (
+        <p className="text-[11px] text-[#8A8A8A] mb-3">{candidate.industry}{candidate.country ? ` · ${candidate.country}` : ''}</p>
+      )}
+
+      {/* The Signal */}
+      {candidate.signal_summary && (
+        <div className="mb-4">
+          <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">The Signal</p>
+          <p className="text-[13px] text-[#1A1A1A] leading-relaxed">{candidate.signal_summary}</p>
+        </div>
+      )}
+
+      {/* Brand Context — only render if at least one row has data */}
+      {brandContextRows.length > 0 && (
+        <div className="mb-4 border-t border-[#E8E4DB] pt-3">
+          <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-2">Brand Context</p>
+          <div className="space-y-2">
+            {brandContextRows.map(([label, value]) => (
+              <div key={label}>
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</p>
+                <p className="text-[13px] text-[#1A1A1A]">{value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Contact — only if any contact field is set */}
+      {contactParts.length > 0 && (
+        <div className="mb-4 border-t border-[#E8E4DB] pt-3">
+          <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Contact (if found)</p>
+          <p className="text-[13px] text-[#1A1A1A]">{contactParts.join(' · ')}</p>
+        </div>
+      )}
+
+      {/* Why this matters */}
+      {candidate.why_this_matters && (
+        <div className="mb-4 border-t border-[#E8E4DB] pt-3">
+          <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Why This Matters for TTA</p>
+          <p className="text-[13px] text-[#1A1A1A] leading-relaxed">{candidate.why_this_matters}</p>
+        </div>
+      )}
+
+      {/* Outreach angle + draft */}
+      {(candidate.outreach_angle || candidate.outreach_draft) && (
+        <div className="mb-4 border-t border-[#E8E4DB] pt-3">
+          <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Outreach</p>
+          {candidate.outreach_angle && (
+            <>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mt-2">Suggested angle</p>
+              <p className="text-[13px] text-[#1A1A1A] leading-relaxed">{candidate.outreach_angle}</p>
+            </>
+          )}
+          {candidate.outreach_draft && (
+            <>
+              <button
+                onClick={() => setShowDraft(!showDraft)}
+                className="mt-3 text-[11px] text-[#1F4A3A] hover:underline inline-flex items-center gap-1"
+                data-testid={`opps-toggle-draft-${candidate.id}`}
+              >
+                <Mail className="w-3.5 h-3.5" /> {showDraft ? 'Hide draft email' : 'View draft email'}
+              </button>
+              {showDraft && (
+                <div className="mt-2 p-3 bg-[#FAF9F5] rounded text-[12px] text-[#1A1A1A] whitespace-pre-wrap leading-relaxed border border-[#E8E4DB]" data-testid={`opps-draft-${candidate.id}`}>
+                  {candidate.outreach_draft}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Action row */}
+      <div className="flex flex-wrap gap-2 pt-3 border-t border-[#E8E4DB]">
+        {activeTab === 'new' && (
+          <>
+            <button onClick={() => onTransition('reviewing')} disabled={busy} className="v3-btn-secondary text-[11px]" data-testid={`opps-mark-reviewing-${candidate.id}`}>
+              Reviewing
+            </button>
+            <button onClick={onAccept} disabled={busy} className="v3-btn-primary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
+              <CheckCircle2 className="w-3.5 h-3.5" /> Accept to CRM →
+            </button>
+            <button onClick={onReject} disabled={busy} className="v3-btn-secondary text-[11px] ml-auto" data-testid={`opps-reject-${candidate.id}`}>
+              <XCircle className="w-3.5 h-3.5" /> Dismiss
+            </button>
+          </>
+        )}
+        {activeTab === 'reviewing' && (
+          <>
+            <button onClick={() => onTransition('outreach_sent')} disabled={busy} className="v3-btn-secondary text-[11px]" data-testid={`opps-mark-outreach-${candidate.id}`}>
+              Outreach sent
+            </button>
+            <button onClick={onAccept} disabled={busy} className="v3-btn-primary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
+              <CheckCircle2 className="w-3.5 h-3.5" /> Accept to CRM →
+            </button>
+            <button onClick={onReject} disabled={busy} className="v3-btn-secondary text-[11px] ml-auto" data-testid={`opps-reject-${candidate.id}`}>
+              Dismiss
+            </button>
+          </>
+        )}
+        {activeTab === 'outreach_sent' && (
+          <>
+            <button onClick={() => onTransition('meeting_booked')} disabled={busy} className="v3-btn-primary text-[11px]" data-testid={`opps-mark-meeting-${candidate.id}`}>
+              Meeting booked
+            </button>
+            <button onClick={onAccept} disabled={busy} className="v3-btn-secondary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
+              Accept to CRM →
+            </button>
+          </>
+        )}
+        {activeTab === 'meeting_booked' && (
+          <button onClick={onAccept} disabled={busy} className="v3-btn-primary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
+            <CheckCircle2 className="w-3.5 h-3.5" /> Accept to CRM →
+          </button>
+        )}
+        {activeTab === 'won' && (
+          <>
+            <button onClick={onOpenBC} disabled={!candidate.business_case_id} className="v3-btn-primary text-[11px]" data-testid={`opps-open-business-case-${candidate.id}`}>
+              Open Business Case →
+            </button>
+            <button onClick={onOpenBrand} disabled={!candidate.accepted_brand_id} className="v3-btn-secondary text-[11px]">
+              Open CRM brand
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export default V3AdminOpportunityScanner;
+
