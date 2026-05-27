@@ -71,7 +71,9 @@ Every project = one MongoDB document in `v3_business_cases` spanning Connect →
 - iteration_12.json — backend read flows + new admin pages: 100% (16/16 + 4/4)
 - iteration_13.json — backend write flows + full TTA-user UI walkthrough: 100% (11/11 backend + all UI flows)
 - iteration_14.json — Opportunity Tracker v3.3 (Pass-1 filter + Pass-2 Claude Sonnet 4.5 LLM + new card UI): 100% backend + frontend; 2 HIGH bugs found
-- **iteration_15.json — Tracker v3.3 HIGH-bug fixes: 100% (6/6 pytest)** — existing-brand Family A merge + reset_demo Tracker wipe
+- iteration_15.json — Tracker v3.3 HIGH-bug fixes: 100% (6/6 pytest) — existing-brand Family A merge + reset_demo Tracker wipe
+- iteration_16.json — Tracker v3.3 Addendum (multi-source + recency + cost telemetry): 14/14 unit pytest PASS + 4/6 API integration PASS (2 ingress 60s timeouts on full 16-call runs — backend completed 200 OK in logs); 4 frontend bugs flagged
+- **iteration_17.json — Tracker v3.3 Addendum frontend fixes: 100% (all 4 bugs verified)** — cost telemetry visible, last-scan-summary testid added, freshness Hot filter no longer empties list, source toggle testids renamed
 
 ### Demo Reset
 Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admin/reset-demo`). Restores the 5 seeded Business Cases and **wipes Tracker collections** (candidates/scans/opportunities). Use between MI rehearsal runs.
