@@ -58,7 +58,11 @@ _TEMPORAL_SIGNAL = re.compile(
 
 
 def pass1_keep(title: str, snippet: str) -> Dict[str, Any]:
-    """Returns {'keep': bool, 'reason': str}. Pure stdlib; ~10ms per call."""
+    """Returns {'keep': bool, 'reason': str}. Pure stdlib; ~10ms per call.
+
+    Note: temporal/recency is already enforced by Google's `tbs=qdr:*` filter
+    at the search layer, so we don't re-check it in snippet text (would over-filter).
+    """
     text = f"{title or ''} {snippet or ''}".strip()
     if not text:
         return {"keep": False, "reason": "Empty result"}
@@ -73,9 +77,6 @@ def pass1_keep(title: str, snippet: str) -> Dict[str, Any]:
 
     if not _GEO_SIGNAL.search(text):
         return {"keep": False, "reason": "No Nigeria geo signal"}
-
-    if not _TEMPORAL_SIGNAL.search(text):
-        return {"keep": False, "reason": "No temporal anchor"}
 
     return {"keep": True, "reason": "Passed all gates"}
 
