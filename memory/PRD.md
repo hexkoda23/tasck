@@ -69,14 +69,25 @@ Every project = one MongoDB document in `v3_business_cases` spanning Connect →
 
 ### Testing
 - iteration_12.json — backend read flows + new admin pages: 100% (16/16 + 4/4)
-- **iteration_13.json — backend write flows + full TTA-user UI walkthrough: 100% (11/11 backend + all UI flows)**
+- iteration_13.json — backend write flows + full TTA-user UI walkthrough: 100% (11/11 backend + all UI flows)
+- iteration_14.json — Opportunity Tracker v3.3 (Pass-1 filter + Pass-2 Claude Sonnet 4.5 LLM + new card UI): 100% backend + frontend; 2 HIGH bugs found
+- **iteration_15.json — Tracker v3.3 HIGH-bug fixes: 100% (6/6 pytest)** — existing-brand Family A merge + reset_demo Tracker wipe
 
 ### Demo Reset
-Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admin/reset-demo`). Restores the 5 seeded Business Cases. Use between MI rehearsal runs.
+Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admin/reset-demo`). Restores the 5 seeded Business Cases and **wipes Tracker collections** (candidates/scans/opportunities). Use between MI rehearsal runs.
+
+### Integrations
+- **SerpAPI** (server-side only via `SERPAPI_API_KEY` env). Powers the Brand Opportunity Tracker scan endpoint. Live on preview AND production (`thcodemo.space`).
+- **Emergent LLM Key — Claude Sonnet 4.5** (server-side only via `EMERGENT_LLM_KEY`). Powers Tracker v3.3 Pass-2 enrichment. Returns the v3.3 structured JSON card (Family A + Family B).
+
+### Opportunity Tracker v3.3 (27 May 2026)
+- **Pass 1 — deterministic filter** (`v3_tracker_v33.pass1_keep`): silently rejects creator self-promos, freelancer ads, awards listicles, industry think-pieces, anything without commercial intent + Nigeria geo + temporal anchor. ~10ms per result.
+- **Pass 2 — Claude Sonnet 4.5 enrichment** (`call_llm_enricher`): one structured-JSON call per Pass-1 survivor. Family A: partner_name, brand_type, industry, contact fields, Key Marketing Focus, Primary Target Audience, Key Marketing Channels, Marketing KPIs, Likelihood to Work with TTA. Family B: signal_type pill, brand_confidence + signal_strength (two scores), why_this_matters, outreach_angle, outreach_draft (3-sentence email).
+- **Card UI**: counter bar (NEW / REVIEWING / OUTREACH SENT / MEETINGS BOOKED) replaces old Pending/Accepted/Archive. Two-score badge "92 / 78". Signal-type pill colour-coded. Empty fields silently hidden — no "Not found" strings anywhere. View draft email toggle. Per-tab action buttons including transition state machine.
+- **Pipeline state model**: new → reviewing → outreach_sent → meeting_booked → won. brand_confidence < 40 stored as `dismissed_auto` (audit-only, never surfaced).
+- **Accept-to-CRM**: populates brand with all Family A fields (whether new or existing brand). Contact defaults to `connect_status: "Stranger"`. Brand defaults to `desired_relationship_status: "Project Identified - Move to Framing"`. Business Case `connect.intelligence` + `connect.suggested_outreach` + `connect.outreach_angle` (Alignment Snapshot seed) populated. UI auto-navigates to the new BC.
 
 ### Remaining P2 / Future
 - Wire Brand + Creator portals to `/api/v3/*` (still on `v3data.js` fallback)
-- Resolve low-priority React hydration console warning from visual-editor `<span>` inside `<select>` on the New BC modal
-- Real LLM integration for AI moments (currently deterministic templates per user choice)
 - Mobile responsiveness pass
 - WhatsApp integration
