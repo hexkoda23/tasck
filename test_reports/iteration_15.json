@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 15 — focused re-test of the two HIGH-priority bugs fixed by E1 (accept_opportunity_candidate existing-brand Family A merge + reset_demo Tracker wipe). All 6 targeted pytest cases PASS (100%). The previously failing scenarios (existing-brand Family A propagation, post-reset zero counts) are now green. The 'do not overwrite populated Family A' negative case is exercised by directly pre-setting key_marketing_focus to a sentinel via Mongo and confirming accept does NOT overwrite it. Stranger-status patch on the pre-existing primary contact is verified. Bug fixes are confirmed in /app/backend/v3_routes.py lines 2798-2833 (Family A $set + Stranger patch) and 3021-3037 (reset-demo tracker_collections wipe).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "feature_test_results": {
+    "POST /api/v3/admin/reset-demo declares v3_opportunity_candidates / v3_opportunity_scans / v3_opportunities in collections_reset response": "PASS",
+    "After scan + reset, pipeline-counts returns 0 for every state and /opportunities/candidates returns [] for every state filter": "PASS",
+    "Existing seed brand 'Coca-Cola Nigeria Limited' has at least one empty Family A field pre-accept (precondition / test is non-vacuous)": "PASS",
+    "Accept on candidate whose partner_name slug-matches existing brand updates the SAME brand id and sets desired_relationship_status='Project Identified - Move to Framing' + Family A fields from candidate": "PASS",
+    "Accept does NOT overwrite a pre-populated Family A field (key_marketing_focus sentinel preserved through accept)": "PASS",
+    "Accept on existing brand whose primary contact had no connect_status now surfaces a Stranger contact via GET /brands/{id}.contacts": "PASS"
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v3_iter15_bugfix.py",
+    "/app/test_reports/pytest/v3_iter15.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Family A merge block (v3_routes.py:2798-2812) duplicates the field key list that also appears on the new-brand branch (2776-2783). Consider extracting a single _build_family_a_from_candidate(candidate, existing_brand=None) helper so the two paths cannot drift again (was the root cause of iter14 HIGH bug).",
+    "reset_demo now hard-codes ['v3_opportunity_candidates','v3_opportunity_scans','v3_opportunities']. As new Tracker-side collections get added (e.g. v3_opportunity_outreach_logs, v3_opportunity_dismiss_reasons), they will silently leak across resets. Safer to enumerate collections by `await db.list_collection_names()` and delete every name starting with 'v3_' that is not in get_v3_seed_data() keys, or maintain the list as a module-level constant next to get_v3_seed_data().",
+    "Existing-brand merge uses `if incoming and not brand.get(key)` — note that this treats empty string '' the same as None (good), but if any Family A field is later stored as 0 / False / [] / {} it would be considered 'empty' and overwritten. Currently fine because all Family A fields are strings, but document the invariant.",
+    "The Stranger-status patch only fires when existing_contact has no connect_status. Spec invariant from action_item was 'every freshly-accepted opportunity surfaces a Stranger contact'. If the existing contact already has connect_status='Customer' or 'Warm', the brand will NOT carry any Stranger contact post-accept. Verify with product whether that's intended; otherwise insert an additional contact in that branch."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v3_iter15_bugfix.py",
+    "/app/test_reports/iteration_15.json",
+    "/app/test_reports/pytest/v3_iter15.xml"
+  ],
+  "success_rate": {"backend": "100% (6/6 pytest)", "frontend": "N/A — backend-only re-test per request"},
+  "test_credentials": "Not required — /api/v3/admin/* and Tracker routes bypass auth. /app/memory/test_credentials.md does not exist.",
+  "seed_data_creation": "Test fixtures call /api/v3/admin/reset-demo before and after each class. Final teardown leaves the demo DB clean (per request).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 15 verified both HIGH bugs from iter14 are fixed. Regression file: /app/backend/tests/test_v3_iter15_bugfix.py (6 tests, all PASS). Companion full v3.3 suite is at /app/backend/tests/test_v3_iter14_opportunities.py — re-run it if a broader regression is needed. Final reset-demo is invoked in the module-scoped teardown so the DB is clean. The Coca-Cola candidate is reliably surfaced by query 'Coca-Cola Nigeria campaign launch' and matches the seeded 'Coca-Cola Nigeria Limited' brand via backend _slug() (first 3 alphanumeric tokens joined by '.'). One Mongo-direct preset is used in the overwrite negative test (reads /app/backend/.env for MONGO_URL/DB_NAME, strips quotes).",
+  "rca of the issue": "Both bugs were resolved in v3_routes.py: (1) accept_opportunity_candidate else-branch (lines 2798-2833) now performs db.v3_brands.update_one($set=family_a_updates) where family_a_updates is built from candidate fields conditional on `if incoming and not brand.get(key)`, then refetches the brand; it also patches the existing primary contact with connect_status='Stranger' when missing. (2) reset_demo (lines 3021-3037) now iterates tracker_collections=['v3_opportunity_candidates','v3_opportunity_scans','v3_opportunities'] and runs delete_many({}) on each, plus surfaces them in the response payload. Re-test confirms pipeline-counts returns all zeros post-reset and Coca-Cola accept produces a brand with desired_relationship_status='Project Identified - Move to Framing', Family A fields hydrated from candidate Pass-2 enrichment, AND a Stranger contact."
+}

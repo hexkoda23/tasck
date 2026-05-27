@@ -2796,8 +2796,23 @@ Produce the opportunity card JSON.
                 "connect_status": "Stranger",  # v3.3 default per spec §2
             })
         else:
-            has_contact = await db.v3_contacts.find_one({"brand_id": brand["id"]}, {"_id": 0})
-            if not has_contact:
+            # v3.3 — apply Family A fields to existing brand (only overwrite empty values)
+            family_a_updates: Dict[str, Any] = {}
+            for key in [
+                "key_marketing_focus", "primary_target_audience", "key_marketing_channels",
+                "marketing_kpis", "likelihood_to_work_with_tta", "brand_type",
+            ]:
+                incoming = candidate.get(key)
+                if incoming and not brand.get(key):
+                    family_a_updates[key] = incoming
+            if not brand.get("desired_relationship_status"):
+                family_a_updates["desired_relationship_status"] = "Project Identified - Move to Framing"
+            if family_a_updates:
+                await db.v3_brands.update_one({"id": brand["id"]}, {"$set": family_a_updates})
+                brand = await db.v3_brands.find_one({"id": brand["id"]}, {"_id": 0})
+
+            existing_contact = await db.v3_contacts.find_one({"brand_id": brand["id"]}, {"_id": 0})
+            if not existing_contact:
                 await db.v3_contacts.insert_one({
                     "id": f"ct-{uuid.uuid4().hex[:8]}",
                     "brand_id": brand["id"],
@@ -2810,6 +2825,12 @@ Produce the opportunity card JSON.
                     "decision_seniority": "lead",
                     "connect_status": "Stranger",
                 })
+            elif not existing_contact.get("connect_status"):
+                # v3.3 — ensure the primary contact carries a Stranger status
+                await db.v3_contacts.update_one(
+                    {"id": existing_contact["id"]},
+                    {"$set": {"connect_status": "Stranger"}},
+                )
 
         account = await ensure_brand_account(brand)
         existing_opp = await db.v3_opportunities.find_one({"candidate_id": candidate_id}, {"_id": 0})
@@ -3002,10 +3023,18 @@ Produce the opportunity card JSON.
         seed = get_v3_seed_data()
         for collection_name in seed.keys():
             await db[collection_name].delete_many({})
+        # v3.3 — also wipe Tracker collections so demo runs start clean
+        tracker_collections = [
+            "v3_opportunity_candidates",
+            "v3_opportunity_scans",
+            "v3_opportunities",
+        ]
+        for c in tracker_collections:
+            await db[c].delete_many({})
         for collection_name, docs in seed.items():
             if docs:
                 await db[collection_name].insert_many([{**d} for d in docs])
-        return {"ok": True, "collections_reset": list(seed.keys())}
+        return {"ok": True, "collections_reset": list(seed.keys()) + tracker_collections}
 
     # ------------------------------------------------------------------------
     # METRICS / OVERVIEW
