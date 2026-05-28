@@ -27,6 +27,7 @@ import uuid
 
 from v3_seed import get_v3_seed_data
 import v3_tracker_v33
+import v3_tracker_dedupe
 
 logger = logging.getLogger("tasck.v3")
 
@@ -1998,11 +1999,18 @@ def make_v3_router(db):
         return sorted(
             rows,
             key=lambda item: (
-                # v3.3: prefer real-brand cards (partner_name set); rank by signal_strength
+                # v3.3: prefer real-brand cards (partner_name set)
                 (item.get("partner_name") is None and item.get("brand_name") is None),
+                # Dedupe addendum §10: signal_strength desc
                 -int(item.get("signal_strength") or item.get("confidence_score") or 0),
+                # HOT before PIPELINE
+                0 if (item.get("freshness_bucket") or "") == "hot" else 1,
+                # brand_confidence desc
                 -int(item.get("brand_confidence") or 0),
-                str(item.get("created_at") or ""),
+                # support count desc (more verified sources rises)
+                -len(item.get("supporting_sources") or []),
+                # scanned_at desc
+                str(item.get("scanned_at") or item.get("created_at") or ""),
             ),
         )
 
@@ -2712,7 +2720,9 @@ Produce the opportunity card JSON.
         # ---- Assemble candidates --------------------------------------------
         fallback_count = 0
         auto_dismissed = 0
-        candidates: List[Dict[str, Any]] = []
+        # First build all raw candidates in-memory. Dedupe happens AFTER the
+        # full batch is built so cross-source duplicates collapse correctly.
+        raw_batch: List[Dict[str, Any]] = []
 
         for item, v33_card in zip(survivors, enriched_cards):
             source_key = item.get("_source_key")
@@ -2771,16 +2781,84 @@ Produce the opportunity card JSON.
             candidate["signal_type_targeted"] = signal_type_targeted
             candidate["freshness_bucket"] = freshness_bucket
             candidate.setdefault("scanned_at", _now_iso())
-
-            existing = await db.v3_opportunity_candidates.find_one(
-                {"$or": [{"source_url": candidate["source_url"]}, {"dedupe_key": candidate["dedupe_key"]}]},
-                {"_id": 0},
+            # Canonicalise source_url for downstream dedupe
+            candidate["source_url_canonical"] = v3_tracker_dedupe.normalize_url(
+                candidate.get("source_url", "")
             )
+            raw_batch.append(candidate)
+
+        # ---- Stage B + C — in-batch semantic + fuzzy dedupe ------------------
+        # Split visible vs auto-dismissed so we dedupe only the visible queue.
+        visible_raw = [c for c in raw_batch if c.get("pipeline_state") != "dismissed_auto"]
+        auto_dismissed_raw = [c for c in raw_batch if c.get("pipeline_state") == "dismissed_auto"]
+
+        deduped_visible = v3_tracker_dedupe.dedupe_batch(visible_raw)
+        batch_dedupe_dropped = len(visible_raw) - len(deduped_visible)
+        logger.info(
+            "[Tracker dedupe] in-batch: %d visible → %d primaries (dropped %d duplicates)",
+            len(visible_raw), len(deduped_visible), batch_dedupe_dropped,
+        )
+
+        # ---- Persist: merge into DB if existing match, else insert -----------
+        candidates: List[Dict[str, Any]] = []
+        db_merge_count = 0
+
+        # Cache all existing candidates ONCE so we don't hammer Mongo per card.
+        # Only inspect non-dismissed rows — auto_dismissed shouldn't poison live merges.
+        existing_rows = await db.v3_opportunity_candidates.find(
+            {}, {"_id": 0},
+        ).to_list(2000)
+
+        for card in deduped_visible:
+            existing = v3_tracker_dedupe.find_db_duplicate(card, existing_rows)
+            if existing:
+                # Merge: boost confidence, append supporting source, update DB.
+                merged = v3_tracker_dedupe.merge_into_primary(dict(existing), [card])
+                await db.v3_opportunity_candidates.update_one(
+                    {"id": existing["id"]},
+                    {"$set": {
+                        "brand_confidence": merged["brand_confidence"],
+                        "signal_strength": merged["signal_strength"],
+                        "supporting_sources": merged.get("supporting_sources", []),
+                        "duplicate_count": merged.get("duplicate_count"),
+                        "duplicate_cluster_id": merged.get("duplicate_cluster_id"),
+                        "key_marketing_focus": merged.get("key_marketing_focus"),
+                        "primary_target_audience": merged.get("primary_target_audience"),
+                        "key_marketing_channels": merged.get("key_marketing_channels"),
+                        "marketing_kpis": merged.get("marketing_kpis"),
+                        "website": merged.get("website"),
+                        "primary_contact_name": merged.get("primary_contact_name"),
+                        "primary_contact_role": merged.get("primary_contact_role"),
+                        "primary_contact_email": merged.get("primary_contact_email"),
+                        "primary_contact_phone": merged.get("primary_contact_phone"),
+                        "primary_contact_linkedin": merged.get("primary_contact_linkedin"),
+                        "why_this_matters": merged.get("why_this_matters"),
+                        "outreach_angle": merged.get("outreach_angle"),
+                        "outreach_draft": merged.get("outreach_draft"),
+                        "updated_at": _now_iso(),
+                    }},
+                )
+                db_merge_count += 1
+                # Refresh our in-memory cache so a SECOND duplicate in this scan
+                # merges into the same row, not into a stale copy.
+                for idx, row in enumerate(existing_rows):
+                    if row.get("id") == existing["id"]:
+                        existing_rows[idx] = {**row, **merged}
+                        break
+                if merged.get("pipeline_state") not in ("dismissed", "dismissed_auto"):
+                    candidates.append(merged)
+            else:
+                await db.v3_opportunity_candidates.insert_one({**card})
+                existing_rows.append(card)
+                candidates.append(card)
+
+        # Persist auto-dismissed rows untouched (audit trail)
+        for card in auto_dismissed_raw:
+            existing = v3_tracker_dedupe.find_db_duplicate(card, existing_rows)
             if existing:
                 continue
-            await db.v3_opportunity_candidates.insert_one({**candidate})
-            if candidate.get("pipeline_state") != "dismissed_auto":
-                candidates.append(candidate)
+            await db.v3_opportunity_candidates.insert_one({**card})
+            existing_rows.append(card)
 
         # ---- Extraction-method summary ------------------------------------
         extraction_method = "llm"
@@ -2802,6 +2880,8 @@ Produce the opportunity card JSON.
                 "candidate_count": len(candidates),
                 "pass1_rejected": pass1_rejected,
                 "auto_dismissed": auto_dismissed,
+                "batch_dedupe_dropped": batch_dedupe_dropped,
+                "db_merge_count": db_merge_count,
                 "extraction_method": extraction_method,
                 "fallback_count": fallback_count,
                 "llm_attempts": llm_attempts,
@@ -2824,6 +2904,8 @@ Produce the opportunity card JSON.
                 "candidate_count": len(candidates),
                 "pass1_rejected": pass1_rejected,
                 "auto_dismissed": auto_dismissed,
+                "batch_dedupe_dropped": batch_dedupe_dropped,
+                "db_merge_count": db_merge_count,
                 "extraction_method": extraction_method,
                 "fallback_count": fallback_count,
                 "llm_attempts": llm_attempts,

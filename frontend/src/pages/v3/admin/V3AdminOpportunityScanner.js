@@ -742,6 +742,16 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
               {SOURCE_LABEL[candidate.source_key]}
             </span>
           )}
+          {Array.isArray(candidate.supporting_sources) && candidate.supporting_sources.length > 0 && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider"
+              style={{ background: '#E6EEF3', color: '#1F4A6E' }}
+              title={candidate.supporting_sources.map((s) => s.source_domain).filter(Boolean).join(', ')}
+              data-testid={`opps-supporting-sources-${candidate.id}`}
+            >
+              {candidate.supporting_sources.length + 1} sources
+            </span>
+          )}
           <span
             className="text-[10px] px-2 py-0.5 rounded font-semibold"
             style={{ fontFamily: "'JetBrains Mono', monospace", background: '#F4F2EC', color: '#1A1A1A' }}

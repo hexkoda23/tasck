@@ -82,6 +82,20 @@ Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admi
 - **SerpAPI** (server-side only via `SERPAPI_API_KEY` env). Powers the Brand Opportunity Tracker scan endpoint. Live on preview AND production (`thcodemo.space`).
 - **Emergent LLM Key — Claude Sonnet 4.5** (server-side only via `EMERGENT_LLM_KEY`). Powers Tracker v3.3 Pass-2 enrichment. Returns the v3.3 structured JSON card (Family A + Family B).
 
+### Opportunity Tracker Dedupe & Accuracy Addendum (28 May 2026)
+Three-stage dedupe layer in `v3_tracker_dedupe.py` — additive, does **not** change the v3.3 card schema, Accept-to-CRM flow, or Business Case lineage.
+
+- **Stage A — Pre-LLM canonical URL dedupe** (`normalize_url`): strips `utm_*`, `fbclid`, `gclid`, `igshid`, `ref*`, `trk*`, fragments, trailing slashes, `www.`, lowercases scheme+host. Identical canonical URLs are de-duped before any SerpAPI/LLM cost is incurred.
+- **Stage B — Post-LLM semantic key** (`build_semantic_key`): `normalize_brand_name(partner) | signal_type | extract_event_signature(summary, brand) | country | freshness_bucket`. Collapses "The Macallan", "Macallan Nigeria", "The Macallan Nigeria Limited" → `macallan`. Event signature strips brand tokens + channel words (LinkedIn/Instagram/Google) so the same Adekunle-Gold creator signing collapses across all three source domains.
+- **Stage C — Fuzzy duplicate** (`is_fuzzy_duplicate`): same signal_type + brand-name similarity ≥ 0.85 + (signal_summary similarity ≥ 0.75 OR shared event signature). Catches casing variants the semantic key missed (BLord / Blord / B-Lord Group).
+- **Merge rules** (`merge_into_primary`): picks the strongest card by brand_confidence > signal_strength > source reliability (trade press 3, news 3, brand-owned 2, LinkedIn 2, gossip 0) > field richness > recency. Persists losers as `supporting_sources` (backend-only). +2 brand_confidence per additional reliable source (cap 96); +2 signal_strength per same-action confirmation (cap 92 unless rfp_open). Gossip-source primary card incurs −5 brand_confidence.
+- **DB re-scan merge** (`find_db_duplicate`): every fresh candidate is checked against all persisted rows (canonical URL → semantic key → fuzzy). If matched, the existing row is updated in place (boost confidence, append supporting source) instead of creating a new card. **Re-running the same scan does not recreate accepted/dismissed/visible cards.**
+- **Sort order** (spec §10): signal_strength desc → HOT before PIPELINE → brand_confidence desc → supporting-sources count desc → scanned_at desc.
+- **UI**: small "N sources" chip (steel-blue) on cards with `supporting_sources.length > 0`, sitting inline with the existing signal/freshness/source/score pills. No layout change.
+- **Telemetry**: scan-summary now also includes `batch_dedupe_dropped` + `db_merge_count` so the demo can show "we collapsed N duplicates, merged M into existing CRM rows."
+- **Pytest coverage**: 23 new tests in `tests/test_tracker_dedupe.py` covering URL normalisation, brand-name normalisation (Macallan + BLord variants + non-collapsing of distinct brands), semantic key collapse, fuzzy dedupe, source reliability weighting, full `dedupe_batch` against all three spec §12 acceptance cases (Macallan ×3, BLord ×2, BusinessDay four distinct brands), and DB-duplicate detection.
+- **Total Tracker pytest**: 37/37 PASS (23 dedupe + 14 multi-source addendum).
+
 ### Opportunity Tracker v3.3 Async Scan (28 May 2026 — production-ready)
 - **`POST /api/v3/opportunities/scans`** is now non-blocking by default: returns `{scan: {id, status:'queued',...}, candidates:[], async:true}` in ~13ms. The actual fan-out runs in a background `asyncio.create_task`.
 - **`GET /api/v3/opportunities/scans/{scan_id}`** — new poll endpoint. Returns the live scan row + any candidates persisted so far (UI streams them as Pass-2 completes). `status` transitions queued → running → completed | failed.
