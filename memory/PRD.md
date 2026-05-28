@@ -82,6 +82,22 @@ Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admi
 - **SerpAPI** (server-side only via `SERPAPI_API_KEY` env). Powers the Brand Opportunity Tracker scan endpoint. Live on preview AND production (`thcodemo.space`).
 - **Emergent LLM Key — Claude Sonnet 4.5** (server-side only via `EMERGENT_LLM_KEY`). Powers Tracker v3.3 Pass-2 enrichment. Returns the v3.3 structured JSON card (Family A + Family B).
 
+### Tracker Dedupe Fix Follow-Up — Visibility Gate (28 May 2026)
+Stops incomplete / low-signal cards from rendering in the RM queue even when they survive Pass 1 + LLM enrichment.
+
+- **Strengthened Pass 1 regex rejects** (`v3_tracker_v33._REJECT_PATTERNS`): added "best/top influencer-marketing platforms" listicles, "becoming a brand ambassador" educational articles, "elevate your brand", "grow your brand", "cost guide", "tips for", ResearchGate `.pdf`, gushing social captions ("that unforgettable moment", "throwback to", "so grateful to"), Shopify/HubSpot ecommerce education.
+- **Domain-level Pass 1 reject** (`_REJECT_DOMAINS`): job boards (Indeed, Jobberman, MyJobMag, HotNigerianJobs, NaijaJobs, JobListNigeria, NGCareers), academic (ResearchGate, Academia.edu, JSTOR), ecommerce education (shopify.com/blog, hubspot.com/blog, influencermarketinghub.com), learning platforms (LinkedIn Learning, Coursera, Udemy). Domain check runs BEFORE any regex.
+- **Strict CRM-readiness gate** (`v3_tracker_dedupe.passes_visibility_gate`) applied AFTER Pass 2 LLM enrichment and BEFORE dedupe. A card is auto-dismissed (`pipeline_state=dismissed_auto`) unless ALL are true:
+  - `partner_name` is set and not "Unknown brand"
+  - `brand_confidence >= 40`
+  - `signal_strength >= 50`
+  - `signal_type` ≠ "unknown"
+  - `signal_summary`, `why_this_matters`, `outreach_angle` are all ≥ 40 chars
+  - `source_title` doesn't match a junk pattern (cost guide / becoming a brand / PDF / elevate your brand)
+- **Order of operations** (spec §6 confirmed): Pass 1 → LLM enrichment → visibility gate → in-batch dedupe → DB merge → sort → render. Junk cannot leak into supporting_sources because the gate runs before dedupe.
+- **Pytest coverage**: 21 new tests in `tests/test_tracker_visibility_gate.py` covering all spec acceptance cases (cost guides, ResearchGate, Indeed, Becoming a Brand Ambassador, Elevate Your Brand, gushing captions, low-bc, low-ss, missing why_this_matters, thin outreach_angle, unknown brand string).
+- **Total Tracker pytest**: 58/58 PASS (21 visibility-gate + 23 dedupe + 14 multi-source addendum).
+
 ### Opportunity Tracker Dedupe & Accuracy Addendum (28 May 2026)
 Three-stage dedupe layer in `v3_tracker_dedupe.py` — additive, does **not** change the v3.3 card schema, Accept-to-CRM flow, or Business Case lineage.
 

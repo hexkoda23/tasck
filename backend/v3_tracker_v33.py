@@ -147,10 +147,18 @@ _REJECT_PATTERNS = [
     re.compile(r"\b(filmmaker|videographer|photographer|drone\s+expert|content\s+creator|freelance|portfolio|services\s*available|hire\s+me|hire\s+us|book\s+me\s+now)\b", re.I),
     # Awards listicles
     re.compile(r"\b(nominees?|year\s+in\s+review|top\s+\d+|the\s+\d+\s+best|winners?\s+of|awards?\s+(season|night|ceremony)|wins?\s+(campaign|award)\s+of\s+the\s+year)\b", re.I),
-    # Industry think-pieces / how-to / cost guides
-    re.compile(r"\b(how\s+to|guide\s+to|what\s+brands?\s+should|cost\s+guide|playbook\s+for|things\s+to\s+know|explained|complete\s+guide|ultimate\s+guide)\b", re.I),
+    # Industry think-pieces / how-to / cost guides / education-pitch articles
+    re.compile(r"\b(how\s+to|guide\s+to|what\s+brands?\s+should|cost\s+guide|playbook\s+for|things\s+to\s+know|explained|complete\s+guide|ultimate\s+guide|becoming\s+a(?:\s+\w+)?\s+(?:brand|ambassador|influencer)|elevate\s+your\s+brand|grow\s+your\s+brand|build\s+your\s+brand|tips\s+for|ways\s+to)\b", re.I),
+    # "Best of" / "platforms for" influencer-marketing listicles
+    re.compile(r"\b(best\s+(?:influencer|marketing|brand\s+ambassador)\s+(?:platforms?|tools|software|programs?|networks?|agencies)|top\s+(?:influencer|brand\s+ambassador)\s+(?:platforms?|tools|software|programs?|networks?|agencies))\b", re.I),
     # Research / case-study / PDF reports
-    re.compile(r"\b(case\s+study|research\s+gate|\(pdf\)|published\s+in\s+(?:journal|magazine)|academic\s+paper)\b", re.I),
+    re.compile(r"\b(case\s+study|research\s*gate|researchgate|\(pdf\)|\.pdf\b|published\s+in\s+(?:journal|magazine)|academic\s+paper|journal\s+of\s+\w+|abstract\s*:)\b", re.I),
+    # Job boards / vacancy listings
+    re.compile(r"\b(job\s+description|job\s+vacancy|vacancy|now\s+hiring|we'?re\s+hiring|apply\s+(?:now|today)|salary\s+range|recruiter|recruitment|\d+\s+years?\s+(?:of\s+)?experience\s+(?:required|preferred)|jobberman|indeed|myjobmag|hotnigerianjobs)\b", re.I),
+    # Ecommerce education (Shopify/HubSpot/etc playbooks)
+    re.compile(r"\b(shopify\s+(?:blog|guide|tutorial)|hubspot\s+(?:blog|guide)|ecommerce\s+(?:tips|guide|tutorial)|how\s+(?:do\s+i|to\s+become)|ambassador\s+program\s+(?:template|examples?|ideas?))\b", re.I),
+    # Generic gushing social captions (no brand actor)
+    re.compile(r"\b(that\s+unforgettable\s+moment|throwback\s+to|tbt\s+|so\s+(?:grateful|honoured|excited)\s+to|cannot\s+wait\s+to|in\s+love\s+with)\b", re.I),
     # Creator handle prefix in title
     re.compile(r"^@[a-z0-9_.]+", re.I),
 ]
@@ -179,8 +187,19 @@ _TEMPORAL_SIGNAL = re.compile(
     re.I,
 )
 
+# Domain reject list — job boards / academic / ecommerce education sites must
+# never reach LLM enrichment regardless of snippet text.
+_REJECT_DOMAINS = (
+    "researchgate.net", "academia.edu", "jstor.org",
+    "indeed.com", "jobberman.com", "myjobmag.com", "hotnigerianjobs.com",
+    "naijajobs.com.ng", "joblistnigeria.com", "ngcareers.com",
+    "shopify.com/blog", "shopify.com/learn", "hubspot.com/blog",
+    "influencermarketinghub.com", "trackmaven.com",
+    "linkedin.com/learning", "coursera.org", "udemy.com",
+)
 
-def pass1_keep(title: str, snippet: str, source_key: Optional[str] = None) -> Dict[str, Any]:
+
+def pass1_keep(title: str, snippet: str, source_key: Optional[str] = None, source_url: Optional[str] = None) -> Dict[str, Any]:
     """Returns {'keep': bool, 'reason': str}. Pure stdlib; ~10ms per call.
 
     Source-aware (v3.3 Addendum):
@@ -190,9 +209,18 @@ def pass1_keep(title: str, snippet: str, source_key: Optional[str] = None) -> Di
         "industry think-piece" gate (e.g. "Guide to FMCG marketing").
       - google_web / google_news / None: original v3.3 behaviour.
 
+    `source_url` (optional): if provided, hits in `_REJECT_DOMAINS` are dropped
+    before any regex work.
+
     Note: temporal/recency is enforced by Google's `tbs=qdr:*` filter at the
     search layer, so we don't re-check it in snippet text (would over-filter).
     """
+    # Domain-level reject (cheap, runs first)
+    if source_url:
+        url_lower = source_url.lower()
+        for bad in _REJECT_DOMAINS:
+            if bad in url_lower:
+                return {"keep": False, "reason": f"Rejected domain: {bad}"}
     text = f"{title or ''} {snippet or ''}".strip()
     if not text:
         return {"keep": False, "reason": "Empty result"}

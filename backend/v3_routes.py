@@ -2659,6 +2659,7 @@ Produce the opportunity card JSON.
             gate = v3_tracker_v33.pass1_keep(
                 item.get("title", ""), item.get("snippet", ""),
                 source_key=item.get("_source_key"),
+                source_url=item.get("link", ""),
             )
             if not gate["keep"]:
                 pass1_rejected += 1
@@ -2785,6 +2786,22 @@ Produce the opportunity card JSON.
             candidate["source_url_canonical"] = v3_tracker_dedupe.normalize_url(
                 candidate.get("source_url", "")
             )
+
+            # ---- Strict CRM-readiness gate (Dedupe Fix Follow-Up §1) ----
+            # Any card that wouldn't render properly in the RM queue is
+            # auto-dismissed BEFORE dedupe so it can't sneak through as
+            # "supporting evidence" either.
+            if candidate.get("pipeline_state") != "dismissed_auto":
+                passes, reason = v3_tracker_dedupe.passes_visibility_gate(candidate)
+                if not passes:
+                    candidate["pipeline_state"] = "dismissed_auto"
+                    candidate["dismissal_reason"] = reason
+                    auto_dismissed += 1
+                    logger.info(
+                        "[Tracker visibility gate] dismiss %s — %s",
+                        (candidate.get("partner_name") or "?")[:40], reason,
+                    )
+
             raw_batch.append(candidate)
 
         # ---- Stage B + C — in-batch semantic + fuzzy dedupe ------------------

@@ -474,3 +474,52 @@ def find_db_duplicate(card: Dict[str, Any], existing_rows: List[Dict[str, Any]])
         if is_fuzzy_duplicate(row, card):
             return row
     return None
+
+
+# ---------------------------------------------------------------------------
+# Visibility gate (Dedupe Fix Follow-Up §1)
+# ---------------------------------------------------------------------------
+
+# Junk-card titles that occasionally slip past Pass 1 (e.g. when commercial
+# verbs + Nigeria mention coexist in an educational article).
+_JUNK_TITLE_PATTERNS = [
+    re.compile(r"\b(cost\s+guide|influencer\s+(?:cost|pricing|rates?)|salary\s+report)\b", re.I),
+    re.compile(r"\b(elevate\s+your\s+brand|grow\s+your\s+brand|build\s+your\s+brand|becoming\s+a(?:\s+\w+)?\s+(?:brand|ambassador|influencer))\b", re.I),
+    re.compile(r"\(pdf\)|\.pdf\b|researchgate", re.I),
+    re.compile(r"^\s*unknown\s+brand\s*$", re.I),
+]
+
+
+def passes_visibility_gate(card: Dict[str, Any]) -> tuple:
+    """Spec §1 — strict CRM-readiness check.
+
+    Returns (passes: bool, reason: str). Cards that fail this gate get
+    `pipeline_state="dismissed_auto"` and are never rendered to the RM queue.
+    """
+    partner = (card.get("partner_name") or "").strip()
+    if not partner or partner.lower() in {"unknown brand", "unknown"}:
+        return False, "no partner_name"
+
+    bc = int(card.get("brand_confidence") or 0)
+    if bc < 40:
+        return False, f"brand_confidence {bc} < 40"
+
+    ss = int(card.get("signal_strength") or 0)
+    if ss < 50:
+        return False, f"signal_strength {ss} < 50"
+
+    if (card.get("signal_type") or "unknown") == "unknown":
+        return False, "signal_type is unknown"
+
+    for field in ("signal_summary", "why_this_matters", "outreach_angle"):
+        value = (card.get(field) or "").strip()
+        if not value or len(value) < 40:
+            return False, f"missing or thin {field}"
+
+    title = card.get("source_title") or card.get("source_headline") or ""
+    for pat in _JUNK_TITLE_PATTERNS:
+        m = pat.search(title)
+        if m:
+            return False, f"junk title pattern: {m.group(0)!r}"
+
+    return True, "passes"
