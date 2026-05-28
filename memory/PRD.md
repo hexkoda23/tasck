@@ -82,6 +82,15 @@ Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admi
 - **SerpAPI** (server-side only via `SERPAPI_API_KEY` env). Powers the Brand Opportunity Tracker scan endpoint. Live on preview AND production (`thcodemo.space`).
 - **Emergent LLM Key — Claude Sonnet 4.5** (server-side only via `EMERGENT_LLM_KEY`). Powers Tracker v3.3 Pass-2 enrichment. Returns the v3.3 structured JSON card (Family A + Family B).
 
+### Tracker Production Safety Net — Read-Side Gate + Cleanup (28 May 2026)
+Fixes the production-only issue where legacy candidate rows (persisted before the visibility gate landed) were still rendering plain/incomplete cards in the RM queue.
+
+- **`GET /api/v3/opportunities/candidates`** now runs the same `passes_visibility_gate` check on every row before returning. Rows that fail are silently dropped from the response — they are NOT mutated in the DB. `enforce_gate=false` query param disables this for debugging.
+- **Actioned rows are preserved**: pipeline states `reviewing | outreach_sent | meeting_booked | won` skip the gate entirely. Once an RM has interacted with a card, the gate never hides it (manual decisions always win).
+- **`POST /api/v3/admin/tracker/cleanup-legacy`** — one-shot maintenance endpoint that flips legacy non-actioned rows to `pipeline_state=dismissed_auto` with `dismissal_reason=legacy_visibility_gate_cleanup`. Idempotent. `?dry_run=true` returns what would change without writing. Returns counts + first 25 examples for audit.
+- **Defence in depth**: the write-side gate (during a scan) and the read-side gate (on every list call) now both run, so even if a future code path inserts a bad row, the RM queue stays clean.
+- **Regression**: 64/64 pytest still PASS. Live preview's 9 cards all pass the gate (cleanup is a no-op there).
+
 ### Tracker Quality-Preserving Volume Fix (28 May 2026)
 Adds a quality-preserving top-up loop so the visible queue can grow beyond the strict gate without weakening filters.
 

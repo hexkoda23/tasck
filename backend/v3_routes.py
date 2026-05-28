@@ -1986,6 +1986,7 @@ def make_v3_router(db):
         status: Optional[str] = None,
         pipeline_state: Optional[str] = None,
         include_dismissed_auto: bool = False,
+        enforce_gate: bool = True,
     ):
         query: Dict[str, Any] = {}
         if status:
@@ -1996,6 +1997,27 @@ def make_v3_router(db):
             # Hide auto-dismissed candidates from the default queue
             query["pipeline_state"] = {"$ne": "dismissed_auto"}
         rows = await db.v3_opportunity_candidates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+        # ---- Read-side visibility gate (production safety net) -----------
+        # Legacy rows persisted BEFORE the visibility gate landed would still
+        # render without this filter. Mark them dismissed_auto on the fly so
+        # they don't reach the RM queue, but do NOT mutate the DB (the cleanup
+        # endpoint below does that explicitly).
+        if enforce_gate and not include_dismissed_auto:
+            kept: List[Dict[str, Any]] = []
+            for row in rows:
+                if (row.get("pipeline_state") or "") in (
+                    "reviewing", "outreach_sent", "meeting_booked", "won"
+                ):
+                    # Once an RM has actioned a card, leave it alone — the gate
+                    # only governs the unreviewed "new" queue.
+                    kept.append(row)
+                    continue
+                passes, _ = v3_tracker_dedupe.passes_visibility_gate(row)
+                if passes:
+                    kept.append(row)
+            rows = kept
+
         return sorted(
             rows,
             key=lambda item: (
@@ -2013,6 +2035,52 @@ def make_v3_router(db):
                 str(item.get("scanned_at") or item.get("created_at") or ""),
             ),
         )
+
+    @router.post("/admin/tracker/cleanup-legacy")
+    async def cleanup_legacy_candidates(dry_run: bool = False):
+        """One-shot maintenance: walks every non-actioned candidate row and
+        flips it to `dismissed_auto` if it would fail today's visibility gate.
+
+        - Actioned rows (reviewing / outreach_sent / meeting_booked / won) are
+          left untouched — manual decisions always win.
+        - `dry_run=true` returns what would change without writing.
+        - Idempotent: safe to call repeatedly.
+        """
+        # Pull only rows that *could* be candidates for cleanup
+        rows = await db.v3_opportunity_candidates.find(
+            {"pipeline_state": {"$nin": ["reviewing", "outreach_sent", "meeting_booked", "won", "dismissed_auto"]}},
+            {"_id": 0},
+        ).to_list(5000)
+
+        to_dismiss: List[Dict[str, str]] = []
+        for row in rows:
+            passes, reason = v3_tracker_dedupe.passes_visibility_gate(row)
+            if not passes:
+                to_dismiss.append({
+                    "id": row.get("id"),
+                    "partner_name": row.get("partner_name") or row.get("brand_name") or "",
+                    "reason": reason,
+                })
+
+        if not dry_run and to_dismiss:
+            ids = [item["id"] for item in to_dismiss if item.get("id")]
+            await db.v3_opportunity_candidates.update_many(
+                {"id": {"$in": ids}},
+                {"$set": {
+                    "pipeline_state": "dismissed_auto",
+                    "dismissal_reason": "legacy_visibility_gate_cleanup",
+                    "updated_at": _now_iso(),
+                }},
+            )
+
+        return {
+            "scanned": len(rows),
+            "dismissed": 0 if dry_run else len(to_dismiss),
+            "would_dismiss": len(to_dismiss),
+            "dry_run": dry_run,
+            "examples": to_dismiss[:25],
+        }
+
 
     @router.get("/opportunities/pipeline-counts")
     async def opportunity_pipeline_counts():
