@@ -137,6 +137,115 @@ def build_query_plans(
 
     return plans
 
+
+# ---------------------------------------------------------------------------
+# Top-up plan builder (Quality-Preserving Volume Fix)
+# ---------------------------------------------------------------------------
+
+# Extended Nigerian trade-press allowlist (used in attempt 4 — wider source coverage)
+_TRADE_PRESS_EXTENDED = (
+    "(site:marketingedge.com.ng OR site:brandcom.ng OR site:thecable.ng "
+    "OR site:businessday.ng OR site:businessday.com.ng "
+    "OR site:premiumtimesng.com OR site:guardian.ng OR site:thisdaylive.com "
+    "OR site:pulse.ng OR site:nairametrics.com OR site:techcabal.com "
+    "OR site:techpoint.africa OR site:independent.ng OR site:tribuneonlineng.com "
+    "OR site:encomium.ng)"
+)
+
+# Extra query variants per signal type (used in attempt 3)
+_EXTRA_VARIANTS: Dict[str, List[str]] = {
+    "creator_signing": [
+        '("signs brand ambassador" OR "unveils ambassador" OR "appoints brand ambassador" OR "names new ambassador")',
+        '("celebrity endorsement" OR "ambassador deal" OR "official spokesperson" OR "face of the brand")',
+    ],
+    "campaign_launch": [
+        '("brand activation" OR "consumer activation" OR "experiential campaign" OR "experiential marketing")',
+        '("rolls out campaign" OR "kicks off campaign" OR "debuts campaign" OR "campaign goes live")',
+    ],
+    "rfp_open": [
+        '("invites pitch" OR "agency pitch" OR "creative agency review" OR "agency pitch process")',
+        '("seeking creative agency" OR "media agency review" OR "shortlists agencies" OR "calls for pitches")',
+    ],
+    "spend_signal": [
+        '("sponsorship deal" OR "title sponsor" OR "headline sponsor" OR "official partner")',
+        '("launch event" OR "market expansion" OR "go-to-market" OR "brand investment")',
+    ],
+}
+
+
+def build_topup_plans(
+    base_query: str,
+    country: str,
+    attempt: int,
+    enabled_sources: Optional[List[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Return a fresh set of plans for top-up attempt N (1..4).
+
+    Each attempt broadens differently — see spec §4:
+      Attempt 1: same plans (caller increases per_source_limit)
+      Attempt 2: broaden recency to past 12 months (qdr:y), all bucketed PIPELINE
+      Attempt 3: extra query variants per signal type
+      Attempt 4: expand trade-press domain coverage + extra variants combined
+    """
+    geo = (country or "Nigeria").strip()
+    base = (base_query or "").strip()
+    enabled = set(enabled_sources or []) or None
+    plans: List[Dict[str, Any]] = []
+
+    def _add(source_key: str, source_label: str, site_filter: Optional[str],
+             engine_kwargs: Dict[str, Any], signal_key: str, signal_label: str,
+             terms: str, bucket: str, tbs: str) -> None:
+        if enabled and source_key not in enabled:
+            return
+        parts: List[str] = [terms, geo]
+        if site_filter:
+            parts.append(site_filter)
+        if base:
+            parts.append(base)
+        plans.append({
+            "source_key": source_key,
+            "source_label": source_label,
+            "signal_type": signal_key,
+            "signal_label": signal_label,
+            "freshness_bucket": bucket,
+            "q": " ".join(parts),
+            "engine_kwargs": dict(engine_kwargs),
+            "tbs": tbs,
+        })
+
+    if attempt == 2:
+        # Broaden recency to past 12 months — all marked PIPELINE per spec §4
+        for source in SOURCES:
+            for signal in SIGNAL_QUERIES:
+                _add(source["key"], source["label"], source["site_filter"],
+                     source["engine_kwargs"], signal["key"], signal["label"],
+                     signal["terms"], "pipeline", "qdr:y")
+        return plans
+
+    if attempt == 3:
+        # Extra query variants × 4 sources × 4 signals, default 60/40 mix
+        for s_idx, source in enumerate(SOURCES):
+            for sig_idx, signal in enumerate(SIGNAL_QUERIES):
+                bucket = _DEFAULT_BUCKET_MATRIX[s_idx][sig_idx]
+                for variant_terms in _EXTRA_VARIANTS.get(signal["key"], []):
+                    _add(source["key"], source["label"], source["site_filter"],
+                         source["engine_kwargs"], signal["key"], signal["label"],
+                         variant_terms, bucket, RECENCY_TBS[bucket])
+        return plans
+
+    if attempt >= 4:
+        # Widen trade-press coverage + use extra variants — only for trade_press source
+        for signal in SIGNAL_QUERIES:
+            for variant_terms in _EXTRA_VARIANTS.get(signal["key"], [signal["terms"]]):
+                _add("trade_press", "Nigerian Trade",
+                     _TRADE_PRESS_EXTENDED, {},
+                     signal["key"], signal["label"],
+                     variant_terms, "pipeline", "qdr:y")
+        return plans
+
+    # Attempt 0/1 fall through to no extra plans (caller reuses base plans)
+    return []
+
 # ---------------------------------------------------------------------------
 # Pass 1 — deterministic filter
 # ---------------------------------------------------------------------------

@@ -532,11 +532,24 @@ const V3AdminOpportunityScanner = () => {
               <div className="mt-2 grid grid-cols-2 gap-1.5 text-[11px] text-[#6E6657]" data-testid="opps-scan-stats">
                 <span>Fan-out: <b className="text-[#1A1A1A]">{scan.fan_out ?? '—'}</b> calls</span>
                 <span>Raw: <b className="text-[#1A1A1A]">{scan.raw_count}</b></span>
-                <span>Hot/Pipe: <b className="text-[#1A1A1A]">{scan.hot_count ?? 0}/{scan.pipeline_count ?? 0}</b></span>
+                <span>Pass-1 keep: <b className="text-[#1A1A1A]">{scan.pass_1_survivors ?? 0}</b></span>
                 <span>Pass-1 reject: <b className="text-[#1A1A1A]">{scan.pass1_rejected ?? 0}</b></span>
+                <span>LLM enriched: <b className="text-[#1A1A1A]">{scan.llm_enriched_count ?? scan.llm_attempts ?? 0}</b></span>
                 <span>Auto-dismiss: <b className="text-[#1A1A1A]">{scan.auto_dismissed ?? 0}</b></span>
-                <span>Candidates: <b className="text-[#1F4A3A]">{scan.candidate_count}</b></span>
+                <span>Dedupe-merged: <b className="text-[#1A1A1A]">{(scan.batch_dedupe_dropped ?? 0) + (scan.db_merge_count ?? 0)}</b></span>
+                <span>CRM-ready: <b className="text-[#1F4A3A]">{scan.candidate_count}</b></span>
               </div>
+              {(scan.top_up_attempts ?? 0) > 0 && (
+                <div className="mt-2 pt-2 border-t border-[#E8E4DB] text-[10px] text-[#6E6657]" data-testid="opps-topup-summary">
+                  Top-up: <b className="text-[#1A1A1A]">{scan.top_up_attempts}</b> broader attempt{scan.top_up_attempts === 1 ? '' : 's'} run
+                  {scan.top_up_reason && <> · stopped on <b className="text-[#1A1A1A]">{scan.top_up_reason.replace(/_/g, ' ')}</b></>}
+                </div>
+              )}
+              {(scan.candidate_count ?? 0) < (scan.min_target ?? 25) && scan.status === 'completed' && (
+                <div className="mt-2 pt-2 border-t border-[#FBE6DE] text-[11px] text-[#B54A37]" data-testid="opps-low-volume-note">
+                  Only {scan.candidate_count} high-confidence opportunities found. Try broader sources, broader recency, or relax the query.
+                </div>
+              )}
               {scan.cost_estimate && (
                 <div className="mt-2 pt-2 border-t border-[#E8E4DB] text-[10px] text-[#8A8A8A]" data-testid="opps-cost-telemetry">
                   Est. cost: <b className="text-[#1A1A1A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>${scan.cost_estimate.total_usd?.toFixed(3)}</b>

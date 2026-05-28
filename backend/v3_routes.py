@@ -2581,361 +2581,419 @@ Produce the opportunity card JSON.
         else:
             await db.v3_opportunity_scans.insert_one({**scan})
 
-        per_call_limit = max(1, min(int(payload.template.per_source_limit or 10), 20))
         gl = _country_to_gl(payload.template.country)
+        # Cache all existing candidates ONCE so we don't hammer Mongo per attempt.
+        existing_rows = await db.v3_opportunity_candidates.find({}, {"_id": 0}).to_list(2000)
 
-        # ---- Single-call helper (used by gather) --------------------------
-        async def _serpapi_one(plan: Dict[str, Any]) -> Dict[str, Any]:
-            params = {
-                "engine": "google",
-                "q": plan["q"],
-                "api_key": api_key,
-                "hl": "en",
-                "gl": gl,
-                "num": per_call_limit,
-                "tbs": plan["tbs"],
-                **plan.get("engine_kwargs", {}),
-            }
-            redacted = {k: ("***REDACTED***" if k == "api_key" else v) for k, v in params.items()}
-            logger.info(
-                "[SerpAPI fan-out] source=%s signal=%s bucket=%s params=%s",
-                plan["source_key"], plan["signal_type"], plan["freshness_bucket"], redacted,
-            )
-            try:
-                response = await asyncio.to_thread(
-                    requests.get, "https://serpapi.com/search.json", params=params, timeout=25,
-                )
-                response.raise_for_status()
-                data = response.json()
-                logger.info(
-                    "[SerpAPI fan-out] << %s/%s/%s organic=%d news=%d top=%d error=%s",
-                    plan["source_key"], plan["signal_type"], plan["freshness_bucket"],
-                    len(data.get("organic_results") or []),
-                    len(data.get("news_results") or []),
-                    len(data.get("top_stories") or []),
-                    data.get("error"),
-                )
-                return {"plan": plan, "raw": data, "error": data.get("error")}
-            except Exception as exc:
-                logger.warning("[SerpAPI fan-out] call failed: %s — %s", plan["source_key"], exc)
-                return {"plan": plan, "raw": {}, "error": str(exc)}
-
-        # ---- Fan-out: all 16 calls in parallel ----------------------------
-        fanout_results = await asyncio.gather(*[_serpapi_one(p) for p in plans])
-
-        # ---- Pool + tag every item with provenance ------------------------
-        all_items: List[Dict[str, Any]] = []
-        seen_urls: set = set()
-        for result in fanout_results:
-            plan = result["plan"]
-            raw = result["raw"] or {}
-            for item in _result_items(raw):
-                url = (item.get("link") or "").strip()
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                all_items.append({
-                    **item,
-                    "_source_key": plan["source_key"],
-                    "_source_label": plan["source_label"],
-                    "_signal_type_targeted": plan["signal_type"],
-                    "_freshness_bucket": plan["freshness_bucket"],
-                })
-
-        if not all_items:
-            # Fail-soft: surface the worst error so the UI can show it
-            first_error = next((r["error"] for r in fanout_results if r.get("error")), None)
-            message = f"Multi-source SerpAPI fan-out returned no results. Last error: {first_error}" if first_error else "Multi-source SerpAPI fan-out returned no results."
-            await db.v3_opportunity_scans.update_one(
-                {"id": scan_id},
-                {"$set": {"status": "failed", "error": message, "raw_count": 0}},
-            )
-            raise HTTPException(502, message)
-
-        # ---- Pass 1 — source-aware deterministic filter (sync, fast) -----
-        survivors: List[Dict[str, Any]] = []
-        pass1_rejected = 0
-        for item in all_items:
-            gate = v3_tracker_v33.pass1_keep(
-                item.get("title", ""), item.get("snippet", ""),
-                source_key=item.get("_source_key"),
-                source_url=item.get("link", ""),
-            )
-            if not gate["keep"]:
-                pass1_rejected += 1
-                logger.info(
-                    "[Tracker v3.3] Pass-1 reject %s (%s): %s",
-                    item.get("_source_key"), gate["reason"], (item.get("title") or "")[:80],
-                )
-                continue
-            survivors.append(item)
-
-        # Cap LLM volume per scan to keep total scan time bounded (~60s budget)
-        # Spread across (source, freshness) buckets so we keep diversity.
-        MAX_LLM_CALLS = 40
-        if len(survivors) > MAX_LLM_CALLS:
-            # Round-robin pick across source_key + freshness_bucket
-            buckets: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
-            for s in survivors:
-                key = (s.get("_source_key") or "unknown", s.get("_freshness_bucket") or "pipeline")
-                buckets.setdefault(key, []).append(s)
-            balanced: List[Dict[str, Any]] = []
-            while len(balanced) < MAX_LLM_CALLS and any(buckets.values()):
-                for k in list(buckets.keys()):
-                    if not buckets[k]:
-                        continue
-                    balanced.append(buckets[k].pop(0))
-                    if len(balanced) >= MAX_LLM_CALLS:
-                        break
-            llm_skipped_overflow = len(survivors) - len(balanced)
-            survivors = balanced
-            logger.info("[Tracker v3.3] Capped LLM volume: %d skipped (over %d limit)", llm_skipped_overflow, MAX_LLM_CALLS)
-
-        # ---- Pass 2 — parallel Claude Sonnet 4.5 (bounded concurrency) -----
+        # ---- Aggregate diagnostics across all attempts ----------------------
+        diagnostics = {
+            "raw_results_count": 0,
+            "pass_1_survivors": 0,
+            "llm_enriched_count": 0,
+            "dismissed_auto_count": 0,
+            "duplicate_merged_count": 0,
+            "batch_dedupe_dropped": 0,
+            "visible_cards_count": 0,
+            "fallback_count": 0,
+            "llm_attempts": 0,
+            "llm_failures": 0,
+            "serpapi_calls_total": 0,
+            "top_up_attempts": 0,
+            "top_up_reason": None,
+            "attempts": [],  # per-attempt summary for debugging
+        }
+        all_seen_urls: set = set()
+        candidates: List[Dict[str, Any]] = []
         llm_configured = scan["extraction_method"] == "llm"
-        llm_concurrency = 6
-        sem = asyncio.Semaphore(llm_concurrency)
+        first_attempt_plans = list(plans)
 
-        async def _enrich(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-            if not llm_configured:
-                return None
-            async with sem:
+        # ---- One attempt — runs the existing fan-out → persist pipeline ----
+        async def _execute_attempt(attempt_plans: List[Dict[str, Any]], per_call_limit: int, attempt_num: int) -> int:
+            """Execute one fan-out attempt. Returns the number of visible cards added.
+            Mutates: diagnostics, all_seen_urls, existing_rows, candidates."""
+            if not attempt_plans:
+                return 0
+
+            # ---- Single-call helper (used by gather) --------------------------
+            async def _serpapi_one(plan: Dict[str, Any]) -> Dict[str, Any]:
+                params = {
+                    "engine": "google",
+                    "q": plan["q"],
+                    "api_key": api_key,
+                    "hl": "en",
+                    "gl": gl,
+                    "num": per_call_limit,
+                    "tbs": plan["tbs"],
+                    **plan.get("engine_kwargs", {}),
+                }
+                redacted = {k: ("***REDACTED***" if k == "api_key" else v) for k, v in params.items()}
+                logger.info(
+                    "[SerpAPI fan-out a%d] source=%s signal=%s bucket=%s params=%s",
+                    attempt_num, plan["source_key"], plan["signal_type"], plan["freshness_bucket"], redacted,
+                )
                 try:
-                    return await v3_tracker_v33.call_llm_enricher(
-                        title=item.get("title", ""),
-                        snippet=item.get("snippet", ""),
-                        source_url=item.get("link", ""),
-                        source_domain=_domain_from_url(item.get("link", "")),
-                        signal_type_targeted=item.get("_signal_type_targeted") or "unknown",
-                        freshness_bucket=item.get("_freshness_bucket") or "pipeline",
-                        source_label=item.get("_source_label"),
+                    response = await asyncio.to_thread(
+                        requests.get, "https://serpapi.com/search.json", params=params, timeout=25,
                     )
+                    response.raise_for_status()
+                    data = response.json()
+                    logger.info(
+                        "[SerpAPI fan-out a%d] << %s/%s/%s organic=%d news=%d top=%d error=%s",
+                        attempt_num, plan["source_key"], plan["signal_type"], plan["freshness_bucket"],
+                        len(data.get("organic_results") or []),
+                        len(data.get("news_results") or []),
+                        len(data.get("top_stories") or []),
+                        data.get("error"),
+                    )
+                    return {"plan": plan, "raw": data, "error": data.get("error")}
                 except Exception as exc:
-                    logger.warning("[Tracker v3.3] enrichment exception: %s", exc)
+                    logger.warning("[SerpAPI fan-out a%d] call failed: %s — %s", attempt_num, plan["source_key"], exc)
+                    return {"plan": plan, "raw": {}, "error": str(exc)}
+
+            fanout_results = await asyncio.gather(*[_serpapi_one(p) for p in attempt_plans])
+            diagnostics["serpapi_calls_total"] += len(attempt_plans)
+
+            # Pool + tag — skip URLs already seen in any previous attempt
+            all_items: List[Dict[str, Any]] = []
+            for result in fanout_results:
+                plan = result["plan"]
+                raw = result["raw"] or {}
+                for item in _result_items(raw):
+                    url = (item.get("link") or "").strip()
+                    if not url or url in all_seen_urls:
+                        continue
+                    all_seen_urls.add(url)
+                    all_items.append({
+                        **item,
+                        "_source_key": plan["source_key"],
+                        "_source_label": plan["source_label"],
+                        "_signal_type_targeted": plan["signal_type"],
+                        "_freshness_bucket": plan["freshness_bucket"],
+                    })
+            diagnostics["raw_results_count"] += len(all_items)
+
+            if not all_items:
+                if attempt_num == 0:
+                    first_error = next((r["error"] for r in fanout_results if r.get("error")), None)
+                    if first_error:
+                        message = f"Multi-source SerpAPI fan-out returned no results. Last error: {first_error}"
+                        await db.v3_opportunity_scans.update_one(
+                            {"id": scan_id},
+                            {"$set": {"status": "failed", "error": message, "raw_count": 0}},
+                        )
+                        raise HTTPException(502, message)
+                return 0
+
+            # ---- Pass 1 ---------------------------------------------------------
+            survivors: List[Dict[str, Any]] = []
+            attempt_pass1_rejected = 0
+            for item in all_items:
+                gate = v3_tracker_v33.pass1_keep(
+                    item.get("title", ""), item.get("snippet", ""),
+                    source_key=item.get("_source_key"),
+                    source_url=item.get("link", ""),
+                )
+                if not gate["keep"]:
+                    attempt_pass1_rejected += 1
+                    logger.info(
+                        "[Tracker v3.3 a%d] Pass-1 reject %s (%s): %s",
+                        attempt_num, item.get("_source_key"), gate["reason"], (item.get("title") or "")[:80],
+                    )
+                    continue
+                survivors.append(item)
+            diagnostics["pass_1_survivors"] += len(survivors)
+
+            # Cap LLM volume per attempt (round-robin across source × freshness)
+            MAX_LLM_CALLS = 40
+            if len(survivors) > MAX_LLM_CALLS:
+                buckets: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+                for s in survivors:
+                    key = (s.get("_source_key") or "unknown", s.get("_freshness_bucket") or "pipeline")
+                    buckets.setdefault(key, []).append(s)
+                balanced: List[Dict[str, Any]] = []
+                while len(balanced) < MAX_LLM_CALLS and any(buckets.values()):
+                    for k in list(buckets.keys()):
+                        if not buckets[k]:
+                            continue
+                        balanced.append(buckets[k].pop(0))
+                        if len(balanced) >= MAX_LLM_CALLS:
+                            break
+                logger.info("[Tracker v3.3 a%d] Capped LLM volume: %d skipped (over %d limit)",
+                            attempt_num, len(survivors) - len(balanced), MAX_LLM_CALLS)
+                survivors = balanced
+
+            # ---- Pass 2 — parallel LLM enrichment -----------------------------
+            llm_concurrency = 6
+            sem = asyncio.Semaphore(llm_concurrency)
+
+            async def _enrich(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                if not llm_configured:
                     return None
+                async with sem:
+                    try:
+                        return await v3_tracker_v33.call_llm_enricher(
+                            title=item.get("title", ""),
+                            snippet=item.get("snippet", ""),
+                            source_url=item.get("link", ""),
+                            source_domain=_domain_from_url(item.get("link", "")),
+                            signal_type_targeted=item.get("_signal_type_targeted") or "unknown",
+                            freshness_bucket=item.get("_freshness_bucket") or "pipeline",
+                            source_label=item.get("_source_label"),
+                        )
+                    except Exception as exc:
+                        logger.warning("[Tracker v3.3 a%d] enrichment exception: %s", attempt_num, exc)
+                        return None
 
-        enriched_cards = await asyncio.gather(*[_enrich(item) for item in survivors])
-        llm_attempts = len(survivors) if llm_configured else 0
-        llm_failures = sum(1 for c in enriched_cards if c is None) if llm_configured else 0
+            enriched_cards = await asyncio.gather(*[_enrich(item) for item in survivors])
+            attempt_llm_attempts = len(survivors) if llm_configured else 0
+            attempt_llm_failures = sum(1 for c in enriched_cards if c is None) if llm_configured else 0
+            diagnostics["llm_attempts"] += attempt_llm_attempts
+            diagnostics["llm_failures"] += attempt_llm_failures
+            diagnostics["llm_enriched_count"] += sum(1 for c in enriched_cards if c is not None)
 
-        # ---- Assemble candidates --------------------------------------------
-        fallback_count = 0
-        auto_dismissed = 0
-        # First build all raw candidates in-memory. Dedupe happens AFTER the
-        # full batch is built so cross-source duplicates collapse correctly.
-        raw_batch: List[Dict[str, Any]] = []
+            # ---- Assemble + visibility gate ----------------------------------
+            attempt_fallback = 0
+            attempt_dismissed = 0
+            raw_batch: List[Dict[str, Any]] = []
 
-        for item, v33_card in zip(survivors, enriched_cards):
-            source_key = item.get("_source_key")
-            signal_type_targeted = item.get("_signal_type_targeted") or "unknown"
-            freshness_bucket = item.get("_freshness_bucket") or "pipeline"
-            source_label = item.get("_source_label")
+            for item, v33_card in zip(survivors, enriched_cards):
+                llm_card = None
+                extraction_method = "heuristic_fallback"
+                if v33_card is None:
+                    attempt_fallback += 1
+                else:
+                    extraction_method = "llm_pass_2"
 
-            llm_card = None  # legacy field, kept for back-compat
-            extraction_method = "heuristic_fallback"
-            if v33_card is None:
-                fallback_count += 1
-            else:
-                extraction_method = "llm_pass_2"
+                candidate = _candidate_from_result(item, payload, scan_id, llm_card=llm_card, extraction_method=extraction_method)
 
-            candidate = _candidate_from_result(item, payload, scan_id, llm_card=llm_card, extraction_method=extraction_method)
-
-            # Layer v3.3 fields + provenance
-            if v33_card:
-                candidate.update({
-                    "partner_name": v33_card["partner_name"],
-                    "brand_type": v33_card["brand_type"],
-                    "industry": v33_card["industry"] or candidate.get("industry") or "Other",
-                    "country": v33_card["country"] or candidate.get("country") or "Nigeria",
-                    "website": v33_card["website"],
-                    "primary_contact_name": v33_card["primary_contact_name"],
-                    "primary_contact_role": v33_card["primary_contact_role"],
-                    "primary_contact_email": v33_card["primary_contact_email"],
-                    "primary_contact_phone": v33_card["primary_contact_phone"],
-                    "primary_contact_linkedin": v33_card["primary_contact_linkedin"],
-                    "key_marketing_focus": v33_card["key_marketing_focus"],
-                    "primary_target_audience": v33_card["primary_target_audience"],
-                    "key_marketing_channels": v33_card["key_marketing_channels"],
-                    "marketing_kpis": v33_card["marketing_kpis"],
-                    "likelihood_to_work_with_tta": v33_card["likelihood_to_work_with_tta"],
-                    "signal_type": v33_card["signal_type"],
-                    "signal_summary": v33_card["signal_summary"],
-                    "signal_strength": v33_card["signal_strength"],
-                    "brand_confidence": v33_card["brand_confidence"],
-                    "why_this_matters": v33_card["why_this_matters"],
-                    "outreach_angle": v33_card["outreach_angle"],
-                    "outreach_draft": v33_card["outreach_draft"],
-                    "detected_keywords": v33_card["detected_keywords"],
-                    "dismissal_reason": v33_card["dismissal_reason"],
-                    "brand_name": v33_card["partner_name"] or candidate.get("brand_name"),
-                })
-                if (v33_card["brand_confidence"] or 0) < 40:
-                    candidate["pipeline_state"] = "dismissed_auto"
-                    auto_dismissed += 1
+                if v33_card:
+                    candidate.update({
+                        "partner_name": v33_card["partner_name"],
+                        "brand_type": v33_card["brand_type"],
+                        "industry": v33_card["industry"] or candidate.get("industry") or "Other",
+                        "country": v33_card["country"] or candidate.get("country") or "Nigeria",
+                        "website": v33_card["website"],
+                        "primary_contact_name": v33_card["primary_contact_name"],
+                        "primary_contact_role": v33_card["primary_contact_role"],
+                        "primary_contact_email": v33_card["primary_contact_email"],
+                        "primary_contact_phone": v33_card["primary_contact_phone"],
+                        "primary_contact_linkedin": v33_card["primary_contact_linkedin"],
+                        "key_marketing_focus": v33_card["key_marketing_focus"],
+                        "primary_target_audience": v33_card["primary_target_audience"],
+                        "key_marketing_channels": v33_card["key_marketing_channels"],
+                        "marketing_kpis": v33_card["marketing_kpis"],
+                        "likelihood_to_work_with_tta": v33_card["likelihood_to_work_with_tta"],
+                        "signal_type": v33_card["signal_type"],
+                        "signal_summary": v33_card["signal_summary"],
+                        "signal_strength": v33_card["signal_strength"],
+                        "brand_confidence": v33_card["brand_confidence"],
+                        "why_this_matters": v33_card["why_this_matters"],
+                        "outreach_angle": v33_card["outreach_angle"],
+                        "outreach_draft": v33_card["outreach_draft"],
+                        "detected_keywords": v33_card["detected_keywords"],
+                        "dismissal_reason": v33_card["dismissal_reason"],
+                        "brand_name": v33_card["partner_name"] or candidate.get("brand_name"),
+                    })
+                    if (v33_card["brand_confidence"] or 0) < 40:
+                        candidate["pipeline_state"] = "dismissed_auto"
+                        attempt_dismissed += 1
+                    else:
+                        candidate["pipeline_state"] = "new"
                 else:
                     candidate["pipeline_state"] = "new"
-            else:
-                candidate["pipeline_state"] = "new"
 
-            candidate["source_key"] = source_key
-            candidate["source_label"] = source_label
-            candidate["signal_type_targeted"] = signal_type_targeted
-            candidate["freshness_bucket"] = freshness_bucket
-            candidate.setdefault("scanned_at", _now_iso())
-            # Canonicalise source_url for downstream dedupe
-            candidate["source_url_canonical"] = v3_tracker_dedupe.normalize_url(
-                candidate.get("source_url", "")
-            )
+                candidate["source_key"] = item.get("_source_key")
+                candidate["source_label"] = item.get("_source_label")
+                candidate["signal_type_targeted"] = item.get("_signal_type_targeted") or "unknown"
+                candidate["freshness_bucket"] = item.get("_freshness_bucket") or "pipeline"
+                candidate.setdefault("scanned_at", _now_iso())
+                candidate["source_url_canonical"] = v3_tracker_dedupe.normalize_url(candidate.get("source_url", ""))
 
-            # ---- Strict CRM-readiness gate (Dedupe Fix Follow-Up §1) ----
-            # Any card that wouldn't render properly in the RM queue is
-            # auto-dismissed BEFORE dedupe so it can't sneak through as
-            # "supporting evidence" either.
-            if candidate.get("pipeline_state") != "dismissed_auto":
-                passes, reason = v3_tracker_dedupe.passes_visibility_gate(candidate)
-                if not passes:
-                    candidate["pipeline_state"] = "dismissed_auto"
-                    candidate["dismissal_reason"] = reason
-                    auto_dismissed += 1
-                    logger.info(
-                        "[Tracker visibility gate] dismiss %s — %s",
-                        (candidate.get("partner_name") or "?")[:40], reason,
+                if candidate.get("pipeline_state") != "dismissed_auto":
+                    passes, reason = v3_tracker_dedupe.passes_visibility_gate(candidate)
+                    if not passes:
+                        candidate["pipeline_state"] = "dismissed_auto"
+                        candidate["dismissal_reason"] = reason
+                        attempt_dismissed += 1
+                        logger.info("[Tracker visibility gate a%d] dismiss %s — %s",
+                                    attempt_num, (candidate.get("partner_name") or "?")[:40], reason)
+
+                raw_batch.append(candidate)
+
+            diagnostics["fallback_count"] += attempt_fallback
+            diagnostics["dismissed_auto_count"] += attempt_dismissed
+
+            # ---- Dedupe + DB persist ----------------------------------------
+            visible_raw = [c for c in raw_batch if c.get("pipeline_state") != "dismissed_auto"]
+            auto_dismissed_raw = [c for c in raw_batch if c.get("pipeline_state") == "dismissed_auto"]
+            deduped_visible = v3_tracker_dedupe.dedupe_batch(visible_raw)
+            attempt_batch_drop = len(visible_raw) - len(deduped_visible)
+            diagnostics["batch_dedupe_dropped"] += attempt_batch_drop
+
+            attempt_db_merge = 0
+            attempt_visible_added = 0
+            for card in deduped_visible:
+                existing = v3_tracker_dedupe.find_db_duplicate(card, existing_rows)
+                if existing:
+                    merged = v3_tracker_dedupe.merge_into_primary(dict(existing), [card])
+                    await db.v3_opportunity_candidates.update_one(
+                        {"id": existing["id"]},
+                        {"$set": {
+                            "brand_confidence": merged["brand_confidence"],
+                            "signal_strength": merged["signal_strength"],
+                            "supporting_sources": merged.get("supporting_sources", []),
+                            "duplicate_count": merged.get("duplicate_count"),
+                            "duplicate_cluster_id": merged.get("duplicate_cluster_id"),
+                            "key_marketing_focus": merged.get("key_marketing_focus"),
+                            "primary_target_audience": merged.get("primary_target_audience"),
+                            "key_marketing_channels": merged.get("key_marketing_channels"),
+                            "marketing_kpis": merged.get("marketing_kpis"),
+                            "website": merged.get("website"),
+                            "primary_contact_name": merged.get("primary_contact_name"),
+                            "primary_contact_role": merged.get("primary_contact_role"),
+                            "primary_contact_email": merged.get("primary_contact_email"),
+                            "primary_contact_phone": merged.get("primary_contact_phone"),
+                            "primary_contact_linkedin": merged.get("primary_contact_linkedin"),
+                            "why_this_matters": merged.get("why_this_matters"),
+                            "outreach_angle": merged.get("outreach_angle"),
+                            "outreach_draft": merged.get("outreach_draft"),
+                            "updated_at": _now_iso(),
+                        }},
                     )
+                    attempt_db_merge += 1
+                    for idx, row in enumerate(existing_rows):
+                        if row.get("id") == existing["id"]:
+                            existing_rows[idx] = {**row, **merged}
+                            break
+                    if merged.get("pipeline_state") not in ("dismissed", "dismissed_auto"):
+                        # Only append if not already in `candidates` from a previous attempt
+                        if not any(c.get("id") == existing["id"] for c in candidates):
+                            candidates.append(merged)
+                            attempt_visible_added += 1
+                else:
+                    await db.v3_opportunity_candidates.insert_one({**card})
+                    existing_rows.append(card)
+                    candidates.append(card)
+                    attempt_visible_added += 1
 
-            raw_batch.append(candidate)
-
-        # ---- Stage B + C — in-batch semantic + fuzzy dedupe ------------------
-        # Split visible vs auto-dismissed so we dedupe only the visible queue.
-        visible_raw = [c for c in raw_batch if c.get("pipeline_state") != "dismissed_auto"]
-        auto_dismissed_raw = [c for c in raw_batch if c.get("pipeline_state") == "dismissed_auto"]
-
-        deduped_visible = v3_tracker_dedupe.dedupe_batch(visible_raw)
-        batch_dedupe_dropped = len(visible_raw) - len(deduped_visible)
-        logger.info(
-            "[Tracker dedupe] in-batch: %d visible → %d primaries (dropped %d duplicates)",
-            len(visible_raw), len(deduped_visible), batch_dedupe_dropped,
-        )
-
-        # ---- Persist: merge into DB if existing match, else insert -----------
-        candidates: List[Dict[str, Any]] = []
-        db_merge_count = 0
-
-        # Cache all existing candidates ONCE so we don't hammer Mongo per card.
-        # Only inspect non-dismissed rows — auto_dismissed shouldn't poison live merges.
-        existing_rows = await db.v3_opportunity_candidates.find(
-            {}, {"_id": 0},
-        ).to_list(2000)
-
-        for card in deduped_visible:
-            existing = v3_tracker_dedupe.find_db_duplicate(card, existing_rows)
-            if existing:
-                # Merge: boost confidence, append supporting source, update DB.
-                merged = v3_tracker_dedupe.merge_into_primary(dict(existing), [card])
-                await db.v3_opportunity_candidates.update_one(
-                    {"id": existing["id"]},
-                    {"$set": {
-                        "brand_confidence": merged["brand_confidence"],
-                        "signal_strength": merged["signal_strength"],
-                        "supporting_sources": merged.get("supporting_sources", []),
-                        "duplicate_count": merged.get("duplicate_count"),
-                        "duplicate_cluster_id": merged.get("duplicate_cluster_id"),
-                        "key_marketing_focus": merged.get("key_marketing_focus"),
-                        "primary_target_audience": merged.get("primary_target_audience"),
-                        "key_marketing_channels": merged.get("key_marketing_channels"),
-                        "marketing_kpis": merged.get("marketing_kpis"),
-                        "website": merged.get("website"),
-                        "primary_contact_name": merged.get("primary_contact_name"),
-                        "primary_contact_role": merged.get("primary_contact_role"),
-                        "primary_contact_email": merged.get("primary_contact_email"),
-                        "primary_contact_phone": merged.get("primary_contact_phone"),
-                        "primary_contact_linkedin": merged.get("primary_contact_linkedin"),
-                        "why_this_matters": merged.get("why_this_matters"),
-                        "outreach_angle": merged.get("outreach_angle"),
-                        "outreach_draft": merged.get("outreach_draft"),
-                        "updated_at": _now_iso(),
-                    }},
-                )
-                db_merge_count += 1
-                # Refresh our in-memory cache so a SECOND duplicate in this scan
-                # merges into the same row, not into a stale copy.
-                for idx, row in enumerate(existing_rows):
-                    if row.get("id") == existing["id"]:
-                        existing_rows[idx] = {**row, **merged}
-                        break
-                if merged.get("pipeline_state") not in ("dismissed", "dismissed_auto"):
-                    candidates.append(merged)
-            else:
+            for card in auto_dismissed_raw:
+                existing = v3_tracker_dedupe.find_db_duplicate(card, existing_rows)
+                if existing:
+                    continue
                 await db.v3_opportunity_candidates.insert_one({**card})
                 existing_rows.append(card)
-                candidates.append(card)
 
-        # Persist auto-dismissed rows untouched (audit trail)
-        for card in auto_dismissed_raw:
-            existing = v3_tracker_dedupe.find_db_duplicate(card, existing_rows)
-            if existing:
+            diagnostics["duplicate_merged_count"] += attempt_db_merge
+            diagnostics["attempts"].append({
+                "attempt": attempt_num,
+                "plans": len(attempt_plans),
+                "raw": len(all_items),
+                "pass1_rejected": attempt_pass1_rejected,
+                "llm_attempts": attempt_llm_attempts,
+                "dismissed": attempt_dismissed,
+                "batch_dedupe_dropped": attempt_batch_drop,
+                "db_merge": attempt_db_merge,
+                "visible_added": attempt_visible_added,
+            })
+            logger.info(
+                "[Tracker top-up a%d] +%d visible (raw=%d pass1=%d llm=%d dismissed=%d merged=%d)",
+                attempt_num, attempt_visible_added, len(all_items),
+                attempt_pass1_rejected, attempt_llm_attempts, attempt_dismissed, attempt_db_merge,
+            )
+            return attempt_visible_added
+
+        # ---- Attempt 0 — user's initial plans ---------------------------------
+        per_call_limit = max(1, min(int(payload.template.per_source_limit or 10), 20))
+        await _execute_attempt(first_attempt_plans, per_call_limit, attempt_num=0)
+
+        # ---- Top-up loop ------------------------------------------------------
+        MIN_TARGET = 25
+        topup_strategies = [
+            # (attempt_num passed to builder, per_call_limit_for_this_run)
+            (1, 20),  # increase per_source_limit on the SAME plans
+            (2, max(10, per_call_limit)),  # broaden recency to past 12 months
+            (3, max(10, per_call_limit)),  # extra query variants
+            (4, max(10, per_call_limit)),  # widen trade-press domains
+        ]
+        for topup_num, override_limit in topup_strategies:
+            visible_so_far = len(candidates)
+            if visible_so_far >= MIN_TARGET:
+                diagnostics["top_up_reason"] = "min_target_reached"
+                break
+            # Build the broadened plans for THIS top-up attempt
+            if topup_num == 1:
+                # Reuse the original plans, just bump per_call_limit
+                topup_plans = first_attempt_plans
+            else:
+                topup_plans = v3_tracker_v33.build_topup_plans(
+                    base_query=query,
+                    country=payload.template.country,
+                    attempt=topup_num,
+                    enabled_sources=payload.template.enabled_sources,
+                )
+            if not topup_plans:
                 continue
-            await db.v3_opportunity_candidates.insert_one({**card})
-            existing_rows.append(card)
+            diagnostics["top_up_attempts"] += 1
+            added = await _execute_attempt(topup_plans, override_limit, attempt_num=topup_num)
+            if added == 0:
+                diagnostics["top_up_reason"] = "no_new_unique_results"
+                # Don't break — try the next strategy. Different broadening axes
+                # can still surface fresh content even if one fails.
+                continue
+        else:
+            # Loop completed all 4 attempts without hitting MIN_TARGET
+            if len(candidates) < MIN_TARGET and diagnostics["top_up_reason"] is None:
+                diagnostics["top_up_reason"] = "max_attempts_reached"
+
+        diagnostics["visible_cards_count"] = len(candidates)
 
         # ---- Extraction-method summary ------------------------------------
         extraction_method = "llm"
         if not llm_configured:
             extraction_method = "heuristic_fallback"
-        elif fallback_count:
+        elif diagnostics["fallback_count"]:
             extraction_method = "mixed_llm_heuristic"
 
         # ---- Cost telemetry (Phase 5) -------------------------------------
-        serpapi_cost = round(len(plans) * SERPAPI_USD_PER_CALL, 4)
-        llm_cost = round(llm_attempts * LLM_USD_PER_CALL, 4)
+        serpapi_cost = round(diagnostics["serpapi_calls_total"] * SERPAPI_USD_PER_CALL, 4)
+        llm_cost = round(diagnostics["llm_attempts"] * LLM_USD_PER_CALL, 4)
         total_cost = round(serpapi_cost + llm_cost, 4)
+
+        completion_payload = {
+            "status": "completed",
+            "raw_count": diagnostics["raw_results_count"],
+            "candidate_count": len(candidates),
+            "pass1_rejected": diagnostics["raw_results_count"] - diagnostics["pass_1_survivors"],
+            "pass_1_survivors": diagnostics["pass_1_survivors"],
+            "auto_dismissed": diagnostics["dismissed_auto_count"],
+            "batch_dedupe_dropped": diagnostics["batch_dedupe_dropped"],
+            "db_merge_count": diagnostics["duplicate_merged_count"],
+            "extraction_method": extraction_method,
+            "fallback_count": diagnostics["fallback_count"],
+            "llm_attempts": diagnostics["llm_attempts"],
+            "llm_failures": diagnostics["llm_failures"],
+            "llm_enriched_count": diagnostics["llm_enriched_count"],
+            "fan_out": diagnostics["serpapi_calls_total"],
+            "top_up_attempts": diagnostics["top_up_attempts"],
+            "top_up_reason": diagnostics["top_up_reason"],
+            "min_target": MIN_TARGET,
+            "attempts_breakdown": diagnostics["attempts"],
+            "cost_estimate": {
+                "serpapi_calls": diagnostics["serpapi_calls_total"],
+                "serpapi_usd": serpapi_cost,
+                "llm_calls": diagnostics["llm_attempts"],
+                "llm_usd": llm_cost,
+                "total_usd": total_cost,
+            },
+            "completed_at": _now_iso(),
+        }
 
         await db.v3_opportunity_scans.update_one(
             {"id": scan_id},
-            {"$set": {
-                "status": "completed",
-                "raw_count": len(all_items),
-                "candidate_count": len(candidates),
-                "pass1_rejected": pass1_rejected,
-                "auto_dismissed": auto_dismissed,
-                "batch_dedupe_dropped": batch_dedupe_dropped,
-                "db_merge_count": db_merge_count,
-                "extraction_method": extraction_method,
-                "fallback_count": fallback_count,
-                "llm_attempts": llm_attempts,
-                "llm_failures": llm_failures,
-                "cost_estimate": {
-                    "serpapi_calls": len(plans),
-                    "serpapi_usd": serpapi_cost,
-                    "llm_calls": llm_attempts,
-                    "llm_usd": llm_cost,
-                    "total_usd": total_cost,
-                },
-                "completed_at": _now_iso(),
-            }},
+            {"$set": completion_payload},
         )
         return {
-            "scan": {
-                **scan,
-                "status": "completed",
-                "raw_count": len(all_items),
-                "candidate_count": len(candidates),
-                "pass1_rejected": pass1_rejected,
-                "auto_dismissed": auto_dismissed,
-                "batch_dedupe_dropped": batch_dedupe_dropped,
-                "db_merge_count": db_merge_count,
-                "extraction_method": extraction_method,
-                "fallback_count": fallback_count,
-                "llm_attempts": llm_attempts,
-                "llm_failures": llm_failures,
-                "cost_estimate": {
-                    "serpapi_calls": len(plans),
-                    "serpapi_usd": serpapi_cost,
-                    "llm_calls": llm_attempts,
-                    "llm_usd": llm_cost,
-                    "total_usd": total_cost,
-                },
-                "completed_at": _now_iso(),
-            },
+            "scan": {**scan, **completion_payload},
             "candidates": candidates,
         }
 

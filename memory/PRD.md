@@ -82,6 +82,21 @@ Click the Reset demo button on `/v3/admin/business-cases` (or POST `/api/v3/admi
 - **SerpAPI** (server-side only via `SERPAPI_API_KEY` env). Powers the Brand Opportunity Tracker scan endpoint. Live on preview AND production (`thcodemo.space`).
 - **Emergent LLM Key — Claude Sonnet 4.5** (server-side only via `EMERGENT_LLM_KEY`). Powers Tracker v3.3 Pass-2 enrichment. Returns the v3.3 structured JSON card (Family A + Family B).
 
+### Tracker Quality-Preserving Volume Fix (28 May 2026)
+Adds a quality-preserving top-up loop so the visible queue can grow beyond the strict gate without weakening filters.
+
+- **Top-up planner** (`v3_tracker_v33.build_topup_plans`) — four broadening strategies:
+  - **Attempt 1** (per_source_limit 5→20): reuses the user's base plans with a higher SerpAPI `num`.
+  - **Attempt 2** (broaden recency): same 16-plan grid but `tbs=qdr:y` (past 12 months), all marked PIPELINE.
+  - **Attempt 3** (extra query variants): 32 plans = 4 sources × 4 signals × 2 fresh phrasings per signal (e.g. creator_signing adds "signs brand ambassador", "appoints brand ambassador", "celebrity endorsement", "official spokesperson"; campaign_launch adds "brand activation", "rolls out campaign", "kicks off campaign", "campaign goes live"; rfp_open adds "invites pitch", "shortlists agencies", "calls for pitches"; spend_signal adds "sponsorship deal", "title sponsor", "brand investment").
+  - **Attempt 4** (wider trade-press domains): 8 plans against the extended 16-domain trade-press allowlist (adds thisdaylive, guardian, premiumtimesng, pulse, nairametrics, techcabal, techpoint.africa, independent.ng, tribuneonlineng, encomium to the original 5).
+- **Refactored** `run_opportunity_scan` so the fan-out → Pass 1 → LLM → visibility gate → in-batch dedupe → DB merge sequence is now an inner closure `_execute_attempt(plans, per_call_limit, attempt_num)` that mutates a single shared `candidates` list + `diagnostics` dict + URL-seen set across attempts. Same quality gates run in every attempt (no relaxation).
+- **Loop**: attempt 0 runs the user's plans → top-up attempts 1..4 fire ONLY while `len(candidates) < 25`. Each attempt that produces 0 new candidates is skipped silently (URL-already-seen, dedupe collapses everything, etc.) but the next strategy still runs because different broadening axes can still surface fresh content.
+- **Diagnostics** (`v3_opportunity_scans.{...}`): `raw_results_count`, `pass_1_survivors`, `llm_enriched_count`, `dismissed_auto_count`, `duplicate_merged_count`, `batch_dedupe_dropped`, `visible_cards_count`, `top_up_attempts`, `top_up_reason` (`min_target_reached` | `no_new_unique_results` | `max_attempts_reached`), `attempts_breakdown[]` (per-attempt summary).
+- **UI**: scan summary now shows the full funnel — Fan-out / Raw / Pass-1 keep / Pass-1 reject / LLM enriched / Auto-dismiss / Dedupe-merged / CRM-ready. Adds a "Top-up: N broader attempts run · stopped on X" chip when `top_up_attempts > 0`. When `candidate_count < min_target (25)`, surfaces a low-volume note: "Only N high-confidence opportunities found. Try broader sources, broader recency, or relax the query."
+- **Live verified**: against the same DB that previously surfaced 3 cards, the top-up loop ran a0 (12 plans → +3 visible) + a2 (12 plans qdr:y → +3 visible) + a3 (24 plans extra variants → +3 visible) = **9 CRM-ready cards** with same quality bar (full Signal/Brand Context/Why/Outreach on every card). Pass-1 reject rate held at ~67%, auto-dismiss rate ~74% of LLM-enriched. No junk leaked through.
+- **Pytest**: 6 new tests in `tests/test_tracker_topup.py` covering each attempt's planner output. **Total Tracker pytest: 64/64 PASS** (6 top-up + 21 visibility + 23 dedupe + 14 multi-source).
+
 ### Tracker Dedupe Fix Follow-Up — Visibility Gate (28 May 2026)
 Stops incomplete / low-signal cards from rendering in the RM queue even when they survive Pass 1 + LLM enrichment.
 
