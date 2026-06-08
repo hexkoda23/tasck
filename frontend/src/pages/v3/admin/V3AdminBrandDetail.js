@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { v3Brands, v3Interactions, getProjectsForBrand, v3Stages, formatNairaV3 } from '../../../lib/v3data';
+import { v3Brands, v3Interactions, v3RMs, getProjectsForBrand, getRM, v3Stages, formatNairaV3 } from '../../../lib/v3data';
 import { v3GetBrand } from '../../../lib/v3api';
 import { ChevronLeft, Mail, Phone, Globe, Building2, Sparkles } from 'lucide-react';
 
@@ -11,6 +11,8 @@ const normaliseBrand = (b) => ({
   lastInteraction: b.lastInteraction || b.last_interaction,
   decisionMakers: b.decisionMakers || [{ name: b.primary_contact || b.primaryContact, role: b.role || 'Primary contact', note: 'primary' }],
   leadScoreFactors: b.leadScoreFactors || [{ factor: 'CRM intake', detail: b.status || 'Captured in CRM' }],
+  rmId: b.rm_id || b.rmId || b.relationship_manager?.id || 'rm-temi',
+  relationshipManager: b.relationship_manager || getRM(b.rm_id || b.rmId) || v3RMs[0],
 });
 
 const V3AdminBrandDetail = () => {
@@ -50,6 +52,18 @@ const V3AdminBrandDetail = () => {
             <div className="flex items-center gap-2"><Mail className="w-3.5 h-3.5 text-[#8A8A8A]" /><span className="text-[#5C5C5C]">{brand.email}</span></div>
             <div className="flex items-center gap-2"><Phone className="w-3.5 h-3.5 text-[#8A8A8A]" /><span className="text-[#5C5C5C]">{brand.phone}</span></div>
             <div className="flex items-center gap-2"><Globe className="w-3.5 h-3.5 text-[#8A8A8A]" /><span className="text-[#5C5C5C]">{brand.website}</span></div>
+          </div>
+          <div className="v3-card p-4">
+            <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Relationship Manager</p>
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-full bg-[#DDE7E2] text-[#1F4A3A] flex items-center justify-center text-[11px] font-semibold">
+                {brand.relationshipManager?.initials || 'TB'}
+              </div>
+              <div>
+                <p className="text-[13px] text-[#1A1A1A] font-medium">{brand.relationshipManager?.name || 'Temi Bakare'}</p>
+                <p className="text-[11px] text-[#6E6657]">{brand.relationshipManager?.email || 'temi.bakare@tasck.com'}</p>
+              </div>
+            </div>
           </div>
           <div className="v3-card p-4">
             <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Decision Makers</p>

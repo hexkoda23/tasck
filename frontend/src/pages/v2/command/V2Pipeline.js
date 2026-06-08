@@ -183,7 +183,7 @@ const V2Pipeline = () => {
                         {/* Drop-off indicator */}
                         {count > nextCount && (
                           <text x={`${midX}%`} y={y1bot + 18} textAnchor="middle" className="fill-white/15" style={{ fontSize: '8px', fontFamily: 'monospace' }}>
-                            -{count - nextCount}
+                            {count - nextCount} lost
                           </text>
                         )}
                       </g>

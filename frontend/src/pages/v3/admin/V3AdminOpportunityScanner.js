@@ -50,7 +50,7 @@ const scoreColor = (score) => (score >= 85 ? '#1F4A3A' : score >= 70 ? '#C49B5F'
 
 const isMissingKeyError = (error) => /SERPAPI_API_KEY/i.test(error?.response?.data?.detail || error?.message || '');
 
-const valueOrManual = (value) => value || 'Not found - recommend manual search.';
+const valueOrManual = (value) => value || 'Not found. Recommend manual search.';
 
 const InfoPanel = ({ icon: Icon, title, children, accent = '#1F4A3A' }) => (
   <div className="min-w-0 rounded-lg border border-[#E8E4DB] bg-[#FAFAF7] p-3">
@@ -327,7 +327,7 @@ const V3AdminOpportunityScanner = () => {
             <div className="v3-card p-4 min-w-0 overflow-hidden" data-testid="opps-scan-summary">
               <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Last scan</p>
               <p className="text-[12px] text-[#1A1A1A] break-words">{scan.query}</p>
-              <p className="text-[11px] text-[#6E6657] mt-2">{scan.raw_count} raw results - {scan.candidate_count} new candidates</p>
+              <p className="text-[11px] text-[#6E6657] mt-2">{scan.raw_count} raw results, {scan.candidate_count} new candidates</p>
             </div>
           )}
         </div>
@@ -375,11 +375,11 @@ const V3AdminOpportunityScanner = () => {
                         <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657]">{candidate.industry}</span>
                         <span className="text-[10px] px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]">{candidate.country}</span>
                         {(!candidate.brand_name || Number(candidate.confidence_score || 0) < 55) && (
-                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#F5D9D2] text-[#B54A37]">Low signal - likely skip</span>
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#F5D9D2] text-[#B54A37]">Low signal. Likely skip</span>
                         )}
                       </div>
                       <p className="text-[13px] text-[#6E6657] mt-1 break-words">
-                        {[candidate.campaign_name || 'Campaign not named', candidate.campaign_type].filter(Boolean).join(' - ')}
+                        {[candidate.campaign_name || 'Campaign not named', candidate.campaign_type].filter(Boolean).join(' / ')}
                       </p>
                       <a
                         href={candidate.brand_profile?.website || candidate.source_url}

@@ -41,6 +41,50 @@ def _temporary_password() -> str:
     return f"TASCK-{uuid.uuid4().hex[:4].upper()}-{uuid.uuid4().hex[:4].upper()}"
 
 
+V3_RELATIONSHIP_MANAGERS = [
+    {"id": "rm-temi", "name": "Temi Bakare", "role": "Relationship Manager", "initials": "TB", "email": "temi.bakare@tasck.com"},
+    {"id": "rm-adaeze", "name": "Adaeze Obi", "role": "Relationship Manager", "initials": "AO", "email": "adaeze.obi@tasck.com"},
+    {"id": "rm-tope", "name": "Tope Martins", "role": "Relationship Manager", "initials": "TM", "email": "tope.martins@tasck.com"},
+    {"id": "rm-femi", "name": "Femi Oladipo", "role": "Relationship Manager", "initials": "FO", "email": "femi.oladipo@tasck.com"},
+]
+
+
+def _relationship_manager(rm_id: Optional[str] = None) -> Dict[str, str]:
+    rm = next((item for item in V3_RELATIONSHIP_MANAGERS if item["id"] == rm_id), None)
+    return rm or V3_RELATIONSHIP_MANAGERS[0]
+
+
+def _default_rm_for_brand(brand_id: Optional[str]) -> Dict[str, str]:
+    value = brand_id or ""
+    if value.endswith(("guinness", "star", "airtel")):
+        return _relationship_manager("rm-adaeze")
+    if value.endswith(("mtn", "pepsi")):
+        return _relationship_manager("rm-tope")
+    if value.endswith(("access", "uba", "gtbank")):
+        return _relationship_manager("rm-femi")
+    return _relationship_manager("rm-temi")
+
+
+def _with_relationship_manager(brand: Dict[str, Any]) -> Dict[str, Any]:
+    if not brand:
+        return brand
+    rm = _relationship_manager(brand.get("rm_id")) if brand.get("rm_id") else _default_rm_for_brand(brand.get("id"))
+    return {
+        **brand,
+        "rm_id": brand.get("rm_id") or rm["id"],
+        "relationship_manager": brand.get("relationship_manager") or rm,
+        "relationship_manager_name": brand.get("relationship_manager_name") or rm["name"],
+        "relationship_manager_email": brand.get("relationship_manager_email") or rm["email"],
+    }
+
+
+def _brand_created_at_key(brand: Dict[str, Any]) -> str:
+    created_at = brand.get("created_at") or brand.get("updated_at")
+    if isinstance(created_at, str) and created_at:
+        return created_at
+    return ""
+
+
 def _domain_from_url(value: str) -> str:
     match = re.search(r"https?://([^/]+)", value or "")
     return match.group(1).replace("www.", "") if match else ""
@@ -197,13 +241,16 @@ def make_v3_router(db):
         query = {}
         if engagement:
             query["engagement_track_default"] = engagement
-        return await db.v3_brands.find(query, {"_id": 0}).to_list(200)
+        brands = await db.v3_brands.find(query, {"_id": 0}).to_list(200)
+        brands = sorted(brands, key=_brand_created_at_key, reverse=True)
+        return [_with_relationship_manager(brand) for brand in brands]
 
     @router.get("/brands/{brand_id}")
     async def get_brand(brand_id: str):
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
+        brand = _with_relationship_manager(brand)
         contacts = await db.v3_contacts.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         cases = await db.v3_business_cases.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         interactions = await db.v3_interactions.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
@@ -231,10 +278,12 @@ def make_v3_router(db):
         lead_score: int = 60
         hq: Optional[str] = None
         website: Optional[str] = None
+        rm_id: str = "rm-temi"
 
     @router.post("/brands")
     async def create_brand(payload: BrandCreate):
         brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+        rm = _relationship_manager(payload.rm_id)
         doc = {
             "id": brand_id,
             "company": payload.company,
@@ -249,6 +298,11 @@ def make_v3_router(db):
             "lead_score": payload.lead_score,
             "last_interaction": "just now",
             "engagement_track_default": payload.engagement_track_default,
+            "created_at": _now_iso(),
+            "rm_id": rm["id"],
+            "relationship_manager": rm,
+            "relationship_manager_name": rm["name"],
+            "relationship_manager_email": rm["email"],
         }
         await db.v3_brands.insert_one({**doc})
 
@@ -284,7 +338,7 @@ def make_v3_router(db):
 
         welcome = await queue_email(
             to=username,
-            subject="Welcome to TASCK OS - your brand portal access",
+            subject="Welcome to TASCK OS: your brand portal access",
             body=(
                 f"Welcome to TASCK OS, {payload.primary_contact}.\n\n"
                 f"Your brand account for {payload.company} is ready.\n"
@@ -332,7 +386,7 @@ def make_v3_router(db):
         await db.v3_brand_accounts.insert_one({**account_doc})
         welcome = await queue_email(
             to=username,
-            subject="Welcome to TASCK OS - your brand portal access",
+            subject="Welcome to TASCK OS: your brand portal access",
             body=(
                 f"Welcome to TASCK OS, {brand.get('primary_contact') or 'Marketing Team'}.\n\n"
                 f"Your brand account for {brand.get('company')} is ready.\n"
@@ -547,7 +601,7 @@ def make_v3_router(db):
                 "on_time_rate": 0,
                 "brand_satisfaction": 0,
                 "repeat_brand_count": 0,
-                "rate_card": "TBD - outreach required",
+                "rate_card": "TBD. Outreach required",
                 "reliability": 7.0 + min(idx, 2) * 0.2,
                 "platforms": template["platforms"],
                 "email": f"hello@{_slug(name)}.demo",
@@ -644,7 +698,8 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
         creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
         alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
-        brief = await db.v3_creative_briefs.find_one({"business_case_id": bc_id}, {"_id": 0})
+        briefs = await db.v3_creative_briefs.find({"business_case_id": bc_id}, {"_id": 0}).sort("sent_at", -1).to_list(100)
+        brief = briefs[0] if briefs else None
         snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         contract = await db.v3_contracts.find_one({"business_case_id": bc_id}, {"_id": 0})
         deliverables = await db.v3_deliverables.find({"business_case_id": bc_id}, {"_id": 0}).to_list(100)
@@ -658,6 +713,7 @@ def make_v3_router(db):
             "creator": creator,
             "alignment_snapshot": alignment,
             "creative_brief": brief,
+            "creative_briefs": briefs,
             "creative_snapshot": snapshot,
             "contract": contract,
             "deliverables": deliverables,
@@ -851,7 +907,7 @@ def make_v3_router(db):
             "approved_by": None,
             "approved_by_party": None,
             "brand_header": f"{brand['company'].split(' ')[0].upper()} x TASCK",
-            "title": f"{case['title']} - Alignment Snapshot",
+            "title": f"{case['title']}: Alignment Snapshot",
             "meta": "AI-generated from connector call. Pending admin review and brand approval.",
             "marketing_intelligence": mi,
             "brand_comments": [],
@@ -978,7 +1034,7 @@ def make_v3_router(db):
         if case.get("engagement_track") == "grant":
             updates["frame.strategy_development_fee_invoice_id"] = None
             updates["frame.strategy_development_fee_paid"] = False
-            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement - TTA absorbs strategy cost."
+            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement. TTA absorbs strategy cost."
         else:
             updates["frame.strategy_development_fee_invoice_id"] = case.get("frame", {}).get("strategy_development_fee_invoice_id")
             updates["frame.strategy_development_fee_paid"] = bool(case.get("frame", {}).get("strategy_development_fee_paid", False))
@@ -1064,7 +1120,7 @@ def make_v3_router(db):
         )
         email = await queue_email(
             to=(brand or {}).get("email", ""),
-            subject=f"Alignment Snapshot ready for approval - {case['title']}",
+            subject=f"Alignment Snapshot ready for approval: {case['title']}",
             body=(
                 f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
                 f"The Alignment Snapshot for {case['title']} is ready in your TASCK brand portal. "
@@ -1154,6 +1210,34 @@ def make_v3_router(db):
             )
         return {"ok": True, "paid_at": paid_at}
 
+    class InvoiceUpdate(BaseModel):
+        amount: Optional[float] = None
+        status: Optional[str] = None
+        note: Optional[str] = None
+
+    @router.patch("/invoices/{invoice_id}")
+    async def update_invoice(invoice_id: str, payload: InvoiceUpdate):
+        inv = await db.v3_invoices.find_one({"id": invoice_id}, {"_id": 0})
+        if not inv:
+            raise HTTPException(404, "Invoice not found")
+        update: Dict[str, Any] = {"updated_at": _now_iso()}
+        if payload.amount is not None:
+            update["amount"] = payload.amount
+        if payload.status is not None:
+            update["status"] = payload.status
+        if payload.note is not None:
+            update["note"] = payload.note
+        await db.v3_invoices.update_one({"id": invoice_id}, {"$set": update})
+        if inv.get("kind") == "strategy_development_fee":
+            frame_update: Dict[str, Any] = {"updated_at": _now_iso()}
+            if payload.amount is not None:
+                frame_update["frame.strategy_development_fee_amount"] = payload.amount
+            if payload.status == "paid":
+                frame_update["frame.strategy_development_fee_paid"] = True
+            await db.v3_business_cases.update_one({"id": inv["business_case_id"]}, {"$set": frame_update})
+        updated = await db.v3_invoices.find_one({"id": invoice_id}, {"_id": 0})
+        return updated
+
     # ------------------------------------------------------------------------
     # CREATIVE BRIEFS  (Plan flagship #2 — per-creator)
     # ------------------------------------------------------------------------
@@ -1181,7 +1265,7 @@ def make_v3_router(db):
             "sent_at": _now_iso(),
             "responded_at": None,
             "status": "sent",
-            "subject": payload.subject or f"Creative Brief - {case['title']}",
+            "subject": payload.subject or f"Creative Brief: {case['title']}",
             "brief_text": payload.brief_text,
             "creator_contact_email": creator_email,
             "reminder_count": 0,
@@ -1211,7 +1295,7 @@ def make_v3_router(db):
             }
             await queue_email(
                 to=(brand or {}).get("email", ""),
-                subject=f"Strategy Development Fee issued - {case['title']}",
+                subject=f"Strategy Development Fee issued: {case['title']}",
                 body=(
                     f"The creator brief for {case['title']} has been sent. "
                     "The Strategy Development Fee is now due before TASCK drafts the Strategy Snapshot."
@@ -1233,7 +1317,10 @@ def make_v3_router(db):
         await db.v3_business_cases.update_one(
             {"id": payload.business_case_id},
             {"$set": {"creator_id": payload.creator_id, "plan.creative_brief_id": cb_id, "updated_at": _now_iso(), **invoice_update},
-             "$push": {"timeline": {"at": _now_iso(), "event": "creative_brief_sent", "creator_id": payload.creator_id}}},
+             "$push": {
+                 "plan.creative_brief_ids": cb_id,
+                 "timeline": {"at": _now_iso(), "event": "creative_brief_sent", "creator_id": payload.creator_id, "brief_id": cb_id},
+             }},
         )
         return doc
 
@@ -1326,7 +1413,7 @@ def make_v3_router(db):
         )
         email = await queue_email(
             to=(brand or {}).get("email", ""),
-            subject=f"Strategy Snapshot ready for approval - {case['title']}",
+            subject=f"Strategy Snapshot ready for approval: {case['title']}",
             body=(
                 f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
                 f"The Strategy Snapshot for {case['title']} is ready in your TASCK brand portal. "
@@ -1482,14 +1569,61 @@ def make_v3_router(db):
 
         await db.v3_deliverables.update_one({"id": deliverable_id}, {"$set": update})
 
-        # Update milestone counter on the business case
         all_d = await db.v3_deliverables.find({"business_case_id": d["business_case_id"]}, {"_id": 0}).to_list(500)
         approved = len([x for x in all_d if x["status"] == "approved"])
         await db.v3_business_cases.update_one(
             {"id": d["business_case_id"]},
-            {"$set": {"deliver.milestones_total": len(all_d), "deliver.milestones_complete": approved, "updated_at": _now_iso()}},
+            {"$set": {
+                "deliver.deliverables_total": len(all_d),
+                "deliver.deliverables_complete": approved,
+                "deliver.milestones_total": len(all_d),
+                "deliver.milestones_complete": approved,
+                "updated_at": _now_iso(),
+            }},
         )
         return {"ok": True, "new_status": next_state}
+
+    class DeliverableUpdate(BaseModel):
+        title: Optional[str] = None
+        status: Optional[str] = None
+        due_date: Optional[str] = None
+        payment_released: Optional[bool] = None
+        notes: Optional[str] = None
+
+    @router.patch("/deliverables/{deliverable_id}")
+    async def update_deliverable(deliverable_id: str, payload: DeliverableUpdate):
+        d = await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+        if not d:
+            raise HTTPException(404, "Deliverable not found")
+        update: Dict[str, Any] = {"updated_at": _now_iso()}
+        if payload.title is not None:
+            update["title"] = payload.title
+        if payload.status is not None:
+            update["status"] = payload.status
+            if payload.status == "approved":
+                update["rm_approved_at"] = d.get("rm_approved_at") or _now_iso()
+                update["brand_approved_at"] = d.get("brand_approved_at") or _now_iso()
+        if payload.due_date is not None:
+            update["due_date"] = payload.due_date
+        if payload.payment_released is not None:
+            update["payment_released"] = payload.payment_released
+        if payload.notes is not None:
+            update["notes"] = payload.notes
+        await db.v3_deliverables.update_one({"id": deliverable_id}, {"$set": update})
+        all_d = await db.v3_deliverables.find({"business_case_id": d["business_case_id"]}, {"_id": 0}).to_list(500)
+        approved = len([x for x in all_d if x.get("status") == "approved"])
+        await db.v3_business_cases.update_one(
+            {"id": d["business_case_id"]},
+            {"$set": {
+                "deliver.deliverables_total": len(all_d),
+                "deliver.deliverables_complete": approved,
+                "deliver.milestones_total": len(all_d),
+                "deliver.milestones_complete": approved,
+                "updated_at": _now_iso(),
+            }},
+        )
+        updated = await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+        return updated
 
     # ------------------------------------------------------------------------
     # SCOPE CHANGE — pauses delivery until brand approves the amendment
@@ -1721,6 +1855,428 @@ def make_v3_router(db):
         return doc
 
     # ------------------------------------------------------------------------
+    # MEETINGS
+    # ------------------------------------------------------------------------
+    def _demo_meetings() -> List[Dict[str, Any]]:
+        now = _now_iso()
+        return [
+            {
+                "id": "qual-coke-campus",
+                "title": "Qualification Call: Coca-Cola campus signal",
+                "meeting_type": "brand_qualification",
+                "stage": "before_crm",
+                "status": "scheduled",
+                "readiness_status": "needs_contact",
+                "readiness_score": 58,
+                "brand_id": None,
+                "business_case_id": None,
+                "creator_id": None,
+                "source_candidate_id": "opp-cocacola-campus-share",
+                "source_candidate_type": "brand",
+                "candidate_snapshot": {
+                    "company": "Coca-Cola Nigeria Limited",
+                    "campaign_signal": "Campus Share Moments",
+                    "pain_point": "Students are sharing Detty December campus content, but beverage brands are not owning the moment.",
+                    "suggested_opportunity": "Campus storytelling, personalized sharing moments, and retail-to-social UGC.",
+                    "source_url": "culture calendars, student creator posts, retail activation mentions",
+                },
+                "contact_name": "Folake Adeniran",
+                "contact_email": "folake.adeniran@coca-cola.com",
+                "contact_phone": "",
+                "meeting_link": "https://meet.google.com/tasck-qual-coke-demo",
+                "scheduled_for": "2026-06-07T10:00:00+01:00",
+                "duration_minutes": 30,
+                "agenda": "Confirm interest, decision maker, contact details, fit, and whether they want TASCK follow-up.",
+                "transcript": "",
+                "transcript_author": None,
+                "transcript_uploaded_at": None,
+                "summary": "Good brand fit and interest, but contact completeness and decision ownership are still weak.",
+                "missing_context": ["Procurement phone/WhatsApp", "Budget owner", "Campaign window"],
+                "suggested_questions": [
+                    "Is Coca-Cola actively exploring a creator-led campus campaign?",
+                    "Who owns the marketing and procurement decision?",
+                    "Would you like TASCK to prepare a follow-up Business Case if there is fit?",
+                ],
+                "next_questions": ["Can Folake introduce the budget approver?"],
+                "ai_outputs": [],
+                "follow_up_actions": ["Find procurement contact", "Confirm budget owner"],
+                "qualification_status": "needs_contact",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": "qual-mtn-creators",
+                "title": "Qualification Call: MTN creator economy signal",
+                "meeting_type": "brand_qualification",
+                "stage": "before_crm",
+                "status": "accepted",
+                "readiness_status": "qualified_for_crm",
+                "readiness_score": 88,
+                "brand_id": "brand-mtn",
+                "business_case_id": "proj-mtn-burna",
+                "creator_id": None,
+                "source_candidate_id": "opp-mtn-data-youth",
+                "source_candidate_type": "brand",
+                "candidate_snapshot": {
+                    "company": "MTN Nigeria Communications PLC",
+                    "campaign_signal": "Data For Creators Push",
+                    "pain_point": "Creators are discussing high data spend as a barrier to consistent posting.",
+                    "suggested_opportunity": "Position MTN as the network powering the next wave of Nigerian creators.",
+                    "source_url": "creator forums, X posts, student tech blogs, telco campaign mentions",
+                },
+                "contact_name": "Kemi Adebayo",
+                "contact_email": "kemi.adebayo@mtn.com",
+                "contact_phone": "+234 802 XXX 8891",
+                "meeting_link": "https://meet.google.com/tasck-qual-mtn-demo",
+                "scheduled_for": "2026-06-03T14:30:00+01:00",
+                "duration_minutes": 30,
+                "agenda": "Confirm interest and whether TASCK should open a connector Business Case.",
+                "transcript": "Kemi confirmed MTN wants a creator economy positioning opportunity and accepted a TASCK follow-up.",
+                "transcript_author": "admin",
+                "transcript_uploaded_at": now,
+                "summary": "Strong interest, known decision owner, clear marketing angle, and full contact route.",
+                "missing_context": ["Exact internal budget ceiling"],
+                "suggested_questions": ["Is MTN interested in creator economy positioning this quarter?"],
+                "next_questions": ["Can MTN share the target launch month?"],
+                "ai_outputs": [],
+                "follow_up_actions": ["Open Business Case Connect", "Schedule Connector Business Call"],
+                "qualification_status": "accepted",
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": "conn-coke-frame",
+                "title": "Business Call: Connector: Share a Coke",
+                "meeting_type": "brand_connector",
+                "stage": "connect",
+                "status": "transcribed",
+                "readiness_status": "ready_for_alignment",
+                "readiness_score": 86,
+                "brand_id": "brand-cocacola",
+                "business_case_id": "proj-cocacola-tems",
+                "creator_id": None,
+                "source_candidate_id": "opp-cocacola-campus-share",
+                "source_candidate_type": "brand",
+                "candidate_snapshot": {},
+                "contact_name": "Folake Adeniran",
+                "contact_email": "folake.adeniran@coca-cola.com",
+                "contact_phone": "+234 803 XXX 4417",
+                "meeting_link": "https://meet.google.com/tasck-connector-coke-demo",
+                "scheduled_for": "2026-06-05T11:00:00+01:00",
+                "duration_minutes": 45,
+                "agenda": "Collect objective, audience, channels, KPIs, timeline, budget, approval owner, and constraints.",
+                "transcript": "Folake said the Share a Coke platform needs Nigerian cultural specificity. Target audience is 18-28 urban Nigeria. Budget is north of N100M but below N150M. Campaign must be in market by Dec 1. KPI emphasis is emotional shareability, earned media, and creator reliability.",
+                "transcript_author": "admin",
+                "transcript_uploaded_at": now,
+                "summary": "Transcript has enough context to draft an Alignment Snapshot for admin review.",
+                "missing_context": ["Exact KPI numbers", "Physical activation budget carve-out", "Usage rights duration"],
+                "suggested_questions": [
+                    "What is the main campaign objective?",
+                    "Which audience must the campaign reach?",
+                    "What KPIs will make this successful?",
+                    "Who owns final approval?",
+                ],
+                "next_questions": ["Can Coca-Cola confirm UGC volume target?"],
+                "ai_outputs": ["alignment_snapshot_draft: as-coke-connector-draft", "timeline event: meeting_alignment_drafted"],
+                "follow_up_actions": ["Review Alignment Snapshot", "Send to company"],
+                "qualification_status": None,
+                "created_at": now,
+                "updated_at": now,
+            },
+            {
+                "id": "conn-access-followup",
+                "title": "Business Call: Connector: Access Bank trust gap",
+                "meeting_type": "brand_connector",
+                "stage": "connect",
+                "status": "transcribed",
+                "readiness_status": "needs_follow_up_meeting",
+                "readiness_score": 49,
+                "brand_id": "brand-access",
+                "business_case_id": "proj-access-davido",
+                "creator_id": None,
+                "source_candidate_id": "opp-access-finance-culture",
+                "source_candidate_type": "brand",
+                "candidate_snapshot": {},
+                "contact_name": "Obi Nwosu",
+                "contact_email": "obi.nwosu@accessbankplc.com",
+                "contact_phone": "+234 801 XXX 2247",
+                "meeting_link": "https://meet.google.com/tasck-connector-access-demo",
+                "scheduled_for": "2026-06-04T15:00:00+01:00",
+                "duration_minutes": 45,
+                "agenda": "Clarify product owner, KPI targets, compliance constraints, and decision path.",
+                "transcript": "Access Bank is interested in creator finance education but did not confirm product owner, KPI targets, compliance constraints, or decision path.",
+                "transcript_author": "admin",
+                "transcript_uploaded_at": now,
+                "summary": "Useful strategic signal, but not enough operational context to draft a strong Alignment Snapshot.",
+                "missing_context": ["Product owner", "KPI target", "Compliance constraints", "Approval owner", "Budget range"],
+                "suggested_questions": ["What financial product should the campaign support?"],
+                "next_questions": ["Which Access product is being promoted?", "Who owns compliance approval?"],
+                "ai_outputs": ["needs_follow_up_meeting: true", "alignment_snapshot_draft: not created"],
+                "follow_up_actions": ["Schedule follow-up meeting"],
+                "qualification_status": None,
+                "created_at": now,
+                "updated_at": now,
+            },
+        ]
+
+    async def ensure_demo_meetings():
+        count = await db.v3_meetings.count_documents({})
+        if count == 0:
+            await db.v3_meetings.insert_many([{**doc} for doc in _demo_meetings()])
+
+    class MeetingCreate(BaseModel):
+        title: str
+        meeting_type: str
+        stage: str = "before_crm"
+        status: str = "scheduled"
+        readiness_status: str = "not_analyzed"
+        readiness_score: int = 0
+        brand_id: Optional[str] = None
+        business_case_id: Optional[str] = None
+        creator_id: Optional[str] = None
+        source_candidate_id: Optional[str] = None
+        source_candidate_type: Optional[str] = None
+        candidate_snapshot: Dict[str, Any] = Field(default_factory=dict)
+        contact_name: Optional[str] = None
+        contact_email: Optional[str] = None
+        contact_phone: Optional[str] = None
+        meeting_link: Optional[str] = None
+        scheduled_for: Optional[str] = None
+        duration_minutes: int = 30
+        agenda: Optional[str] = None
+
+    @router.get("/meetings")
+    async def list_meetings(
+        meeting_type: Optional[str] = None,
+        stage: Optional[str] = None,
+        business_case_id: Optional[str] = None,
+        brand_id: Optional[str] = None,
+        source_candidate_id: Optional[str] = None,
+    ):
+        await ensure_demo_meetings()
+        query = {}
+        if meeting_type:
+            query["meeting_type"] = meeting_type
+        if stage:
+            query["stage"] = stage
+        if business_case_id:
+            query["business_case_id"] = business_case_id
+        if brand_id:
+            query["brand_id"] = brand_id
+        if source_candidate_id:
+            query["source_candidate_id"] = source_candidate_id
+        return await db.v3_meetings.find(query, {"_id": 0}).sort("scheduled_for", -1).to_list(200)
+
+    @router.get("/meetings/{meeting_id}")
+    async def get_meeting(meeting_id: str):
+        await ensure_demo_meetings()
+        doc = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not doc:
+            raise HTTPException(404, "Meeting not found")
+        return doc
+
+    @router.post("/meetings")
+    async def create_meeting(payload: MeetingCreate):
+        doc = {
+            **payload.model_dump(),
+            "id": f"mtg-{uuid.uuid4().hex[:8]}",
+            "transcript": "",
+            "transcript_author": None,
+            "transcript_uploaded_at": None,
+            "summary": "",
+            "missing_context": [],
+            "suggested_questions": [],
+            "next_questions": [],
+            "ai_outputs": [],
+            "follow_up_actions": [],
+            "qualification_status": "pending" if "qualification" in payload.meeting_type else None,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        await db.v3_meetings.insert_one({**doc})
+        return doc
+
+    class MeetingContactPatch(BaseModel):
+        contact_name: Optional[str] = None
+        contact_email: Optional[str] = None
+        contact_phone: Optional[str] = None
+        meeting_link: Optional[str] = None
+
+    @router.patch("/meetings/{meeting_id}/contact")
+    async def save_meeting_contact(meeting_id: str, payload: MeetingContactPatch):
+        updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+        updates["updated_at"] = _now_iso()
+        result = await db.v3_meetings.update_one({"id": meeting_id}, {"$set": updates})
+        if result.matched_count == 0:
+            raise HTTPException(404, "Meeting not found")
+        return await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+
+    class MeetingTranscriptPayload(BaseModel):
+        transcript: str
+        transcript_author: str = "admin"
+
+    @router.post("/meetings/{meeting_id}/transcript")
+    async def upload_meeting_transcript(meeting_id: str, payload: MeetingTranscriptPayload):
+        updates = {
+            "transcript": payload.transcript,
+            "transcript_author": payload.transcript_author,
+            "transcript_uploaded_at": _now_iso(),
+            "status": "transcribed",
+            "updated_at": _now_iso(),
+        }
+        result = await db.v3_meetings.update_one({"id": meeting_id}, {"$set": updates})
+        if result.matched_count == 0:
+            raise HTTPException(404, "Meeting not found")
+        return await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+
+    class MeetingAnalyzePayload(BaseModel):
+        actor: str = "admin"
+
+    def _meeting_missing_fields(text: str) -> List[str]:
+        lower = (text or "").lower()
+        checks = [
+            ("Campaign objective", ["objective", "goal", "intent"]),
+            ("Audience", ["audience", "target", "18", "gen z", "youth"]),
+            ("Channels", ["instagram", "tiktok", "youtube", "pr", "channel"]),
+            ("KPIs", ["kpi", "reach", "engagement", "ugc", "earned media"]),
+            ("Timeline", ["timeline", "date", "launch", "market", "dec"]),
+            ("Budget", ["budget", "fee", "n100", "n150", "amount"]),
+            ("Approval owner", ["approval", "approver", "procurement", "decision"]),
+        ]
+        return [label for label, needles in checks if not any(needle in lower for needle in needles)]
+
+    @router.post("/meetings/{meeting_id}/analyze")
+    async def analyze_meeting_transcript(meeting_id: str, payload: MeetingAnalyzePayload):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        transcript = meeting.get("transcript") or ""
+        meeting_type = meeting.get("meeting_type") or ""
+
+        if "qualification" in meeting_type:
+            lower = transcript.lower()
+            score = 82 if any(word in lower for word in ["interested", "accepted", "follow-up", "proceed"]) else 55
+            updates = {
+                "readiness_score": score,
+                "readiness_status": "qualified_for_crm" if score >= 75 else "needs_contact",
+                "summary": "Qualification analysis complete. This transcript supports the CRM entry decision only.",
+                "missing_context": ["Decision maker", "Contact phone"] if score < 75 else ["Exact budget ceiling"],
+                "next_questions": ["Should TASCK create the CRM record?", "Who should receive the next follow-up?"],
+                "ai_outputs": ["no_alignment_snapshot_generated", "qualification_decision_only"],
+                "updated_at": _now_iso(),
+            }
+            await db.v3_meetings.update_one({"id": meeting_id}, {"$set": updates})
+            return await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+
+        missing = _meeting_missing_fields(transcript)
+        score = max(35, 100 - (len(missing) * 9))
+        ready = score >= 75
+        extraction = _extract_marketing_intelligence(transcript)
+        ai_outputs = ["business_case_connect.marketing_intelligence updated"]
+        updates = {
+            "readiness_score": score,
+            "readiness_status": "ready_for_alignment" if ready else "needs_follow_up_meeting",
+            "summary": "Connector transcript analyzed for Alignment Snapshot readiness.",
+            "missing_context": missing,
+            "next_questions": [f"Clarify {item.lower()}." for item in missing[:5]],
+            "ai_outputs": ai_outputs,
+            "updated_at": _now_iso(),
+        }
+        bc_id = meeting.get("business_case_id")
+        if bc_id:
+            await db.v3_business_cases.update_one(
+                {"id": bc_id},
+                {"$set": {
+                    "connect.marketing_intelligence": extraction,
+                    "connect.stated_intent": extraction["key_marketing_focus"],
+                    "updated_at": _now_iso(),
+                }, "$push": {"timeline": {"at": _now_iso(), "event": "meeting_transcript_analyzed", "meeting_id": meeting_id}}},
+            )
+            if ready:
+                snapshot_id = f"as-{uuid.uuid4().hex[:8]}"
+                snapshot = {
+                    "id": snapshot_id,
+                    "business_case_id": bc_id,
+                    "source_meeting_id": meeting_id,
+                    "title": f"{meeting.get('title', 'Connector Call')}: Alignment Snapshot Draft",
+                    "meta": "AI-drafted from Connector business call. Admin review required.",
+                    "status": "draft",
+                    "sections": [
+                        {"heading": "Business promotion summary", "type": "prose", "content": extraction["key_marketing_focus"]},
+                        {"heading": "Primary target audience", "type": "prose", "content": extraction["primary_target_audience"]},
+                        {"heading": "Key marketing channels", "type": "bullets", "items": extraction["key_marketing_channels"]},
+                        {"heading": "Marketing KPIs", "type": "kpis", "items": extraction["marketing_kpis"]},
+                    ],
+                    "generated_at": _now_iso(),
+                    "updated_at": _now_iso(),
+                }
+                await db.v3_alignment_snapshots.update_one(
+                    {"business_case_id": bc_id, "source_meeting_id": meeting_id},
+                    {"$set": snapshot},
+                    upsert=True,
+                )
+                ai_outputs.append(f"alignment_snapshot_draft: {snapshot_id}")
+                await db.v3_business_cases.update_one(
+                    {"id": bc_id},
+                    {"$push": {"timeline": {"at": _now_iso(), "event": "meeting_alignment_drafted", "meeting_id": meeting_id, "snapshot_id": snapshot_id}}},
+                )
+        await db.v3_meetings.update_one({"id": meeting_id}, {"$set": updates})
+        return await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+
+    @router.post("/meetings/{meeting_id}/questions/regenerate")
+    async def regenerate_meeting_questions(meeting_id: str):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        questions = (
+            [
+                "Are you interested in working with TASCK?",
+                "Who is the decision maker?",
+                "What contact details should TASCK use for the next step?",
+            ]
+            if "qualification" in (meeting.get("meeting_type") or "")
+            else [
+                "What is the campaign objective?",
+                "Who is the primary audience?",
+                "Which KPIs, budget, timeline, and approval owner should TASCK capture?",
+            ]
+        )
+        await db.v3_meetings.update_one({"id": meeting_id}, {"$set": {"suggested_questions": questions, "updated_at": _now_iso()}})
+        return await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+
+    class QualificationActionPayload(BaseModel):
+        note: Optional[str] = None
+        scheduled_for: Optional[str] = None
+
+    @router.post("/meetings/{meeting_id}/qualification/accept")
+    async def accept_qualification_meeting(meeting_id: str, payload: QualificationActionPayload):
+        updates = {
+            "status": "accepted",
+            "qualification_status": "accepted",
+            "follow_up_actions": ["Open Business Case Connect", "Schedule Connector Business Call"],
+            "updated_at": _now_iso(),
+        }
+        await db.v3_meetings.update_one({"id": meeting_id}, {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "qualification_accepted", "note": payload.note}}})
+        return await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+
+    @router.post("/meetings/{meeting_id}/qualification/reschedule")
+    async def reschedule_qualification_meeting(meeting_id: str, payload: QualificationActionPayload):
+        updates = {"status": "rescheduled", "qualification_status": "rescheduled", "updated_at": _now_iso()}
+        if payload.scheduled_for:
+            updates["scheduled_for"] = payload.scheduled_for
+        await db.v3_meetings.update_one({"id": meeting_id}, {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "qualification_rescheduled", "note": payload.note}}})
+        return await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+
+    @router.post("/meetings/{meeting_id}/qualification/delete")
+    async def delete_qualification_meeting(meeting_id: str, payload: QualificationActionPayload):
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"status": "deleted", "qualification_status": "deleted", "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": _now_iso(), "event": "qualification_deleted", "note": payload.note}}},
+        )
+        return {"ok": True, "id": meeting_id, "status": "deleted"}
+
+    # ------------------------------------------------------------------------
     # CONNECT-STAGE HELPERS
     # ------------------------------------------------------------------------
     class ConnectStatusPayload(BaseModel):
@@ -1861,7 +2417,11 @@ def make_v3_router(db):
         all_d = await db.v3_deliverables.find({"business_case_id": payload.business_case_id}, {"_id": 0}).to_list(500)
         await db.v3_business_cases.update_one(
             {"id": payload.business_case_id},
-            {"$set": {"deliver.milestones_total": len(all_d), "updated_at": _now_iso()},
+            {"$set": {
+                "deliver.deliverables_total": len(all_d),
+                "deliver.milestones_total": len(all_d),
+                "updated_at": _now_iso(),
+            },
              "$push": {"timeline": {"at": _now_iso(), "event": "deliverable_added", "deliverable_id": d_id}}},
         )
         return doc
@@ -1907,9 +2467,10 @@ def make_v3_router(db):
             "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' × ' + creator['name'].upper() if creator else ''} × TASCK",
             "title": f"{case['title']} — Final Campaign Report",
             "summary": (
-                f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones."
+                f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted deliverables."
                 f" KPI performance compared against the Strategy Snapshot targets is summarised below, alongside the closure checklist."
             ),
+            "deliverables": deliverables,
             "kpis": kpis,
             "closure_checklist": [
                 {"item": "Final report delivered", "status": "done"},
@@ -1943,7 +2504,7 @@ def make_v3_router(db):
         "partnership opportunity", "open application", "casting call", "agency brief",
         "rfp", "signed", "unveils", "announces", "partnered with",
     ]
-    NOT_FOUND = "Not found - recommend manual search."
+    NOT_FOUND = "Not found. Recommend manual search."
     DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514"
     DEFAULT_EMERGENT_PROVIDER = "gemini"
     DEFAULT_EMERGENT_MODEL = "gemini-2.0-flash"
@@ -2194,7 +2755,7 @@ You are the TTA Brand Opportunity Scanner. Read one SerpAPI web/news result and 
 CRITICAL RULES:
 1. Brand name must be a REAL CONSUMER OR ENTERPRISE BRAND, not a person, government body, regulator, institution, NGO, or vague news subject. If it is not a commercial brand, return brand_name null and confidence_score below 50. Do not invent a brand.
 2. If the snippet is too thin to confidently extract a brand, set confidence_score below 55 and explain why in pain_point.
-3. suggested_opportunity_angle must be generative, creator-led, and in this form: "TTA could approach [brand] with [specific creator-led concept] anchored on [specific cultural moment or audience truth] - the brief would lead with [specific creative direction]."
+3. suggested_opportunity_angle must be generative, creator-led, and in this form: "TTA could approach [brand] with [specific creator-led concept] anchored on [specific cultural moment or audience truth]. The brief would lead with [specific creative direction]."
 4. Score honestly: 85-96 strong explicit brand/campaign/creator/recent signal; 70-84 clear brand with hinted campaign; 55-69 clear brand but vague campaign; below 55 non-brand, thin snippet, or non-commercial signal. No score above 90 unless every signal is unambiguous.
 5. Pain point must reference the source text. Quote or paraphrase a concrete signal. Never use generic marketing language.
 6. Industry must be one of: {industries_list}. If none fit, use "Other".
@@ -2219,13 +2780,13 @@ Return exactly this schema and no other fields:
 
 EXAMPLES:
 Strong input: Guinness Nigeria launches "Made of More" Africa campaign with Rema. Snippet says the Q4 activation is fronted by Rema and uses creator-led documentary content for 25-34 males.
-Strong output: {{"brand_name":"Guinness Nigeria","campaign_name":"Made of More: Africa","industry":"Beverage","campaign_type":"creator campaign","country":"{template.country}","confidence_score":92,"pain_point":"Guinness is anchoring its Q4 activation on Rema and creator-led documentary content for 25-34 males, so campaign performance depends on whether that creator format converts the stated audience.","suggested_opportunity_angle":"TTA could approach Guinness Nigeria with a Lagos-rooted supporting creator slate anchored on Detty December cultural moments - the brief would lead with extending Rema's documentary into city-specific creator stories that drive Made of More deeper into local conversation.","detected_keywords":["Guinness Nigeria","Made of More","Rema","Q4 activation","Afrobeats","documentary","25-34 male"],"reasoning":"Brand, campaign, creator, audience, and activation are all explicit, so this is a strong opportunity."}}
+Strong output: {{"brand_name":"Guinness Nigeria","campaign_name":"Made of More: Africa","industry":"Beverage","campaign_type":"creator campaign","country":"{template.country}","confidence_score":92,"pain_point":"Guinness is anchoring its Q4 activation on Rema and creator-led documentary content for 25-34 males, so campaign performance depends on whether that creator format converts the stated audience.","suggested_opportunity_angle":"TTA could approach Guinness Nigeria with a Lagos-rooted supporting creator slate anchored on Detty December cultural moments. The brief would lead with extending Rema's documentary into city-specific creator stories that drive Made of More deeper into local conversation.","detected_keywords":["Guinness Nigeria","Made of More","Rema","Q4 activation","Afrobeats","documentary","25-34 male"],"reasoning":"Brand, campaign, creator, audience, and activation are all explicit, so this is a strong opportunity."}}
 
 Weak input: EFCC Chairman warns banks against marketing fraud.
-Weak output: {{"brand_name":null,"campaign_name":null,"industry":"Other","campaign_type":"marketing campaign","country":"{template.country}","confidence_score":28,"pain_point":"The source subject is a regulator addressing the banking sector broadly. No specific brand or campaign is named, so this is regulatory commentary, not a commercial opportunity.","suggested_opportunity_angle":"No actionable angle - this is regulatory news, not a brand activation signal. Recommend discarding this result.","detected_keywords":["EFCC","regulatory","banking sector","marketing fraud"],"reasoning":"Subject is non-commercial and no brand is available to pursue."}}
+Weak output: {{"brand_name":null,"campaign_name":null,"industry":"Other","campaign_type":"marketing campaign","country":"{template.country}","confidence_score":28,"pain_point":"The source subject is a regulator addressing the banking sector broadly. No specific brand or campaign is named, so this is regulatory commentary, not a commercial opportunity.","suggested_opportunity_angle":"No actionable angle. This is regulatory news, not a brand activation signal. Recommend discarding this result.","detected_keywords":["EFCC","regulatory","banking sector","marketing fraud"],"reasoning":"Subject is non-commercial and no brand is available to pursue."}}
 
 Medium input: MTN Nigeria boosts Q4 marketing spend, but no specific campaign or creator partnership is announced.
-Medium output: {{"brand_name":"MTN Nigeria","campaign_name":null,"industry":"Telco","campaign_type":"marketing campaign","country":"{template.country}","confidence_score":68,"pain_point":"MTN has signaled increased Q4 marketing investment, but no campaign, creator, or partnership has been announced. The opportunity is real but still undefined.","suggested_opportunity_angle":"TTA could approach MTN Nigeria with a proactive 5G-tier creator campaign anchored on urban Gen Z mobile behavior - the brief would lead with culturally-led acquisition content that positions creators as the trust layer for tier upgrades.","detected_keywords":["MTN Nigeria","Q4 marketing","mobile data","5G","acquisition"],"reasoning":"Brand and marketing intent are clear, but the campaign and creator angle require assumption."}}
+Medium output: {{"brand_name":"MTN Nigeria","campaign_name":null,"industry":"Telco","campaign_type":"marketing campaign","country":"{template.country}","confidence_score":68,"pain_point":"MTN has signaled increased Q4 marketing investment, but no campaign, creator, or partnership has been announced. The opportunity is real but still undefined.","suggested_opportunity_angle":"TTA could approach MTN Nigeria with a proactive 5G-tier creator campaign anchored on urban Gen Z mobile behavior. The brief would lead with culturally-led acquisition content that positions creators as the trust layer for tier upgrades.","detected_keywords":["MTN Nigeria","Q4 marketing","mobile data","5G","acquisition"],"reasoning":"Brand and marketing intent are clear, but the campaign and creator angle require assumption."}}
 """.strip()
 
     def _llm_user_message(item: Dict[str, str], template: OpportunityQueryTemplate) -> str:
@@ -2278,7 +2839,7 @@ Produce the opportunity card JSON.
             "country": template.country,
             "confidence_score": max(0, min(confidence, 100)),
             "pain_point": str(card.get("pain_point") or "Source context was insufficient to extract a confident brand opportunity.")[:800],
-            "suggested_opportunity_angle": str(card.get("suggested_opportunity_angle") or "No actionable angle - recommend manual review before pursuing this result.")[:900],
+            "suggested_opportunity_angle": str(card.get("suggested_opportunity_angle") or "No actionable angle. Recommend manual review before pursuing this result.")[:900],
             "detected_keywords": keywords,
             "reasoning": str(card.get("reasoning") or "No model reasoning provided.")[:500],
         }
@@ -2466,7 +3027,7 @@ Produce the opportunity card JSON.
                 f"Source context: {source_snippet or item['title']}"
             ),
             "suggested_opportunity_angle": (llm_card or {}).get("suggested_opportunity_angle") or (
-                "No actionable angle - recommend discarding or manually reviewing this result before CRM acceptance."
+                "No actionable angle. Recommend discarding or manually reviewing this result before CRM acceptance."
                 if low_signal_fallback else
                 f"Prepare a celebrity partnership outreach angle for {brand_name or 'this brand'} around {campaign_name or 'this signal'}, "
                 "then validate budget, decision maker, talent category, usage rights, and measurable KPI fit."
@@ -2639,6 +3200,7 @@ Produce the opportunity card JSON.
         all_brands = await db.v3_brands.find({}, {"_id": 0}).to_list(1000)
         brand = next((item for item in all_brands if _slug(item.get("company")) == _slug(candidate.get("brand_name"))), None)
         contact_email = candidate.get("contact_email") or ""
+        rm = _relationship_manager(payload.reviewed_by)
         if not brand:
             brand_id = f"brand-{uuid.uuid4().hex[:8]}"
             brand = {
@@ -2651,10 +3213,15 @@ Produce the opportunity card JSON.
                 "role": "Brand contact",
                 "email": contact_email,
                 "phone": "",
-                "status": "Lead - accepted scanned opportunity",
+                "status": "Lead. Accepted scanned opportunity",
                 "lead_score": candidate.get("confidence_score", 65),
                 "last_interaction": "just now",
+                "created_at": _now_iso(),
                 "engagement_track_default": "paid",
+                "rm_id": rm["id"],
+                "relationship_manager": rm,
+                "relationship_manager_name": rm["name"],
+                "relationship_manager_email": rm["email"],
                 "source": "serpapi_opportunity_scanner",
             }
             await db.v3_brands.insert_one({**brand})
@@ -2669,6 +3236,17 @@ Produce the opportunity card JSON.
                 "decision_seniority": "lead",
             })
         else:
+            brand = _with_relationship_manager(brand)
+            await db.v3_brands.update_one(
+                {"id": brand["id"], "rm_id": {"$exists": False}},
+                {"$set": {
+                    "created_at": brand.get("created_at") or _now_iso(),
+                    "rm_id": brand["rm_id"],
+                    "relationship_manager": brand["relationship_manager"],
+                    "relationship_manager_name": brand["relationship_manager_name"],
+                    "relationship_manager_email": brand["relationship_manager_email"],
+                }},
+            )
             has_contact = await db.v3_contacts.find_one({"brand_id": brand["id"]}, {"_id": 0})
             if not has_contact:
                 await db.v3_contacts.insert_one({
@@ -2712,7 +3290,7 @@ Produce the opportunity card JSON.
         business_case = await db.v3_business_cases.find_one({"connect.source_candidate_id": candidate_id}, {"_id": 0})
         if not business_case:
             bc_id = f"bc-{uuid.uuid4().hex[:8]}"
-            rm_id = payload.reviewed_by or "admin"
+            rm_id = brand.get("rm_id") or rm["id"]
             source_title = candidate.get("source_title") or "Scanned source article"
             source_url = candidate.get("source_url") or ""
             detected_keywords = candidate.get("detected_keywords") or []

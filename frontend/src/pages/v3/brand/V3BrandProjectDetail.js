@@ -63,7 +63,7 @@ const docsFromBundle = (bundle) => {
       snapshot: strategy,
       sections: [
         { heading: 'Recommended creative direction', type: 'prose', content: strategy.concept || '' },
-        { heading: 'Deliverables', type: 'bullets', items: normalizeStrategyDeliverables(strategy.deliverables || []).map((d) => `${d.title} - ${d.format}${d.duration ? ` (${d.duration})` : ''}`) },
+        { heading: 'Deliverables', type: 'bullets', items: normalizeStrategyDeliverables(strategy.deliverables || []).map((d) => `${d.title}: ${d.format}${d.duration ? ` (${d.duration})` : ''}`) },
         { heading: 'Budget assumptions', type: 'bullets', items: normalizeStrategyBudget(strategy.budget).map((b) => `${b.line}: ${formatNairaV3(b.amount)}`) },
         { heading: 'Success metrics', type: 'kpis', items: normalizeStrategyMetrics(strategy.success_metrics || []) },
       ],

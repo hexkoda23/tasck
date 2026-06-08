@@ -11,7 +11,8 @@ import {
   v3CreateInteraction, v3ResolveScopeFlag, v3ApproveAlignmentAs, v3UpdateAlignment,
   v3SendAlignmentToBrand, v3ResolveAlignmentComment, v3SuggestCreatorMatches,
   v3SendBriefReminder, v3UpdateStrategySnapshot,
-  v3SendStrategySnapshotToBrand, v3ResolveStrategySnapshotComment,
+  v3SendStrategySnapshotToBrand, v3ResolveStrategySnapshotComment, v3UpdateInvoice,
+  v3UpdateDeliverable,
 } from '../../../lib/v3api';
 import { buildMockAlignmentSnapshot, buildMockBusinessCaseBundle, formatNairaV3, v3Creators as fallbackCreators } from '../../../lib/v3data';
 import { getStoredDemoBundle, saveStoredDemoBundle } from '../../../lib/v3demoStore';
@@ -307,7 +308,7 @@ const StrategySnapshotEditor = ({ snapshot, busy, onSave, onSaveAndSend }) => {
         <h4 className="text-[12px] font-semibold uppercase tracking-wider mb-2">Deliverables</h4>
         <ul className="text-[13px] space-y-1 mb-6">
           {normalizedDeliverables.map((d, index) => (
-            <li key={`${d.title}-${index}`}>{d.num || index + 1}. {d.title} - {d.format} {d.duration && `(${d.duration})`}</li>
+            <li key={`${d.title}-${index}`}>{d.num || index + 1}. {d.title}: {d.format} {d.duration && `(${d.duration})`}</li>
           ))}
         </ul>
         <h4 className="text-[12px] font-semibold uppercase tracking-wider mb-2">Budget</h4>
@@ -336,7 +337,7 @@ const buildDeliveryContractText = ({ bundle, kind }) => {
   const title = bundle.business_case?.title || 'Campaign';
   const value = formatNairaV3(bundle.business_case?.estimated_value || 0);
   const deliverables = Array.isArray(bundle.deliverables) && bundle.deliverables.length
-    ? bundle.deliverables.map((d, index) => `${index + 1}. ${d.title} - ${String(d.status || 'pending').replace(/_/g, ' ')}`).join('\n')
+    ? bundle.deliverables.map((d, index) => `${index + 1}. ${d.title}: ${String(d.status || 'pending').replace(/_/g, ' ')}`).join('\n')
     : '1. Campaign concept, production assets, review rounds, launch support, and final reporting.';
   const strategy = bundle.creative_snapshot?.concept || 'The campaign strategy follows the approved Strategy Snapshot and approved brand objectives.';
 
@@ -359,7 +360,7 @@ ${strategy}
 ${deliverables}
 
 4. Creator Fee And Payment
-The creator fee, reimbursable expenses, payment milestones, tax treatment, and payment destination will be confirmed in the final commercial schedule before signature.
+The creator fee, reimbursable expenses, payment schedule, tax treatment, and payment destination will be confirmed in the final commercial schedule before signature.
 
 5. Usage, Exclusivity, And Approvals
 Usage rights are limited to the approved campaign channels, territory, and flight period unless extended in writing. ${creator} will comply with agreed brand safety, disclosure, and approval requirements.
@@ -391,7 +392,7 @@ TASCK will manage creator strategy, talent briefing, contract coordination, camp
 2. Approved Strategy
 ${strategy}
 
-3. Deliverables And Milestones
+3. Deliverables And Payment Schedule
 ${deliverables}
 
 4. Brand Responsibilities
@@ -535,7 +536,7 @@ const buildDemoStrategySnapshotDraft = ({ bundle, creator, briefText = '', respo
     ...existing,
     id: existing.id || `strategy-demo-${businessCase.id}`,
     business_case_id: businessCase.id,
-    title: existing.title || `${businessCase.title || 'Campaign'} - Strategy Snapshot v1`,
+    title: existing.title || `${businessCase.title || 'Campaign'}: Strategy Snapshot v1`,
     status: 'draft',
     concept,
     deliverables: [
@@ -635,6 +636,49 @@ const V3AdminBusinessCaseDetail = () => {
 
   const c = bundle.business_case;
   const isGrant = c.engagement_track === 'grant';
+  const creativeBriefs = (Array.isArray(bundle.creative_briefs) && bundle.creative_briefs.length
+    ? bundle.creative_briefs
+    : bundle.creative_brief ? [bundle.creative_brief] : []
+  ).filter(Boolean);
+  const caseDeliverables = Array.isArray(bundle.deliverables) ? bundle.deliverables : [];
+  const approvedDeliverableCount = caseDeliverables.filter((item) => item.status === 'approved').length;
+  const planEstimatedValue = c.estimated_value || 0;
+  const defaultBrainstormContentPlan = [
+    { item: 'Hero creator film', owner: 'Creative', format: '60 to 90 seconds', status: 'planned' },
+    { item: 'Social cutdowns', owner: 'Creative and TASCK', format: '6 vertical videos', status: 'planned' },
+    { item: 'Behind the scenes content', owner: 'TASCK production', format: '10 BTS assets', status: 'planned' },
+    { item: 'Launch copy and posting guide', owner: 'TASCK strategy', format: 'Caption and CTA kit', status: 'planned' },
+  ];
+  const defaultBrainstormBudgetPlan = [
+    { line: 'Creator fee', amount: Math.round(planEstimatedValue * 0.28), owner: 'TASCK negotiates with creative' },
+    { line: 'Production budget', amount: Math.round(planEstimatedValue * 0.22), owner: 'TASCK production planning' },
+    { line: 'Paid media and amplification', amount: Math.round(planEstimatedValue * 0.18), owner: 'Brand and TASCK' },
+    { line: 'Strategy Development Fee', amount: Math.max(4000000, Math.round(planEstimatedValue * 0.035)), owner: 'Brand pays before Strategy Snapshot' },
+  ];
+  const defaultBrainstormRevenuePlan = {
+    brand_budget: planEstimatedValue,
+    creator_fee: defaultBrainstormBudgetPlan[0].amount,
+    production_budget: defaultBrainstormBudgetPlan[1].amount,
+    strategy_development_fee: defaultBrainstormBudgetPlan[3].amount,
+    tasck_management_fee: Math.round(planEstimatedValue * 0.12),
+    projected_tasck_revenue: defaultBrainstormBudgetPlan[3].amount + Math.round(planEstimatedValue * 0.12),
+  };
+  const defaultBrainstormContractPlan = [
+    { item: 'Brand service agreement', detail: 'Confirm campaign scope, brand approvals, payment schedule, usage rights, and reporting obligations.' },
+    { item: 'Independent creator agreement', detail: 'Confirm creator deliverables, fees, usage, exclusivity, cancellation, and payment triggers.' },
+    { item: 'Budget schedule', detail: 'Attach creator fee, production spend, paid media, Strategy Development Fee, and TASCK management fee.' },
+    { item: 'Deliverables schedule', detail: 'Attach final deliverable list before signature so Delivery and Reports use the same source.' },
+  ];
+  const brainstormContentPlan = Array.isArray(bundle.brainstorm_round?.content_plan) && bundle.brainstorm_round.content_plan.length
+    ? bundle.brainstorm_round.content_plan
+    : defaultBrainstormContentPlan;
+  const brainstormBudgetPlan = Array.isArray(bundle.brainstorm_round?.budget_plan) && bundle.brainstorm_round.budget_plan.length
+    ? bundle.brainstorm_round.budget_plan
+    : defaultBrainstormBudgetPlan;
+  const brainstormRevenuePlan = bundle.brainstorm_round?.revenue_plan || defaultBrainstormRevenuePlan;
+  const brainstormContractPlan = Array.isArray(bundle.brainstorm_round?.contract_plan) && bundle.brainstorm_round.contract_plan.length
+    ? bundle.brainstorm_round.contract_plan
+    : defaultBrainstormContractPlan;
   const flash = (msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
@@ -1033,9 +1077,262 @@ const V3AdminBusinessCaseDetail = () => {
     }
   };
 
+  const editStrategyFee = async (invoice) => {
+    const rawAmount = prompt('Strategy Development Fee amount?', String(invoice.amount || ''));
+    if (!rawAmount) return;
+    const nextAmount = Number(rawAmount.replace(/[^\d.]/g, ''));
+    if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
+      flash('Enter a valid Strategy Development Fee amount.');
+      return;
+    }
+    setBusy(true);
+    try {
+      try {
+        await v3UpdateInvoice(invoice.id, { amount: nextAmount });
+        await reload();
+        flash('Strategy Development Fee updated.');
+      } catch (e) {
+        setBundle((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            invoices: (Array.isArray(prev.invoices) ? prev.invoices : []).map((inv) =>
+              inv.id === invoice.id ? { ...inv, amount: nextAmount, updated_at: new Date().toISOString() } : inv
+            ),
+            business_case: {
+              ...prev.business_case,
+              frame: {
+                ...(prev.business_case.frame || {}),
+                strategy_development_fee_amount: nextAmount,
+              },
+            },
+          };
+        });
+        flash('Demo mode: Strategy Development Fee updated.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const editDeliverable = async (deliverable) => {
+    const title = prompt('Deliverable title?', deliverable.title || '');
+    if (!title) return;
+    const status = prompt('Status: pending_upload, pending_rm_review, approved', deliverable.status || 'pending_upload') || deliverable.status || 'pending_upload';
+    const dueDate = prompt('Due date? Leave blank to keep current.', deliverable.due_date || '') || deliverable.due_date;
+    const payload = { title, status, due_date: dueDate };
+    setBusy(true);
+    try {
+      try {
+        await v3UpdateDeliverable(deliverable.id, payload);
+        await reload();
+        flash('Deliverable updated.');
+      } catch (e) {
+        setBundle((prev) => {
+          if (!prev) return prev;
+          const deliverables = (Array.isArray(prev.deliverables) ? prev.deliverables : []).map((item) =>
+            item.id === deliverable.id ? { ...item, ...payload, updated_at: new Date().toISOString() } : item
+          );
+          const approved = deliverables.filter((item) => item.status === 'approved').length;
+          return {
+            ...prev,
+            deliverables,
+            business_case: {
+              ...prev.business_case,
+              deliver: {
+                ...(prev.business_case.deliver || {}),
+                deliverables_total: deliverables.length,
+                deliverables_complete: approved,
+                milestones_total: deliverables.length,
+                milestones_complete: approved,
+              },
+            },
+          };
+        });
+        flash('Demo mode: deliverable updated.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addDeliverable = async () => {
+    const title = prompt('Deliverable title?');
+    if (!title) return;
+    setBusy(true);
+    try {
+      try {
+        await v3AddDeliverable({ business_case_id: c.id, title });
+        await reload();
+        flash('Deliverable added.');
+      } catch (e) {
+        setBundle((prev) => {
+          if (!prev) return prev;
+          const deliverables = [
+            ...(Array.isArray(prev.deliverables) ? prev.deliverables : []),
+            {
+              id: `deliverable-demo-${Date.now()}`,
+              business_case_id: prev.business_case.id,
+              title,
+              status: 'pending_upload',
+              payment_released: false,
+            },
+          ];
+          const approved = deliverables.filter((item) => item.status === 'approved').length;
+          return {
+            ...prev,
+            deliverables,
+            business_case: {
+              ...prev.business_case,
+              deliver: {
+                ...(prev.business_case.deliver || {}),
+                deliverables_total: deliverables.length,
+                deliverables_complete: approved,
+                milestones_total: deliverables.length,
+                milestones_complete: approved,
+              },
+            },
+          };
+        });
+        flash('Demo mode: deliverable added.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const generateFinalReport = async () => {
+    setBusy(true);
+    try {
+      try {
+        await v3GenerateFinalReport(c.id);
+        await reload();
+        flash('Final Report generated.');
+      } catch (e) {
+        setBundle((prev) => {
+          if (!prev) return prev;
+          const deliverables = Array.isArray(prev.deliverables) ? prev.deliverables : [];
+          const approved = deliverables.filter((item) => item.status === 'approved');
+          const report = {
+            id: `final-report-demo-${prev.business_case.id}`,
+            business_case_id: prev.business_case.id,
+            status: 'ready_for_brand',
+            generated_at: new Date().toISOString(),
+            title: `${prev.business_case.title} Final Campaign Report`,
+            summary: `${prev.business_case.title} delivered ${approved.length} of ${deliverables.length} contracted deliverables. KPI performance, creator execution, budget handling, and closure readiness are summarised below.`,
+            deliverables,
+            kpis: [
+              { kpi: 'Reach', target: '10M', actual: '11.8M', variance: '+18%' },
+              { kpi: 'Engagement rate', target: '7%', actual: '8.1%', variance: '+16%' },
+              { kpi: 'Earned media value', target: 'N200M', actual: 'N238M', variance: '+19%' },
+            ],
+            closure_checklist: [
+              { item: 'Final report delivered', status: 'done' },
+              { item: 'All invoices settled', status: 'done' },
+              { item: 'All creator payments released', status: approved.every((item) => item.payment_released) ? 'done' : 'pending' },
+              { item: 'Contracts archived', status: prev.contract ? 'done' : 'pending' },
+              { item: 'Brand feedback received', status: 'pending' },
+              { item: 'Creator feedback received', status: 'pending' },
+            ],
+          };
+          return {
+            ...prev,
+            final_report: report,
+            business_case: {
+              ...prev.business_case,
+              closure: {
+                ...(prev.business_case.closure || {}),
+                final_report_id: report.id,
+                final_report_status: 'ready_for_brand',
+                report_status: 'generated',
+                closure_pct: 50,
+              },
+            },
+          };
+        });
+        flash('Demo mode: Final Report generated.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitBrandFeedback = async () => {
+    setBusy(true);
+    try {
+      try {
+        const rater = bundle.brand?.primary_contact || 'Brand';
+        await v3SubmitBrandFeedback(c.id, {
+          rater,
+          scores: { clarity: 10, communication: 9, deliverables: 9, budget: 8, reporting: 10 },
+          comment: 'Google Form-style checklist submitted after final report.',
+        });
+        await reload();
+        flash('Brand feedback recorded.');
+      } catch (e) {
+        setBundle((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            business_case: {
+              ...prev.business_case,
+              closure: {
+                ...(prev.business_case.closure || {}),
+                brand_feedback_received: true,
+                closure_pct: Math.max(prev.business_case.closure?.closure_pct || 0, 75),
+              },
+            },
+          };
+        });
+        flash('Demo mode: brand feedback recorded.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitCreatorFeedback = async () => {
+    setBusy(true);
+    try {
+      try {
+        await v3SubmitCreatorFeedback(c.id, {
+          rater: bundle.creator?.name || 'Creator',
+          scores: { professionalism: 9, clarity: 9, payment_speed: 9 },
+          comment: 'Auto-submitted from admin panel after final report.',
+        });
+        await reload();
+        flash('Creator feedback recorded.');
+      } catch (e) {
+        setBundle((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            business_case: {
+              ...prev.business_case,
+              closure: {
+                ...(prev.business_case.closure || {}),
+                creator_feedback_received: true,
+                closure_pct: Math.max(prev.business_case.closure?.closure_pct || 0, 90),
+              },
+            },
+          };
+        });
+        flash('Demo mode: creator feedback recorded.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const createDemoBrainstorm = (scored = []) => {
     setBundle((prev) => {
       if (!prev) return prev;
+      const estimatedValue = prev.business_case.estimated_value || 0;
+      const creatorFee = Math.round(estimatedValue * 0.28);
+      const productionBudget = Math.round(estimatedValue * 0.22);
+      const paidMediaBudget = Math.round(estimatedValue * 0.18);
+      const strategyFee = Math.max(4000000, Math.round(estimatedValue * 0.035));
+      const tasckManagementFee = Math.round(estimatedValue * 0.12);
       return {
         ...prev,
         brainstorm_round: {
@@ -1056,6 +1353,32 @@ const V3AdminBusinessCaseDetail = () => {
             reason: item.conversion_behavior < 3 ? 'Conversion behaviour below threshold' : item.reason,
             rank: index + 1,
           })),
+          content_plan: [
+            { item: 'Hero creator film', owner: 'Creative', format: '60 to 90 seconds', status: 'planned' },
+            { item: 'Social cutdowns', owner: 'Creative and TASCK', format: '6 vertical videos', status: 'planned' },
+            { item: 'Behind the scenes content', owner: 'TASCK production', format: '10 BTS assets', status: 'planned' },
+            { item: 'Launch copy and posting guide', owner: 'TASCK strategy', format: 'Caption and CTA kit', status: 'planned' },
+          ],
+          budget_plan: [
+            { line: 'Creator fee', amount: creatorFee, owner: 'TASCK negotiates with creative' },
+            { line: 'Production budget', amount: productionBudget, owner: 'TASCK production planning' },
+            { line: 'Paid media and amplification', amount: paidMediaBudget, owner: 'Brand and TASCK' },
+            { line: 'Strategy Development Fee', amount: strategyFee, owner: 'Brand pays before Strategy Snapshot' },
+          ],
+          revenue_plan: {
+            brand_budget: estimatedValue,
+            creator_fee: creatorFee,
+            production_budget: productionBudget,
+            strategy_development_fee: strategyFee,
+            tasck_management_fee: tasckManagementFee,
+            projected_tasck_revenue: strategyFee + tasckManagementFee,
+          },
+          contract_plan: [
+            { item: 'Brand service agreement', detail: 'Confirm campaign scope, brand approvals, payment schedule, usage rights, and reporting obligations.' },
+            { item: 'Independent creator agreement', detail: 'Confirm creator deliverables, fees, usage, exclusivity, cancellation, and payment triggers.' },
+            { item: 'Budget schedule', detail: 'Attach creator fee, production spend, paid media, Strategy Development Fee, and TASCK management fee.' },
+            { item: 'Deliverables schedule', detail: 'Attach final deliverable list before signature so Delivery and Reports use the same source.' },
+          ],
           created_at: new Date().toISOString(),
         },
       };
@@ -1103,8 +1426,12 @@ const V3AdminBusinessCaseDetail = () => {
       const creator = selected || prev.creator;
       const creatorName = creator?.name || 'Selected creator';
       const invoices = Array.isArray(prev.invoices) ? prev.invoices : [];
+      const existingBriefs = Array.isArray(prev.creative_briefs)
+        ? prev.creative_briefs
+        : prev.creative_brief ? [prev.creative_brief] : [];
       const hasSdfInvoice = invoices.some((inv) => inv.kind === 'strategy_development_fee');
       const strategyFee = Math.max(4000000, Math.round((prev.business_case.estimated_value || 0) * 0.035));
+      const sentAt = new Date().toISOString();
       const creatorResponse = {
         interest: 'Creative Brief sent; awaiting creator confirmation.',
         fee_expectation: 'Pending creator fee confirmation.',
@@ -1115,12 +1442,12 @@ const V3AdminBusinessCaseDetail = () => {
         ai_source: 'creative_brief_auto_strategy_draft',
       };
       const creativeBrief = {
-        id: `brief-demo-${prev.business_case.id}`,
+        id: `brief-demo-${prev.business_case.id}-${existingBriefs.length + 1}`,
         business_case_id: prev.business_case.id,
         creator_id: creatorId,
         brief_text: briefText,
         status: 'sent',
-        sent_at: new Date().toISOString(),
+        sent_at: sentAt,
         sent_via: 'email',
         creator_response: creatorResponse,
       };
@@ -1133,6 +1460,7 @@ const V3AdminBusinessCaseDetail = () => {
         ...prev,
         creator,
         creative_brief: creativeBrief,
+        creative_briefs: [creativeBrief, ...existingBriefs],
         creative_snapshot: buildDemoStrategySnapshotDraft({
           bundle: snapshotBundle,
           creator,
@@ -1158,6 +1486,7 @@ const V3AdminBusinessCaseDetail = () => {
           plan: {
             ...(prev.business_case.plan || {}),
             creative_brief_status: 'sent',
+            creative_brief_ids: [creativeBrief.id, ...existingBriefs.map((brief) => brief.id)],
             creative_snapshot_status: 'draft',
             strategy_snapshot_status: 'draft',
           },
@@ -1198,6 +1527,9 @@ const V3AdminBusinessCaseDetail = () => {
       return {
         ...prev,
         creative_brief: creativeBrief,
+        creative_briefs: (Array.isArray(prev.creative_briefs) ? prev.creative_briefs : [prev.creative_brief]).map((brief) =>
+          brief?.id === creativeBrief.id ? creativeBrief : brief
+        ),
         creative_snapshot: buildDemoStrategySnapshotDraft({
           bundle: snapshotBundle,
           creator: prev.creator,
@@ -1640,13 +1972,18 @@ const V3AdminBusinessCaseDetail = () => {
                   <div key={inv.id} className="flex items-center justify-between" data-testid={`bc-plan-invoice-${inv.id}`}>
                     <div>
                       <p className="text-[13px] font-medium">{formatNairaV3(inv.amount)}</p>
-                      <p className="text-[11px] text-[#8A8A8A]">Tracked before Strategy Snapshot is sent - Status: {inv.status}</p>
+                      <p className="text-[11px] text-[#8A8A8A]">Tracked before Strategy Snapshot is sent. Status: {inv.status}</p>
                     </div>
-                    {inv.status !== 'paid' && (
-                      <button onClick={() => markStrategyFeePaid(inv.id)} disabled={busy} className="v3-btn-primary">
-                        Mark paid
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => editStrategyFee(inv)} disabled={busy || inv.status === 'paid'} className="v3-btn-secondary" data-testid={`bc-edit-sdf-${inv.id}`}>
+                        <Edit3 className="w-3.5 h-3.5" /> Edit fee
                       </button>
-                    )}
+                      {inv.status !== 'paid' && (
+                        <button onClick={() => markStrategyFeePaid(inv.id)} disabled={busy} className="v3-btn-primary">
+                          Mark paid
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
             </Section>
@@ -1666,10 +2003,11 @@ const V3AdminBusinessCaseDetail = () => {
             onDemoPaySdf={markStrategyFeePaid}
             onDemoDraftSnapshot={draftDemoStrategySnapshot}
             onDemoContract={createDemoContract}
+            creativeBriefCount={creativeBriefs.length}
           />
 
           {bundle.brainstorm_round && (
-            <Section title="Brainstorm — 7-phase round">
+            <Section title="Brainstorm planning">
               <div className="grid grid-cols-7 gap-2 mb-4">
                 {(Array.isArray(bundle.brainstorm_round.phases) ? bundle.brainstorm_round.phases : []).map((p) => (
                   <div key={p.phase} className={`p-2 rounded text-center ${p.status === 'complete' ? 'bg-[#DDE7E2]' : 'bg-[#F4F2EC]'}`}>
@@ -1690,35 +2028,105 @@ const V3AdminBusinessCaseDetail = () => {
                   </div>
                 ))}
               </div>
+              <div className="grid grid-cols-2 gap-4 mt-5">
+                <div className="p-4 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
+                  <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-3">Content plan</p>
+                  <div className="space-y-2">
+                    {brainstormContentPlan.map((item) => (
+                      <div key={item.item} className="flex items-start justify-between gap-3 text-[12px]">
+                        <div>
+                          <p className="font-medium text-[#1A1A1A]">{item.item}</p>
+                          <p className="text-[#8A8A8A]">{item.format}</p>
+                        </div>
+                        <span className="text-[10px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">{item.owner}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="p-4 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
+                  <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-3">Budget plan</p>
+                  <div className="space-y-2">
+                    {brainstormBudgetPlan.map((line) => (
+                      <div key={line.line} className="flex items-center justify-between gap-3 text-[12px]">
+                        <div>
+                          <p className="font-medium text-[#1A1A1A]">{line.line}</p>
+                          <p className="text-[#8A8A8A]">{line.owner}</p>
+                        </div>
+                        <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(line.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {brainstormRevenuePlan && (
+                  <div className="p-4 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
+                    <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-3">Revenue plan</p>
+                    <div className="space-y-1 text-[12px]">
+                      {[
+                        ['Brand budget', brainstormRevenuePlan.brand_budget],
+                        ['Creator fee', brainstormRevenuePlan.creator_fee],
+                        ['Production budget', brainstormRevenuePlan.production_budget],
+                        ['Strategy Development Fee', brainstormRevenuePlan.strategy_development_fee],
+                        ['TASCK management fee', brainstormRevenuePlan.tasck_management_fee],
+                        ['Projected TASCK revenue', brainstormRevenuePlan.projected_tasck_revenue],
+                      ].map(([label, amount]) => (
+                        <div key={label} className="flex justify-between border-b border-[#E8E4DB] py-1 last:border-0">
+                          <span>{label}</span>
+                          <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(amount || 0)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="p-4 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
+                  <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-3">Contract plan</p>
+                  <div className="space-y-2">
+                    {brainstormContractPlan.map((item) => (
+                      <div key={item.item} className="text-[12px]">
+                        <p className="font-medium text-[#1A1A1A]">{item.item}</p>
+                        <p className="text-[#8A8A8A] leading-relaxed">{item.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </Section>
           )}
 
-          {bundle.creative_brief && (
-            <Section title="Creative Brief — sent to creator">
-              <p className="text-[12px] text-[#8A8A8A] mb-2">
-                Sent to {bundle.creator?.name} • {bundle.creative_brief.sent_at?.slice(0, 10)}
-              </p>
-              <p className="text-[13px] mb-4 whitespace-pre-wrap">{bundle.creative_brief.brief_text}</p>
-              {bundle.creative_brief.creator_response && (
-                <div className="p-4 bg-[#F4F2EC] rounded">
-                  <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">
-                    {bundle.creative_brief.admin_creator_discussion_transcript ? 'AI brief discussion summary' : 'AI strategy draft inputs'}
-                  </p>
-                  <p className="text-[12px] mb-1"><strong>Alignment:</strong> {bundle.creative_brief.creator_response.interest}</p>
-                  <p className="text-[12px] mb-1"><strong>Fee:</strong> {bundle.creative_brief.creator_response.fee_expectation}</p>
-                  <p className="text-[12px] mb-1"><strong>Availability:</strong> {bundle.creative_brief.creator_response.availability}</p>
-                  {bundle.creative_brief.admin_creator_discussion_transcript && (
-                    <p className="text-[12px] mb-1"><strong>Source:</strong> Admin-creative brief discussion pasted into AI</p>
-                  )}
-                  <p className="text-[12px] mt-2 whitespace-pre-wrap">{bundle.creative_brief.creator_response.proposed_concept}</p>
-                </div>
-              )}
+          {creativeBriefs.length > 0 && (
+            <Section title="Creative Briefs sent to creators">
+              <div className="space-y-3">
+                {creativeBriefs.map((brief, index) => (
+                  <div key={brief.id} className="p-4 border border-[#E8E4DB] rounded" data-testid={`bc-creative-brief-${brief.id}`}>
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <p className="text-[12px] text-[#8A8A8A]">
+                        Brief {creativeBriefs.length - index} sent to {bundle.creator?.name || brief.creator_id} on {brief.sent_at?.slice(0, 10)}
+                      </p>
+                      <span className="text-[10px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">{brief.status}</span>
+                    </div>
+                    <p className="text-[13px] mb-4 whitespace-pre-wrap">{brief.brief_text}</p>
+                    {brief.creator_response && (
+                      <div className="p-4 bg-[#F4F2EC] rounded">
+                        <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">
+                          {brief.admin_creator_discussion_transcript ? 'AI brief discussion summary' : 'AI strategy draft inputs'}
+                        </p>
+                        <p className="text-[12px] mb-1"><strong>Alignment:</strong> {brief.creator_response.interest}</p>
+                        <p className="text-[12px] mb-1"><strong>Fee:</strong> {brief.creator_response.fee_expectation}</p>
+                        <p className="text-[12px] mb-1"><strong>Availability:</strong> {brief.creator_response.availability}</p>
+                        {brief.admin_creator_discussion_transcript && (
+                          <p className="text-[12px] mb-1"><strong>Source:</strong> Admin-creative brief discussion pasted into AI</p>
+                        )}
+                        <p className="text-[12px] mt-2 whitespace-pre-wrap">{brief.creator_response.proposed_concept}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </Section>
           )}
 
           {bundle.creative_snapshot && (
             <Section
-              title="Strategy Snapshot - brand-facing strategy"
+              title="Strategy Snapshot: brand facing strategy"
               action={
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider bg-[#F4F2EC] text-[#6E6657]" data-testid="bc-strategy-status">
@@ -1766,7 +2174,7 @@ const V3AdminBusinessCaseDetail = () => {
 
           {false && bundle.creative_snapshot && (
             <Section
-              title="Strategy Snapshot - brand-facing strategy"
+              title="Strategy Snapshot: brand facing strategy"
               action={
                 bundle.creative_snapshot.status !== 'approved' && (
                   <button
@@ -1862,14 +2270,10 @@ const V3AdminBusinessCaseDetail = () => {
           <DeliveryContractStudio bundle={bundle} busy={busy} />
 
           <Section
-            title="Milestones"
+            title="Deliverables"
             action={
               <button
-                onClick={wrap(async () => {
-                  const title = prompt('Deliverable title?');
-                  if (!title) return;
-                  await v3AddDeliverable({ business_case_id: c.id, title });
-                })}
+                onClick={addDeliverable}
                 disabled={busy}
                 className="v3-btn-secondary"
                 data-testid="bc-add-deliverable"
@@ -1879,13 +2283,13 @@ const V3AdminBusinessCaseDetail = () => {
             }
           >
             <p className="text-[12px] text-[#8A8A8A] mb-3">
-              {c.deliver?.milestones_complete || 0} of {c.deliver?.milestones_total || bundle.deliverables.length} approved
+              {approvedDeliverableCount} of {caseDeliverables.length} approved
             </p>
             <div className="space-y-2">
-              {bundle.deliverables.length === 0 && (
+              {caseDeliverables.length === 0 && (
                 <p className="text-[12px] text-[#8A8A8A] italic">No deliverables yet. Add the first one to begin Deliver.</p>
               )}
-              {bundle.deliverables.map((d) => (
+              {caseDeliverables.map((d) => (
                 <div key={d.id} className="flex items-center justify-between p-3 border border-[#E8E4DB] rounded" data-testid={`bc-deliverable-${d.id}`}>
                   <div className="flex items-center gap-3">
                     {d.status === 'approved' ? (
@@ -1898,11 +2302,16 @@ const V3AdminBusinessCaseDetail = () => {
                       <p className="text-[10px] text-[#8A8A8A]">{d.status}</p>
                     </div>
                   </div>
-                  {d.status !== 'approved' && (
-                    <button onClick={wrap(() => v3TransitionDeliverable(d.id))} disabled={busy} className="v3-btn-secondary text-[11px]" data-testid={`bc-transition-${d.id}`}>
-                      <PackageCheck className="w-3.5 h-3.5" /> Advance
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => editDeliverable(d)} disabled={busy} className="v3-btn-secondary text-[11px]" data-testid={`bc-edit-deliverable-${d.id}`}>
+                      <Edit3 className="w-3.5 h-3.5" /> Edit
                     </button>
-                  )}
+                    {d.status !== 'approved' && (
+                      <button onClick={wrap(() => v3TransitionDeliverable(d.id))} disabled={busy} className="v3-btn-secondary text-[11px]" data-testid={`bc-transition-${d.id}`}>
+                        <PackageCheck className="w-3.5 h-3.5" /> Advance
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1969,6 +2378,15 @@ const V3AdminBusinessCaseDetail = () => {
             <Section title="Final report">
               <V3DocumentSurface title={bundle.final_report.title}>
                 <p className="text-[14px] mb-4 whitespace-pre-wrap">{bundle.final_report.summary}</p>
+                <h4 className="text-[12px] font-semibold uppercase tracking-wider mb-2">Deliverables feed</h4>
+                <ul className="text-[13px] space-y-1 mb-4">
+                  {(Array.isArray(bundle.final_report.deliverables) && bundle.final_report.deliverables.length ? bundle.final_report.deliverables : caseDeliverables).map((item) => (
+                    <li key={item.id || item.title} className="flex justify-between border-b border-[#E8E4DB] py-1">
+                      <span>{item.title}</span>
+                      <span className={item.status === 'approved' ? 'text-[#1F4A3A]' : 'text-[#C49B5F]'}>{item.status}</span>
+                    </li>
+                  ))}
+                </ul>
                 <h4 className="text-[12px] font-semibold uppercase tracking-wider mb-2">KPI performance</h4>
                 <ul className="text-[13px] space-y-1 mb-4">
                   {bundle.final_report.kpis.map((k, i) => (
@@ -1996,7 +2414,7 @@ const V3AdminBusinessCaseDetail = () => {
             <Section title="Final report">
               <p className="text-[12px] text-[#8A8A8A] mb-3">No final report generated yet. The AI compiles deliverables + KPI targets into a templated report you can edit.</p>
               <button
-                onClick={wrap(() => v3GenerateFinalReport(c.id))}
+                onClick={generateFinalReport}
                 disabled={busy}
                 className="v3-btn-primary"
                 data-testid="bc-generate-final-report"
@@ -2006,40 +2424,54 @@ const V3AdminBusinessCaseDetail = () => {
             </Section>
           )}
 
-          <Section title="Brand feedback">
-            <button
-              onClick={wrap(async () => {
-                const rater = bundle.brand?.primary_contact || 'Brand';
-                await v3SubmitBrandFeedback(c.id, {
-                  rater,
-                  scores: { timeliness: 9, quality: 9, communication: 9 },
-                  comment: 'Auto-submitted from admin panel for demo.',
-                });
-              })}
-              disabled={busy || c.closure?.brand_feedback_received}
-              className="v3-btn-primary"
-              data-testid="bc-submit-brand-feedback"
-            >
-              <FileText className="w-3.5 h-3.5" /> {c.closure?.brand_feedback_received ? 'Brand feedback recorded' : 'Submit brand feedback'}
-            </button>
-          </Section>
+          {!bundle.final_report && (
+            <Section title="Feedback locked">
+              <p className="text-[12px] text-[#8A8A8A]">Feedback opens only after the final report has been generated and shared for closure review.</p>
+            </Section>
+          )}
 
-          <Section title="Creator feedback">
-            <button
-              onClick={wrap(async () => {
-                await v3SubmitCreatorFeedback(c.id, {
-                  rater: bundle.creator?.name || 'Creator',
-                  scores: { professionalism: 9, clarity: 9, payment_speed: 9 },
-                  comment: 'Auto-submitted from admin panel for demo.',
-                });
-              })}
-              disabled={busy || c.closure?.creator_feedback_received}
-              className="v3-btn-primary"
-              data-testid="bc-submit-creator-feedback"
-            >
-              <FileText className="w-3.5 h-3.5" /> {c.closure?.creator_feedback_received ? 'Creator feedback recorded' : 'Submit creator feedback'}
-            </button>
-          </Section>
+          {bundle.final_report && (
+            <>
+              <Section title="Brand feedback Google Form">
+                <div className="space-y-3 mb-4">
+                  {[
+                    ['Campaign objectives were clearly understood', 10],
+                    ['TASCK communication was timely and useful', 9],
+                    ['Creator delivery matched approved deliverables', 9],
+                    ['Budget and fee handling was transparent', 8],
+                    ['Final report answered the brand decision questions', 10],
+                  ].map(([label, score]) => (
+                    <label key={label} className="flex items-center justify-between gap-3 p-3 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
+                      <span className="flex items-center gap-2 text-[12px] text-[#1A1A1A]">
+                        <input type="checkbox" defaultChecked className="accent-[#1F4A3A]" />
+                        {label}
+                      </span>
+                      <span className="text-[12px] text-[#1F4A3A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{score}/10</span>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  onClick={submitBrandFeedback}
+                  disabled={busy || c.closure?.brand_feedback_received}
+                  className="v3-btn-primary"
+                  data-testid="bc-submit-brand-feedback"
+                >
+                  <FileText className="w-3.5 h-3.5" /> {c.closure?.brand_feedback_received ? 'Brand feedback recorded' : 'Submit brand feedback'}
+                </button>
+              </Section>
+
+              <Section title="Creator feedback">
+                <button
+                  onClick={submitCreatorFeedback}
+                  disabled={busy || c.closure?.creator_feedback_received}
+                  className="v3-btn-primary"
+                  data-testid="bc-submit-creator-feedback"
+                >
+                  <FileText className="w-3.5 h-3.5" /> {c.closure?.creator_feedback_received ? 'Creator feedback recorded' : 'Submit creator feedback'}
+                </button>
+              </Section>
+            </>
+          )}
         </>
       )}
     </div>
@@ -2138,6 +2570,7 @@ const PlanStageActions = ({
   onDemoPaySdf,
   onDemoDraftSnapshot,
   onDemoContract,
+  creativeBriefCount = 0,
 }) => {
   const c = bundle.business_case;
   const creatorList = Array.isArray(creators) ? creators : [];
@@ -2291,7 +2724,7 @@ const PlanStageActions = ({
       <textarea
         value={briefText}
         onChange={(e) => setBriefText(e.target.value)}
-        placeholder="Brief - write the one-paragraph creative ask you want to send the creator."
+        placeholder="Brief: write the one-paragraph creative ask you want to send the creator."
         rows={4}
         className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white mb-3"
         data-testid="bc-brief-text"
@@ -2325,10 +2758,12 @@ const PlanStageActions = ({
     </div>
   );
 
+  if (actionView === 'brief') {
+    return renderBriefComposer(hasBrainstorm);
+  }
+
   // Brainstorm CTA — defaults to scoring the top 4 super-tier creators
   if (!hasBrainstorm && !hasBrief && !hasSnapshot && !hasContract) {
-    if (actionView === 'brief') return renderBriefComposer(false);
-
     return (
       <div className="v3-card p-6 mb-4 border-[#C49B5F]" data-testid="bc-plan-action-brainstorm">
         <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-2 text-[#1A1A1A]">
@@ -2496,6 +2931,15 @@ const PlanStageActions = ({
               <Mail className="w-3.5 h-3.5" /> Remind creator
             </button>
             <button
+              type="button"
+              onClick={() => setActionView('brief')}
+              disabled={busy}
+              className="v3-btn-secondary"
+              data-testid="bc-send-another-brief"
+            >
+              <Plus className="w-3.5 h-3.5" /> Send another brief {creativeBriefCount > 0 ? `(${creativeBriefCount})` : ''}
+            </button>
+            <button
               onClick={() => downloadBrief(bundle.creative_brief.brief_text, `${c.id}-creative-brief.txt`)}
               className="v3-btn-secondary"
               data-testid="bc-download-brief-sent"
@@ -2568,6 +3012,15 @@ const PlanStageActions = ({
             data-testid="bc-brief-reminder"
           >
             <Mail className="w-3.5 h-3.5" /> Remind
+          </button>
+          <button
+            type="button"
+            onClick={() => setActionView('brief')}
+            disabled={busy}
+            className="v3-btn-secondary"
+            data-testid="bc-send-another-brief"
+          >
+            <Plus className="w-3.5 h-3.5" /> Send another brief {creativeBriefCount > 0 ? `(${creativeBriefCount})` : ''}
           </button>
           <button
             onClick={() => downloadBrief(bundle.creative_brief.brief_text, `${c.id}-creative-brief.txt`)}

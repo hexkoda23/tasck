@@ -27,6 +27,7 @@ export const v3Brands = [
       { factor: 'Decision seniority', detail: 'Head of Marketing direct — not a junior intermediary' },
     ],
     lastInteraction: '12 days ago',
+    rmId: 'rm-temi',
   },
   {
     id: 'brand-guinness',
@@ -53,6 +54,7 @@ export const v3Brands = [
       { factor: 'Strategic clarity', detail: 'Strong brief — repositioning objective well-articulated' },
     ],
     lastInteraction: '3 days ago',
+    rmId: 'rm-adaeze',
   },
   {
     id: 'brand-mtn',
@@ -79,6 +81,7 @@ export const v3Brands = [
       { factor: 'Brief quality', detail: 'Very good — clear KPIs, firm timelines' },
     ],
     lastInteraction: '1 day ago',
+    rmId: 'rm-tope',
   },
   {
     id: 'brand-access',
@@ -104,6 +107,7 @@ export const v3Brands = [
       { factor: 'Decision seniority', detail: 'Group Head direct — solid authority' },
     ],
     lastInteraction: '5 days ago',
+    rmId: 'rm-femi',
   },
   {
     id: 'brand-star',
@@ -129,6 +133,7 @@ export const v3Brands = [
       { factor: 'Prior agency experience', detail: 'Positive — has worked with creator agencies before' },
     ],
     lastInteraction: '2 days ago',
+    rmId: 'rm-adaeze',
   },
   {
     id: 'brand-pepsi',
@@ -154,6 +159,7 @@ export const v3Brands = [
       { factor: 'Brief quality', detail: 'Developing — still refining goals' },
     ],
     lastInteraction: '8 days ago',
+    rmId: 'rm-temi',
   },
   {
     id: 'brand-uba',
@@ -179,6 +185,7 @@ export const v3Brands = [
       { factor: 'Decision seniority', detail: 'Mid-level lead — may slow approvals' },
     ],
     lastInteraction: '6 days ago',
+    rmId: 'rm-femi',
   },
   {
     id: 'brand-dangote',
@@ -204,6 +211,7 @@ export const v3Brands = [
       { factor: 'Decision seniority', detail: 'GCCO direct — but Chairman involvement adds complexity' },
     ],
     lastInteraction: '18 days ago',
+    rmId: 'rm-temi',
   },
   {
     id: 'brand-airtel',
@@ -229,6 +237,7 @@ export const v3Brands = [
       { factor: 'Brief quality', detail: 'Good — specific about audience segments' },
     ],
     lastInteraction: '4 days ago',
+    rmId: 'rm-adaeze',
   },
   {
     id: 'brand-gtbank',
@@ -254,6 +263,7 @@ export const v3Brands = [
       { factor: 'Multi-creator interest', detail: 'Wants a multi-creator approach — adds complexity' },
     ],
     lastInteraction: '10 days ago',
+    rmId: 'rm-femi',
   },
 ];
 
@@ -271,10 +281,10 @@ export const v3Creators = [
 ];
 
 export const v3RMs = [
-  { id: 'rm-temi', name: 'Temi Bakare', role: 'Relationship Manager', initials: 'TB' },
-  { id: 'rm-adaeze', name: 'Adaeze Obi', role: 'Relationship Manager', initials: 'AO' },
-  { id: 'rm-tope', name: 'Tope Martins', role: 'Relationship Manager', initials: 'TM' },
-  { id: 'rm-femi', name: 'Femi Oladipo', role: 'Relationship Manager', initials: 'FO' },
+  { id: 'rm-temi', name: 'Temi Bakare', role: 'Relationship Manager', initials: 'TB', email: 'temi.bakare@tasck.com' },
+  { id: 'rm-adaeze', name: 'Adaeze Obi', role: 'Relationship Manager', initials: 'AO', email: 'adaeze.obi@tasck.com' },
+  { id: 'rm-tope', name: 'Tope Martins', role: 'Relationship Manager', initials: 'TM', email: 'tope.martins@tasck.com' },
+  { id: 'rm-femi', name: 'Femi Oladipo', role: 'Relationship Manager', initials: 'FO', email: 'femi.oladipo@tasck.com' },
 ];
 
 export const v3Projects = [
@@ -825,7 +835,7 @@ const makeGenericAlignmentSnapshot = (project, brand) => {
     generatedAt: project.createdAt,
     approvedBy: null,
     brandHeader: `${brand?.company?.split(' ')[0]?.toUpperCase() || 'BRAND'} x TASCK`,
-    title: `"${project.title}" - Alignment Snapshot`,
+    title: `"${project.title}": Alignment Snapshot`,
     meta: 'AI-generated from connector phase data | Pending admin review',
     sections: [
       { heading: 'Business promotion summary', type: 'prose', content: `TASCK can help ${brand?.company || 'the brand'} turn "${project.title}" into a creator-led campaign anchored on ${mi.key_marketing_focus}` },

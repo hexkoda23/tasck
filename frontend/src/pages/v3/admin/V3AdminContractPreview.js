@@ -60,7 +60,7 @@ const V3AdminContractPreview = () => {
 
         <h2>4. Payment Terms</h2>
         <p>All invoices are payable within {isRetainer ? '14' : '21'} days of issuance. Late payments shall incur a 2% monthly surcharge. TASCK reserves the right to pause deliverables if payment is overdue by more than 30 days.</p>
-        <p>Creator payments are held in escrow by TASCK and released upon brand approval of each deliverable milestone, as specified in the Strategy Snapshot timeline.</p>
+        <p>Creator payments are held in escrow by TASCK and released upon brand approval of each contracted deliverable, as specified in the Strategy Snapshot timeline.</p>
 
         <h2>5. Usage Rights</h2>
         <p>All content produced under this Agreement is licensed to the Client for a period of <strong>12 months</strong> from the date of final deliverable approval. Usage territory: {brand?.industry?.includes('Alcohol') ? 'Pan-African (Nigeria, Kenya, South Africa, Cameroon)' : 'Nigeria (primary) with option for pan-African extension'}.</p>

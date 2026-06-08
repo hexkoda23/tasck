@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { v3Brands as fallbackBrands, getProjectsForBrand } from '../../../lib/v3data';
+import { v3Brands as fallbackBrands, v3RMs, getProjectsForBrand, getRM } from '../../../lib/v3data';
 import { v3GetBrands, v3CreateBrand } from '../../../lib/v3api';
 import { useV3Resource } from '../../../lib/useV3Resource';
 import V3Modal from '../../../components/v3/V3Modal';
@@ -15,9 +15,17 @@ const normaliseBrand = (b) => ({
   primaryContact: b.primary_contact || b.primaryContact,
   role: b.role,
   leadScore: b.lead_score || b.leadScore,
+  createdAt: b.created_at || b.createdAt || null,
   lastInteraction: b.last_interaction || b.lastInteraction,
   engagementTrack: b.engagement_track_default || 'paid',
+  rmId: b.rm_id || b.rmId || b.relationship_manager?.id || 'rm-temi',
+  relationshipManager: b.relationship_manager || getRM(b.rm_id || b.rmId) || v3RMs[0],
 });
+
+const brandCreatedAtTs = (value) => {
+  const ts = Date.parse(value || '');
+  return Number.isNaN(ts) ? 0 : ts;
+};
 
 const V3AdminCRM = () => {
   const navigate = useNavigate();
@@ -30,7 +38,7 @@ const V3AdminCRM = () => {
   const normalised = brandList.map(normaliseBrand);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({ company: '', industry: '', primary_contact: '', role: '', email: '', engagement_track_default: 'paid' });
+  const [form, setForm] = useState({ company: '', industry: '', primary_contact: '', role: '', email: '', rm_id: 'rm-temi', engagement_track_default: 'paid' });
   const [submitting, setSubmitting] = useState(false);
   const [createdAccount, setCreatedAccount] = useState(null);
 
@@ -58,7 +66,15 @@ const V3AdminCRM = () => {
       (b.company.toLowerCase().includes(search.toLowerCase()) ||
         (b.primaryContact || '').toLowerCase().includes(search.toLowerCase()))
     )
-    .sort((a, b) => (sortBy === 'score' ? (b.leadScore || 0) - (a.leadScore || 0) : a.company.localeCompare(b.company)));
+    .sort((a, b) => {
+      const newestFirst = brandCreatedAtTs(b.createdAt) - brandCreatedAtTs(a.createdAt);
+      if (newestFirst !== 0) {
+        return newestFirst;
+      }
+      return sortBy === 'score'
+        ? (b.leadScore || 0) - (a.leadScore || 0)
+        : a.company.localeCompare(b.company);
+    });
 
   const scoreColor = (score) => (score >= 70 ? '#1F4A3A' : score >= 40 ? '#C49B5F' : '#B54A37');
   const trackPill = (track) =>
@@ -165,7 +181,10 @@ const V3AdminCRM = () => {
                   </span>
                 </div>
                 <p className="text-[12px] text-[#8A8A8A] mt-0.5">
-                  {brand.primaryContact} — {brand.role}
+                  {brand.primaryContact} / {brand.role}
+                </p>
+                <p className="text-[11px] text-[#6E6657] mt-1">
+                  Relationship Manager: {brand.relationshipManager?.name || 'Temi Bakare'}
                 </p>
               </div>
 
@@ -227,6 +246,20 @@ const V3AdminCRM = () => {
               />
             </div>
           ))}
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Relationship Manager</label>
+            <select
+              value={form.rm_id}
+              onChange={(e) => setForm({ ...form, rm_id: e.target.value })}
+              className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+              data-testid="add-brand-rm"
+            >
+              {v3RMs.map((rm) => (
+                <option key={rm.id} value={rm.id}>{rm.name}</option>
+              ))}
+            </select>
+            <p className="text-[11px] text-[#8A8A8A] mt-1">This RM owns the brand relationship, follow-ups, meetings, and first Business Case handoff.</p>
+          </div>
           <div>
             <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Engagement track default</label>
             <div className="flex gap-2">

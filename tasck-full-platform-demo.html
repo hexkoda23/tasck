@@ -1,0 +1,2458 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TASCK OS - Production Prototype</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&family=Fraunces:opsz,wght@9..144,500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;1,600&display=swap');
+
+    :root {
+      --blue: #2F55FF;
+      --green: #22C55E;
+      --dark: #0E1420;
+      --dark-2: #111827;
+      --ink: #1A1A1A;
+      --text: #5C5C5C;
+      --muted: #8A8A8A;
+      --line: #E8E4DB;
+      --line-2: #D4CDBF;
+      --v3-bg: #FAFAF7;
+      --v3-soft: #F4F2EC;
+      --v3-green: #1F4A3A;
+      --v3-gold: #C49B5F;
+      --v3-olive: #567B3F;
+      --v3-red: #B54A37;
+      --radius: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--v3-bg);
+      color: var(--ink);
+      -webkit-font-smoothing: antialiased;
+      min-height: 100vh;
+    }
+
+    button,
+    input,
+    textarea,
+    select {
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    .font-display {
+      font-family: "Playfair Display", Georgia, serif;
+    }
+
+    .font-heading {
+      font-family: "Fraunces", Georgia, serif;
+    }
+
+    .mono {
+      font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      border: 0;
+      background: transparent;
+      text-align: left;
+    }
+
+    .logo-button {
+      border: 0;
+      background: transparent;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .logo-mark {
+      width: 48px;
+      height: 48px;
+      border-radius: 999px;
+      background: var(--blue);
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      box-shadow: 0 0 40px rgba(47, 85, 255, 0.22);
+    }
+
+    .logo-mark.small {
+      width: 32px;
+      height: 32px;
+    }
+
+    .logo-word {
+      font-weight: 800;
+      font-size: 11px;
+      line-height: 1.1;
+      letter-spacing: 0.1em;
+      color: #fff;
+    }
+
+    .logo.light .logo-word {
+      color: #0F172A;
+    }
+
+    .logo-letters {
+      font-weight: 800;
+      font-size: 12px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .logo-letters .t {
+      color: #6BFF9A;
+    }
+
+    .logo-letters .rest {
+      color: #fff;
+    }
+
+    .landing {
+      min-height: 100vh;
+      background: var(--dark);
+      color: #fff;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .landing::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 600px 360px at 28% 42%, rgba(47, 85, 255, 0.12), transparent 62%),
+        radial-gradient(ellipse 420px 280px at 74% 63%, rgba(34, 197, 94, 0.08), transparent 56%),
+        url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+      pointer-events: none;
+    }
+
+    .landing-rings {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      opacity: 0.9;
+    }
+
+    .landing-logo {
+      position: fixed;
+      top: 24px;
+      left: 32px;
+      z-index: 20;
+    }
+
+    .landing-inner {
+      min-height: 100vh;
+      width: min(980px, calc(100% - 40px));
+      margin: 0 auto;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      position: relative;
+      z-index: 2;
+      padding: 112px 0 54px;
+    }
+
+    .landing-kicker {
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.25em;
+      margin-bottom: 30px;
+    }
+
+    .landing h1 {
+      font-size: clamp(52px, 7vw, 92px);
+      line-height: 0.92;
+      letter-spacing: 0;
+      color: #fff;
+      margin-bottom: 30px;
+    }
+
+    .landing h1 span {
+      color: rgba(255, 255, 255, 0.72);
+      font-style: italic;
+    }
+
+    .landing-copy {
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 18px;
+      line-height: 1.75;
+      max-width: 520px;
+      margin: 0 auto 34px;
+    }
+
+    .landing-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 64px;
+    }
+
+    .enter-btn {
+      border: 0;
+      border-radius: 999px;
+      padding: 16px 34px;
+      background: #fff;
+      color: #0F172A;
+      font-size: 14px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      box-shadow: 0 0 42px rgba(255, 255, 255, 0.09);
+      transition: transform 0.18s ease, background 0.18s ease;
+    }
+
+    .enter-btn:hover {
+      background: rgba(255, 255, 255, 0.92);
+      transform: translateY(-1px) scale(1.01);
+    }
+
+    .landing-link {
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+      padding: 15px 24px;
+      color: rgba(255, 255, 255, 0.76);
+      background: rgba(255, 255, 255, 0.04);
+      font-size: 13px;
+      font-weight: 700;
+      transition: background 0.18s ease, color 0.18s ease;
+    }
+
+    .landing-link:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+    }
+
+    .landing-stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 42px;
+      width: min(560px, 100%);
+      margin: 0 auto;
+    }
+
+    .landing-stat strong {
+      display: block;
+      color: #fff;
+      font-size: 24px;
+      font-weight: 800;
+      margin-bottom: 5px;
+    }
+
+    .landing-stat span {
+      color: rgba(255, 255, 255, 0.28);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+    }
+
+    .landing-footer {
+      color: rgba(255, 255, 255, 0.16);
+      font-size: 10px;
+      margin-top: 58px;
+    }
+
+    .landing-detail {
+      position: relative;
+      z-index: 2;
+      background: #0C111B;
+      border-top: 1px solid rgba(255, 255, 255, 0.07);
+      padding: 72px 24px 90px;
+    }
+
+    .landing-detail-inner {
+      width: min(1160px, 100%);
+      margin: 0 auto;
+    }
+
+    .dark-section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    .dark-section-head h2 {
+      font-family: "Fraunces", Georgia, serif;
+      color: #fff;
+      font-size: 30px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .dark-section-head p {
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 14px;
+      line-height: 1.6;
+      max-width: 680px;
+    }
+
+    .dark-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .dark-card {
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.035);
+      border-radius: var(--radius);
+      padding: 18px;
+      min-height: 188px;
+    }
+
+    .dark-card h3 {
+      color: #fff;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .dark-card p {
+      color: rgba(255, 255, 255, 0.42);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .dark-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      color: rgba(255, 255, 255, 0.72);
+      background: rgba(255, 255, 255, 0.06);
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+
+    .role-screen {
+      min-height: 100vh;
+      background: var(--v3-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+    }
+
+    .role-wrap {
+      width: min(560px, 100%);
+    }
+
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 28px;
+    }
+
+    .v3-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 24px 0 22px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    .v3-pill::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--v3-green);
+    }
+
+    .role-title {
+      font-family: "Fraunces", Georgia, serif;
+      font-size: 28px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 6px;
+    }
+
+    .role-copy {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+      margin-bottom: 28px;
+    }
+
+    .role-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .role-card-v3 {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: #fff;
+      text-align: left;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+    }
+
+    .role-card-v3:hover {
+      border-color: var(--line-2);
+      box-shadow: 0 4px 14px rgba(26, 26, 26, 0.05);
+      transform: translateY(-1px);
+    }
+
+    .role-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: var(--v3-soft);
+      color: var(--v3-green);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+
+    .role-card-v3 h3 {
+      color: var(--ink);
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 3px;
+    }
+
+    .role-card-v3 .subtitle {
+      color: var(--v3-green);
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .role-card-v3 p {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+
+    .role-footer {
+      margin-top: 36px;
+      padding-top: 22px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .role-footer button {
+      border: 0;
+      background: transparent;
+      color: var(--v3-green);
+      font-size: 11px;
+    }
+
+    .access-screen {
+      min-height: 100vh;
+      background: var(--v3-bg);
+      padding: 32px 24px 70px;
+    }
+
+    .access-wrap {
+      width: min(980px, 100%);
+      margin: 0 auto;
+    }
+
+    .access-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.86fr) minmax(340px, 0.58fr);
+      gap: 18px;
+      align-items: start;
+      margin-top: 32px;
+    }
+
+    .v3-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .v3-card-muted {
+      background: var(--v3-soft);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .card-pad {
+      padding: 20px;
+    }
+
+    .v3-heading {
+      font-family: "Fraunces", Georgia, serif;
+      font-weight: 600;
+      color: var(--ink);
+      line-height: 1.2;
+    }
+
+    .section-kicker {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 11px;
+      margin-bottom: 5px;
+    }
+
+    .section-copy {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 13px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .field input,
+    .field textarea,
+    .field select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      padding: 10px 12px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .field textarea {
+      min-height: 96px;
+      resize: vertical;
+    }
+
+    .field input:focus,
+    .field textarea:focus,
+    .field select:focus {
+      border-color: var(--line-2);
+      box-shadow: 0 0 0 4px rgba(31, 74, 58, 0.08);
+    }
+
+    .v3-btn-primary,
+    .v3-btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 36px;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+    }
+
+    .v3-btn-primary {
+      border: 1px solid var(--v3-green);
+      background: var(--v3-green);
+      color: #fff;
+    }
+
+    .v3-btn-primary:hover {
+      background: #173D30;
+      transform: translateY(-1px);
+    }
+
+    .v3-btn-secondary {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--ink);
+    }
+
+    .v3-btn-secondary:hover {
+      border-color: var(--line-2);
+      background: var(--v3-soft);
+    }
+
+    .v3-btn-full {
+      width: 100%;
+    }
+
+    .v3-shell {
+      display: flex;
+      min-height: 100vh;
+      background: var(--v3-bg);
+      color: var(--ink);
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
+    .v3-sidebar {
+      width: 240px;
+      min-height: 100vh;
+      background: #fff;
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      left: 0;
+      top: 0;
+      z-index: 30;
+    }
+
+    .v3-sidebar-head {
+      padding: 20px 20px 12px;
+    }
+
+    .portal-label {
+      margin-top: 12px;
+      padding-left: 4px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 10px;
+    }
+
+    .v3-nav {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 12px 14px;
+      display: grid;
+      align-content: start;
+      gap: 3px;
+    }
+
+    .v3-nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: 8px;
+      color: var(--text);
+      transition: all 0.15s ease;
+      text-align: left;
+      border: none;
+      background: none;
+    }
+
+    .v3-nav-item:hover {
+      background: var(--v3-soft);
+      color: var(--ink);
+    }
+
+    .v3-nav-item.active {
+      background: #DDE7E2;
+      color: var(--v3-green);
+      font-weight: 600;
+    }
+
+    .nav-icon {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .v3-sidebar-foot {
+      padding: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .v3-main {
+      flex: 1;
+      margin-left: 240px;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      min-width: 0;
+      width: calc(100% - 240px);
+    }
+
+    .v3-topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(250, 250, 247, 0.84);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .search-trigger {
+      min-width: 260px;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: #D4CDBF;
+      font-size: 12px;
+    }
+
+    .top-spacer {
+      flex: 1;
+    }
+
+    .avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: #DDE7E2;
+      color: var(--v3-green);
+      display: grid;
+      place-items: center;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .v3-content {
+      flex: 1;
+      padding: 32px 40px;
+      max-width: 1280px;
+      width: 100%;
+      min-width: 0;
+    }
+
+    .page-kicker {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 11px;
+      margin-bottom: 5px;
+    }
+
+    .page-title-row {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 28px;
+    }
+
+    .page-title-row h1 {
+      font-family: "Fraunces", Georgia, serif;
+      color: var(--ink);
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+
+    .page-title-row p {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+      max-width: 760px;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 26px;
+    }
+
+    .stat-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      min-height: 118px;
+    }
+
+    .stat-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 10px;
+      margin-bottom: 12px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--v3-green);
+      flex: 0 0 auto;
+    }
+
+    .stat-value {
+      color: var(--ink);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .stat-note {
+      color: var(--v3-green);
+      font-size: 10px;
+    }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .small {
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .mini {
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      min-height: 22px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .badge.green {
+      color: var(--v3-green);
+      background: rgba(31, 74, 58, 0.08);
+      border-color: rgba(31, 74, 58, 0.18);
+    }
+
+    .badge.gold {
+      color: var(--v3-gold);
+      background: rgba(196, 155, 95, 0.1);
+      border-color: rgba(196, 155, 95, 0.22);
+    }
+
+    .badge.olive {
+      color: var(--v3-olive);
+      background: rgba(86, 123, 63, 0.1);
+      border-color: rgba(86, 123, 63, 0.22);
+    }
+
+    .badge.red {
+      color: var(--v3-red);
+      background: rgba(181, 74, 55, 0.09);
+      border-color: rgba(181, 74, 55, 0.18);
+    }
+
+    .badge.dark {
+      color: var(--ink);
+      background: transparent;
+      border-color: var(--ink);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 600;
+      background: var(--v3-bg);
+    }
+
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #F4F2EC;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.45;
+      vertical-align: top;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .attention-item {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      text-align: left;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      transition: border-color 0.16s ease, background 0.16s ease;
+    }
+
+    .attention-item:hover {
+      border-color: var(--line-2);
+      background: #fff;
+    }
+
+    .stage-line {
+      width: 3px;
+      align-self: stretch;
+      min-height: 42px;
+      border-radius: 999px;
+      background: var(--v3-green);
+      flex: 0 0 auto;
+    }
+
+    .pipeline-row {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      overflow-x: auto;
+    }
+
+    .pipeline-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 14px;
+      min-height: 100px;
+    }
+
+    .progress {
+      height: 7px;
+      border-radius: 999px;
+      background: var(--v3-soft);
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .bar {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--v3-green);
+    }
+
+    .bar.gold {
+      background: var(--v3-gold);
+    }
+
+    .bar.red {
+      background: var(--v3-red);
+    }
+
+    .list {
+      display: grid;
+      gap: 8px;
+      list-style: none;
+    }
+
+    .list-item {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px;
+      border-radius: 9px;
+      background: var(--v3-bg);
+      border: 1px solid var(--line);
+    }
+
+    .ai-panel {
+      background: var(--v3-soft);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+    }
+
+    .score {
+      width: 102px;
+      height: 102px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at center, #fff 56%, transparent 57%),
+        conic-gradient(var(--v3-green) 0 82%, #E8E4DB 82% 100%);
+      display: grid;
+      place-items: center;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+
+    .readiness {
+      display: grid;
+      grid-template-columns: 110px minmax(0, 1fr);
+      gap: 16px;
+      align-items: center;
+    }
+
+    .document-surface {
+      max-width: 760px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 42px 48px;
+    }
+
+    .document-surface h2 {
+      font-family: "Fraunces", Georgia, serif;
+      font-size: 26px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--ink);
+    }
+
+    .document-surface h3 {
+      color: var(--ink);
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin: 24px 0 8px;
+    }
+
+    .document-surface p,
+    .document-surface li {
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.75;
+      margin-bottom: 10px;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      background: rgba(14, 20, 32, 0.52);
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+
+    .modal {
+      width: min(640px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 22px;
+      box-shadow: 0 20px 70px rgba(14, 20, 32, 0.22);
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 100;
+      max-width: 360px;
+      background: var(--ink);
+      color: #fff;
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 13px;
+      line-height: 1.45;
+      box-shadow: 0 18px 50px rgba(14, 20, 32, 0.22);
+    }
+
+    @media (max-width: 1100px) {
+      .dark-grid,
+      .stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .layout-grid,
+      .access-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .v3-shell {
+        display: block;
+      }
+
+      .v3-sidebar {
+        position: sticky;
+        width: 100%;
+        min-height: auto;
+        max-height: 430px;
+      }
+
+      .v3-nav {
+        display: flex;
+        overflow-x: auto;
+        padding-bottom: 12px;
+      }
+
+      .v3-nav-item {
+        min-width: max-content;
+      }
+
+      .v3-main {
+        margin-left: 0;
+        width: 100%;
+      }
+
+      .v3-content {
+        padding: 24px 16px;
+      }
+
+      .search-trigger {
+        min-width: 0;
+        flex: 1;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .landing-logo {
+        position: absolute;
+        left: 20px;
+        top: 20px;
+      }
+
+      .landing-inner {
+        padding-top: 118px;
+      }
+
+      .landing-stats,
+      .dark-grid,
+      .stat-grid,
+      .split {
+        grid-template-columns: 1fr;
+      }
+
+      .dark-section-head,
+      .page-title-row,
+      .role-footer {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .landing-actions {
+        flex-direction: column;
+      }
+
+      .landing-actions button {
+        width: 100%;
+        justify-content: center;
+      }
+
+      .document-surface {
+        padding: 26px 20px;
+      }
+
+      .v3-topbar {
+        flex-wrap: wrap;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    const roles = {
+      admin: {
+        label: "Admin Control Centre",
+        subtitle: "Run the campaign engine",
+        description: "Pipeline, CRM, business cases, scraper agents, meeting intelligence, creator matching, contracts, delivery, and closure.",
+        initials: "AD",
+        sections: [
+          ["overview", "Overview", "OV"],
+          ["discovery", "Scraper / Discovery Agent", "DA"],
+          ["opportunities", "Opportunity Candidates", "OC"],
+          ["creative-scraper", "Creative Scraper", "CS"],
+          ["super-creative-scraper", "Super Creative Scraper", "SC"],
+          ["contact-research", "Contact Research", "CR"],
+          ["meetings", "Meeting Intelligence", "MI"],
+          ["alignment", "Alignment Snapshot", "AS"],
+          ["business-cases", "Business Cases", "BC"],
+          ["pipeline", "Pipeline", "PL"],
+          ["projects", "Projects", "PR"],
+          ["crm", "CRM / Brands", "BR"],
+          ["creatives", "Creatives", "CT"],
+          ["super-creatives", "Super Creatives", "ST"],
+          ["contracts", "Contracts", "CO"],
+          ["templates", "Templates", "TP"],
+          ["documents", "Documents", "DO"],
+          ["invoices", "Invoices", "IN"],
+          ["wallet", "Wallet / Fees", "WF"],
+          ["tasks", "Tasks", "TK"],
+          ["reports", "Reports / Insights", "RI"],
+          ["users", "Users / Permissions", "UP"],
+          ["settings", "Settings", "SE"]
+        ]
+      },
+      brand: {
+        label: "Brand Portal",
+        subtitle: "Track your campaign, approve the work",
+        description: "Curated project view, approvals, documents vault, invoices, meetings, messaging, and reports.",
+        initials: "BR",
+        sections: [
+          ["dashboard", "Overview", "OV"],
+          ["projects", "Active Projects", "AP"],
+          ["project-detail", "Project Detail", "PD"],
+          ["alignment", "Alignment Review", "AR"],
+          ["strategy", "Strategy Review", "SR"],
+          ["approvals", "Approvals", "AV"],
+          ["documents", "Documents", "DO"],
+          ["contracts", "Contracts", "CO"],
+          ["invoices", "Invoices", "IN"],
+          ["meetings", "Meetings", "ME"],
+          ["messages", "Messages", "MS"],
+          ["reports", "Reports", "RE"],
+          ["settings", "Settings", "SE"]
+        ]
+      },
+      creative: {
+        label: "Creative Portal",
+        subtitle: "Receive briefs, deliver work, get paid",
+        description: "Brief inbox, deliverable uploads, milestone tracking, wallet, profile, meetings, and messaging.",
+        initials: "CR",
+        sections: [
+          ["dashboard", "Overview", "OV"],
+          ["briefs", "Briefs", "BF"],
+          ["opportunities", "Opportunities", "OP"],
+          ["project-detail", "Project Detail", "PD"],
+          ["deliverables", "Deliverables", "DV"],
+          ["uploads", "Uploads", "UP"],
+          ["approvals", "Approvals", "AV"],
+          ["meetings", "Meetings", "ME"],
+          ["messages", "Messages", "MS"],
+          ["wallet", "Wallet", "WA"],
+          ["profile", "Profile", "PF"],
+          ["settings", "Settings", "SE"]
+        ]
+      },
+      super: {
+        label: "Super Creative Portal",
+        subtitle: "Manage your roster and team delivery",
+        description: "Roster management, team projects, applications, delivery monitoring, wallet, meetings, and team performance.",
+        initials: "SC",
+        sections: [
+          ["dashboard", "Overview", "OV"],
+          ["managed-creatives", "Managed Creatives", "MC"],
+          ["team-projects", "Team Projects", "TP"],
+          ["assigned-opportunities", "Assigned Opportunities", "AO"],
+          ["applications", "Applications", "AP"],
+          ["performance", "Project Performance", "PP"],
+          ["deliverables", "Deliverables", "DV"],
+          ["meetings", "Meetings", "ME"],
+          ["messages", "Messages", "MS"],
+          ["wallet", "Wallet / Earnings", "WE"],
+          ["roster-profile", "Roster Profile", "RP"],
+          ["settings", "Settings", "SE"]
+        ]
+      }
+    };
+
+    const data = {
+      stageMeta: {
+        connect: ["Connect", "#9B9380"],
+        frame: ["Frame", "#C49B5F"],
+        plan: ["Plan", "#1F4A3A"],
+        deliver: ["Deliver", "#567B3F"],
+        closed: ["Closed", "#B54A37"]
+      },
+      stages: [
+        ["Connect", "#9B9380", 2, "N285M"],
+        ["Frame", "#C49B5F", 3, "N235M"],
+        ["Plan", "#1F4A3A", 3, "N415M"],
+        ["Deliver", "#567B3F", 2, "N260M"],
+        ["Closed", "#B54A37", 0, "N0"]
+      ],
+      stats: [
+        ["Active Projects", "10", "+2 this month", "#1F4A3A"],
+        ["Pipeline Value", "N1.195B", "+N245M this month", "#C49B5F"],
+        ["Scraped Signals", "148", "18 need review", "#9B9380"],
+        ["Creators", "10", "+2 this month", "#567B3F"]
+      ],
+      candidates: [
+        ["Coca-Cola Nigeria", "Campaign/RFP signal", "Press release + LinkedIn hiring signal", "91", "Procurement contact", "Admin review"],
+        ["MTN Nigeria", "Partnership opportunity", "Brand social + agency brief mention", "86", "Budget owner phone", "Qualified"],
+        ["UBA Foundation", "Grant/CSR opportunity", "Grant bulletin", "78", "CSR lead email", "Needs verification"],
+        ["Access Bank", "Brand opportunity", "Trade publication", "74", "Agency contact", "New"],
+        ["Ifeoma Nwosu", "New creative", "TikTok + portfolio site", "89", "Manager email", "Shortlisted"],
+        ["Northside Collective", "New super creative", "Instagram roster + event credits", "83", "Team lead phone", "Shortlisted"]
+      ],
+      projects: [
+        ["Share a Coke, Share a Story", "Coca-Cola Nigeria Limited", "frame", "N120M", "Temi Bakare", "Awaiting brand confirmation of Alignment Snapshot"],
+        ["Made of More: Africa", "Guinness Nigeria PLC", "plan", "N180M", "Adaeze Obi", "Strategy Snapshot v1 under internal review"],
+        ["Lagos Unlimited", "MTN Nigeria Communications PLC", "deliver", "N150M", "Tope Martins", "Awaiting brand + creator feedback forms for closure"],
+        ["Financial Futures", "Access Bank PLC", "plan", "N95M", "Femi Oladipo", "Creator brief sent - awaiting Davido response"],
+        ["Star Nights Tour", "Nigerian Breweries PLC (Star Lager)", "deliver", "N110M", "Adaeze Obi", "3 of 8 milestones complete, next deliverable due Mar 20"],
+        ["Afrobeats Rising", "Seven-Up Bottling Company PLC (Pepsi Nigeria)", "frame", "N65M", "Temi Bakare", "Alignment Snapshot in draft - RM review pending"],
+        ["Wedding Season", "United Bank for Africa PLC", "frame", "N50M", "Femi Oladipo", "Alignment Snapshot generated - awaiting brand confirmation"],
+        ["Empire Builders", "Dangote Industries Limited", "connect", "N200M", "Temi Bakare", "Discovery call scheduled Mar 20"],
+        ["Unlimited", "Airtel Nigeria", "plan", "N140M", "Adaeze Obi", "Creator matched - brief being drafted"],
+        ["Fashion Week Access", "Guaranty Trust Holding Company", "connect", "N85M", "Femi Oladipo", "Follow-up email drafted - awaiting RM send"]
+      ],
+      businessCases: [
+        { id: "proj-cocacola-tems", brand: "Coca-Cola Nigeria Limited", creator: "Tems", title: "Share a Coke, Share a Story", stage: "frame", engagement_track: "paid", engagement: "Retainer", estimated_value: 120000000, value: "N120M", rm: "Temi Bakare", created_at: "2026-02-28", days_in_stage: 14, next_action: "Awaiting brand confirmation of Alignment Snapshot", health: "on-track" },
+        { id: "proj-guinness-rema", brand: "Guinness Nigeria PLC", creator: "Rema", title: "Made of More: Africa", stage: "plan", engagement_track: "paid", engagement: "Retainer", estimated_value: 180000000, value: "N180M", rm: "Adaeze Obi", created_at: "2026-02-01", days_in_stage: 10, next_action: "Strategy Snapshot v1 under internal review", health: "on-track" },
+        { id: "proj-mtn-burna", brand: "MTN Nigeria Communications PLC", creator: "Burna Boy", title: "Lagos Unlimited", stage: "deliver", engagement_track: "paid", engagement: "Direct", estimated_value: 150000000, value: "N150M", rm: "Tope Martins", created_at: "2025-10-15", days_in_stage: 45, next_action: "Awaiting brand + creator feedback forms for closure", health: "near-closure" },
+        { id: "proj-access-davido", brand: "Access Bank PLC", creator: "Davido", title: "Financial Futures", stage: "plan", engagement_track: "paid", engagement: "Retainer", estimated_value: 95000000, value: "N95M", rm: "Femi Oladipo", created_at: "2026-02-10", days_in_stage: 7, next_action: "Creator brief sent - awaiting Davido response", health: "on-track" },
+        { id: "proj-star-ayra", brand: "Nigerian Breweries PLC (Star Lager)", creator: "Ayra Starr", title: "Star Nights Tour", stage: "deliver", engagement_track: "paid", engagement: "Retainer", estimated_value: 110000000, value: "N110M", rm: "Adaeze Obi", created_at: "2025-12-01", days_in_stage: 30, next_action: "3 of 8 milestones complete, next deliverable due Mar 20", health: "on-track" },
+        { id: "proj-pepsi-fireboy", brand: "Seven-Up Bottling Company PLC (Pepsi Nigeria)", creator: "Fireboy DML", title: "Afrobeats Rising", stage: "frame", engagement_track: "paid", engagement: "Direct", estimated_value: 65000000, value: "N65M", rm: "Temi Bakare", created_at: "2026-03-05", days_in_stage: 9, next_action: "Alignment Snapshot in draft - RM review pending", health: "on-track" },
+        { id: "proj-uba-gold", brand: "United Bank for Africa PLC", creator: "Adekunle Gold", title: "Wedding Season", stage: "frame", engagement_track: "paid", engagement: "Retainer", estimated_value: 50000000, value: "N50M", rm: "Femi Oladipo", created_at: "2026-03-01", days_in_stage: 12, next_action: "Alignment Snapshot generated - awaiting brand confirmation", health: "on-track" },
+        { id: "proj-dangote-wizkid", brand: "Dangote Industries Limited", creator: "Wizkid", title: "Empire Builders", stage: "connect", engagement_track: "paid", engagement: "Retainer", estimated_value: 200000000, value: "N200M", rm: "Temi Bakare", created_at: "2026-03-10", days_in_stage: 4, next_action: "Discovery call scheduled Mar 20", health: "new" },
+        { id: "proj-airtel-donjazzy", brand: "Airtel Nigeria", creator: "Don Jazzy/Mavin", title: "Unlimited", stage: "plan", engagement_track: "paid", engagement: "Direct", estimated_value: 140000000, value: "N140M", rm: "Adaeze Obi", created_at: "2026-02-15", days_in_stage: 8, next_action: "Creator matched - brief being drafted", health: "on-track" },
+        { id: "proj-gtbank-multi", brand: "Guaranty Trust Holding Company", creator: "Multi-creator", title: "Fashion Week Access", stage: "connect", engagement_track: "paid", engagement: "Direct", estimated_value: 85000000, value: "N85M", rm: "Femi Oladipo", created_at: "2026-03-08", days_in_stage: 6, next_action: "Follow-up email drafted - awaiting RM send", health: "on-track" }
+      ],
+      grantOpportunities: [
+        ["African Creative Economy Growth Fund", "Pan-African Culture & Innovation Facility", "N75M", "2026-07-18", "94%", "Supports TASCK creator infrastructure, talent discovery, and reporting tools for youth culture campaigns."],
+        ["Youth Digital Jobs & Media Skills Grant", "West Africa Digital Skills Alliance", "N48M", "2026-08-02", "89%", "Good fit for creator onboarding, production training, campaign operations, and measurable employment outcomes."],
+        ["Women In Culture Commerce Accelerator", "Global Inclusive Markets Lab", "N62M", "2026-06-29", "86%", "Can fund campaigns and creator partnerships led by women, plus brand access for women-owned creative businesses."],
+        ["Climate Storytelling For African Cities", "Green Futures Media Trust", "N35M", "2026-09-10", "81%", "Useful for TASCK documentary briefs, creator-led climate storytelling, and brand-funded impact reporting."]
+      ],
+      creatives: [
+        ["Rema Team", "Independent creative", "94", "Music, youth culture, social video", "Available"],
+        ["Ifeoma Nwosu", "Independent creative", "88", "Short-form content, fashion, youth culture", "Needs onboarding"],
+        ["Kelechi Amadi-Obi", "Independent creative", "84", "Photography, editorial, campaign visuals", "Available"],
+        ["Leading Vibes", "Super creative team", "91", "Roster management, campaign execution", "Available"],
+        ["Northside Collective", "Super creative team", "86", "Events, creators, documentary crews", "Verification"]
+      ],
+      meetings: [
+        ["Coca-Cola discovery call", "June 5, 2026", "Transcribed", "82", "Brand wants cultural credibility, measurable youth reach, and creator-led music storytelling."],
+        ["MTN scope review", "June 7, 2026", "Scheduled", "64", "Confirm reduced deliverables, fee schedule, and usage rights."],
+        ["Access Bank contact validation", "June 9, 2026", "Draft", "41", "Admin still needs brand owner and agency contact."]
+      ],
+      roster: [
+        ["Ayo Martins", "Director", "3 projects", "Available"],
+        ["Kemi Alade", "Content strategist", "2 projects", "Booked"],
+        ["Dami Cole", "Cinematographer", "1 project", "Available"],
+        ["Simi Grant", "Editor", "4 projects", "At capacity"]
+      ]
+    };
+
+    const state = {
+      screen: "landing",
+      portal: "admin",
+      section: "overview",
+      accessType: "brand",
+      bcStage: "all",
+      bcTrack: "all",
+      modal: "",
+      toast: ""
+    };
+
+    const app = document.getElementById("app");
+
+    function esc(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function logo(light = false, small = false) {
+      return `
+        <span class="logo ${light ? "light" : ""}">
+          <span class="logo-mark ${small ? "small" : ""}">
+            <span class="logo-letters"><span class="t">T</span><span class="rest">ASCK</span></span>
+          </span>
+          <span class="logo-word">
+            <span>THE TASCK</span><br />
+            <span>AGENCY.</span>
+          </span>
+        </span>
+      `;
+    }
+
+    function badge(text, tone) {
+      return `<span class="badge ${tone || "green"}">${esc(text)}</span>`;
+    }
+
+    function setScreen(screen) {
+      state.screen = screen;
+      state.modal = "";
+      render();
+      window.scrollTo(0, 0);
+    }
+
+    function setPortal(portal, section) {
+      state.screen = "portal";
+      state.portal = portal;
+      state.section = section || roles[portal].sections[0][0];
+      state.modal = "";
+      render();
+      window.scrollTo(0, 0);
+    }
+
+    function action(label) {
+      state.modal = label;
+      state.toast = `${label} queued in prototype`;
+      render();
+      clearTimeout(window.__toast);
+      window.__toast = setTimeout(() => {
+        state.toast = "";
+        render();
+      }, 2600);
+    }
+
+    function landing() {
+      const cards = [
+        ["Admin Control Centre", "The production command room for scraping, meetings, business cases, matching, delivery, finance, permissions, and reporting."],
+        ["Brand Portal", "Invited brands review snapshots, approve work, manage documents, attend meetings, pay invoices, and see reports."],
+        ["Creative Portal", "Independent creatives receive briefs, upload deliverables, attend meetings, manage profile, and track wallet status."],
+        ["Super Creative Portal", "Team leads manage creatives under them, monitor assignments, handle roster delivery, and track team earnings."]
+      ];
+
+      return `
+        <main class="landing">
+          <svg class="landing-rings" viewBox="0 0 1200 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <ellipse cx="600" cy="1000" rx="900" ry="700" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="1" />
+            <ellipse cx="600" cy="1100" rx="1050" ry="800" fill="none" stroke="rgba(255,255,255,0.02)" stroke-width="0.5" />
+            <ellipse cx="300" cy="200" rx="400" ry="250" fill="none" stroke="rgba(47,85,255,0.06)" stroke-width="0.5" />
+            <ellipse cx="900" cy="150" rx="350" ry="200" fill="none" stroke="rgba(34,197,94,0.04)" stroke-width="0.5" />
+          </svg>
+          <button class="landing-logo logo-button" data-screen="landing" aria-label="TASCK home">${logo(false)}</button>
+          <section class="landing-inner">
+            <div>
+              <p class="landing-kicker">THE TASCK AGENCY</p>
+              <h1 class="font-display">Creativity,<br /><span>Managed.</span></h1>
+              <p class="landing-copy">
+                The operating system for Africa's creative economy. Connecting brands, artists, creatives, and super creative teams through one production-ready workflow.
+              </p>
+              <div class="landing-actions">
+                <button class="enter-btn" data-screen="role">Enter Platform Preview <span>-></span></button>
+                <button class="landing-link" data-access="brand">Brand Enquiry</button>
+                <button class="landing-link" data-access="creative">Creative Application</button>
+                <button class="landing-link" data-access="super">Super Creative Application</button>
+              </div>
+              <div class="landing-stats">
+                <div class="landing-stat"><strong class="mono">N2.4B+</strong><span>Pipeline Value</span></div>
+                <div class="landing-stat"><strong class="mono">50+</strong><span>Brand Partners</span></div>
+                <div class="landing-stat"><strong class="mono">200+</strong><span>Creatives</span></div>
+              </div>
+              <p class="landing-footer">&copy; 2026 The TASCK Agency. All rights reserved.</p>
+            </div>
+          </section>
+
+          <section class="landing-detail">
+            <div class="landing-detail-inner">
+              <div class="dark-section-head">
+                <div>
+                  <h2>One TASCK platform, built from the V3 workflow.</h2>
+                  <p>
+                    This prototype merges the useful ideas from V1, V2, and V3 into one product direction:
+                    public entry, role access, scraper agents, contact research, Meeting Intelligence,
+                    Alignment Snapshot, Business Case, matching, delivery, and closure.
+                  </p>
+                </div>
+                <button class="enter-btn" data-screen="role">Open Role Selector</button>
+              </div>
+              <div class="dark-grid">
+                ${cards.map((card, index) => `
+                  <div class="dark-card">
+                    <span class="dark-pill">${index + 1} / Production portal</span>
+                    <h3>${card[0]}</h3>
+                    <p>${card[1]}</p>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          </section>
+        </main>
+      `;
+    }
+
+    function roleSelector() {
+      const roleCards = [
+        ["admin", "Admin Control Centre", "Run the campaign engine", roles.admin.description, "AD"],
+        ["brand", "Brand Portal", "Track your campaign, approve the work", roles.brand.description, "BR"],
+        ["creative", "Creative Portal", "Receive briefs, deliver work, get paid", roles.creative.description, "CR"],
+        ["super", "Super Creative Portal", "Manage your roster and team delivery", roles.super.description, "SC"]
+      ];
+
+      return `
+        <main class="role-screen">
+          <section class="role-wrap">
+            <button class="back-btn" data-screen="landing">‹ Back to landing</button>
+            <div>${logo(true, true)}</div>
+            <div class="v3-pill">TASCK OS v3 - Production Blueprint Demo</div>
+            <h1 class="role-title">Choose Your Portal</h1>
+            <p class="role-copy">Select a role to explore the unified TASCK platform as it should be rebuilt for production.</p>
+            <div class="role-list">
+              ${roleCards.map(role => `
+                <button class="role-card-v3" data-portal="${role[0]}">
+                  <span class="role-icon">${role[4]}</span>
+                  <span style="flex:1;min-width:0">
+                    <h3>${role[1]}</h3>
+                    <span class="subtitle">${role[2]}</span>
+                    <p>${role[3]}</p>
+                  </span>
+                  <span style="color:#1F4A3A">›</span>
+                </button>
+              `).join("")}
+            </div>
+            <div class="role-footer">
+              <span>&copy; 2026 The TASCK Agency. All rights reserved.</span>
+              <button data-access="brand">Are you a brand? Submit an enquiry -></button>
+            </div>
+          </section>
+        </main>
+      `;
+    }
+
+    function accessScreen() {
+      const content = {
+        brand: ["Brand Enquiry", "Company name", "Marketing objective", "Submit brand enquiry", "Coca-Cola Nigeria", "Youth culture campaign with measurable reach"],
+        creative: ["Creative Application", "Creative name", "Primary skill", "Submit creative application", "Ifeoma Nwosu", "Short-form branded content"],
+        super: ["Super Creative Application", "Roster or company name", "Team strength", "Submit super creative application", "Northside Collective", "Campaign production roster"]
+      }[state.accessType] || {};
+
+      return `
+        <main class="access-screen">
+          <section class="access-wrap">
+            <button class="back-btn" data-screen="landing">‹ Back to landing</button>
+            <div>${logo(true, true)}</div>
+            <div class="access-grid">
+              <div class="v3-card card-pad">
+                <p class="section-kicker">Access request</p>
+                <h1 class="v3-heading" style="font-size:30px;margin-bottom:10px">${content[0]}</h1>
+                <p class="section-copy">
+                  Public users do not automatically get full platform access. Brands submit enquiries,
+                  creatives apply, super creatives apply with their roster, then TASCK verifies and activates the right portal account.
+                </p>
+                <div class="split" style="margin-top:20px">
+                  <button class="role-card-v3" data-access="brand"><span class="role-icon">BR</span><span><h3>Brand</h3><p>Submit campaign, partnership, or CSR enquiry.</p></span></button>
+                  <button class="role-card-v3" data-access="creative"><span class="role-icon">CR</span><span><h3>Creative</h3><p>Apply as an independent creative.</p></span></button>
+                  <button class="role-card-v3" data-access="super"><span class="role-icon">SC</span><span><h3>Super Creative</h3><p>Apply as a roster or creative team lead.</p></span></button>
+                  <button class="role-card-v3" data-screen="role"><span class="role-icon">OS</span><span><h3>Demo portals</h3><p>Preview the production app by role.</p></span></button>
+                </div>
+              </div>
+              <form class="v3-card card-pad form-grid">
+                <h2 class="v3-heading" style="font-size:22px">${content[0]}</h2>
+                <div class="field"><label>${content[1]}</label><input value="${content[4]}" /></div>
+                <div class="field"><label>Contact email</label><input value="${state.accessType}@tasck.example" /></div>
+                <div class="field"><label>${content[2]}</label><input value="${content[5]}" /></div>
+                <div class="field"><label>Notes</label><textarea>Demo form data only. In production, this becomes an enquiry or application record for Admin review.</textarea></div>
+                <button type="button" class="v3-btn-primary v3-btn-full" data-action="${content[3]}">${content[3]}</button>
+              </form>
+            </div>
+          </section>
+        </main>
+      `;
+    }
+
+    function portalShell() {
+      const role = roles[state.portal];
+      const active = role.sections.find(item => item[0] === state.section) || role.sections[0];
+      const nav = role.sections.map(item => `
+        <button class="v3-nav-item ${item[0] === state.section ? "active" : ""}" data-section="${item[0]}">
+          <span class="nav-icon">${item[2]}</span>
+          <span>${item[1]}</span>
+        </button>
+      `).join("");
+
+      return `
+        <main class="v3-shell">
+          <aside class="v3-sidebar">
+            <div class="v3-sidebar-head">
+              <button class="logo-button" data-screen="role" style="border:0;background:transparent">${logo(true, true)}</button>
+              <p class="portal-label">${role.label}</p>
+            </div>
+            <nav class="v3-nav">${nav}</nav>
+            <div class="v3-sidebar-foot">
+              <button class="v3-nav-item" data-screen="landing"><span class="nav-icon">‹</span><span>Exit Portal</span></button>
+            </div>
+          </aside>
+          <section class="v3-main">
+            <header class="v3-topbar">
+              <button class="search-trigger" data-action="Open command search">Search... <span class="mono" style="margin-left:auto;color:#8A8A8A;font-size:10px">Ctrl K</span></button>
+              <span class="top-spacer"></span>
+              <button class="v3-btn-secondary" data-screen="role">Switch Role</button>
+              <button class="v3-btn-secondary" data-action="Open notification centre">Notifications</button>
+              <span class="avatar">${role.initials}</span>
+            </header>
+            <div class="v3-content">
+              <div class="page-title-row">
+                <div>
+                  <p class="page-kicker">${role.label}</p>
+                  <h1>${active[1]}</h1>
+                  <p>${role.description}</p>
+                </div>
+                <button class="v3-btn-primary" data-action="Create ${active[1]} record">Create / Update</button>
+              </div>
+              ${renderPortalContent(state.portal, state.section)}
+            </div>
+          </section>
+        </main>
+      `;
+    }
+
+    function statCards(items = data.stats) {
+      return `
+        <div class="stat-grid">
+          ${items.map(item => `
+            <div class="stat-card">
+              <div class="stat-top"><span class="dot" style="background:${item[3]}"></span>${item[0]}</div>
+              <div class="stat-value">${item[1]}</div>
+              <div class="stat-note">${item[2]}</div>
+            </div>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function table(headers, rows) {
+      return `
+        <div class="table-wrap">
+          <table>
+            <thead><tr>${headers.map(header => `<th>${header}</th>`).join("")}</tr></thead>
+            <tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function pipeline() {
+      return `
+        <div class="v3-card card-pad">
+          <div class="card-title"><span class="dot"></span>Pipeline</div>
+          <div class="pipeline-row">
+            ${data.stages.map(stage => `
+              <div class="pipeline-card" style="border-color:${stage[1]}33;background:${stage[1]}08">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                  <span class="dot" style="background:${stage[1]}"></span>
+                  <span style="font-size:11px;font-weight:700;color:${stage[1]}">${stage[0]}</span>
+                </div>
+                <div class="stat-value" style="font-size:18px">${stage[2]}</div>
+                <div class="mini mono">${stage[3]}</div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    function attentionList() {
+      const items = [
+        ["Coca-Cola - Share a Coke, Share a Story", "Awaiting brand confirmation of Alignment Snapshot.", "frame", "retainer", "14d"],
+        ["Guinness - Made of More: Africa", "Strategy Snapshot v1 is under internal review.", "plan", "retainer", "10d"],
+        ["MTN - Lagos Unlimited", "Awaiting brand + creator feedback forms for closure.", "deliver", "direct", "45d"],
+        ["Dangote - Empire Builders", "Discovery call scheduled Mar 20.", "connect", "retainer", "4d"]
+      ];
+      const colors = { frame: "#C49B5F", plan: "#1F4A3A", deliver: "#567B3F", connect: "#9B9380" };
+      return `
+        <div class="stack">
+          ${items.map(item => `
+            <button class="attention-item" data-action="Open ${item[0]}">
+              <span class="stage-line" style="background:${colors[item[2]]}"></span>
+              <span style="flex:1;min-width:0">
+                <span style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+                  <strong style="font-size:13px;color:#1A1A1A">${item[0]}</strong>
+                  <span class="muted">-</span>
+                  <span class="font-heading" style="font-size:13px;color:#5C5C5C">${item[2]}</span>
+                </span>
+                <span class="small muted">${item[1]}</span>
+              </span>
+              ${badge(item[3], item[3] === "retainer" ? "green" : "dark")}
+              <span class="mini">${item[4]}</span>
+            </button>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function adminOverview() {
+      return `
+        ${statCards()}
+        <div class="layout-grid">
+          <div class="stack">
+            ${pipeline()}
+            <div class="v3-card card-pad">
+              <div class="card-title"><span class="dot" style="background:#C49B5F"></span>Needs your attention</div>
+              ${attentionList()}
+            </div>
+            <div class="v3-card card-pad">
+              <div class="card-title">Recent activity</div>
+              <ul class="list">
+                ${[
+                  "Meeting Intelligence generated a transcript summary for Coca-Cola.",
+                  "Admin converted Northside Collective into a Super Creative candidate.",
+                  "MTN Strategy Snapshot was sent back for scope clarification.",
+                  "Ifeoma Nwosu profile passed creative scraper confidence threshold."
+                ].map((item, index) => `<li class="list-item"><span><span class="mini mono">${index + 1}h ago</span><br><span class="small">${item}</span></span>${badge("Logged", "green")}</li>`).join("")}
+              </ul>
+            </div>
+          </div>
+          <aside class="stack">
+            ${agentPanel()}
+            ${readinessPanel()}
+          </aside>
+        </div>
+      `;
+    }
+
+    function agentPanel() {
+      return `
+        <div class="ai-panel">
+          <div class="card-title">Agent recommendations</div>
+          <p class="small muted" style="margin-bottom:12px">The agent can scrape and summarize, but Admin decides what becomes a lead, creative, super creative, or business case.</p>
+          <ul class="list">
+            <li class="list-item"><span class="small"><strong>Convert Coca-Cola to Business Case</strong><br><span class="muted">High-confidence campaign signal.</span></span>${badge("Recommended", "green")}</li>
+            <li class="list-item"><span class="small"><strong>Research Northside Collective</strong><br><span class="muted">Strong super creative candidate.</span></span>${badge("Missing info", "gold")}</li>
+            <li class="list-item"><span class="small"><strong>Schedule MTN follow-up</strong><br><span class="muted">Budget and usage rights unresolved.</span></span>${badge("Meeting", "olive")}</li>
+          </ul>
+        </div>
+      `;
+    }
+
+    function readinessPanel() {
+      return `
+        <div class="v3-card card-pad">
+          <div class="readiness">
+            <div class="score">82%</div>
+            <div>
+              <p class="mini">Alignment Snapshot readiness</p>
+              <h3 class="v3-heading" style="font-size:18px;margin:5px 0">Coca-Cola is almost ready</h3>
+              <p class="small muted">Budget range, KPIs, target audience, timeline, and creative ambition were captured. Procurement path still needs confirmation.</p>
+            </div>
+          </div>
+          <button class="v3-btn-primary v3-btn-full" style="margin-top:14px" data-action="Generate Alignment Snapshot">Generate Alignment Snapshot</button>
+        </div>
+      `;
+    }
+
+    function discoveryPanel(kind) {
+      const rows = data.candidates.map(item => [
+        `<strong>${item[0]}</strong><br><span class="muted">${item[2]}</span>`,
+        badge(item[1], item[1].includes("creative") ? "gold" : "olive"),
+        `<span class="mono">${item[3]}%</span><div class="progress"><div class="bar ${Number(item[3]) < 80 ? "gold" : ""}" style="width:${item[3]}%"></div></div>`,
+        item[4],
+        badge(item[5], item[5] === "Qualified" ? "green" : item[5] === "New" ? "olive" : "gold"),
+        `<button class="v3-btn-secondary" data-action="Convert ${item[0]}">Convert</button>`
+      ]);
+
+      return `
+        ${statCards([
+          ["Brand signals", "52", "Campaigns, RFPs, CSR, agencies", "#C49B5F"],
+          ["Creative leads", "61", "Social, credits, portfolios", "#1F4A3A"],
+          ["Super creative leads", "19", "Teams, rosters, collectives", "#567B3F"],
+          ["Needs review", "18", "Awaiting admin decision", "#B54A37"]
+        ])}
+        <div class="layout-grid">
+          <div class="stack">
+            ${table(["Candidate", "Category", "Confidence", "Missing contact info", "Status", "Action"], rows)}
+          </div>
+          <aside class="stack">${agentPanel()}${scannerRules()}</aside>
+        </div>
+      `;
+    }
+
+    function scannerRules() {
+      return `
+        <div class="v3-card card-pad">
+          <div class="card-title">Scraper review rules</div>
+          <ul class="list">
+            <li class="list-item"><span class="small">Verify identity, source, manager, and location.</span>${badge("Required", "red")}</li>
+            <li class="list-item"><span class="small">Score relevance, confidence, category, and opportunity value.</span>${badge("AI scored", "olive")}</li>
+            <li class="list-item"><span class="small">Convert to brand, creative, super creative, or business case.</span>${badge("Admin gate", "gold")}</li>
+          </ul>
+        </div>
+      `;
+    }
+
+    function contactResearch() {
+      return `
+        <div class="layout-grid">
+          <div>
+            ${table(["Company / Team", "Contact", "Role", "Email", "Phone", "Next action"], [
+              ["Coca-Cola", "Folake Adeniran", "Head of Marketing, West Africa", badge("Verified", "green"), "Missing procurement phone", `<button class="v3-btn-secondary" data-action="Schedule Coca-Cola meeting">Schedule meeting</button>`],
+              ["MTN", "Segun Ogunsanya", "Head of Marketing and CX", badge("Verified", "green"), "Verified", `<button class="v3-btn-secondary" data-action="Create MTN follow-up">Follow up</button>`],
+              ["Access Bank", "Unknown", "Brand and communications", badge("Researching", "gold"), "Agency contact missing", `<button class="v3-btn-secondary" data-action="Assign researcher">Assign</button>`],
+              ["Northside Collective", "Team lead TBD", "Super creative lead", badge("Needs validation", "red"), "Phone missing", `<button class="v3-btn-secondary" data-action="Manual lookup">Manual lookup</button>`]
+            ])}
+          </div>
+          <aside class="ai-panel">
+            <div class="card-title">Why this step matters</div>
+            <p class="small muted">Scraping usually finds the opportunity before it finds the right person. Admin verifies contacts, then links the record to Meeting Intelligence for outreach and transcript capture.</p>
+          </aside>
+        </div>
+      `;
+    }
+
+    function meetingsPanel() {
+      return `
+        <div class="layout-grid">
+          <div class="stack">
+            <div class="v3-card card-pad">
+              <div class="card-title">Coca-Cola discovery call ${badge("Linked to scraped opportunity", "green")}</div>
+              <p class="small muted">Generated meeting link: https://meet.google.com/tasck-coke-studio-demo</p>
+              <div class="split" style="margin-top:14px">
+                <div>
+                  <p class="mini" style="margin-bottom:8px">Suggested questions</p>
+                  <ul class="list">
+                    <li class="list-item"><span class="small">What business outcome should the campaign prove?</span>${badge("KPI", "olive")}</li>
+                    <li class="list-item"><span class="small">Which audience segments must the creative reach?</span>${badge("Audience", "green")}</li>
+                    <li class="list-item"><span class="small">What budget, usage rights, and timeline constraints exist?</span>${badge("Scope", "gold")}</li>
+                    <li class="list-item"><span class="small">Who signs off procurement and brand approval?</span>${badge("Missing", "red")}</li>
+                  </ul>
+                </div>
+                <div>
+                  <p class="mini" style="margin-bottom:8px">Transcript preview</p>
+                  <p class="small muted">Sarah: We need a creator-led music story that feels youth-native but still measurable. Reach matters, but engagement quality and earned media are also important.</p>
+                  <p class="small muted" style="margin-top:10px">Admin: Can we confirm budget range, campaign timeline, and approval path before the Alignment Snapshot?</p>
+                </div>
+              </div>
+            </div>
+            ${table(["Meeting", "Date", "Status", "Readiness", "AI summary"], data.meetings.map(m => [m[0], m[1], badge(m[2], m[2] === "Transcribed" ? "green" : "gold"), `${m[3]}%`, m[4]]))}
+          </div>
+          <aside class="stack">${meetingSummary()}${readinessPanel()}</aside>
+        </div>
+      `;
+    }
+
+    function meetingSummary() {
+      return `
+        <div class="ai-panel">
+          <div class="card-title">AI meeting summary</div>
+          <ul class="list">
+            <li class="list-item"><span class="small"><strong>Brand objective</strong><br><span class="muted">Build youth cultural credibility around music storytelling.</span></span>${badge("Captured", "green")}</li>
+            <li class="list-item"><span class="small"><strong>KPIs</strong><br><span class="muted">Reach, engagement quality, earned media, creator output.</span></span>${badge("Captured", "green")}</li>
+            <li class="list-item"><span class="small"><strong>Procurement path</strong><br><span class="muted">Not fully confirmed. Follow-up recommended.</span></span>${badge("Missing", "red")}</li>
+          </ul>
+        </div>
+      `;
+    }
+
+    function alignmentPanel() {
+      return `
+        <div class="layout-grid">
+          <div class="document-surface">
+            <p class="mini">Alignment Snapshot</p>
+            <h2>COCA-COLA x TASCK</h2>
+            <p>Coca-Cola Nigeria wants a creator-led campaign that gives Coke Studio Africa stronger cultural relevance with youth audiences while preserving measurable brand outcomes.</p>
+            <h3>Business promotion summary</h3>
+            <p>TASCK can help the brand turn a music-led campaign into a structured creator engagement with clear objectives, KPIs, budget gates, deliverables, and approval controls.</p>
+            <h3>Audience and channels</h3>
+            <p>Urban youth, music fans, Gen Z culture followers, Instagram, TikTok, YouTube, PR, and earned media moments.</p>
+            <h3>Scope flags</h3>
+            <ul>
+              <li>Procurement approval chain is still missing.</li>
+              <li>Usage rights duration is partially confirmed.</li>
+              <li>Exact production budget range needs brand confirmation.</li>
+            </ul>
+            <button class="v3-btn-primary" data-action="Send Alignment Snapshot to Brand">Send to Brand</button>
+          </div>
+          <aside class="stack">${readinessPanel()}${meetingSummary()}</aside>
+        </div>
+      `;
+    }
+
+    function formatMoney(value) {
+      const number = Number(value || 0);
+      if (number >= 1000000000) return `N${(number / 1000000000).toFixed(3).replace(/\.?0+$/, "")}B`;
+      if (number >= 1000000) return `N${(number / 1000000).toFixed(0)}M`;
+      return `N${number.toLocaleString()}`;
+    }
+
+    function stageBadge(stage) {
+      const meta = data.stageMeta[stage] || data.stageMeta.connect;
+      return `<span class="badge" style="background:${meta[1]}1A;color:${meta[1]};border-color:${meta[1]}30">${meta[0]}</span>`;
+    }
+
+    function trackBadge(row) {
+      if (row.engagement_track === "grant") {
+        return `<span class="badge gold">Grant</span>`;
+      }
+      return `<span class="badge green">Paid Strategy</span>`;
+    }
+
+    function health(row) {
+      const map = {
+        "on-track": ["On track", "green"],
+        "near-closure": ["Near closure", "gold"],
+        "new": ["New", "olive"],
+        "at-risk": ["At risk", "red"]
+      };
+      const item = map[row.health] || map.new;
+      return badge(item[0], item[1]);
+    }
+
+    function businessCaseOverview() {
+      const rows = data.businessCases;
+      const paid = rows.filter(row => row.engagement_track === "paid");
+      const grant = rows.filter(row => row.engagement_track === "grant");
+      const byStage = ["connect", "frame", "plan", "deliver", "closed"].map(stage => {
+        const meta = data.stageMeta[stage];
+        const count = rows.filter(row => row.stage === stage).length;
+        return `<div style="display:flex;align-items:center;justify-content:space-between;font-size:11px">
+          <span style="color:#6E6657">${meta[0]}</span>
+          <span class="mono" style="font-weight:700;color:${meta[1]}">${count}</span>
+        </div>`;
+      }).join("");
+
+      return `
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-top"><span class="dot"></span>Total Business Cases</div>
+            <div class="stat-value">${rows.length}</div>
+            <div class="stat-note">One document chain across Connect -> Frame -> Plan -> Deliver.</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="dot" style="background:#1F4A3A"></span>Paid Strategy</div>
+            <div class="stat-value">${paid.length}</div>
+            <div class="stat-note">${formatMoney(paid.reduce((sum, row) => sum + row.estimated_value, 0))} pipeline</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="dot" style="background:#C49B5F"></span>Grant</div>
+            <div class="stat-value">${grant.length}</div>
+            <div class="stat-note">${formatMoney(grant.reduce((sum, row) => sum + row.estimated_value, 0))} pipeline</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="dot" style="background:#B54A37"></span>By Stage</div>
+            <div class="stack" style="gap:5px">${byStage}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function businessCaseFilters() {
+      const stages = ["all", "connect", "frame", "plan", "deliver", "closed"];
+      const tracks = [
+        ["all", "All tracks"],
+        ["paid", "Paid"],
+        ["grant", "Grant"]
+      ];
+      return `
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:22px">
+          <span class="mini">Filters</span>
+          <div style="display:flex;gap:4px;padding:4px;background:#F4F2EC;border-radius:10px" data-testid="bc-stage-filter">
+            ${stages.map(stage => `
+              <button
+                class="v3-btn-secondary"
+                style="min-height:28px;padding:4px 11px;font-size:11px;border-color:${state.bcStage === stage ? "#fff" : "transparent"};background:${state.bcStage === stage ? "#fff" : "transparent"};box-shadow:${state.bcStage === stage ? "0 1px 4px rgba(26,26,26,0.06)" : "none"};color:${state.bcStage === stage ? "#1A1A1A" : "#8A8A8A"}"
+                data-bc-stage="${stage}"
+              >${stage}</button>
+            `).join("")}
+          </div>
+          <div style="display:flex;gap:4px;padding:4px;background:#F4F2EC;border-radius:10px" data-testid="bc-track-filter">
+            ${tracks.map(track => `
+              <button
+                class="v3-btn-secondary"
+                style="min-height:28px;padding:4px 11px;font-size:11px;border-color:${state.bcTrack === track[0] ? "#fff" : "transparent"};background:${state.bcTrack === track[0] ? "#fff" : "transparent"};box-shadow:${state.bcTrack === track[0] ? "0 1px 4px rgba(26,26,26,0.06)" : "none"};color:${state.bcTrack === track[0] ? "#1A1A1A" : "#8A8A8A"}"
+                data-bc-track="${track[0]}"
+              >${track[1]}</button>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    function grantAgentPanel() {
+      if (state.bcTrack !== "grant") return "";
+      return `
+        <div class="v3-card card-pad" style="border-color:#C49B5F;margin-bottom:18px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px">
+            <div>
+              <p class="mini">Grant web discovery agent</p>
+              <h2 class="v3-heading" style="font-size:21px;margin:4px 0">AI grant scraper for TASCK</h2>
+              <p class="small muted">Demo agent scans public grant portals, funder calls, creative economy programs, and impact funding pages, then ranks opportunities TASCK can pursue.</p>
+            </div>
+            <button class="v3-btn-primary" data-action="Scrape web for grants">Scrape web for grants</button>
+          </div>
+          <div class="split">
+            ${data.grantOpportunities.map(grant => `
+              <div class="v3-card-muted card-pad">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+                  <div>
+                    <strong style="font-size:13px;color:#1A1A1A">${grant[0]}</strong>
+                    <p class="small muted">${grant[1]}</p>
+                  </div>
+                  ${badge("new", "gold")}
+                </div>
+                <div class="split" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:13px 0">
+                  <div><p class="mini">Amount</p><p class="small mono">${grant[2]}</p></div>
+                  <div><p class="mini">Deadline</p><p class="small">${grant[3]}</p></div>
+                  <div><p class="mini">Fit</p><p class="small" style="color:#1F4A3A;font-weight:700">${grant[4]}</p></div>
+                </div>
+                <p class="small muted">${grant[5]}</p>
+                <div style="display:flex;gap:8px;margin-top:12px">
+                  <button class="v3-btn-primary" data-action="Approve ${grant[0]}">Approve</button>
+                  <button class="v3-btn-secondary" data-action="Reject ${grant[0]}">Reject</button>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    function businessCases() {
+      const filtered = data.businessCases.filter(row =>
+        (state.bcStage === "all" || row.stage === state.bcStage) &&
+        (state.bcTrack === "all" || row.engagement_track === state.bcTrack)
+      );
+      const rows = filtered.map(row => `
+        <button class="attention-item" data-action="Open ${row.title}" style="align-items:center">
+          <span class="stage-line" style="background:${(data.stageMeta[row.stage] || data.stageMeta.connect)[1]}"></span>
+          <span style="flex:1;min-width:0">
+            <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+              <strong style="font-size:14px;color:#1A1A1A">${row.title}</strong>
+              ${stageBadge(row.stage)}
+              ${trackBadge(row)}
+              ${health(row)}
+            </span>
+            <span class="small muted">${row.brand}${row.creator ? ` x ${row.creator}` : ""}</span><br>
+            <span class="small muted">${row.next_action}</span>
+          </span>
+          <span style="text-align:right;flex:0 0 auto">
+            <span class="small mono" style="display:block;color:#1F4A3A;font-weight:700">${row.value}</span>
+            <span class="mini">${row.days_in_stage}d in stage</span>
+          </span>
+          <span style="color:#8A8A8A">›</span>
+        </button>
+      `).join("");
+
+      return `
+        <div class="stack">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+            <div>
+              <p class="section-kicker">Admin Control Centre</p>
+              <h2 class="v3-heading" style="font-size:24px;margin-bottom:4px">Business Cases</h2>
+              <p class="small muted">One Business Case = one document chain across Connect -> Frame -> Plan -> Deliver.</p>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="v3-btn-secondary" data-action="AI-generated business cases">AI-generated business cases</button>
+              <button class="v3-btn-primary" data-action="New Business Case">New Business Case</button>
+            </div>
+          </div>
+          ${businessCaseOverview()}
+          ${businessCaseFilters()}
+          ${grantAgentPanel()}
+          <div class="stack">
+            ${rows || `<div class="v3-card card-pad" style="text-align:center;color:#8A8A8A;font-size:13px">No business cases match these filters.</div>`}
+          </div>
+        </div>
+      `;
+    }
+
+    function projectsTable(title = "Projects") {
+      return `
+        <div class="v3-card card-pad">
+          <div class="card-title">${title}</div>
+          ${table(["Project", "Brand", "Stage", "Value", "Owner", "Status"], data.businessCases.map(row => [row.title, row.brand, stageBadge(row.stage), row.value, row.rm, row.next_action]))}
+        </div>
+      `;
+    }
+
+    function creativeDirectory(kind) {
+      const rows = data.creatives
+        .filter(c => kind === "all" || (kind === "creative" ? c[1].includes("Independent") : c[1].includes("Super")))
+        .map(c => [
+          `<strong>${c[0]}</strong>`,
+          c[1],
+          `<span class="mono">${c[2]}%</span><div class="progress"><div class="bar ${Number(c[2]) < 90 ? "gold" : ""}" style="width:${c[2]}%"></div></div>`,
+          c[3],
+          badge(c[4], c[4] === "Available" ? "green" : "gold"),
+          `<button class="v3-btn-secondary" data-action="Open ${c[0]} profile">Open</button>`
+        ]);
+      return `
+        <div class="v3-card card-pad">
+          <div class="card-title">${kind === "super" ? "Super Creatives" : kind === "creative" ? "Creatives" : "Creative and Super Creative Matching"}</div>
+          ${table(["Name", "Type", "Fit", "Specialty", "Status", "Action"], rows)}
+        </div>
+      `;
+    }
+
+    function financePanel(title) {
+      return `
+        ${statCards([
+          ["Available", "N82M", "Cleared and ready", "#1F4A3A"],
+          ["Pending", "N44M", "Awaiting approval", "#C49B5F"],
+          ["Fees", "N19M", "Strategy and platform", "#567B3F"],
+          ["Risk holds", "N4M", "Scope or dispute", "#B54A37"]
+        ])}
+        <div class="v3-card card-pad">
+          <div class="card-title">${title}</div>
+          ${table(["Reference", "Project", "Type", "Amount", "Status"], [
+            ["TX-8832", "Coke Studio Africa", "Strategy fee", "N15M", badge("Pending", "gold")],
+            ["TX-8821", "MTN Creator Partnership", "Creative payout", "N8.4M", badge("Cleared", "green")],
+            ["TX-8788", "Access Bank Lifestyle", "Milestone", "N5M", badge("Paid", "green")]
+          ])}
+        </div>
+      `;
+    }
+
+    function genericModule(title, bullets) {
+      return `
+        <div class="layout-grid">
+          <div class="v3-card card-pad">
+            <div class="card-title">${title}</div>
+            <ul class="list">
+              ${bullets.map(item => `<li class="list-item"><span class="small">${item}</span>${badge("Production feature", "olive")}</li>`).join("")}
+            </ul>
+          </div>
+          <aside class="ai-panel">
+            <div class="card-title">Connected to core workflow</div>
+            <p class="small muted">This module must connect to Business Case, project stage, permissions, audit history, and role-based portal visibility.</p>
+            <button class="v3-btn-primary v3-btn-full" style="margin-top:12px" data-action="Preview ${title} action">Preview action</button>
+          </aside>
+        </div>
+      `;
+    }
+
+    function adminContent(section) {
+      if (section === "overview") return adminOverview();
+      if (section === "discovery" || section === "opportunities") return discoveryPanel(section);
+      if (section === "creative-scraper") return `<div class="layout-grid"><div>${creativeDirectory("creative")}</div><aside>${scannerRules()}</aside></div>`;
+      if (section === "super-creative-scraper") return `<div class="layout-grid"><div>${creativeDirectory("super")}</div><aside>${scannerRules()}</aside></div>`;
+      if (section === "contact-research") return contactResearch();
+      if (section === "meetings") return meetingsPanel();
+      if (section === "alignment") return alignmentPanel();
+      if (section === "business-cases") return businessCases(true);
+      if (section === "pipeline") return `${statCards()}${pipeline()}${projectsTable("Pipeline by business case")}`;
+      if (section === "projects") return projectsTable("Projects");
+      if (section === "crm") return projectsTable("CRM / Brand records");
+      if (section === "creatives") return creativeDirectory("creative");
+      if (section === "super-creatives") return creativeDirectory("super");
+      if (section === "invoices") return financePanel("Invoices");
+      if (section === "wallet") return financePanel("Wallet / Fees");
+      if (section === "reports") return genericModule("Reports / Insights", ["Lead quality, conversion, stage velocity, approval speed, delivery health, and revenue reporting.", "Final report generation after project closure.", "Discovery agent performance and missed-opportunity analysis."]);
+      if (section === "users") return genericModule("Users / Permissions", ["Admin, Brand, Creative, and Super Creative access control.", "Super Creative can monitor creatives under their build/team.", "Audit logs for every sensitive production action."]);
+      if (section === "tasks") return genericModule("Tasks", ["Verify Coca-Cola procurement contact.", "Approve MTN revised scope.", "Review Northside Collective roster.", "Publish final report template."]);
+      if (section === "contracts") return genericModule("Contracts", ["Generate contracts after strategy approval.", "Track brand, creative, super creative, and TASCK signatures.", "Connect usage rights, fees, deliverables, and scope changes."]);
+      if (section === "templates") return genericModule("Templates", ["Alignment Snapshot templates.", "Strategy Snapshot templates.", "Creative brief, contract, scope change, final report, and follow-up email templates."]);
+      if (section === "documents") return genericModule("Documents", ["Central document library for snapshots, briefs, contracts, reports, invoices, and meeting exports.", "Admin publishes documents to brand, creative, or super creative portals.", "Version history and approval status."]);
+      return genericModule("Settings", ["Provider settings for email, meetings, scraping, transcription, AI, and storage.", "Workspace profile and notification rules.", "Security, role, and approval preferences."]);
+    }
+
+    function brandContent(section) {
+      if (section === "dashboard") {
+        return `${statCards([
+          ["Active Projects", "4", "Coca-Cola, MTN, Access Bank, UBA", "#1F4A3A"],
+          ["Pending Approvals", "3", "Snapshots and deliverables", "#C49B5F"],
+          ["Open Invoices", "2", "One pending payment", "#567B3F"],
+          ["Meetings", "5", "Two upcoming", "#B54A37"]
+        ])}<div class="layout-grid"><div>${projectsTable("Brand active projects")}</div><aside class="stack">${readinessPanel()}${approvalsPanel()}</aside></div>`;
+      }
+      if (section === "projects" || section === "project-detail") return projectsTable(section === "project-detail" ? "Project detail" : "Brand active projects");
+      if (section === "alignment") return alignmentPanel();
+      if (section === "strategy") return genericModule("Strategy Snapshot Review", ["Review creative route, channel plan, deliverable plan, timeline, KPIs, and risks.", "Comment before Admin advances to delivery.", "Approve or request revision with clear notes."]);
+      if (section === "approvals") return approvalsPanel();
+      if (section === "documents") return genericModule("Brand Documents", ["Alignment Snapshot PDF.", "Strategy Snapshot PDF.", "Creative brief, contract, invoice, and final report documents."]);
+      if (section === "contracts") return genericModule("Brand Contracts", ["Review terms, usage rights, payment schedule, and signature status.", "View scope changes and legal notes.", "Download signed copies."]);
+      if (section === "invoices") return financePanel("Brand invoices");
+      if (section === "meetings") return meetingsPanel();
+      if (section === "messages") return messagesPanel("Brand messages");
+      if (section === "reports") return genericModule("Brand Reports", ["Project performance summary.", "Creator output and approval history.", "Final report and learning log after closure."]);
+      return genericModule("Brand Settings", ["Brand profile.", "Notification preferences.", "Password and access management."]);
+    }
+
+    function approvalsPanel() {
+      return `
+        <div class="v3-card card-pad">
+          <div class="card-title">Approval queue</div>
+          <ul class="list">
+            <li class="list-item"><span class="small"><strong>Coke Studio Alignment Snapshot</strong><br><span class="muted">Review objective, KPIs, audience, timeline, and risks.</span></span>${badge("Pending", "gold")}</li>
+            <li class="list-item"><span class="small"><strong>MTN revised strategy route</strong><br><span class="muted">Reduced deliverables after budget discussion.</span></span>${badge("Needs comment", "olive")}</li>
+            <li class="list-item"><span class="small"><strong>Access Bank contract draft</strong><br><span class="muted">Usage rights and production window.</span></span>${badge("Draft", "gold")}</li>
+          </ul>
+        </div>
+      `;
+    }
+
+    function creativeContent(section) {
+      if (section === "dashboard") {
+        return `${statCards([
+          ["Assigned Campaigns", "3", "Two active, one pending", "#1F4A3A"],
+          ["Deliverables", "7", "4 due this week", "#567B3F"],
+          ["Approvals", "2", "Waiting on brand", "#C49B5F"],
+          ["Wallet", "N8.4M", "Cleared milestone", "#1F4A3A"]
+        ])}<div class="layout-grid"><div>${briefsPanel()}</div><aside class="stack">${deliverablesPanel()}${financePanel("Creative wallet")}</aside></div>`;
+      }
+      if (section === "briefs") return briefsPanel();
+      if (section === "opportunities") return genericModule("Creative Opportunities", ["Invitations matched by specialty, audience, region, availability, and previous performance.", "Creatives can accept interest, decline, or request more details.", "Admin decides final assignment after business case approval."]);
+      if (section === "project-detail") return projectsTable("Creative project detail");
+      if (section === "deliverables" || section === "uploads") return deliverablesPanel();
+      if (section === "approvals") return genericModule("Creative Approvals", ["Track brand comments, admin notes, revision requests, and final approvals.", "Every deliverable should show due date, version, reviewer, and approval history.", "Approved work connects to payment milestones."]);
+      if (section === "meetings") return meetingsPanel();
+      if (section === "messages") return messagesPanel("Creative messages");
+      if (section === "wallet") return financePanel("Creative wallet");
+      if (section === "profile") return profilePanel("Creative profile");
+      return genericModule("Creative Settings", ["Profile preferences.", "Notification rules.", "Security and account settings."]);
+    }
+
+    function briefsPanel() {
+      return `
+        <div class="v3-card card-pad">
+          <div class="card-title">Pending brief: MTN Creator Partnership ${badge("Response due", "gold")}</div>
+          <p class="small muted" style="margin-bottom:14px">Create short-form campaign concepts for youth audiences. Brand wants measurable engagement and authentic creator-led storytelling.</p>
+          ${table(["Brief", "Brand", "Deadline", "Fee", "Status"], [
+            ["Youth creator launch concepts", "MTN", "June 8, 2026", "N4.8M", badge("Pending response", "gold")],
+            ["Music culture storyboards", "Coca-Cola", "June 12, 2026", "N6.2M", badge("Assigned", "green")],
+            ["Lifestyle campaign cutdowns", "Access Bank", "June 14, 2026", "N2.1M", badge("Reviewing", "olive")]
+          ])}
+        </div>
+      `;
+    }
+
+    function deliverablesPanel() {
+      return genericModule("Deliverables", ["Concept deck v2 due June 6.", "15s creator video cut submitted for Coca-Cola.", "Behind-the-scenes photo set not started.", "Upload package and captions before approval gate."]);
+    }
+
+    function superContent(section) {
+      if (section === "dashboard") {
+        return `${statCards([
+          ["Managed Creatives", "18", "12 active, 4 available", "#1F4A3A"],
+          ["Team Projects", "6", "Coke Studio, MTN, Access", "#567B3F"],
+          ["Applications", "5", "Roster requests", "#C49B5F"],
+          ["Team Earnings", "N18.7M", "Cleared and pending", "#1F4A3A"]
+        ])}<div class="layout-grid"><div>${rosterPanel()}</div><aside class="stack">${projectsTable("Team projects")}${financePanel("Team wallet")}</aside></div>`;
+      }
+      if (section === "managed-creatives") return rosterPanel();
+      if (section === "team-projects" || section === "performance") return projectsTable(section === "performance" ? "Team project performance" : "Team projects");
+      if (section === "assigned-opportunities") return genericModule("Assigned Opportunities", ["Admin can assign work to a super creative team instead of a single independent creative.", "Super Creative confirms capacity and nominates roster members.", "Opportunity links to business case, meeting notes, scope, and fee expectations."]);
+      if (section === "applications") return genericModule("Roster Applications", ["Creatives can request to join a super creative build/team.", "Super Creative reviews portfolio, skills, availability, and verification status.", "Admin can audit team membership and access boundaries."]);
+      if (section === "deliverables") return deliverablesPanel();
+      if (section === "meetings") return meetingsPanel();
+      if (section === "messages") return messagesPanel("Super Creative messages");
+      if (section === "wallet") return financePanel("Super Creative team wallet");
+      if (section === "roster-profile") return profilePanel("Roster profile");
+      return genericModule("Super Creative Settings", ["Team profile.", "Roster access rules.", "Notification and payout preferences."]);
+    }
+
+    function rosterPanel() {
+      return `
+        <div class="v3-card card-pad">
+          <div class="card-title">Managed creatives under Leading Vibes ${badge("Super Creative", "gold")}</div>
+          <p class="small muted" style="margin-bottom:14px">Each creative can have their own account, while the Super Creative monitors team assignments, capacity, deliverables, meetings, and earnings.</p>
+          ${table(["Creative", "Role", "Active Work", "Status", "Action"], data.roster.map(r => [r[0], r[1], r[2], badge(r[3], r[3] === "Available" ? "green" : "gold"), `<button class="v3-btn-secondary" data-action="Open ${r[0]}">Open</button>`]))}
+        </div>
+      `;
+    }
+
+    function messagesPanel(title) {
+      return genericModule(title, ["Admin: Alignment Snapshot comments are ready for review.", "Coca-Cola Team: Confirm next meeting and procurement contact.", "Creative Team: Deliverable v2 uploaded for review."]);
+    }
+
+    function profilePanel(title) {
+      return `
+        <div class="layout-grid">
+          <div class="v3-card card-pad">
+            <div class="card-title">${title}</div>
+            ${["Portfolio strength", "Audience proof", "Rate card", "Availability", "Verification"].map((item, index) => `
+              <div style="margin-bottom:14px">
+                <p class="mini">${item}</p>
+                <div class="progress"><div class="bar ${index % 2 ? "gold" : ""}" style="width:${84 - index * 8}%"></div></div>
+              </div>
+            `).join("")}
+          </div>
+          <aside class="ai-panel">
+            <div class="score">76%</div>
+            <h3 class="v3-heading" style="margin:12px 0 6px;font-size:18px">Profile readiness</h3>
+            <p class="small muted">Production should use profile completeness and verification as matching signals.</p>
+          </aside>
+        </div>
+      `;
+    }
+
+    function renderPortalContent(portal, section) {
+      if (portal === "admin") return adminContent(section);
+      if (portal === "brand") return brandContent(section);
+      if (portal === "creative") return creativeContent(section);
+      return superContent(section);
+    }
+
+    function modal() {
+      if (!state.modal) return "";
+      return `
+        <div class="modal-backdrop" data-close="true">
+          <div class="modal">
+            <div class="modal-head">
+              <div>
+                <p class="mini">Prototype action</p>
+                <h2 class="v3-heading" style="font-size:24px">${esc(state.modal)}</h2>
+              </div>
+              <button class="v3-btn-secondary" data-close="true">Close</button>
+            </div>
+            <p class="section-copy">
+              This static prototype shows the intended product flow. In production this action would call FastAPI,
+              write to PostgreSQL, update audit logs, and refresh role-scoped portal views.
+            </p>
+          </div>
+        </div>
+      `;
+    }
+
+    function render() {
+      let html = "";
+      if (state.screen === "landing") html = landing();
+      if (state.screen === "role") html = roleSelector();
+      if (state.screen === "access") html = accessScreen();
+      if (state.screen === "portal") html = portalShell();
+      app.innerHTML = html + modal() + (state.toast ? `<div class="toast">${esc(state.toast)}</div>` : "");
+    }
+
+    document.addEventListener("click", event => {
+      const screen = event.target.closest("[data-screen]");
+      if (screen) {
+        setScreen(screen.getAttribute("data-screen"));
+        return;
+      }
+
+      const access = event.target.closest("[data-access]");
+      if (access) {
+        state.accessType = access.getAttribute("data-access");
+        setScreen("access");
+        return;
+      }
+
+      const portal = event.target.closest("[data-portal]");
+      if (portal) {
+        setPortal(portal.getAttribute("data-portal"));
+        return;
+      }
+
+      const section = event.target.closest("[data-section]");
+      if (section) {
+        state.section = section.getAttribute("data-section");
+        render();
+        window.scrollTo(0, 0);
+        return;
+      }
+
+      const bcStage = event.target.closest("[data-bc-stage]");
+      if (bcStage) {
+        state.bcStage = bcStage.getAttribute("data-bc-stage");
+        render();
+        return;
+      }
+
+      const bcTrack = event.target.closest("[data-bc-track]");
+      if (bcTrack) {
+        state.bcTrack = bcTrack.getAttribute("data-bc-track");
+        render();
+        return;
+      }
+
+      const actionButton = event.target.closest("[data-action]");
+      if (actionButton) {
+        action(actionButton.getAttribute("data-action"));
+        return;
+      }
+
+      const close = event.target.closest("[data-close]");
+      if (close) {
+        state.modal = "";
+        render();
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>

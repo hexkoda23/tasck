@@ -6,6 +6,7 @@ const seededUsers = [
   ...v3RMs.map(rm => ({
     id: rm.id, name: rm.name, email: `${rm.name.toLowerCase().replace(' ', '.')}@tasck.com`, role: 'admin', subRole: 'Relationship Manager',
     status: 'active', lastActive: '2 hours ago', projects: v3Projects.filter(p => p.rmId === rm.id).length,
+    assignedBrands: v3Brands.filter(b => b.rmId === rm.id).map(b => b.company),
   })),
   { id: 'u-ops1', name: 'Chioma Adewale', email: 'chioma@tasck.com', role: 'admin', subRole: 'Operations Lead', status: 'active', lastActive: '1 hour ago', projects: 0 },
   { id: 'u-ops2', name: 'Emeka Nwankwo', email: 'emeka@tasck.com', role: 'admin', subRole: 'Finance', status: 'active', lastActive: '3 hours ago', projects: 0 },
@@ -89,6 +90,7 @@ const V3AdminUsers = () => {
               <th className="text-left text-[10px] text-[#8A8A8A] uppercase tracking-wider p-3 font-medium">User</th>
               <th className="text-left text-[10px] text-[#8A8A8A] uppercase tracking-wider p-3 font-medium">Role</th>
               <th className="text-left text-[10px] text-[#8A8A8A] uppercase tracking-wider p-3 font-medium">Portal</th>
+              <th className="text-left text-[10px] text-[#8A8A8A] uppercase tracking-wider p-3 font-medium">Assigned Brands</th>
               <th className="text-right text-[10px] text-[#8A8A8A] uppercase tracking-wider p-3 font-medium">Projects</th>
               <th className="text-right text-[10px] text-[#8A8A8A] uppercase tracking-wider p-3 font-medium">Last Active</th>
               <th className="text-right text-[10px] text-[#8A8A8A] uppercase tracking-wider p-3 font-medium">Status</th>
@@ -111,6 +113,17 @@ const V3AdminUsers = () => {
                 <td className="p-3"><span className="text-[11px] text-[#5C5C5C]">{user.subRole}</span></td>
                 <td className="p-3">
                   <span className={`text-[10px] px-2 py-0.5 rounded capitalize ${roleBadge(user.role)}`}>{user.role}</span>
+                </td>
+                <td className="p-3">
+                  {user.role === 'admin' && user.assignedBrands?.length > 0 ? (
+                    <div className="flex flex-wrap gap-1 max-w-[260px]" data-testid={`rm-assigned-brands-${user.id}`}>
+                      {user.assignedBrands.map(brand => (
+                        <span key={brand} className="text-[10px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">{brand}</span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-[10px] text-[#8A8A8A]">None</span>
+                  )}
                 </td>
                 <td className="p-3 text-right text-[12px]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{user.projects}</td>
                 <td className="p-3 text-right text-[10px] text-[#8A8A8A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{user.lastActive}</td>

@@ -79,7 +79,7 @@ const baseDemoOpportunityCandidates = [
   },
 ];
 
-const NOT_FOUND = 'Not found - recommend manual search.';
+const NOT_FOUND = 'Not found. Recommend manual search.';
 
 const enrichPartnershipCandidate = (candidate) => ({
   ...candidate,
