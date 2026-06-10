@@ -433,7 +433,12 @@ const V3AdminBusinessCases = () => {
                     className="font-semibold"
                     style={{ fontFamily: "'JetBrains Mono', monospace", color: s.color }}
                   >
-                    {byStage[s.key] || 0}
+                    {(() => {
+                      const v = byStage[s.key];
+                      if (v == null) return 0;
+                      if (typeof v === 'object') return v.count ?? 0;
+                      return v;
+                    })()}
                   </span>
                 </div>
               ))}

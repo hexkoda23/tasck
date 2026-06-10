@@ -3630,6 +3630,90 @@ Produce the opportunity card JSON.
         users = await db.v3_admin_users.find({}, {"_id": 0}).to_list(500)
         return [{k: v for k, v in u.items() if k != "password"} for u in users]
 
+    @router.get("/templates")
+    async def list_templates():
+        rows = await db.v3_templates.find({}, {"_id": 0}).to_list(500)
+        return sorted(rows, key=lambda r: r.get("name", ""))
+
+    @router.get("/meetings")
+    async def list_meetings():
+        rows = await db.v3_meetings.find({}, {"_id": 0}).to_list(1000)
+        return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
+
+    @router.get("/projects")
+    async def list_projects():
+        rows = await db.v3_projects.find({}, {"_id": 0}).to_list(1000)
+        if rows:
+            return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
+        # Fallback: derive from business cases so the Projects page is never empty
+        bcs = await db.v3_business_cases.find({}, {"_id": 0}).to_list(1000)
+        return [
+            {
+                "id": bc.get("id"),
+                "title": bc.get("title"),
+                "stage": bc.get("stage"),
+                "stage_label": bc.get("stage_label"),
+                "brand_id": bc.get("brand_id"),
+                "rm_id": bc.get("rm_id"),
+                "estimated_value": bc.get("estimated_value"),
+                "derived_from": "business_case",
+                "source_business_case_id": bc.get("id"),
+                "created_at": bc.get("created_at"),
+            }
+            for bc in bcs
+        ]
+
+    @router.post("/admin/import-crm-workbook")
+    async def import_crm_workbook_endpoint():
+        """Run the workbook importer. Idempotent — safe to call repeatedly."""
+        from v3_workbook_import import import_crm_workbook
+        result = await import_crm_workbook(db)
+        if not result.get("success"):
+            raise HTTPException(503, result.get("error") or "Workbook import failed")
+        return result
+
+    @router.post("/admin/clear-v3-demo-data")
+    async def clear_v3_demo_data(dry_run: bool = False):
+        """Remove pre-existing demo seed records from v3_* collections so only
+        workbook-imported rows remain. A row is considered "demo" if it does
+        NOT carry `created_from_crm_template: true`.
+
+        - `?dry_run=true` returns counts without deleting.
+        - Idempotent. Run AFTER the workbook importer.
+        - Also purges legacy placeholder brands (people names imported as
+          brands by an older importer pass).
+        """
+        v3_collections = [
+            "v3_brands", "v3_contacts", "v3_creators", "v3_rms", "v3_admin_users",
+            "v3_business_cases", "v3_projects", "v3_contracts", "v3_reports",
+            "v3_fees", "v3_wallet", "v3_tasks", "v3_insights", "v3_templates",
+            "v3_meetings",
+        ]
+        report: Dict[str, Any] = {}
+        for c in v3_collections:
+            filt = {"created_from_crm_template": {"$ne": True}}
+            n = await db[c].count_documents(filt)
+            if not dry_run and n:
+                await db[c].delete_many(filt)
+            report[c] = n
+        # Specifically purge legacy placeholder brand rows produced by the
+        # older Framing-Partners importer pass (people names treated as brands).
+        legacy_brand_filter = {
+            "$or": [
+                {"_placeholder": True},
+                {"source_sheet": "Framing - Partners"},
+            ]
+        }
+        legacy_brand_count = await db.v3_brands.count_documents(legacy_brand_filter)
+        if not dry_run and legacy_brand_count:
+            await db.v3_brands.delete_many(legacy_brand_filter)
+        report["v3_brands_placeholder_removed"] = legacy_brand_count
+        return {
+            "dry_run": dry_run,
+            "removed_per_collection": report,
+            "total": sum(v for v in report.values() if isinstance(v, int)),
+        }
+
     @router.post("/admin/reset-demo")
     async def reset_demo():
         seed = get_v3_seed_data()
@@ -3717,10 +3801,12 @@ Produce the opportunity card JSON.
 
         return {
             "brands_total": len(brands),
+            "contacts_total": await db.v3_contacts.count_documents({}),
             "creators_total": len(creators),
             "relationship_managers_total": len(rms),
             "business_cases_total": len(cases),
-            "projects_total": len(cases),
+            "projects_total": (await db.v3_projects.count_documents({})) or len(cases),
+            "pipeline_total": len(cases),
             "contracts_total": len(contracts),
             "reports_total": len(reports) + len(final_reports),
             "tasks_total": len(tasks),

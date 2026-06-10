@@ -126,4 +126,7 @@ export const v3ReassignRM = (brandId, rmId) => v3.patch(`/brands/${brandId}/rm`,
 // -------- Metrics --------
 export const v3AdminOverview = () => v3.get('/metrics/admin-overview').then(r => r.data);
 
+// -------- Projects --------
+export const v3ListProjects = () => v3.get('/projects').then(r => r.data);
+
 export default v3;

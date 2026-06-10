@@ -1,1016 +1,1009 @@
-"""TASCK v3 — Workbook Importer (v2)
+"""TASCK OS — CRM Workbook Importer (clean rewrite).
 
-Imports all real CRM data from: Copy of Copy of CRM Template.xlsx
+Reads `backend/data/Copy of Copy of CRM Template.xlsx` and populates:
+  v3_brands, v3_contacts, v3_creators, v3_rms, v3_admin_users,
+  v3_business_cases, v3_projects, v3_contracts, v3_reports, v3_fees,
+  v3_wallet, v3_tasks, v3_insights, v3_templates, v3_meetings
 
-Sheet layout discovered via inspection:
-  CRM - Partners         : Row 1=title, Row 2=headers, Row 3+=data
-  Framing - Partners     : Row 1=headers, Row 2=empty,  Row 3+=data
-  CRM - Super Creatives  : Row 1=title, Row 2=headers, Row 3+=data
-  Super Creatives-Framing: Row 1=headers+data mixed,    Row 2+=data
-
-Key rules:
-  - Continuation rows (company/creator blank, but contact/status/notes present) are
-    attached to the most recent valid parent record.
-  - Missing optional fields (website, email, phone, RM) never block record creation.
-  - Deterministic IDs prevent duplicates on re-import.
-  - All records carry full source metadata.
+Rules:
+- Idempotent: deterministic IDs by slug; re-runs UPDATE never duplicate.
+- Continuation-row aware: blank company → attach to last brand as another contact.
+- Never wipes destination collections — uses `update_one({id}, {$set: doc}, upsert=True)`.
+- Preserves source provenance on every record (workbook, sheet, row, original values).
+- Path resolved relative to this file so it works regardless of cwd.
 """
+from __future__ import annotations
 
-import openpyxl
 import hashlib
+import logging
 import re
+import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-import logging
+from typing import Any, Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+import openpyxl
+
+logger = logging.getLogger("tasck.v3.workbook_import")
+
+WORKBOOK_FILENAME = "Copy of Copy of CRM Template.xlsx"
+WORKBOOK_PATH = Path(__file__).resolve().parent / "data" / WORKBOOK_FILENAME
 
 
-def _now_iso():
+def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _sha(text: str) -> str:
-    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:10]
+def _slug(value: Any, fallback: str = "x") -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", str(value or fallback).strip().lower()).strip("-")
+    return s or fallback
 
 
-def _clean(value) -> str:
-    """Return a stripped string, empty string if None/empty."""
+def _det_id(prefix: str, *parts: Any) -> str:
+    key = "|".join(str(p or "") for p in parts)
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:10]
+    return f"{prefix}-{digest}"
+
+
+def _norm(value: Any) -> str:
     if value is None:
         return ""
-    s = str(value).strip()
-    # Remove formula artifacts like leading =
-    if s.startswith("="):
-        s = s[1:]
-    # Collapse internal whitespace / newlines
-    s = re.sub(r"[\r\n\t]+", " ", s).strip()
-    return s
+    s = str(value).replace("\n", " ").replace("\r", " ").strip()
+    return re.sub(r"\s+", " ", s)
 
 
-def _normalize_rm(raw: str) -> str:
-    """Return a canonical, lowercased, stripped RM name."""
-    if not raw:
-        return ""
-    return raw.strip().lower().replace(".", "").replace("-", " ").strip()
+def _norm_header(value: Any) -> str:
+    s = _norm(value).lower()
+    return re.sub(r"[^a-z0-9]+", "_", s).strip("_")
 
 
-# Canonical RM merge map: all variants → one canonical display name
-_RM_CANONICAL = {
-    "seyel":    "Seyelnen",
-    "seyelnen": "Seyelnen",
-    "seyel nen": "Seyelnen",
-}
+def _split_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    s = _norm(value)
+    if not s or s.lower() == "nil":
+        return []
+    return [p.strip() for p in re.split(r"[;,\u2022\n]+", s) if p.strip()]
 
 
-def _canonical_rm_name(raw: str) -> str:
-    key = _normalize_rm(raw)
-    return _RM_CANONICAL.get(key, raw.strip())
+def _parse_fee(value: Any) -> Tuple[Optional[float], Optional[str]]:
+    if value is None:
+        return None, None
+    if isinstance(value, (int, float)):
+        return float(value), None
+    s = str(value).strip().lower()
+    if not s or s in {"nil", "free", "n/a", "none"}:
+        return None, None
+    currency = "USD" if ("$" in s or "usd" in s) else ("NGN" if ("₦" in s or "naira" in s or "ngn" in s) else None)
+    m = re.search(r"([\d,]+(?:\.\d+)?)\s*(k|m|million|thousand)?", s)
+    if not m:
+        return None, currency
+    try:
+        amount = float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None, currency
+    mult = (m.group(2) or "").lower()
+    if mult in {"k", "thousand"}:
+        amount *= 1_000
+    elif mult in {"m", "million"}:
+        amount *= 1_000_000
+    return amount, currency
+
+
+def _likelihood_to_stage(value: Any) -> str:
+    s = _norm(value).lower()
+    if "no immediate" in s or "nurture" in s:
+        return "connect"
+    if "project identified" in s or "move to framing" in s:
+        return "frame"
+    return "connect"
+
+
+def _framing_stage_canon(value: Any) -> str:
+    s = _norm(value).lower()
+    if not s:
+        return "frame"
+    if "framing" in s:
+        return "frame"
+    if "creative snapshot" in s or "creative" in s:
+        return "plan"
+    if "delivery" in s or "deliver" in s:
+        return "deliver"
+    if "feedback" in s or "report" in s or "closed" in s or "done" in s:
+        return "closed"
+    return "frame"
+
+
+def _stable_source_row(values: tuple) -> Dict[str, Any]:
+    return {str(i): _norm(v) for i, v in enumerate(values) if v is not None and _norm(v)}
 
 
 class WorkbookImporter:
-    @staticmethod
-    async def import_all(db):
-        logger.info("=" * 70)
-        logger.info("TASCK Workbook Import — START")
-        logger.info("=" * 70)
+    SHEET_BRANDS = "CRM - Partners"
+    SHEET_FRAMING = "Framing - Partners"
+    SHEET_CREATORS = "CRM - Super Creatives"
+    SHEET_CREATIVES_FRAMING = "Super Creatives - Framing"
 
-        import_batch_id = _sha(_now_iso())
+    def __init__(self, path: Optional[Path] = None):
+        self.path = Path(path) if path else WORKBOOK_PATH
+        self.batch_id = uuid.uuid4().hex[:10]
+        self.warnings: List[str] = []
+        self.skipped: List[Dict[str, Any]] = []
+        self.brands: Dict[str, Dict[str, Any]] = {}
+        self.contacts: Dict[str, Dict[str, Any]] = {}
+        self.creators: Dict[str, Dict[str, Any]] = {}
+        self.rms: Dict[str, Dict[str, Any]] = {}
+        self.rm_alias_to_id: Dict[str, str] = {}
+        self.business_cases: Dict[str, Dict[str, Any]] = {}
+        self.projects: Dict[str, Dict[str, Any]] = {}
+        self.contracts: Dict[str, Dict[str, Any]] = {}
+        self.reports: Dict[str, Dict[str, Any]] = {}
+        self.fees: Dict[str, Dict[str, Any]] = {}
+        self.wallet: Dict[str, Dict[str, Any]] = {}
+        self.tasks: Dict[str, Dict[str, Any]] = {}
+        self.meetings: Dict[str, Dict[str, Any]] = {}
+        self.admin_users: Dict[str, Dict[str, Any]] = {}
+        self.templates: Dict[str, Dict[str, Any]] = {}
+        self.insights: Dict[str, Dict[str, Any]] = {}
+        self.sheet_row_counts: Dict[str, int] = {}
 
-        # ── 1. WIPE OLD DATA ──────────────────────────────────────────────────
-        logger.info("Step 1: Wiping all existing v3 data...")
-        collections_to_wipe = [
-            "v3_brands", "v3_contacts", "v3_creators", "v3_rms",
-            "v3_business_cases", "v3_alignment_snapshots", "v3_creative_briefs",
-            "v3_creative_snapshots", "v3_contracts", "v3_deliverables",
-            "v3_invoices", "v3_final_reports", "v3_brainstorm_rounds",
-            "v3_interactions", "v3_brand_accounts", "v3_email_outbox",
-            "v3_opportunities", "v3_admin_users", "v3_tasks", "v3_insights",
-            "v3_wallet", "v3_fees", "v3_reports",
-        ]
-        for col in collections_to_wipe:
-            r = await db[col].delete_many({})
-            logger.info(f"  Cleared {r.deleted_count} docs from {col}")
-
-        # ── 2. SUPER ADMIN ────────────────────────────────────────────────────
-        logger.info("Step 2: Creating super admin...")
-        super_admin = {
-            "id": "admin-super",
-            "username": "admin@tasck.com",
-            "password": "password",
-            "role": "super_admin",
-            "name": "Super Admin",
-            "is_active": True,
-            "created_at": _now_iso(),
-            "updated_at": _now_iso(),
+    # --- RM normalisation -------------------------------------------------
+    def _upsert_rm(self, raw_name: Any) -> Optional[str]:
+        name = _norm(raw_name)
+        if not name or name.lower() in {"nil", "none", "n/a"}:
+            return None
+        alias = name.lower()
+        if alias in self.rm_alias_to_id:
+            rec = self.rms[self.rm_alias_to_id[alias]]
+            if name not in rec["aliases"]:
+                rec["aliases"].append(name)
+            return rec["id"]
+        # canonical = title case of slug (Seyel/Seyelnen both → "seyel" key but preserve aliases)
+        canonical = name if any(c.isupper() for c in name[1:]) else name.title()
+        canonical = re.sub(r"\s+", " ", canonical).strip()
+        rm_id = _det_id("rm", _slug(canonical))
+        if rm_id in self.rms:
+            rec = self.rms[rm_id]
+            if name not in rec["aliases"]:
+                rec["aliases"].append(name)
+            self.rm_alias_to_id[alias] = rm_id
+            return rm_id
+        rec = {
+            "id": rm_id,
+            "name": canonical,
+            "normalized_name": _slug(canonical),
+            "initials": "".join(w[0] for w in canonical.split()[:2]).upper(),
+            "aliases": [name],
+            "role": "Relationship Manager",
+            "email": None,
+            "active": True,
+            "source_values": [name],
+            "created_from_crm_template": True,
+            "import_batch_id": self.batch_id,
+            "imported_at": _now(),
         }
-        await db.v3_admin_users.update_one(
-            {"id": "admin-super"}, {"$set": super_admin}, upsert=True
-        )
+        self.rms[rm_id] = rec
+        self.rm_alias_to_id[alias] = rm_id
+        return rm_id
 
-        # ── 3. LOAD WORKBOOK ──────────────────────────────────────────────────
-        wb_path = Path(__file__).parent.parent / "data" / "Copy of Copy of CRM Template.xlsx"
-        if not wb_path.exists():
-            logger.error(f"Workbook not found at: {wb_path}")
-            return {"error": f"Workbook not found: {wb_path}"}
+    # --- Sheet 1: CRM - Partners -----------------------------------------
+    def parse_brands(self, ws) -> None:
+        rows = list(ws.iter_rows(values_only=True))
+        if len(rows) < 2:
+            return
+        headers = [_norm_header(c) for c in rows[1]]
 
-        logger.info(f"Step 3: Loading workbook from {wb_path}")
-        wb = openpyxl.load_workbook(wb_path, read_only=True, data_only=True)
-        logger.info(f"  Sheet names: {wb.sheetnames}")
+        def col(part: str) -> Optional[int]:
+            for i, h in enumerate(headers):
+                if part in h:
+                    return i
+            return None
+        c_company = 0
+        c_website = col("website")
+        c_brand_notes = 2  # first "Notes and Next Actions" (brand-level)
+        c_contact = 3
+        c_connect = col("connect")
+        c_contact_notes = 5  # second "Notes and Next Actions" (contact-level)
+        c_role = col("role")
+        c_email = col("email")
+        c_phone = col("tel") or col("phone")
+        c_linkedin = col("linkedin")
+        c_rm = col("relationship_manager")
+        c_focus = col("key_marketing_focus")
+        c_audience = col("primary_target_audience")
+        c_channels = col("key_marketing_channels")
+        c_kpis = col("marketing_kpis")
+        c_desired = col("desired_relationship_status")
+        c_likelihood = col("likelihood_to_work_with_tta")
 
-        # Shared state
-        rms_collected: dict[str, dict] = {}   # canonical_name → rm_doc skeleton
-        brands_imported: list[dict] = []
-        contacts_imported: list[dict] = []
-        creators_imported: list[dict] = []
-        business_cases_imported: list[dict] = []
-        fees_imported: list[dict] = []
-        contracts_imported: list[dict] = []
-        reports_imported: list[dict] = []
-        skipped: list[dict] = []
+        current_brand_id: Optional[str] = None
+        useful_rows = 0
+        for ridx, row in enumerate(rows[2:], start=3):
+            if not any(c is not None and _norm(c) for c in row):
+                continue
+            useful_rows += 1
+            company = _norm(row[c_company]) if c_company < len(row) else ""
+            contact_name = _norm(row[c_contact]) if c_contact < len(row) else ""
+            email = _norm(row[c_email]) if c_email is not None and c_email < len(row) else ""
 
-        def _collect_rm(raw_name: str, source_sheet: str, source_row: int):
-            """Register an RM from source data."""
-            raw_stripped = _clean(raw_name)
-            if not raw_stripped:
-                return None
-            canonical = _canonical_rm_name(raw_stripped)
-            norm_key = _normalize_rm(raw_stripped)
-            rm_id = "rm-" + _sha(norm_key)
+            if not company and not contact_name and not email:
+                self.skipped.append({"sheet": self.SHEET_BRANDS, "row": ridx, "reason": "all_key_fields_empty"})
+                continue
 
-            if canonical not in rms_collected:
-                rms_collected[canonical] = {
-                    "id": rm_id,
-                    "name": canonical,
-                    "normalized_name": norm_key,
-                    "aliases": set(),
-                    "role": "relationship_manager",
-                    "is_active": True,
-                    "created_at": _now_iso(),
-                    "source_values": set(),
-                    "source_workbook": "Copy of Copy of CRM Template.xlsx",
-                    "import_batch_id": import_batch_id,
-                    "created_from_crm_template": True,
-                }
-            rm_entry = rms_collected[canonical]
-            rm_entry["aliases"].add(raw_stripped)
-            rm_entry["source_values"].add(f"{source_sheet}:row{source_row}:{raw_stripped}")
-            return rm_entry["id"]
-
-        # ── 4. CRM - Partners ─────────────────────────────────────────────────
-        # Row 1 = title, Row 2 = headers, Rows 3+ = data
-        if "CRM - Partners" in wb.sheetnames:
-            logger.info("Step 4: Importing CRM - Partners...")
-            ws = wb["CRM - Partners"]
-            all_rows = list(ws.iter_rows(values_only=True))
-            data_rows = all_rows[2:]  # skip title + header
-            logger.info(f"  Total data rows: {len(data_rows)}")
-
-            current_brand_id = None
-            current_brand_company = None
-            crm_brand_row_count = 0
-
-            for local_idx, row in enumerate(data_rows):
-                sheet_row = local_idx + 3  # 1-indexed sheet row number
-
-                company_raw = _clean(row[0]) if len(row) > 0 else ""
-                website = _clean(row[1]) if len(row) > 1 else ""
-                notes_next_actions = _clean(row[2]) if len(row) > 2 else ""
-                contact_name = _clean(row[3]) if len(row) > 3 else ""
-                connect_status = _clean(row[4]) if len(row) > 4 else ""
-                contact_notes = _clean(row[5]) if len(row) > 5 else ""
-                role = _clean(row[6]) if len(row) > 6 else ""
-                email = _clean(row[7]) if len(row) > 7 else ""
-                phone = _clean(row[8]) if len(row) > 8 else ""
-                linkedin = _clean(row[9]) if len(row) > 9 else ""
-                rm_raw = _clean(row[10]) if len(row) > 10 else ""
-                key_marketing_focus = _clean(row[11]) if len(row) > 11 else ""
-                primary_target_audience = _clean(row[12]) if len(row) > 12 else ""
-                key_marketing_channels = _clean(row[13]) if len(row) > 13 else ""
-                marketing_kpis = _clean(row[14]) if len(row) > 14 else ""
-                desired_relationship_status = _clean(row[15]) if len(row) > 15 else ""
-                likelihood = _clean(row[16]) if len(row) > 16 else ""
-
-                has_company = bool(company_raw)
-                has_contact = bool(contact_name)
-                has_any_data = any([
-                    company_raw, contact_name, connect_status, role, email,
-                    key_marketing_focus, likelihood, notes_next_actions
-                ])
-
-                if not has_any_data:
-                    skipped.append({"sheet": "CRM - Partners", "row": sheet_row, "reason": "empty row"})
-                    continue
-
-                # ── New brand row ──
-                if has_company:
-                    # Determine engagement track
-                    track = "paid"
-                    cl = company_raw.lower()
-                    if any(k in cl for k in ["open society", "osf", "cjid", "osiwa", "foundation"]):
-                        track = "grant"
-
-                    rm_id = _collect_rm(rm_raw, "CRM - Partners", sheet_row)
-
-                    # Use a row-specific ID so we never lose duplicate company names
-                    brand_id = "brand-crm-" + _sha(f"{company_raw}_{sheet_row}")
-                    current_brand_id = brand_id
-                    current_brand_company = company_raw
-
-                    brand_doc = {
-                        "id": brand_id,
-                        # Multiple field aliases so any frontend normalisation works
-                        "company": company_raw,
-                        "brand_name": company_raw,
-                        "company_name": company_raw,
-                        "name": company_raw,
-                        "website": website,
-                        "connect_status": connect_status or "Active",
-                        "status": connect_status or "Active",
-                        "primary_contact": contact_name,
-                        "contact_name": contact_name,
-                        "contact": contact_name,
-                        "primary_contact_role": role,
-                        "contact_role": role,
-                        "email": email,
-                        "contact_email": email,
-                        "phone": phone,
-                        "contact_phone": phone,
-                        "linkedin": linkedin,
-                        "contact_linkedin": linkedin,
-                        "rm_id": rm_id,
-                        "relationship_manager_name": _canonical_rm_name(rm_raw) if rm_raw else "",
-                        "source_relationship_manager_name": rm_raw,
-                        "notes_and_next_actions": notes_next_actions,
-                        "notes": notes_next_actions,
-                        "contact_notes": contact_notes,
-                        "key_marketing_focus": key_marketing_focus,
-                        "marketing_focus": key_marketing_focus,
-                        "primary_target_audience": primary_target_audience,
-                        "target_audience": primary_target_audience,
-                        "key_marketing_channels": key_marketing_channels,
-                        "channels": key_marketing_channels,
-                        "marketing_kpis": marketing_kpis,
-                        "kpis": marketing_kpis,
-                        "desired_relationship_status": desired_relationship_status,
-                        "likelihood_to_work_with_tta": likelihood,
-                        "likelihood": likelihood,
-                        "engagement_track_default": track,
-                        "industry": role or "Uncategorised",
-                        "lead_score": 70,
-                        "contacts": [],            # will be enriched by continuation rows
-                        "created_at": _now_iso(),
-                        "updated_at": _now_iso(),
-                        "source_workbook": "Copy of Copy of CRM Template.xlsx",
-                        "source_sheet": "CRM - Partners",
-                        "source_row_number": sheet_row,
-                        "import_batch_id": import_batch_id,
-                        "created_from_crm_template": True,
-                        "source_original_values": {k: v for k, v in zip(
-                            ["company","website","notes_next_actions","contact","connect",
-                             "contact_notes","role","email","phone","linkedin","rm",
-                             "key_marketing_focus","primary_target_audience",
-                             "key_marketing_channels","marketing_kpis",
-                             "desired_relationship_status","likelihood"],
-                            [company_raw, website, notes_next_actions, contact_name,
-                             connect_status, contact_notes, role, email, phone, linkedin,
-                             rm_raw, key_marketing_focus, primary_target_audience,
-                             key_marketing_channels, marketing_kpis,
-                             desired_relationship_status, likelihood]
-                        )},
-                    }
-                    await db.v3_brands.update_one(
-                        {"id": brand_id}, {"$set": brand_doc}, upsert=True
-                    )
-                    brands_imported.append(brand_doc)
-                    crm_brand_row_count += 1
-
-                    # Create primary contact record
-                    if contact_name:
-                        ct_id = "ct-crm-" + _sha(f"{brand_id}_{contact_name}_{email}")
-                        ct_doc = {
-                            "id": ct_id,
-                            "brand_id": brand_id,
-                            "name": contact_name,
-                            "role": role,
-                            "email": email,
-                            "phone": phone,
-                            "linkedin": linkedin,
-                            "connect_status": connect_status,
-                            "notes": contact_notes,
-                            "is_primary": True,
-                            "created_at": _now_iso(),
-                            "source_sheet": "CRM - Partners",
-                            "source_row_number": sheet_row,
-                            "import_batch_id": import_batch_id,
-                        }
-                        await db.v3_contacts.update_one(
-                            {"id": ct_id}, {"$set": ct_doc}, upsert=True
-                        )
-                        # Embed contact in brand.contacts array
-                        await db.v3_brands.update_one(
-                            {"id": brand_id},
-                            {"$push": {"contacts": ct_doc}}
-                        )
-                        contacts_imported.append(ct_doc)
-
-                elif has_contact and current_brand_id:
-                    # ── Continuation row: attach contact/details to current brand ──
-                    ct_id = "ct-crm-" + _sha(f"{current_brand_id}_{contact_name}_{email}_{sheet_row}")
-                    ct_doc = {
-                        "id": ct_id,
-                        "brand_id": current_brand_id,
-                        "name": contact_name,
-                        "role": role,
-                        "email": email,
-                        "phone": phone,
-                        "linkedin": linkedin,
-                        "connect_status": connect_status,
-                        "notes": contact_notes or notes_next_actions,
-                        "is_primary": False,
-                        "key_marketing_focus": key_marketing_focus,
-                        "primary_target_audience": primary_target_audience,
-                        "key_marketing_channels": key_marketing_channels,
-                        "marketing_kpis": marketing_kpis,
-                        "desired_relationship_status": desired_relationship_status,
-                        "likelihood_to_work_with_tta": likelihood,
-                        "created_at": _now_iso(),
-                        "source_sheet": "CRM - Partners",
-                        "source_row_number": sheet_row,
-                        "import_batch_id": import_batch_id,
-                        "continuation_of_brand_id": current_brand_id,
-                        "continuation_of_brand_name": current_brand_company,
-                    }
-                    await db.v3_contacts.update_one(
-                        {"id": ct_id}, {"$set": ct_doc}, upsert=True
-                    )
-                    await db.v3_brands.update_one(
-                        {"id": current_brand_id},
-                        {"$push": {"contacts": ct_doc}}
-                    )
-                    contacts_imported.append(ct_doc)
-
-                    # Also update the brand's marketing fields if this row fills them in
-                    update_fields = {}
-                    if key_marketing_focus and not any(
-                        b.get("key_marketing_focus") for b in brands_imported
-                        if b["id"] == current_brand_id
-                    ):
-                        update_fields["key_marketing_focus"] = key_marketing_focus
-                        update_fields["marketing_focus"] = key_marketing_focus
-                    if likelihood:
-                        update_fields["likelihood_to_work_with_tta"] = likelihood
-                        update_fields["likelihood"] = likelihood
-                    if rm_raw:
-                        rm_id2 = _collect_rm(rm_raw, "CRM - Partners", sheet_row)
-                        update_fields["rm_id"] = rm_id2
-                        update_fields["relationship_manager_name"] = _canonical_rm_name(rm_raw)
-                        update_fields["source_relationship_manager_name"] = rm_raw
-                    if update_fields:
-                        await db.v3_brands.update_one(
-                            {"id": current_brand_id}, {"$set": update_fields}
-                        )
-                else:
-                    skipped.append({
-                        "sheet": "CRM - Partners", "row": sheet_row,
-                        "reason": "no company and no contact, and no active parent brand"
-                    })
-
-            logger.info(f"  Brands created: {crm_brand_row_count}")
-            logger.info(f"  Contacts created: {len(contacts_imported)}")
-
-        # ── 5. CRM - Super Creatives ─────────────────────────────────────────
-        # Row 1 = title, Row 2 = headers, Rows 3+ = data
-        if "CRM - Super Creatives" in wb.sheetnames:
-            logger.info("Step 5: Importing CRM - Super Creatives...")
-            ws = wb["CRM - Super Creatives"]
-            all_rows = list(ws.iter_rows(values_only=True))
-            data_rows = all_rows[2:]  # skip title + header
-            logger.info(f"  Total data rows: {len(data_rows)}")
-
-            current_creator_id = None
-            current_creator_name = None
-            crm_creator_count = 0
-
-            for local_idx, row in enumerate(data_rows):
-                sheet_row = local_idx + 3
-
-                creator_name_raw = _clean(row[0]) if len(row) > 0 else ""
-                current_rel_status = _clean(row[1]) if len(row) > 1 else ""
-                desired_rel_status = _clean(row[2]) if len(row) > 2 else ""
-                website = _clean(row[3]) if len(row) > 3 else ""
-                primary_contact = _clean(row[4]) if len(row) > 4 else ""
-                role = _clean(row[5]) if len(row) > 5 else ""
-                email = _clean(row[6]) if len(row) > 6 else ""
-                phone = _clean(row[7]) if len(row) > 7 else ""
-                linkedin = _clean(row[8]) if len(row) > 8 else ""
-                rm_raw = _clean(row[9]) if len(row) > 9 else ""
-                contact_field = _clean(row[10]) if len(row) > 10 else ""
-                key_marketing_focus = _clean(row[11]) if len(row) > 11 else ""
-                primary_target_audience = _clean(row[12]) if len(row) > 12 else ""
-                key_marketing_channels = _clean(row[13]) if len(row) > 13 else ""
-                decision_making_process = _clean(row[14]) if len(row) > 14 else ""
-                current_creative_talent_process = _clean(row[15]) if len(row) > 15 else ""
-                fee_raw = _clean(row[16]) if len(row) > 16 else ""
-
-                # Strip nil placeholders
-                for fld_name in ["website", "primary_contact", "email", "phone", "linkedin"]:
-                    val = locals()[fld_name]
-                    if val.lower() in ("nil", "n/a", "none", "-", "--"):
-                        locals_ = {**locals(), fld_name: ""}
-                        website = locals_.get("website", website)
-                        primary_contact = locals_.get("primary_contact", primary_contact)
-                        email = locals_.get("email", email)
-                        phone = locals_.get("phone", phone)
-                        linkedin = locals_.get("linkedin", linkedin)
-                # Simpler nil strip
-                if website.lower() in ("nil", "n/a", "none", "-", "--"):
-                    website = ""
-                if primary_contact.lower() in ("nil", "n/a", "none", "-", "--"):
-                    primary_contact = ""
-                if email.lower() in ("nil", "n/a", "none", "-", "--"):
-                    email = ""
-                if phone.lower() in ("nil", "n/a", "none", "-", "--"):
-                    phone = ""
-                if linkedin.lower() in ("nil", "n/a", "none", "-", "--"):
-                    linkedin = ""
-
-                has_name = bool(creator_name_raw)
-                has_any_data = any([
-                    creator_name_raw, current_rel_status, desired_rel_status,
-                    rm_raw, fee_raw, key_marketing_focus
-                ])
-
-                if not has_any_data:
-                    skipped.append({"sheet": "CRM - Super Creatives", "row": sheet_row, "reason": "empty row"})
-                    continue
-
-                if has_name:
-                    rm_id = _collect_rm(rm_raw, "CRM - Super Creatives", sheet_row)
-
-                    # Row-specific ID to preserve duplicate names from different RMs
-                    creator_id = "creator-crm-" + _sha(f"{creator_name_raw}_{sheet_row}")
-                    current_creator_id = creator_id
-                    current_creator_name = creator_name_raw
-
-                    creator_doc = {
-                        "id": creator_id,
-                        # Multiple field aliases
-                        "name": creator_name_raw,
-                        "creator_name": creator_name_raw,
-                        "creative_name": creator_name_raw,
-                        "company_name": creator_name_raw,
-                        "tier": "super",
-                        "genre": role or "Creative",
-                        "role": role,
-                        "location": "Nigeria",
-                        "website": website,
-                        "primary_contact": primary_contact,
-                        "contact_name": primary_contact,
-                        "email": email,
-                        "phone": phone,
-                        "linkedin": linkedin,
-                        "rm_id": rm_id,
-                        "relationship_manager_name": _canonical_rm_name(rm_raw) if rm_raw else "",
-                        "source_relationship_manager_name": rm_raw,
-                        "current_relationship_status": current_rel_status,
-                        "desired_relationship_status": desired_rel_status,
-                        "key_marketing_focus": key_marketing_focus,
-                        "marketing_focus": key_marketing_focus,
-                        "primary_target_audience": primary_target_audience,
-                        "target_audience": primary_target_audience,
-                        "key_marketing_channels": key_marketing_channels,
-                        "channels": key_marketing_channels,
-                        "decision_making_process": decision_making_process,
-                        "decision_process": decision_making_process,
-                        "current_creative_talent_process": current_creative_talent_process,
-                        "talent_process": current_creative_talent_process,
-                        "fee_for_engagement_per_month": fee_raw,
-                        "fee": fee_raw,
-                        "rate_card": fee_raw or "TBD",
-                        "contact_notes": contact_field,
-                        "fit_score": 75,
-                        "reliability": 7.5,
-                        "platforms": [],
-                        "created_at": _now_iso(),
-                        "updated_at": _now_iso(),
-                        "source_workbook": "Copy of Copy of CRM Template.xlsx",
-                        "source_sheet": "CRM - Super Creatives",
-                        "source_row_number": sheet_row,
-                        "import_batch_id": import_batch_id,
-                        "created_from_crm_template": True,
-                        "source_original_values": {
-                            "creator_name": creator_name_raw,
-                            "current_relationship_status": current_rel_status,
-                            "desired_relationship_status": desired_rel_status,
-                            "website": _clean(row[3]) if len(row) > 3 else "",
-                            "primary_contact": _clean(row[4]) if len(row) > 4 else "",
-                            "role": role,
-                            "email": _clean(row[6]) if len(row) > 6 else "",
-                            "phone": _clean(row[7]) if len(row) > 7 else "",
-                            "linkedin": _clean(row[8]) if len(row) > 8 else "",
-                            "relationship_manager": rm_raw,
-                            "fee": fee_raw,
-                        },
-                    }
-                    await db.v3_creators.update_one(
-                        {"id": creator_id}, {"$set": creator_doc}, upsert=True
-                    )
-                    creators_imported.append(creator_doc)
-                    crm_creator_count += 1
-
-                elif current_creator_id and any([
-                    current_rel_status, desired_rel_status, fee_raw,
-                    key_marketing_focus, rm_raw
-                ]):
-                    # Continuation row for current creator — update fields if missing
-                    update_fields = {}
-                    if fee_raw:
-                        update_fields["fee_for_engagement_per_month"] = fee_raw
-                        update_fields["fee"] = fee_raw
-                        update_fields["rate_card"] = fee_raw
-                    if rm_raw:
-                        rm_id2 = _collect_rm(rm_raw, "CRM - Super Creatives", sheet_row)
-                        update_fields["rm_id"] = rm_id2
-                        update_fields["relationship_manager_name"] = _canonical_rm_name(rm_raw)
-                        update_fields["source_relationship_manager_name"] = rm_raw
-                    if key_marketing_focus:
-                        update_fields["key_marketing_focus"] = key_marketing_focus
-                        update_fields["marketing_focus"] = key_marketing_focus
-                    if current_rel_status:
-                        update_fields["current_relationship_status"] = current_rel_status
-                    if desired_rel_status:
-                        update_fields["desired_relationship_status"] = desired_rel_status
-                    if update_fields:
-                        await db.v3_creators.update_one(
-                            {"id": current_creator_id}, {"$set": update_fields}
-                        )
-                else:
-                    skipped.append({
-                        "sheet": "CRM - Super Creatives", "row": sheet_row,
-                        "reason": "no creator name and no active parent creator"
-                    })
-
-            logger.info(f"  Creators created: {crm_creator_count}")
-
-        # ── 6. Framing - Partners ─────────────────────────────────────────────
-        # Row 1 = HEADERS (no title row), Row 2 = empty, Rows 3+ = data
-        if "Framing - Partners" in wb.sheetnames:
-            logger.info("Step 6: Importing Framing - Partners...")
-            ws = wb["Framing - Partners"]
-            all_rows = list(ws.iter_rows(values_only=True))
-            # Row 1 is header, skip it + the empty row 2 → data starts at index 2
-            data_rows = all_rows[2:]
-            logger.info(f"  Total data rows: {len(data_rows)}")
-
-            current_framing_folder = None
-            current_framing_lead = None
-
-            for local_idx, row in enumerate(data_rows):
-                sheet_row = local_idx + 3  # 1-indexed (header=1, empty=2, data starts 3)
-
-                partner_folder = _clean(row[0]) if len(row) > 0 else ""
-                partner_lead = _clean(row[1]) if len(row) > 1 else ""
-                stage_raw = _clean(row[2]) if len(row) > 2 else ""
-                notes_updates = _clean(row[3]) if len(row) > 3 else ""
-                project_context = _clean(row[4]) if len(row) > 4 else ""
-                project_goal = _clean(row[5]) if len(row) > 5 else ""
-                success_factors = _clean(row[6]) if len(row) > 6 else ""
-                confirmed_framework = _clean(row[7]) if len(row) > 7 else ""
-                tta_fee = _clean(row[8]) if len(row) > 8 else ""
-                creator_shortlist = _clean(row[9]) if len(row) > 9 else ""
-                indicative_budget = _clean(row[10]) if len(row) > 10 else ""
-                confirmed_scope = _clean(row[11]) if len(row) > 11 else ""
-                business_case_content = _clean(row[12]) if len(row) > 12 else ""
-                agreements_signed = _clean(row[13]) if len(row) > 13 else ""
-                project_report = _clean(row[14]) if len(row) > 14 else ""
-                feedback = _clean(row[15]) if len(row) > 15 else ""
-                brand_score = _clean(row[16]) if len(row) > 16 else ""
-                creative_score = _clean(row[17]) if len(row) > 17 else ""
-
-                if partner_lead:
-                    current_framing_lead = partner_lead
-                if partner_folder:
-                    current_framing_folder = partner_folder
-
-                effective_lead = partner_lead or current_framing_lead
-
-                has_any = any([
-                    effective_lead, stage_raw, project_context, project_goal,
-                    success_factors, tta_fee, notes_updates
-                ])
-                if not has_any:
-                    skipped.append({"sheet": "Framing - Partners", "row": sheet_row, "reason": "empty row"})
-                    continue
-
-                # Find matching brand from imported brands
-                brand_id = None
-                rm_id = None
-                if effective_lead:
-                    lead_lower = effective_lead.lower()
-                    for b in brands_imported:
-                        bname = b.get("company", "").lower()
-                        if lead_lower in bname or bname in lead_lower:
-                            brand_id = b["id"]
-                            rm_id = b.get("rm_id")
-                            break
-
-                # Create a stub brand if no match
-                if not brand_id and effective_lead:
-                    brand_id = "brand-framing-" + _sha(effective_lead.lower())
-                    track = "grant" if any(k in effective_lead.lower() for k in [
-                        "osf", "open society", "cjid", "osiwa", "foundation"
-                    ]) else "paid"
-                    stub = {
-                        "id": brand_id,
-                        "company": effective_lead,
-                        "brand_name": effective_lead,
-                        "company_name": effective_lead,
-                        "name": effective_lead,
-                        "industry": "Uncategorised",
-                        "status": "Active",
-                        "engagement_track_default": track,
-                        "lead_score": 70,
-                        "created_at": _now_iso(),
-                        "updated_at": _now_iso(),
-                        "source_workbook": "Copy of Copy of CRM Template.xlsx",
-                        "source_sheet": "Framing - Partners",
-                        "source_row_number": sheet_row,
-                        "import_batch_id": import_batch_id,
-                        "created_from_crm_template": True,
-                    }
-                    await db.v3_brands.update_one({"id": brand_id}, {"$set": stub}, upsert=True)
-                    brands_imported.append(stub)
-
-                if not brand_id:
-                    skipped.append({"sheet": "Framing - Partners", "row": sheet_row, "reason": "could not resolve brand"})
-                    continue
-
-                # Map stage
-                stage_map = {
-                    "framing": "frame",
-                    "delivery": "deliver",
-                    "feedback": "closed",
-                    "creative snapshot": "plan",
-                    "closed": "closed",
-                }
-                stage = stage_map.get(stage_raw.lower(), "connect")
-
-                bc_id = "bc-framing-" + _sha(f"{brand_id}_{sheet_row}")
-                is_grant = any(k in str(brand_id) for k in ["osf", "cjid", "foundation"])
-
-                bc_doc = {
-                    "id": bc_id,
-                    "brand_id": brand_id,
-                    "creator_id": None,
-                    "title": (project_context or project_goal or effective_lead or "Project")[:120],
-                    "stage": stage,
-                    "engagement_track": "grant" if is_grant else "paid",
-                    "estimated_value": 0,
+            if company:
+                brand_id = _det_id("brand", _slug(company))
+                rm_raw = row[c_rm] if c_rm is not None and c_rm < len(row) else None
+                rm_id = self._upsert_rm(rm_raw)
+                canonical_rm_name = self.rms[rm_id]["name"] if rm_id else _norm(rm_raw)
+                brand = self.brands.get(brand_id) or {
+                    "id": brand_id,
+                    "company": company,
+                    "name": company,
+                    "brand_name": company,
+                    "website": _norm(row[c_website]) if c_website is not None and c_website < len(row) else "",
+                    "primary_contact": contact_name,
+                    "role": _norm(row[c_role]) if c_role is not None and c_role < len(row) else "",
+                    "email": email,
+                    "phone": _norm(row[c_phone]) if c_phone is not None and c_phone < len(row) else "",
+                    "linkedin": _norm(row[c_linkedin]) if c_linkedin is not None and c_linkedin < len(row) else "",
+                    "status": _norm(row[c_connect]) if c_connect is not None and c_connect < len(row) else "Connecting",
+                    "connect_status": _norm(row[c_connect]) if c_connect is not None and c_connect < len(row) else "Connecting",
+                    "notes_and_next_actions": _norm(row[c_contact_notes]) if c_contact_notes < len(row) else "",
+                    "relationship_manager_name": canonical_rm_name,
+                    "source_relationship_manager_name": _norm(rm_raw),
                     "rm_id": rm_id,
-                    "days_in_stage": 0,
-                    "next_action": notes_updates[:250] if notes_updates else "Review project",
-                    "health": "on-track",
-                    "connect": {
-                        "stated_intent": project_goal,
-                        "connect_status": "qualified_to_frame" if stage in ["frame","plan","deliver","closed"] else "new_lead",
-                    },
-                    "frame": {
-                        "project_context": project_context,
-                        "success_factors": success_factors,
-                        "framework": confirmed_framework,
-                        "scope": confirmed_scope,
-                        "business_case": business_case_content,
-                        "creator_shortlist": creator_shortlist,
-                        "tta_engagement_fee": tta_fee,
-                        "indicative_budget": indicative_budget,
-                        "scope_flags_total": 0,
-                        "scope_flags_resolved": 0,
-                    },
-                    "plan": {},
-                    "deliver": {"scope_change_log": [], "scope_creep_locked": False},
-                    "closure": {
-                        "report_status": "complete" if project_report else "pending",
-                        "brand_feedback": feedback,
-                        "brand_score": brand_score,
-                        "creative_score": creative_score,
-                    },
-                    "timeline": [{"at": _now_iso(), "event": "imported", "actor": "system"}],
-                    "updated_at": _now_iso(),
-                    "created_at": _now_iso(),
-                    "source_workbook": "Copy of Copy of CRM Template.xlsx",
-                    "source_sheet": "Framing - Partners",
-                    "source_row_number": sheet_row,
-                    "import_batch_id": import_batch_id,
+                    "key_marketing_focus": _norm(row[c_focus]) if c_focus is not None and c_focus < len(row) else "",
+                    "primary_target_audience": _norm(row[c_audience]) if c_audience is not None and c_audience < len(row) else "",
+                    "key_marketing_channels": _split_list(row[c_channels]) if c_channels is not None and c_channels < len(row) else [],
+                    "marketing_kpis": _norm(row[c_kpis]) if c_kpis is not None and c_kpis < len(row) else "",
+                    "desired_relationship_status": _norm(row[c_desired]) if c_desired is not None and c_desired < len(row) else "",
+                    "likelihood_to_work_with_tta": _norm(row[c_likelihood]) if c_likelihood is not None and c_likelihood < len(row) else "",
+                    "engagement_track_default": "paid",
+                    "contacts": [],
+                    "source_workbook": WORKBOOK_FILENAME,
+                    "source_sheet": self.SHEET_BRANDS,
+                    "source_row_number": ridx,
+                    "source_original_values": _stable_source_row(row),
                     "created_from_crm_template": True,
-                    "source_original_values": {
-                        "partner_folder": partner_folder,
-                        "partner_lead": partner_lead,
-                        "stage": stage_raw,
-                        "notes_updates": notes_updates,
-                        "project_context": project_context,
-                        "project_goal": project_goal,
-                        "success_factors": success_factors,
-                        "confirmed_framework": confirmed_framework,
-                        "tta_fee": tta_fee,
-                        "creator_shortlist": creator_shortlist,
-                        "indicative_budget": indicative_budget,
-                        "confirmed_scope": confirmed_scope,
-                        "business_case": business_case_content,
-                        "agreements_signed": agreements_signed,
-                        "project_report": project_report,
-                        "feedback": feedback,
-                        "brand_score": brand_score,
-                        "creative_score": creative_score,
-                    },
+                    "import_batch_id": self.batch_id,
+                    "imported_at": _now(),
+                    "created_at": _now(),
+                    "updated_at": _now(),
                 }
-                await db.v3_business_cases.update_one(
-                    {"id": bc_id}, {"$set": bc_doc}, upsert=True
-                )
-                business_cases_imported.append(bc_doc)
+                self.brands[brand_id] = brand
+                current_brand_id = brand_id
 
-                if tta_fee:
-                    fee_doc = {
-                        "id": "fee-framing-" + _sha(bc_id),
-                        "business_case_id": bc_id,
-                        "brand_id": brand_id,
-                        "type": "engagement",
-                        "raw_value": tta_fee,
-                        "currency": "NGN",
-                        "status": "pending",
-                        "notes": indicative_budget,
-                        "created_at": _now_iso(),
-                        "source_sheet": "Framing - Partners",
-                        "source_row_number": sheet_row,
-                        "import_batch_id": import_batch_id,
-                        "created_from_crm_template": True,
-                    }
-                    await db.v3_fees.insert_one(fee_doc)
-                    fees_imported.append(fee_doc)
+            # Always create the contact (primary or continuation)
+            if current_brand_id and contact_name:
+                rm_raw = row[c_rm] if c_rm is not None and c_rm < len(row) else None
+                cid = _det_id("contact", current_brand_id, _slug(contact_name), email)
+                is_primary = bool(company) and self.brands[current_brand_id].get("primary_contact") == contact_name
+                connect_status = _norm(row[c_connect]) if c_connect is not None and c_connect < len(row) else ""
+                contact_notes = _norm(row[c_contact_notes]) if c_contact_notes < len(row) else ""
+                contact = {
+                    "id": cid,
+                    "brand_id": current_brand_id,
+                    "name": contact_name,
+                    "role": _norm(row[c_role]) if c_role is not None and c_role < len(row) else "",
+                    "email": email,
+                    "phone": _norm(row[c_phone]) if c_phone is not None and c_phone < len(row) else "",
+                    "linkedin": _norm(row[c_linkedin]) if c_linkedin is not None and c_linkedin < len(row) else "",
+                    "is_primary": is_primary,
+                    "connect_status": connect_status,
+                    "notes": contact_notes,
+                    "key_marketing_focus": _norm(row[c_focus]) if c_focus is not None and c_focus < len(row) else "",
+                    "primary_target_audience": _norm(row[c_audience]) if c_audience is not None and c_audience < len(row) else "",
+                    "likelihood_to_work_with_tta": _norm(row[c_likelihood]) if c_likelihood is not None and c_likelihood < len(row) else "",
+                    "rm_id": self._upsert_rm(rm_raw),
+                    "source_sheet": self.SHEET_BRANDS,
+                    "source_row_number": ridx,
+                    "source_original_values": _stable_source_row(row),
+                    "created_from_crm_template": True,
+                    "import_batch_id": self.batch_id,
+                    "imported_at": _now(),
+                }
+                self.contacts[cid] = contact
+                existing_contact_ids = {c.get("id") for c in self.brands[current_brand_id]["contacts"]}
+                if cid not in existing_contact_ids:
+                    self.brands[current_brand_id]["contacts"].append(
+                        {"id": cid, "name": contact_name, "role": contact["role"], "email": email, "phone": contact["phone"]}
+                    )
+                # Derived task
+                if contact_notes and len(contact_notes) > 20:
+                    self._add_task("brand_note",
+                                   f"{self.brands[current_brand_id]['company']}: follow-up",
+                                   contact_notes[:500], current_brand_id, contact["rm_id"], ridx)
+                # Derived meeting record
+                if connect_status and connect_status.lower() not in {"", "nil"}:
+                    self._add_meeting(current_brand_id, cid, contact_name, contact["rm_id"],
+                                      "qualification" if "connecting" in connect_status.lower() else "follow-up",
+                                      connect_status, contact_notes, ridx)
+        self.sheet_row_counts[self.SHEET_BRANDS] = useful_rows
 
-                if agreements_signed:
-                    ct_doc = {
-                        "id": "contract-framing-" + _sha(bc_id),
-                        "business_case_id": bc_id,
-                        "brand_id": brand_id,
-                        "status": "signed" if "sign" in agreements_signed.lower() else "pending",
-                        "content": agreements_signed,
-                        "created_at": _now_iso(),
-                        "source_sheet": "Framing - Partners",
-                        "source_row_number": sheet_row,
-                        "import_batch_id": import_batch_id,
-                        "created_from_crm_template": True,
-                    }
-                    await db.v3_contracts.insert_one(ct_doc)
-                    contracts_imported.append(ct_doc)
+    # --- Sheet 2: Framing - Partners --------------------------------------
+    def parse_framing(self, ws) -> None:
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return
+        headers = [_norm_header(c) for c in rows[0]]
 
-                if project_report or feedback:
-                    rpt_doc = {
-                        "id": "report-framing-" + _sha(bc_id),
-                        "business_case_id": bc_id,
-                        "brand_id": brand_id,
-                        "content": project_report,
-                        "feedback": feedback,
-                        "brand_score": brand_score,
-                        "creative_score": creative_score,
-                        "status": "complete" if project_report else "draft",
-                        "created_at": _now_iso(),
-                        "source_sheet": "Framing - Partners",
-                        "source_row_number": sheet_row,
-                        "import_batch_id": import_batch_id,
-                        "created_from_crm_template": True,
-                    }
-                    await db.v3_reports.insert_one(rpt_doc)
-                    reports_imported.append(rpt_doc)
+        def col(part: str) -> Optional[int]:
+            for i, h in enumerate(headers):
+                if part in h:
+                    return i
+            return None
+        c_folder = col("partner_folder")
+        c_lead = col("partner_lead")
+        c_stage = col("stage")
+        c_notes = col("notes")
+        c_context = col("project_context")
+        c_goal = col("project_goal")
+        c_success = col("success_factors")
+        c_framework = col("confirmed_project_framework")
+        c_fee = col("tta_engagement_fee")
+        c_shortlist = col("creator_shortlist")
+        c_budget = col("indicative_budget_range")
+        c_scope = col("confirmed_scope")
+        c_bc = col("business_case")
+        c_agreement = col("agreements_signed")
+        c_report = col("project_report")
+        c_feedback = col("feedback")
+        c_brand_score = col("brand_score")
+        c_creative_score = col("creative_score")
 
-            logger.info(f"  Business cases created: {len(business_cases_imported)}")
+        last_folder = ""
+        last_lead = ""
+        useful = 0
+        for ridx, row in enumerate(rows[1:], start=2):
+            if not any(c is not None and _norm(c) for c in row):
+                continue
+            useful += 1
+            folder = _norm(row[c_folder]) if c_folder is not None and c_folder < len(row) else ""
+            lead = _norm(row[c_lead]) if c_lead is not None and c_lead < len(row) else ""
+            stage_raw = _norm(row[c_stage]) if c_stage is not None and c_stage < len(row) else ""
+            if folder:
+                last_folder = folder
+            if lead:
+                last_lead = lead
+            effective_folder = folder or last_folder
+            effective_lead = lead or last_lead
 
-        # ── 7. Super Creatives - Framing ──────────────────────────────────────
-        # Row 1 = headers AND first data row; Row 2+ = more data
-        if "Super Creatives - Framing" in wb.sheetnames:
-            logger.info("Step 7: Importing Super Creatives - Framing...")
-            ws = wb["Super Creatives - Framing"]
-            all_rows = list(ws.iter_rows(values_only=True))
-            # Row 1 is both header AND data — include it
-            data_rows = all_rows  # all rows are data
-            logger.info(f"  Total rows: {len(data_rows)}")
-
-            current_folder = None
-            sc_framing_count = 0
-
-            for local_idx, row in enumerate(data_rows):
-                sheet_row = local_idx + 1
-
-                # Row 1 is headers: skip it (it contains 'Folder', 'Project Name', etc.)
-                if local_idx == 0:
-                    first_cell = _clean(row[0]) if len(row) > 0 else ""
-                    if first_cell.lower() in ("folder", ""):
-                        continue  # skip header row
-
-                folder = _clean(row[0]) if len(row) > 0 else ""
-                project_name = _clean(row[1]) if len(row) > 1 else ""
-                stage_raw = _clean(row[2]) if len(row) > 2 else ""
-                notes_updates = _clean(row[3]) if len(row) > 3 else ""
-                project_goal_1 = _clean(row[4]) if len(row) > 4 else ""
-                project_goal_2 = _clean(row[5]) if len(row) > 5 else ""
-                project_goal_3 = _clean(row[6]) if len(row) > 6 else ""
-                success_story = _clean(row[7]) if len(row) > 7 else ""
-                creatives_story = _clean(row[8]) if len(row) > 8 else ""
-                audience_1 = _clean(row[10]) if len(row) > 10 else ""
-                audience_2 = _clean(row[11]) if len(row) > 11 else ""
-                unique_narrative = _clean(row[15]) if len(row) > 15 else ""
-                marketing_ch_1 = _clean(row[18]) if len(row) > 18 else ""
-                marketing_ch_2 = _clean(row[19]) if len(row) > 19 else ""
-                budget_lines = _clean(row[26]) if len(row) > 26 else ""
-                estimated_budget = _clean(row[27]) if len(row) > 27 else ""
-
-                if folder:
-                    current_folder = folder
-
-                effective_folder = folder or current_folder
-
-                has_any = any([effective_folder, project_name, notes_updates, project_goal_1])
-                if not has_any:
-                    skipped.append({"sheet": "Super Creatives - Framing", "row": sheet_row, "reason": "empty row"})
+            # CRITICAL RULE: NEVER create a brand from `Framing - Partners`.
+            # `Partner Folder` and `Partner Lead` are almost always people names
+            # (Betty, Hamsudeen, Christiana Longe, Pedro Abramovay, etc.), NOT
+            # companies. Brand records ONLY come from `CRM - Partners`.
+            brand_id = self._match_brand(effective_lead, effective_folder)
+            unlinked_brand_name: Optional[str] = None
+            if not brand_id:
+                if not (effective_lead or effective_folder):
+                    self.skipped.append({"sheet": self.SHEET_FRAMING, "row": ridx, "reason": "no_brand_match"})
                     continue
+                unlinked_brand_name = effective_folder or effective_lead
 
-                # Find matching creator
-                creator_id = None
-                if effective_folder:
-                    fl = effective_folder.lower()
-                    for cr in creators_imported:
-                        cn = cr.get("name", "").lower()
-                        if cn and (cn in fl or fl in cn):
-                            creator_id = cr["id"]
-                            break
+            canonical_stage = _framing_stage_canon(stage_raw)
+            fee_raw = _norm(row[c_fee]) if c_fee is not None and c_fee < len(row) else ""
+            fee_amount, fee_currency = _parse_fee(fee_raw)
+            budget_raw = _norm(row[c_budget]) if c_budget is not None and c_budget < len(row) else ""
+            budget_amount, budget_currency = _parse_fee(budget_raw)
+            shortlist = _split_list(row[c_shortlist]) if c_shortlist is not None and c_shortlist < len(row) else []
+            agreement_raw = _norm(row[c_agreement]) if c_agreement is not None and c_agreement < len(row) else ""
+            report_raw = _norm(row[c_report]) if c_report is not None and c_report < len(row) else ""
+            feedback_raw = _norm(row[c_feedback]) if c_feedback is not None and c_feedback < len(row) else ""
 
-                bc_id = "bc-sc-framing-" + _sha(f"{effective_folder}_{project_name}_{sheet_row}")
+            bc_id = _det_id("bc", brand_id or f"unlinked-{_slug(unlinked_brand_name or '')}", _slug(effective_folder or effective_lead or ridx), canonical_stage)
+            brand = self.brands.get(brand_id, {}) if brand_id else {}
+            title = effective_folder or f"{brand.get('company', '')} — {effective_lead}".strip(" —") or f"Business Case #{ridx}"
+            track = "grant" if "grant" in fee_raw.lower() or "grant" in budget_raw.lower() else "paid"
 
-                stage_map = {"framing": "frame", "delivery": "deliver", "feedback": "closed"}
-                stage = stage_map.get(stage_raw.lower(), "connect")
-
-                bc_doc = {
-                    "id": bc_id,
-                    "brand_id": None,
-                    "creator_id": creator_id,
-                    "title": (project_name or effective_folder or "Creator Project")[:120],
-                    "stage": stage,
-                    "engagement_track": "paid",
-                    "estimated_value": 0,
-                    "rm_id": None,
-                    "days_in_stage": 0,
-                    "next_action": notes_updates[:250] if notes_updates else "Review creator project",
-                    "health": "on-track",
-                    "connect": {
-                        "stated_intent": project_goal_1,
-                        "connect_status": "new_lead",
-                    },
-                    "frame": {
-                        "project_context": "\n".join(filter(None, [project_goal_1, project_goal_2, project_goal_3, unique_narrative])),
-                        "success_factors": success_story,
-                        "scope": budget_lines,
-                        "creator_story": creatives_story,
-                    },
-                    "plan": {
-                        "audiences": "\n".join(filter(None, [audience_1, audience_2])),
-                        "channels": ", ".join(filter(None, [marketing_ch_1, marketing_ch_2])),
-                    },
-                    "deliver": {"scope_change_log": [], "scope_creep_locked": False},
-                    "closure": {},
-                    "timeline": [{"at": _now_iso(), "event": "imported", "actor": "system"}],
-                    "updated_at": _now_iso(),
-                    "created_at": _now_iso(),
-                    "source_workbook": "Copy of Copy of CRM Template.xlsx",
-                    "source_sheet": "Super Creatives - Framing",
-                    "source_row_number": sheet_row,
-                    "import_batch_id": import_batch_id,
-                    "created_from_crm_template": True,
-                }
-                await db.v3_business_cases.update_one(
-                    {"id": bc_id}, {"$set": bc_doc}, upsert=True
-                )
-                business_cases_imported.append(bc_doc)
-                sc_framing_count += 1
-
-            logger.info(f"  Creator framing records created: {sc_framing_count}")
-
-        # ── 8. SAVE RELATIONSHIP MANAGERS ────────────────────────────────────
-        logger.info(f"Step 8: Saving {len(rms_collected)} relationship managers...")
-        rms_saved = []
-        for canonical, rm_entry in rms_collected.items():
-            aliases = list(rm_entry["aliases"])
-            rm_doc = {
-                "id": rm_entry["id"],
-                "name": canonical,
-                "normalized_name": rm_entry["normalized_name"],
-                "aliases": aliases,
-                "initials": "".join(n[0].upper() for n in canonical.split() if n)[:3],
-                "email": f"{canonical.lower().replace(' ', '.')}@tasck.com",
-                "role": "relationship_manager",
-                "is_active": True,
-                "source_values": list(rm_entry["source_values"]),
-                "created_at": rm_entry["created_at"],
-                "source_workbook": "Copy of Copy of CRM Template.xlsx",
-                "import_batch_id": import_batch_id,
+            self.business_cases[bc_id] = {
+                "id": bc_id,
+                "brand_id": brand_id,
+                "unlinked_brand_name": unlinked_brand_name,
+                "partner_lead": effective_lead,
+                "partner_folder": effective_folder,
+                "title": title,
+                "stage": canonical_stage,
+                "stage_label": stage_raw,
+                "engagement_track": track,
+                "estimated_value": fee_amount or budget_amount or 0,
+                "rm_id": self._upsert_rm(effective_lead) or brand.get("rm_id"),
+                "next_action": _norm(row[c_notes]) if c_notes is not None and c_notes < len(row) else "",
+                "health": "on_track",
+                "connect": {
+                    "status": brand.get("status") or "Connecting",
+                    "intelligence": brand.get("key_marketing_focus") or "",
+                    "outreach_angle": "",
+                    "suggested_outreach": "",
+                },
+                "frame": {
+                    "project_context": _norm(row[c_context]) if c_context is not None and c_context < len(row) else "",
+                    "project_goal": _norm(row[c_goal]) if c_goal is not None and c_goal < len(row) else "",
+                    "success_factors": _norm(row[c_success]) if c_success is not None and c_success < len(row) else "",
+                    "framework": _norm(row[c_framework]) if c_framework is not None and c_framework < len(row) else "",
+                    "alignment_snapshot_status": "approved" if canonical_stage in {"plan", "deliver", "closed"} else None,
+                },
+                "plan": {
+                    "creator_shortlist": shortlist,
+                    "confirmed_scope": _norm(row[c_scope]) if c_scope is not None and c_scope < len(row) else "",
+                    "business_case_document": _norm(row[c_bc]) if c_bc is not None and c_bc < len(row) else "",
+                    "contract_signed_at": _now() if canonical_stage in {"deliver", "closed"} and agreement_raw else None,
+                },
+                "deliver": {
+                    "agreement_status": agreement_raw,
+                    "fee_raw": fee_raw, "fee_amount": fee_amount, "fee_currency": fee_currency,
+                    "budget_raw": budget_raw, "budget_amount": budget_amount,
+                },
+                "closure": {
+                    "report": report_raw, "feedback": feedback_raw,
+                    "brand_score": _norm(row[c_brand_score]) if c_brand_score is not None and c_brand_score < len(row) else "",
+                    "creative_score": _norm(row[c_creative_score]) if c_creative_score is not None and c_creative_score < len(row) else "",
+                },
+                "timeline": [],
+                "source_workbook": WORKBOOK_FILENAME,
+                "source_sheet": self.SHEET_FRAMING,
+                "source_row_number": ridx,
+                "source_original_values": _stable_source_row(row),
                 "created_from_crm_template": True,
+                "import_batch_id": self.batch_id,
+                "imported_at": _now(),
+                "created_at": _now(),
+                "updated_at": _now(),
             }
-            await db.v3_rms.update_one({"id": rm_doc["id"]}, {"$set": rm_doc}, upsert=True)
 
-            admin_user = {
-                "id": "admin-" + rm_doc["id"],
-                "username": rm_doc["email"],
-                "password": "password",
-                "role": "relationship_manager",
-                "name": canonical,
-                "rm_id": rm_doc["id"],
-                "is_active": True,
-                "created_at": _now_iso(),
-                "updated_at": _now_iso(),
-                "import_batch_id": import_batch_id,
+            # Derived
+            self._add_contract(bc_id, brand_id, agreement_raw, canonical_stage, fee_amount, fee_currency, ridx)
+            if fee_raw or budget_raw:
+                self._add_fee(bc_id, brand_id, fee_raw, fee_amount, fee_currency, budget_raw, budget_amount, budget_currency, ridx)
+                self._add_wallet(bc_id, brand_id, fee_raw or budget_raw, fee_amount or budget_amount, fee_currency or budget_currency, ridx)
+            if report_raw or feedback_raw or canonical_stage == "closed":
+                self._add_report(bc_id, brand_id, title, report_raw, feedback_raw, ridx)
+            if canonical_stage in {"frame", "plan"} and not (_norm(row[c_bc]) if c_bc is not None and c_bc < len(row) else ""):
+                self._add_task("missing_business_case", f"Draft Business Case: {title}", "Framing/Plan-stage project missing Business Case document.", brand_id, self.business_cases[bc_id]["rm_id"], ridx)
+            if canonical_stage in {"deliver", "closed"} and not agreement_raw:
+                self._add_task("missing_agreement", f"Send to legal: {title}", "Deliver/closed-stage project without agreement on record.", brand_id, self.business_cases[bc_id]["rm_id"], ridx)
+            if canonical_stage == "deliver" and not report_raw:
+                self._add_task("missing_report", f"Final report: {title}", "Deliver-stage project without final report.", brand_id, self.business_cases[bc_id]["rm_id"], ridx)
+
+            # Brand-side project record (so the Projects page is populated)
+            pid = _det_id("proj", "brand", bc_id)
+            self.projects[pid] = {
+                "id": pid,
+                "title": title,
+                "brand_id": brand_id,
+                "unlinked_brand_name": unlinked_brand_name,
+                "company": brand.get("company") or unlinked_brand_name or "",
+                "creator_id": None,
+                "source_type": "brand_project",
+                "business_case_id": bc_id,
+                "stage": canonical_stage,
+                "stage_label": stage_raw,
+                "engagement_track": track,
+                "relationship_manager_name": brand.get("relationship_manager_name") or _norm(effective_lead),
+                "rm_id": self.business_cases[bc_id]["rm_id"],
+                "partner_lead": effective_lead,
+                "partner_folder": effective_folder,
+                "project_context": _norm(row[c_context]) if c_context is not None and c_context < len(row) else "",
+                "project_goal": _norm(row[c_goal]) if c_goal is not None and c_goal < len(row) else "",
+                "success_factors": _norm(row[c_success]) if c_success is not None and c_success < len(row) else "",
+                "confirmed_framework": _norm(row[c_framework]) if c_framework is not None and c_framework < len(row) else "",
+                "confirmed_scope": _norm(row[c_scope]) if c_scope is not None and c_scope < len(row) else "",
+                "creator_shortlist": shortlist,
+                "budget_raw": budget_raw,
+                "budget_amount": budget_amount,
+                "budget_currency": budget_currency,
+                "fee_raw": fee_raw,
+                "fee_amount": fee_amount,
+                "fee_currency": fee_currency,
+                "estimated_value": fee_amount or budget_amount or 0,
+                "agreement_status": agreement_raw,
+                "report_status": report_raw,
+                "feedback_status": feedback_raw,
+                "source_workbook": WORKBOOK_FILENAME,
+                "source_sheet": self.SHEET_FRAMING,
+                "source_row_number": ridx,
+                "source_original_values": _stable_source_row(row),
                 "created_from_crm_template": True,
+                "import_batch_id": self.batch_id,
+                "imported_at": _now(),
+                "created_at": _now(),
+                "updated_at": _now(),
             }
-            await db.v3_admin_users.update_one(
-                {"id": admin_user["id"]}, {"$set": admin_user}, upsert=True
-            )
-            rms_saved.append(rm_doc)
-            logger.info(f"  RM: {canonical} (aliases: {aliases})")
+        self.sheet_row_counts[self.SHEET_FRAMING] = useful
 
-        # ── 9. RESOLVE RM NAMES ONTO BRANDS ──────────────────────────────────
-        # Attach relationship_manager embedded object for the frontend
-        all_rms = {rm["id"]: rm for rm in rms_saved}
-        async for brand in db.v3_brands.find({"rm_id": {"$exists": True}}):
-            rm_id = brand.get("rm_id")
-            rm_data = all_rms.get(rm_id, {})
-            if rm_data:
-                await db.v3_brands.update_one(
-                    {"id": brand["id"]},
-                    {"$set": {
-                        "relationship_manager": {
-                            "id": rm_data["id"],
-                            "name": rm_data["name"],
-                            "email": rm_data["email"],
-                            "initials": rm_data["initials"],
-                        },
-                        "relationshipManager": {
-                            "id": rm_data["id"],
-                            "name": rm_data["name"],
-                            "email": rm_data["email"],
-                            "initials": rm_data["initials"],
-                        },
-                    }}
-                )
-        async for creator in db.v3_creators.find({"rm_id": {"$exists": True}}):
-            rm_id = creator.get("rm_id")
-            rm_data = all_rms.get(rm_id, {})
-            if rm_data:
-                await db.v3_creators.update_one(
-                    {"id": creator["id"]},
-                    {"$set": {
-                        "relationship_manager": {
-                            "id": rm_data["id"],
-                            "name": rm_data["name"],
-                            "email": rm_data["email"],
-                            "initials": rm_data["initials"],
-                        },
-                        "relationshipManager": {
-                            "id": rm_data["id"],
-                            "name": rm_data["name"],
-                            "email": rm_data["email"],
-                            "initials": rm_data["initials"],
-                        },
-                    }}
-                )
+    def _match_brand(self, lead: str, folder: str) -> Optional[str]:
+        if not lead and not folder:
+            return None
+        lead_l = lead.lower().strip()
+        folder_l = folder.lower().strip()
+        for b in self.brands.values():
+            if folder_l and folder_l == (b.get("company") or "").lower():
+                return b["id"]
+            primary = (b.get("primary_contact") or "").lower()
+            if lead_l and primary and (lead_l == primary or lead_l in primary or primary.startswith(lead_l)):
+                return b["id"]
+            for c in b.get("contacts", []):
+                cn = (c.get("name") or "").lower()
+                if lead_l and cn and (lead_l == cn or lead_l in cn or cn.startswith(lead_l)):
+                    return b["id"]
+        return None
 
-        # ── FINAL SUMMARY ─────────────────────────────────────────────────────
-        final_brand_count = await db.v3_brands.count_documents({})
-        final_creator_count = await db.v3_creators.count_documents({})
-        final_bc_count = await db.v3_business_cases.count_documents({})
-        final_rm_count = await db.v3_rms.count_documents({})
+    # --- Sheet 3: CRM - Super Creatives -----------------------------------
+    def parse_creators(self, ws) -> None:
+        rows = list(ws.iter_rows(values_only=True))
+        if len(rows) < 2:
+            return
+        headers = [_norm_header(c) for c in rows[1]]
 
-        logger.info("=" * 70)
-        logger.info("WORKBOOK IMPORT SUMMARY")
-        logger.info("=" * 70)
-        logger.info(f"  Brands in DB         : {final_brand_count}")
-        logger.info(f"  Contacts created     : {len(contacts_imported)}")
-        logger.info(f"  Creators in DB       : {final_creator_count}")
-        logger.info(f"  Business Cases in DB : {final_bc_count}")
-        logger.info(f"  Relationship Managers: {final_rm_count}")
-        logger.info(f"  Fees created         : {len(fees_imported)}")
-        logger.info(f"  Contracts created    : {len(contracts_imported)}")
-        logger.info(f"  Reports created      : {len(reports_imported)}")
-        logger.info(f"  Rows skipped         : {len(skipped)}")
-        logger.info(f"  Import batch ID      : {import_batch_id}")
-        logger.info("=" * 70)
+        def col(part: str) -> Optional[int]:
+            for i, h in enumerate(headers):
+                if part in h:
+                    return i
+            return None
+        c_name = 0
+        c_current = col("current_relationship_status")
+        c_desired = col("desired_relationship_status")
+        c_website = col("website")
+        c_primary = col("primary_contact")
+        c_role = col("role")
+        c_email = col("email")
+        c_phone = col("tel")
+        c_linkedin = col("linkedin")
+        c_rm = col("relationship_manager")
+        c_focus = col("key_marketing_focus")
+        c_audience = col("primary_target_audience")
+        c_channels = col("key_marketing_channels")
+        c_decision = col("decision_making_process")
+        c_process = col("current_creative_talent_process")
+        c_fee = col("fee_for_engagement")
 
-        return {
-            "import_batch_id": import_batch_id,
-            "brands_in_db": final_brand_count,
-            "contacts_created": len(contacts_imported),
-            "creators_in_db": final_creator_count,
-            "business_cases_in_db": final_bc_count,
-            "rms_in_db": final_rm_count,
-            "fees_created": len(fees_imported),
-            "contracts_created": len(contracts_imported),
-            "reports_created": len(reports_imported),
-            "rows_skipped": len(skipped),
-            "skipped_details": skipped[:30],
+        useful = 0
+        for ridx, row in enumerate(rows[2:], start=3):
+            if not any(c is not None and _norm(c) for c in row):
+                continue
+            name = _norm(row[c_name]) if c_name < len(row) else ""
+            if not name:
+                self.skipped.append({"sheet": self.SHEET_CREATORS, "row": ridx, "reason": "no_creator_name"})
+                continue
+            useful += 1
+            rm_raw = row[c_rm] if c_rm is not None and c_rm < len(row) else None
+            rm_id = self._upsert_rm(rm_raw)
+            cid = _det_id("creator", _slug(name))
+            fee_raw = _norm(row[c_fee]) if c_fee is not None and c_fee < len(row) else ""
+            fee_amount, fee_currency = _parse_fee(fee_raw)
+            existing = self.creators.get(cid)
+            rec = {
+                "id": cid,
+                "name": name,
+                "creator_name": name,
+                "creative_name": name,
+                "current_relationship_status": _norm(row[c_current]) if c_current is not None and c_current < len(row) else "",
+                "desired_relationship_status": _norm(row[c_desired]) if c_desired is not None and c_desired < len(row) else "",
+                "website": _norm(row[c_website]) if c_website is not None and c_website < len(row) else "",
+                "primary_contact": _norm(row[c_primary]) if c_primary is not None and c_primary < len(row) else "",
+                "role": _norm(row[c_role]) if c_role is not None and c_role < len(row) else "Creator",
+                "email": _norm(row[c_email]) if c_email is not None and c_email < len(row) else "",
+                "phone": _norm(row[c_phone]) if c_phone is not None and c_phone < len(row) else "",
+                "linkedin": _norm(row[c_linkedin]) if c_linkedin is not None and c_linkedin < len(row) else "",
+                "relationship_manager_name": _norm(rm_raw),
+                "source_relationship_manager_name": _norm(rm_raw),
+                "rm_id": rm_id,
+                "key_marketing_focus": _norm(row[c_focus]) if c_focus is not None and c_focus < len(row) else "",
+                "primary_target_audience": _norm(row[c_audience]) if c_audience is not None and c_audience < len(row) else "",
+                "key_marketing_channels": _split_list(row[c_channels]) if c_channels is not None and c_channels < len(row) else [],
+                "decision_making_process": _norm(row[c_decision]) if c_decision is not None and c_decision < len(row) else "",
+                "current_creative_talent_process": _norm(row[c_process]) if c_process is not None and c_process < len(row) else "",
+                "fee_for_engagement_per_month": fee_raw,
+                "fee_raw": fee_raw,
+                "fee_amount": fee_amount,
+                "fee_currency": fee_currency,
+                "fee": fee_raw,
+                "tier": "Platinum" if (fee_amount and fee_amount >= 30000) else "Gold",
+                "genre": _norm(row[c_role]) if c_role is not None and c_role < len(row) else "",
+                "source_workbook": WORKBOOK_FILENAME,
+                "source_sheet": self.SHEET_CREATORS,
+                "source_row_number": ridx,
+                "source_original_values": _stable_source_row(row),
+                "created_from_crm_template": True,
+                "import_batch_id": self.batch_id,
+                "imported_at": _now(),
+                "created_at": _now(),
+                "updated_at": _now(),
+                "aliases": [],
+            }
+            if existing:
+                if rm_id and rm_id != existing.get("rm_id"):
+                    existing.setdefault("rm_aliases", []).append({"rm_id": rm_id, "row": ridx})
+                if not existing.get("fee_amount") and fee_amount:
+                    existing["fee_amount"] = fee_amount
+                    existing["fee_raw"] = fee_raw
+                    existing["fee_currency"] = fee_currency
+                continue
+            self.creators[cid] = rec
+        self.sheet_row_counts[self.SHEET_CREATORS] = useful
+
+    # --- Sheet 4: Super Creatives - Framing -------------------------------
+    def parse_creatives_framing(self, ws) -> None:
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return
+        headers = [_norm_header(c) for c in rows[0]]
+
+        def col(part: str) -> Optional[int]:
+            for i, h in enumerate(headers):
+                if part in h:
+                    return i
+            return None
+        c_folder = 0
+        c_project = 1
+        c_stage = col("stage")
+        c_notes = col("notes")
+        c_budget = col("estimated_budget")
+        c_lines = col("budget_lines")
+        c_agreement = col("agreement")
+
+        last_folder = ""
+        useful = 0
+        for ridx, row in enumerate(rows[1:], start=2):
+            if not any(c is not None and _norm(c) for c in row):
+                continue
+            folder = _norm(row[c_folder]) if c_folder < len(row) else ""
+            project_name = _norm(row[c_project]) if c_project < len(row) else ""
+            if folder:
+                last_folder = folder
+            effective_folder = folder or last_folder
+            if not effective_folder and not project_name:
+                continue
+            useful += 1
+            pid = _det_id("proj", _slug(effective_folder), _slug(project_name or f"row{ridx}"))
+            stage_raw = _norm(row[c_stage]) if c_stage is not None and c_stage < len(row) else ""
+            canonical_stage = _framing_stage_canon(stage_raw)
+            budget_raw = _norm(row[c_budget]) if c_budget is not None and c_budget < len(row) else ""
+            budget_amount, budget_currency = _parse_fee(budget_raw)
+            creator_id = None
+            folder_lower = effective_folder.lower()
+            for c in self.creators.values():
+                if folder_lower and (folder_lower == c["name"].lower() or folder_lower in c["name"].lower()):
+                    creator_id = c["id"]
+                    break
+            self.projects[pid] = {
+                "id": pid,
+                "title": project_name or effective_folder,
+                "working_title": not bool(project_name),
+                "folder": effective_folder,
+                "brand_id": None,
+                "creator_id": creator_id,
+                "creator_name": effective_folder,
+                "source_type": "creator_project",
+                "stage": canonical_stage,
+                "stage_label": stage_raw,
+                "notes": _norm(row[c_notes]) if c_notes is not None and c_notes < len(row) else "",
+                "budget_raw": budget_raw,
+                "budget_amount": budget_amount,
+                "budget_currency": budget_currency,
+                "budget_lines": _norm(row[c_lines]) if c_lines is not None and c_lines < len(row) else "",
+                "agreement_status": _norm(row[c_agreement]) if c_agreement is not None and c_agreement < len(row) else "",
+                "source_workbook": WORKBOOK_FILENAME,
+                "source_sheet": self.SHEET_CREATIVES_FRAMING,
+                "source_row_number": ridx,
+                "source_original_values": _stable_source_row(row),
+                "created_from_crm_template": True,
+                "import_batch_id": self.batch_id,
+                "imported_at": _now(),
+                "created_at": _now(),
+                "updated_at": _now(),
+            }
+        self.sheet_row_counts[self.SHEET_CREATIVES_FRAMING] = useful
+
+    # --- Derived records --------------------------------------------------
+    def _add_contract(self, bc_id, brand_id, agreement_raw, canonical_stage, fee_amount, fee_currency, ridx):
+        cid = _det_id("contract", bc_id)
+        if "signed" in agreement_raw.lower() or "agreement" in agreement_raw.lower():
+            status = "signed"
+        elif "legal" in agreement_raw.lower():
+            status = "pending_legal"
+        elif canonical_stage == "deliver":
+            status = "active"
+        elif canonical_stage == "closed":
+            status = "completed"
+        elif canonical_stage in {"frame", "plan"}:
+            status = "draft_needed"
+        else:
+            status = "not_started"
+        self.contracts[cid] = {
+            "id": cid,
+            "business_case_id": bc_id,
+            "brand_id": brand_id,
+            "status": status,
+            "agreement_description": agreement_raw or "Pending — derived from CRM",
+            "value": fee_amount or 0,
+            "currency": fee_currency or "NGN",
+            "source_sheet": self.SHEET_FRAMING,
+            "source_row_number": ridx,
+            "created_from_crm_template": True,
+            "import_batch_id": self.batch_id,
+            "imported_at": _now(),
+            "created_at": _now(),
         }
+
+    def _add_fee(self, bc_id, brand_id, fee_raw, fee_amount, fee_currency, budget_raw, budget_amount, budget_currency, ridx):
+        fid = _det_id("fee", bc_id)
+        is_strategy = "engagement" in (fee_raw or "").lower() or "strategy" in (fee_raw or "").lower()
+        self.fees[fid] = {
+            "id": fid,
+            "business_case_id": bc_id,
+            "brand_id": brand_id,
+            "type": "strategy_fee" if is_strategy else "project_budget",
+            "raw_value": fee_raw or budget_raw,
+            "parsed_amount": fee_amount or budget_amount,
+            "currency": fee_currency or budget_currency or "NGN",
+            "budget_raw": budget_raw,
+            "budget_amount": budget_amount,
+            "status": "pending_invoice" if fee_amount else "proposed",
+            "source_sheet": self.SHEET_FRAMING,
+            "source_row_number": ridx,
+            "created_from_crm_template": True,
+            "import_batch_id": self.batch_id,
+            "imported_at": _now(),
+            "created_at": _now(),
+        }
+
+    def _add_wallet(self, bc_id, brand_id, raw, amount, currency, ridx):
+        wid = _det_id("wallet", bc_id)
+        self.wallet[wid] = {
+            "id": wid,
+            "business_case_id": bc_id,
+            "brand_id": brand_id,
+            "raw_value": raw,
+            "amount": amount or 0,
+            "currency": currency or "NGN",
+            "status": "proposed" if amount else "no_payment_recorded",
+            "source_sheet": self.SHEET_FRAMING,
+            "source_row_number": ridx,
+            "created_from_crm_template": True,
+            "import_batch_id": self.batch_id,
+            "imported_at": _now(),
+            "created_at": _now(),
+        }
+
+    def _add_task(self, source, title, description, brand_id, rm_id, ridx):
+        tid = _det_id("task", brand_id or "", _slug(title), source)
+        self.tasks[tid] = {
+            "id": tid,
+            "title": title,
+            "description": description,
+            "source": source,
+            "brand_id": brand_id,
+            "rm_id": rm_id,
+            "status": "open",
+            "priority": "P1" if source in {"missing_agreement", "missing_report"} else "P2",
+            "source_row_number": ridx,
+            "created_from_crm_template": True,
+            "import_batch_id": self.batch_id,
+            "imported_at": _now(),
+            "created_at": _now(),
+        }
+
+    def _add_meeting(self, brand_id, contact_id, contact_name, rm_id, meeting_type, status, notes, ridx):
+        mid = _det_id("meeting", brand_id, contact_id or "", meeting_type)
+        self.meetings[mid] = {
+            "id": mid,
+            "brand_id": brand_id,
+            "contact_id": contact_id,
+            "contact_name": contact_name,
+            "rm_id": rm_id,
+            "type": meeting_type,
+            "status": status,
+            "notes": notes or "",
+            "scheduled_for": None,
+            "source_sheet": self.SHEET_BRANDS,
+            "source_row_number": ridx,
+            "created_from_crm_template": True,
+            "import_batch_id": self.batch_id,
+            "imported_at": _now(),
+            "created_at": _now(),
+        }
+
+    def _add_report(self, bc_id, brand_id, title, report_raw, feedback_raw, ridx):
+        rid = _det_id("report", bc_id)
+        self.reports[rid] = {
+            "id": rid,
+            "business_case_id": bc_id,
+            "brand_id": brand_id,
+            "title": f"Report: {title}",
+            "status": "complete" if report_raw and feedback_raw else "draft",
+            "content": report_raw or "(Draft report — derived from CRM. Populate with delivery insights.)",
+            "feedback": feedback_raw,
+            "source": "crm_derived_test_record" if not report_raw else "crm_template",
+            "source_row_number": ridx,
+            "created_from_crm_template": True,
+            "import_batch_id": self.batch_id,
+            "imported_at": _now(),
+            "created_at": _now(),
+        }
+
+    # --- Admin users + Insights + Templates ------------------------------
+    def build_admin_users(self) -> None:
+        sid = "admin-super"
+        self.admin_users[sid] = {
+            "id": sid, "email": "admin@tasck.agency", "name": "Super Admin",
+            "role": "super_admin", "active": True,
+            "created_from_crm_template": True,
+            "import_batch_id": self.batch_id, "imported_at": _now(),
+        }
+        for rm in self.rms.values():
+            uid = f"admin-{rm['normalized_name']}"
+            self.admin_users[uid] = {
+                "id": uid,
+                "email": rm.get("email") or f"{rm['normalized_name']}@tasck.agency",
+                "name": rm["name"], "role": "relationship_manager",
+                "rm_id": rm["id"], "active": True,
+                "created_from_crm_template": True,
+                "import_batch_id": self.batch_id, "imported_at": _now(),
+            }
+        for c in self.contacts.values():
+            email = c.get("email", "")
+            if email and "@" in email:
+                uid = f"user-{_slug(email)}"
+                self.admin_users[uid] = {
+                    "id": uid, "email": email, "name": c["name"],
+                    "role": "brand_contact", "brand_id": c["brand_id"],
+                    "active": True,
+                    "created_from_crm_template": True,
+                    "import_batch_id": self.batch_id, "imported_at": _now(),
+                }
+
+    def build_insights(self) -> None:
+        brand_status = Counter((b.get("status") or "unknown").strip() for b in self.brands.values())
+        creator_status = Counter((c.get("current_relationship_status") or "unknown").strip() for c in self.creators.values())
+        rm_counter = Counter(b.get("relationship_manager_name") or "—" for b in self.brands.values())
+        bc_stage = Counter(bc["stage"] for bc in self.business_cases.values())
+
+        def _i(kind: str, title: str, payload: Dict[str, Any]) -> None:
+            iid = _det_id("insight", kind)
+            self.insights[iid] = {
+                "id": iid, "kind": kind, "title": title, "payload": payload,
+                "created_from_crm_template": True,
+                "import_batch_id": self.batch_id, "imported_at": _now(),
+                "created_at": _now(),
+            }
+        _i("brand_status_breakdown", "Brands by connect status", dict(brand_status))
+        _i("creator_status_breakdown", "Creators by relationship status", dict(creator_status))
+        _i("rm_load", "Relationship-manager workload", dict(rm_counter.most_common(15)))
+        _i("business_case_stage", "Business cases by stage", dict(bc_stage))
+        _i("contracts_needed", "Projects without signed agreement",
+           {"count": sum(1 for c in self.contracts.values() if c["status"] in {"draft_needed", "pending_legal", "not_started"})})
+        _i("reports_pending", "Reports still in draft",
+           {"count": sum(1 for r in self.reports.values() if r["status"] == "draft")})
+
+    def build_templates(self) -> None:
+        templates = [
+            ("business-sop", "Business SOP Template", "Connect → Frame → Plan → Deliver → Close"),
+            ("alignment-snapshot", "Project Alignment Snapshot Template", "Purpose · Business context · User landscape · Strategic entry point · Strategic direction · Creator approach · Expected outcomes · Commercial context · Why focus matters · Engagement model · Next steps"),
+            ("brainstorming", "Brainstorming Template", "Frame the problem · Generate options · Cluster · Score · Decide"),
+            ("creative-strategy", "Creative Strategy Snapshot Template", "Executive snapshot · Strategic foundation · Growth plan · Creator strategy · Execution roadmap · Commercial overview · Tracking plan · Risks · Next steps"),
+            ("creative-brief", "Creative Brief Template", "Project reference · Context · Role of the creative · Expected scope · Indicative timeline · Working assumptions · Fee indication request · Availability · Confirmation"),
+            ("fee-note", "Draft Fee Note Template", "Engagement scope · Coverage · Term duration · Note on separate agency fees"),
+            ("brand-feedback", "Brand Feedback Template", "Understanding · Coordination · Representation · Delivery · Overall · Optional comment"),
+            ("creative-feedback", "Creative Feedback Template", "Engagement clarity · Representation quality · Coordination · Professionalism · Overall · Optional comment"),
+            ("project-report", "Project Report Template", "Campaign · Timeline · Report date · Introduction · Analysis · What worked · What did not · KPIs · Issues · Financial summary · Conclusion"),
+            ("sla", "Service Level Agreement Template", "Relationship · Scope · Client obligations · Payment terms · 10% agency fee · Third-party costs · Approvals · Confidentiality · Liability · Termination · Dispute resolution"),
+            ("ica", "Independent Creator Agreement Template", "Independence · Agency role · Creator responsibility · Payment routing · 10% agency fee · IP · Confidentiality · Warranties · Force majeure · Termination · Nigerian law"),
+            ("service-agreement", "Service Agreement / Vendor Agreement Template", "Scope · Services · Event/project · Payment schedule · Performance · Cancellation · Liability · Force majeure · Signatures"),
+        ]
+        for slug, name, summary in templates:
+            tid = _det_id("template", slug)
+            self.templates[tid] = {
+                "id": tid, "slug": slug, "name": name, "summary": summary,
+                "active": True, "system_template": True,
+                "created_from_crm_template": True,
+                "import_batch_id": self.batch_id, "imported_at": _now(),
+                "created_at": _now(),
+            }
+
+    def derive_connect_business_cases(self) -> None:
+        existing_brand_ids = {bc["brand_id"] for bc in self.business_cases.values()}
+        for brand in self.brands.values():
+            if brand["id"] in existing_brand_ids:
+                continue
+            bc_id = _det_id("bc", brand["id"], "connect")
+            self.business_cases[bc_id] = {
+                "id": bc_id, "brand_id": brand["id"],
+                "title": f"{brand.get('company')} — Connect",
+                "stage": _likelihood_to_stage(brand.get("likelihood_to_work_with_tta")),
+                "stage_label": "Connect",
+                "engagement_track": brand.get("engagement_track_default", "paid"),
+                "estimated_value": 0,
+                "rm_id": brand.get("rm_id"),
+                "next_action": brand.get("notes_and_next_actions") or "",
+                "health": "on_track",
+                "connect": {
+                    "status": brand.get("status") or "Connecting",
+                    "intelligence": brand.get("key_marketing_focus") or "",
+                    "outreach_angle": "", "suggested_outreach": "",
+                },
+                "frame": {}, "plan": {}, "deliver": {}, "closure": {},
+                "timeline": [],
+                "source_workbook": WORKBOOK_FILENAME,
+                "source_sheet": "(derived from CRM - Partners)",
+                "source_row_number": brand.get("source_row_number"),
+                "created_from_crm_template": True,
+                "derived_from_crm": True,
+                "import_batch_id": self.batch_id,
+                "imported_at": _now(),
+                "created_at": _now(),
+                "updated_at": _now(),
+            }
+
+    # --- Orchestration ----------------------------------------------------
+    @staticmethod
+    async def import_all(db) -> Dict[str, Any]:
+        """Static entry point (kept for backward compat with existing callers)."""
+        importer = WorkbookImporter()
+        return await importer._run(db)
+
+    async def _run(self, db) -> Dict[str, Any]:
+        if not self.path.exists():
+            msg = f"CRM workbook not found at {self.path}. Please upload the file there."
+            logger.error(msg)
+            return {"success": False, "error": msg, "workbook_path": str(self.path)}
+
+        wb = openpyxl.load_workbook(self.path, data_only=True)
+        sheet_names = wb.sheetnames
+        logger.info("Loaded workbook %s with sheets: %s", self.path.name, sheet_names)
+
+        if self.SHEET_BRANDS in sheet_names:
+            self.parse_brands(wb[self.SHEET_BRANDS])
+        if self.SHEET_CREATORS in sheet_names:
+            self.parse_creators(wb[self.SHEET_CREATORS])
+        if self.SHEET_FRAMING in sheet_names:
+            self.parse_framing(wb[self.SHEET_FRAMING])
+        if self.SHEET_CREATIVES_FRAMING in sheet_names:
+            self.parse_creatives_framing(wb[self.SHEET_CREATIVES_FRAMING])
+
+        self.derive_connect_business_cases()
+        self.build_admin_users()
+        self.build_insights()
+        self.build_templates()
+
+        async def _upsert_many(collection: str, docs: Dict[str, Dict[str, Any]]) -> int:
+            for doc in docs.values():
+                await db[collection].update_one({"id": doc["id"]}, {"$set": doc}, upsert=True)
+            return len(docs)
+
+        counts = {
+            "brands": await _upsert_many("v3_brands", self.brands),
+            "contacts": await _upsert_many("v3_contacts", self.contacts),
+            "creators": await _upsert_many("v3_creators", self.creators),
+            "relationship_managers": await _upsert_many("v3_rms", self.rms),
+            "admin_users": await _upsert_many("v3_admin_users", self.admin_users),
+            "business_cases": await _upsert_many("v3_business_cases", self.business_cases),
+            "projects": await _upsert_many("v3_projects", self.projects),
+            "contracts": await _upsert_many("v3_contracts", self.contracts),
+            "reports": await _upsert_many("v3_reports", self.reports),
+            "fees": await _upsert_many("v3_fees", self.fees),
+            "wallet_entries": await _upsert_many("v3_wallet", self.wallet),
+            "tasks": await _upsert_many("v3_tasks", self.tasks),
+            "insights": await _upsert_many("v3_insights", self.insights),
+            "templates": await _upsert_many("v3_templates", self.templates),
+            "meetings": await _upsert_many("v3_meetings", self.meetings),
+        }
+        result = {
+            "success": True,
+            "workbook_path": str(self.path),
+            "sheets_detected": sheet_names,
+            "sheet_useful_rows": self.sheet_row_counts,
+            "counts": counts,
+            "skipped_count": len(self.skipped),
+            "skipped_examples": self.skipped[:25],
+            "warnings": self.warnings,
+            "import_batch_id": self.batch_id,
+            "imported_at": _now(),
+        }
+        logger.info("Workbook import OK: %s", {k: v for k, v in counts.items() if v})
+        return result
+
+
+async def import_crm_workbook(db) -> Dict[str, Any]:
+    importer = WorkbookImporter()
+    return await importer._run(db)

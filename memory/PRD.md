@@ -6,6 +6,16 @@ Premium product demo for "TASCK OS" — a creator campaign management platform f
 - **V2 (Next)**: AI-native command center — COMPLETE
 - **V3 (TASCK v3.2)**: Editorial AI-native platform with Business Case primitive + 4-stage pipeline + live backend — **NOW INCLUDES FULL TTA-USER WORKFLOW** (15 May 2026)
 
+## Latest Update — 11 Feb 2026 (P0 Importer Hygiene)
+- **`v3_workbook_import.py`**: `parse_framing()` no longer creates phantom brands from people names (Betty, Hamsudeen, Christiana Longe, Pedro Abramovay, Fiona Mbambo). `v3_brands` is sourced **exclusively** from `CRM - Partners` (`Partner / Company or Organisation` column). Framing rows without a matching brand keep `brand_id: null` and store `unlinked_brand_name`, `partner_lead`, `partner_folder` instead.
+- **Brand-side projects**: Each `Framing - Partners` row now also produces a `v3_projects` record (source_type=`brand_project`) so the Projects page is never empty. Creator projects tagged with `source_type=creator_project`.
+- **Canonical RM names**: `relationship_manager_name` on brands now comes from the canonical RM record (e.g. "Seyelnen" not "seyelnen").
+- **`V3AdminBusinessCases.js`**: Stage-distribution widget safely renders `by_stage[stage]` whether it's a number or `{count, value}` object — fixes "Objects are not valid as a React child" crash.
+- **`V3AdminProjects.js`**: Rewritten to fetch live data from `/api/v3/projects` via `v3ListProjects`, with brand/creator/RM lookup maps for proper card labels. Filters by stage and source_type. Empty states explain how to run the import.
+- **Cleanup**: `POST /api/v3/admin/clear-v3-demo-data` now also purges legacy `_placeholder` brands and any brand whose `source_sheet == "Framing - Partners"`.
+- **Verified data**: 8 real brand rows from `CRM - Partners` (Coca Cola, All Smiles Signature, Open Society Foundations, Open Society Foundation, OSIWA-for-OSF, OSF, CJID, Pernod Ricard – Chivas) with correct RMs (Jennifer, Seyelnen, Chioma, Ade, Mercy, Fanii). 32 projects (19 brand + 13 creator). 20 business cases.
+
+
 ## V3 — v3.2 Architecture
 
 ### Business Case Primitive
