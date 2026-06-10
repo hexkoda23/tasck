@@ -46,12 +46,10 @@ def _temporary_password() -> str:
     return f"TASCK-{uuid.uuid4().hex[:4].upper()}-{uuid.uuid4().hex[:4].upper()}"
 
 
-def _brand_created_at_key(brand: Dict[str, Any]) -> Tuple[int, str]:
-    # User-created brands (NOT imported from CRM template) always sort above
-    # imported ones, then newest-first within each group.
+def _brand_created_at_key(brand: Dict[str, Any]) -> str:
+    # Pure chronological sort — most recently created brand first.
     created_at = brand.get("created_at") or brand.get("updated_at") or brand.get("imported_at") or ""
-    is_user_created = 0 if brand.get("created_from_crm_template") else 1
-    return (is_user_created, created_at if isinstance(created_at, str) else "")
+    return created_at if isinstance(created_at, str) else ""
 
 
 def _domain_from_url(value: str) -> str:

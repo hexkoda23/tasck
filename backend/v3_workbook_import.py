@@ -35,6 +35,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Fixed historical baseline for workbook-imported records' created_at so they
+# never bump above user-created brands chronologically. Row-number is added as
+# seconds offset so imported rows preserve their natural workbook order.
+_WORKBOOK_BASELINE = datetime(2025, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+
+
+def _workbook_created_at(row_number: int = 0) -> str:
+    from datetime import timedelta
+    return (_WORKBOOK_BASELINE + timedelta(seconds=int(row_number or 0))).isoformat()
+
+
 def _slug(value: Any, fallback: str = "x") -> str:
     s = re.sub(r"[^a-z0-9]+", "-", str(value or fallback).strip().lower()).strip("-")
     return s or fallback
@@ -396,7 +407,7 @@ class WorkbookImporter:
                     "created_from_crm_template": True,
                     "import_batch_id": self.batch_id,
                     "imported_at": _now(),
-                    "created_at": _now(),
+                    "created_at": _workbook_created_at(ridx),
                     "updated_at": _now(),
                 }
                 self.brands[brand_id] = brand
@@ -1227,13 +1238,7 @@ class WorkbookImporter:
 
         async def _upsert_many(collection: str, docs: Dict[str, Dict[str, Any]]) -> int:
             for doc in docs.values():
-                # Preserve the original `created_at` on re-import so user-created
-                # records keep their relative timeline. Only stamp it on first insert.
-                doc_for_set = {k: v for k, v in doc.items() if k != "created_at"}
-                update_ops: Dict[str, Any] = {"$set": doc_for_set}
-                if "created_at" in doc:
-                    update_ops["$setOnInsert"] = {"created_at": doc["created_at"]}
-                await db[collection].update_one({"id": doc["id"]}, update_ops, upsert=True)
+                await db[collection].update_one({"id": doc["id"]}, {"$set": doc}, upsert=True)
             return len(docs)
 
         counts = {
