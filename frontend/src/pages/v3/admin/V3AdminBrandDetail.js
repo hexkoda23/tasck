@@ -317,13 +317,22 @@ const V3AdminBrandDetail = () => {
               <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider">
                 Interaction History
               </h2>
-              <button
-                className="v3-btn-primary text-[11px]"
-                data-testid="add-interaction-btn"
-                onClick={() => setInteractionOpen(true)}
-              >
-                <Plus className="w-3.5 h-3.5" /> Add Interaction
-              </button>
+              <div className="flex gap-2">
+                <button
+                  className="v3-btn-secondary text-[11px]"
+                  data-testid="quick-log-interaction-btn"
+                  onClick={() => setInteractionOpen(true)}
+                >
+                  <Plus className="w-3.5 h-3.5" /> Quick log
+                </button>
+                <button
+                  className="v3-btn-primary text-[11px]"
+                  data-testid="add-interaction-btn"
+                  onClick={() => navigate(`/v3/admin/meetings?mode=new&brand_id=${brand.id}&type=connector&from=brand`)}
+                >
+                  <Plus className="w-3.5 h-3.5" /> Schedule meeting
+                </button>
+              </div>
             </div>
 
             {interactions.length > 0 ? (
