@@ -156,7 +156,7 @@ const makePresentationBundle = ({
     approved_by: alignmentStatus === 'approved' ? brand?.primaryContact : null,
     approved_by_party: alignmentStatus === 'approved' ? 'brand' : null,
     brand_header: `${brand?.company?.split(' ')[0]?.toUpperCase() || 'BRAND'} x TASCK`,
-    title: `${title} - Alignment Snapshot`,
+    title: `${title}: Alignment Snapshot`,
     meta: 'AI-generated from connector call. Reviewed by TASCK.',
     marketing_intelligence: marketing,
     sections: [
@@ -177,7 +177,7 @@ const makePresentationBundle = ({
     id: `cs-${id}`,
     business_case_id: id,
     status: strategyStatus,
-    title: `${title} - Strategy Snapshot`,
+    title: `${title}: Strategy Snapshot`,
     concept: `${creator?.name || 'The selected creator'} anchors the campaign with a social-first creative system that translates the approved Alignment Snapshot into content, moments, and measurable brand outcomes.`,
     deliverables: [
       { num: 1, title: 'Hero creator concept', format: 'Campaign idea', duration: 'Core campaign' },
@@ -392,7 +392,7 @@ export const normalizeStrategyMetrics = (metrics = []) =>
 
 export const strategySections = (snapshot) => [
   { heading: 'Recommended creative direction', type: 'prose', content: snapshot.concept || '' },
-  { heading: 'Deliverables', type: 'bullets', items: normalizeStrategyDeliverables(snapshot.deliverables || []).map((d) => `${d.title} - ${d.format}${d.duration ? ` (${d.duration})` : ''}`) },
+  { heading: 'Deliverables', type: 'bullets', items: normalizeStrategyDeliverables(snapshot.deliverables || []).map((d) => `${d.title}: ${d.format}${d.duration ? ` (${d.duration})` : ''}`) },
   { heading: 'Budget assumptions', type: 'bullets', items: normalizeStrategyBudget(snapshot.budget).map((b) => `${b.line}: ${formatNairaV3(b.amount)}`) },
   { heading: 'Success metrics', type: 'kpis', items: normalizeStrategyMetrics(snapshot.success_metrics || []) },
 ];
@@ -442,8 +442,8 @@ export const vaultDocsForBrand = (brandId = getBrandPortalSession().brandId) =>
         label: 'Signed Contract',
         status: bundle.contract.status,
         business_case: bundle.business_case,
-        title: `${bundle.business_case.title} - Contract`,
-        summary: `${bundle.contract.parties?.join(' / ') || 'Contract parties'} - ${formatNairaV3(bundle.contract.value)}`,
+        title: `${bundle.business_case.title}: Contract`,
+        summary: `${bundle.contract.parties?.join(' / ') || 'Contract parties'}, ${formatNairaV3(bundle.contract.value)}`,
         date: bundle.contract.signed_at || bundle.contract.created_at,
       });
     }

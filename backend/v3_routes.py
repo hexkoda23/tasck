@@ -11,7 +11,7 @@ Stage advancement rules:
   plan    → deliver: Strategy Snapshot approved AND contract signed
   deliver → closed : Closure checklist complete (final report + feedback)
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
@@ -44,6 +44,13 @@ def _slug(value: str) -> str:
 
 def _temporary_password() -> str:
     return f"TASCK-{uuid.uuid4().hex[:4].upper()}-{uuid.uuid4().hex[:4].upper()}"
+
+
+def _brand_created_at_key(brand: Dict[str, Any]) -> str:
+    created_at = brand.get("created_at") or brand.get("updated_at") or brand.get("imported_at")
+    if isinstance(created_at, str) and created_at:
+        return created_at
+    return ""
 
 
 def _domain_from_url(value: str) -> str:
@@ -153,6 +160,61 @@ def make_v3_router(db):
     """Factory — receives the motor DB handle and returns a FastAPI router."""
     router = APIRouter(prefix="/api/v3", tags=["v3"])
 
+    async def _relationship_manager(rm_id: Optional[str] = None) -> Dict[str, Any]:
+        """Return an RM from workbook-imported v3_rms. No hardcoded demo RM fallback."""
+        if rm_id:
+            rm = await db.v3_rms.find_one({"id": rm_id}, {"_id": 0})
+            if rm:
+                return rm
+        first_rm = await db.v3_rms.find_one({}, {"_id": 0})
+        if first_rm:
+            return first_rm
+        return {
+            "id": "",
+            "name": "No relationship manager assigned",
+            "role": "Relationship Manager",
+            "initials": "",
+            "email": "",
+        }
+
+    async def _with_relationship_manager(brand: Dict[str, Any]) -> Dict[str, Any]:
+        if not brand:
+            return brand
+        if brand.get("relationship_manager") and isinstance(brand.get("relationship_manager"), dict):
+            rm = brand.get("relationship_manager") or {}
+            return {
+                **brand,
+                "relationshipManager": brand.get("relationshipManager") or rm,
+                "relationship_manager_name": brand.get("relationship_manager_name") or rm.get("name", ""),
+                "relationship_manager_email": brand.get("relationship_manager_email") or rm.get("email", ""),
+            }
+        rm_id = brand.get("rm_id")
+        rm = await _relationship_manager(rm_id) if rm_id else None
+        if rm:
+            return {
+                **brand,
+                "relationship_manager": rm,
+                "relationshipManager": rm,
+                "relationship_manager_name": brand.get("relationship_manager_name") or rm.get("name", ""),
+                "relationship_manager_email": brand.get("relationship_manager_email") or rm.get("email", ""),
+            }
+        return brand
+
+    def require_role(required_roles: List[str]):
+        async def dependency(
+            x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
+            x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
+        ):
+            if not x_admin_role or not x_admin_id:
+                raise HTTPException(401, "Authentication headers X-Admin-ID and X-Admin-Role are required")
+            user = await db.v3_admin_users.find_one({"id": x_admin_id}, {"_id": 0})
+            if not user or not user.get("is_active", True):
+                raise HTTPException(401, "Invalid or inactive admin account")
+            if required_roles and x_admin_role not in required_roles:
+                raise HTTPException(403, "Access denied: insufficient permissions")
+            return user
+        return dependency
+
     # ------------------------------------------------------------------------
     # SEED
     # ------------------------------------------------------------------------
@@ -198,11 +260,30 @@ def make_v3_router(db):
     # BRANDS
     # ------------------------------------------------------------------------
     @router.get("/brands")
-    async def list_brands(engagement: Optional[str] = None):
-        query = {}
+    async def list_brands(
+        engagement: Optional[str] = None,
+        rm_id: Optional[str] = None,
+        x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
+        x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
+    ):
+        query: Dict[str, Any] = {}
         if engagement:
             query["engagement_track_default"] = engagement
-        return await db.v3_brands.find(query, {"_id": 0}).to_list(200)
+
+        # Super admin sees all. Relationship manager sees assigned workbook records.
+        if x_admin_role == "relationship_manager" and x_admin_id:
+            extracted_rm_id = x_admin_id
+            if x_admin_id.startswith("admin-rm-"):
+                extracted_rm_id = x_admin_id[6:]
+            elif x_admin_id.startswith("admin-"):
+                extracted_rm_id = x_admin_id[6:]
+            query["rm_id"] = extracted_rm_id
+        elif rm_id and x_admin_role != "super_admin":
+            query["rm_id"] = rm_id
+
+        brands = await db.v3_brands.find(query, {"_id": 0}).to_list(1000)
+        brands = sorted(brands, key=_brand_created_at_key, reverse=True)
+        return [await _with_relationship_manager(brand) for brand in brands]
 
     @router.get("/brands/{brand_id}")
     async def get_brand(brand_id: str):
@@ -236,10 +317,12 @@ def make_v3_router(db):
         lead_score: int = 60
         hq: Optional[str] = None
         website: Optional[str] = None
+        rm_id: Optional[str] = None
 
     @router.post("/brands")
     async def create_brand(payload: BrandCreate):
         brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+        rm = await _relationship_manager(payload.rm_id)
         doc = {
             "id": brand_id,
             "company": payload.company,
@@ -254,6 +337,12 @@ def make_v3_router(db):
             "lead_score": payload.lead_score,
             "last_interaction": "just now",
             "engagement_track_default": payload.engagement_track_default,
+            "created_at": _now_iso(),
+            "rm_id": rm.get("id", ""),
+            "relationship_manager": rm,
+            "relationshipManager": rm,
+            "relationship_manager_name": rm.get("name", ""),
+            "relationship_manager_email": rm.get("email", ""),
         }
         await db.v3_brands.insert_one({**doc})
 
@@ -400,9 +489,32 @@ def make_v3_router(db):
     # CREATORS
     # ------------------------------------------------------------------------
     @router.get("/creators")
-    async def list_creators(tier: Optional[str] = None):
-        query = {"tier": tier} if tier else {}
-        return await db.v3_creators.find(query, {"_id": 0}).to_list(500)
+    async def list_creators(
+        tier: Optional[str] = None,
+        x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
+        x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
+    ):
+        query: Dict[str, Any] = {}
+        if tier:
+            query["tier"] = tier
+        if x_admin_role == "relationship_manager" and x_admin_id:
+            extracted_rm_id = x_admin_id[6:] if x_admin_id.startswith("admin-") else x_admin_id
+            query["rm_id"] = extracted_rm_id
+        creators = await db.v3_creators.find(query, {"_id": 0}).to_list(1000)
+        result = []
+        for c in creators:
+            rm_obj = c.get("relationship_manager") or {"name": c.get("relationship_manager_name", "")}
+            result.append({
+                **c,
+                "name": c.get("name") or c.get("creator_name") or c.get("creative_name") or c.get("company_name") or "",
+                "creator_name": c.get("creator_name") or c.get("name") or c.get("creative_name") or "",
+                "creative_name": c.get("creative_name") or c.get("name") or c.get("creator_name") or "",
+                "relationship_manager": rm_obj,
+                "relationshipManager": c.get("relationshipManager") or rm_obj,
+                "fee": c.get("fee") or c.get("fee_for_engagement_per_month") or c.get("rate_card") or "Not provided",
+                "rate_card": c.get("rate_card") or c.get("fee") or c.get("fee_for_engagement_per_month") or "Not provided",
+            })
+        return result
 
     @router.get("/creators/{creator_id}")
     async def get_creator(creator_id: str):
@@ -632,13 +744,24 @@ def make_v3_router(db):
     # BUSINESS CASES (the central primitive)
     # ------------------------------------------------------------------------
     @router.get("/business-cases")
-    async def list_business_cases(stage: Optional[str] = None, engagement: Optional[str] = None):
-        query = {}
+    async def list_business_cases(
+        stage: Optional[str] = None,
+        engagement: Optional[str] = None,
+        rm_id: Optional[str] = None,
+        x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
+        x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
+    ):
+        query: Dict[str, Any] = {}
         if stage:
             query["stage"] = stage
         if engagement:
             query["engagement_track"] = engagement
-        return await db.v3_business_cases.find(query, {"_id": 0}).to_list(500)
+        if x_admin_role == "relationship_manager" and x_admin_id:
+            extracted_rm_id = x_admin_id[6:] if x_admin_id.startswith("admin-") else x_admin_id
+            query["rm_id"] = extracted_rm_id
+        elif rm_id:
+            query["rm_id"] = rm_id
+        return await db.v3_business_cases.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
 
     @router.get("/business-cases/{bc_id}")
     async def get_business_case(bc_id: str):
@@ -3426,6 +3549,87 @@ Produce the opportunity card JSON.
         )
         return await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
 
+    # ------------------------------------------------------------------------
+    # PAGE-LEVEL COLLECTION ENDPOINTS
+    # ------------------------------------------------------------------------
+    @router.get("/tasks")
+    async def list_tasks(brand_id: Optional[str] = None, creator_id: Optional[str] = None, rm_id: Optional[str] = None):
+        query: Dict[str, Any] = {}
+        if brand_id:
+            query["brand_id"] = brand_id
+        if creator_id:
+            query["creator_id"] = creator_id
+        if rm_id:
+            query["rm_id"] = rm_id
+        return await db.v3_tasks.find(query, {"_id": 0}).to_list(1000)
+
+    @router.get("/tasks/{task_id}")
+    async def get_task(task_id: str):
+        task = await db.v3_tasks.find_one({"id": task_id}, {"_id": 0})
+        if not task:
+            raise HTTPException(404, "Task not found")
+        return task
+
+    @router.get("/reports")
+    async def list_reports(business_case_id: Optional[str] = None, brand_id: Optional[str] = None):
+        query: Dict[str, Any] = {}
+        if business_case_id:
+            query["business_case_id"] = business_case_id
+        if brand_id:
+            query["brand_id"] = brand_id
+        return await db.v3_reports.find(query, {"_id": 0}).to_list(1000)
+
+    @router.get("/reports/{report_id}")
+    async def get_report(report_id: str):
+        report = await db.v3_reports.find_one({"id": report_id}, {"_id": 0})
+        if not report:
+            raise HTTPException(404, "Report not found")
+        return report
+
+    @router.get("/insights")
+    async def list_insights(brand_id: Optional[str] = None, creator_id: Optional[str] = None):
+        query: Dict[str, Any] = {}
+        if brand_id:
+            query["brand_id"] = brand_id
+        if creator_id:
+            query["creator_id"] = creator_id
+        return await db.v3_insights.find(query, {"_id": 0}).to_list(1000)
+
+    @router.get("/fees")
+    async def list_fees(business_case_id: Optional[str] = None, brand_id: Optional[str] = None, creator_id: Optional[str] = None):
+        query: Dict[str, Any] = {}
+        if business_case_id:
+            query["business_case_id"] = business_case_id
+        if brand_id:
+            query["brand_id"] = brand_id
+        if creator_id:
+            query["creator_id"] = creator_id
+        return await db.v3_fees.find(query, {"_id": 0}).to_list(1000)
+
+    @router.get("/fees/{fee_id}")
+    async def get_fee(fee_id: str):
+        fee = await db.v3_fees.find_one({"id": fee_id}, {"_id": 0})
+        if not fee:
+            raise HTTPException(404, "Fee not found")
+        return fee
+
+    @router.get("/wallet")
+    async def get_wallet():
+        return await db.v3_wallet.find({}, {"_id": 0}).to_list(1000)
+
+    @router.get("/relationship-managers")
+    async def list_relationship_managers():
+        db_rms = await db.v3_rms.find({}, {"_id": 0}).to_list(500)
+        return sorted(db_rms, key=lambda r: r.get("name", "")) if db_rms else []
+
+    # ------------------------------------------------------------------------
+    # ADMIN USER MANAGEMENT
+    # ------------------------------------------------------------------------
+    @router.get("/admin/users")
+    async def list_admin_users():
+        users = await db.v3_admin_users.find({}, {"_id": 0}).to_list(500)
+        return [{k: v for k, v in u.items() if k != "password"} for u in users]
+
     @router.post("/admin/reset-demo")
     async def reset_demo():
         seed = get_v3_seed_data()
@@ -3449,19 +3653,92 @@ Produce the opportunity card JSON.
     # ------------------------------------------------------------------------
     @router.get("/metrics/admin-overview")
     async def admin_overview():
-        cases = await db.v3_business_cases.find({}, {"_id": 0}).to_list(500)
-        by_stage = {"connect": 0, "frame": 0, "plan": 0, "deliver": 0, "closed": 0}
-        for c in cases:
-            by_stage[c["stage"]] = by_stage.get(c["stage"], 0) + 1
+        cases = await db.v3_business_cases.find({}, {"_id": 0}).to_list(1000)
+        brands = await db.v3_brands.find({}, {"_id": 0}).to_list(1000)
+        creators = await db.v3_creators.find({}, {"_id": 0}).to_list(1000)
+        rms = await db.v3_rms.find({}, {"_id": 0}).to_list(500)
+        contracts = await db.v3_contracts.find({}, {"_id": 0}).to_list(1000)
+        reports = await db.v3_reports.find({}, {"_id": 0}).to_list(1000)
+        final_reports = await db.v3_final_reports.find({}, {"_id": 0}).to_list(1000)
+        tasks = await db.v3_tasks.find({}, {"_id": 0}).to_list(1000)
+        fees = await db.v3_fees.find({}, {"_id": 0}).to_list(1000)
+        wallet = await db.v3_wallet.find({}, {"_id": 0}).to_list(1000)
+        meetings = await db.v3_meetings.find({}, {"_id": 0}).to_list(1000)
+        insights = await db.v3_insights.find({}, {"_id": 0}).to_list(1000)
+        templates = await db.v3_templates.find({}, {"_id": 0}).to_list(1000)
+
+        by_stage: Dict[str, Dict[str, Any]] = {
+            "connect": {"count": 0, "value": 0},
+            "frame": {"count": 0, "value": 0},
+            "plan": {"count": 0, "value": 0},
+            "deliver": {"count": 0, "value": 0},
+            "closed": {"count": 0, "value": 0},
+        }
+        for case in cases:
+            stage = case.get("stage") or "connect"
+            by_stage.setdefault(stage, {"count": 0, "value": 0})
+            by_stage[stage]["count"] += 1
+            by_stage[stage]["value"] += case.get("estimated_value") or 0
+
         paid = [c for c in cases if c.get("engagement_track") == "paid"]
         grants = [c for c in cases if c.get("engagement_track") == "grant"]
+
+        needs_attention: List[Dict[str, Any]] = []
+        for brand in brands:
+            if not brand.get("rm_id") and not brand.get("relationship_manager_name"):
+                needs_attention.append({
+                    "id": brand.get("id"),
+                    "type": "relationship_manager_missing",
+                    "title": brand.get("company") or brand.get("name"),
+                    "message": "Brand has no relationship manager assigned.",
+                })
+        for case in cases:
+            if case.get("stage") in ["frame", "plan", "deliver"] and not case.get("frame", {}).get("alignment_snapshot_status"):
+                needs_attention.append({
+                    "id": case.get("id"),
+                    "type": "alignment_snapshot_missing",
+                    "title": case.get("title"),
+                    "message": "Alignment Snapshot is missing or not approved.",
+                })
+            if case.get("stage") in ["deliver", "closed"] and not case.get("plan", {}).get("contract_signed_at"):
+                needs_attention.append({
+                    "id": case.get("id"),
+                    "type": "contract_missing",
+                    "title": case.get("title"),
+                    "message": "Contract is missing or not signed.",
+                })
+
+        latest_activity = [
+            *[{"type": "brand", "title": b.get("company") or b.get("name"), "created_at": b.get("created_at") or b.get("imported_at") or ""} for b in brands],
+            *[{"type": "business_case", "title": c.get("title"), "created_at": c.get("created_at") or c.get("updated_at") or ""} for c in cases],
+            *[{"type": "creator", "title": c.get("name") or c.get("creator_name"), "created_at": c.get("created_at") or c.get("imported_at") or ""} for c in creators],
+        ]
+        latest_activity = sorted(latest_activity, key=lambda x: x.get("created_at") or "", reverse=True)[:10]
+
         return {
+            "brands_total": len(brands),
+            "creators_total": len(creators),
+            "relationship_managers_total": len(rms),
             "business_cases_total": len(cases),
+            "projects_total": len(cases),
+            "contracts_total": len(contracts),
+            "reports_total": len(reports) + len(final_reports),
+            "tasks_total": len(tasks),
+            "fees_total": len(fees),
+            "wallet_entries_total": len(wallet),
+            "meetings_total": len(meetings),
+            "insights_total": len(insights),
+            "templates_total": len(templates),
             "by_stage": by_stage,
             "paid_total_value": sum(c.get("estimated_value", 0) for c in paid),
             "grant_total_value": sum(c.get("estimated_value", 0) for c in grants),
             "paid_count": len(paid),
             "grant_count": len(grants),
+            "estimated_pipeline_value": sum(c.get("estimated_value", 0) for c in cases),
+            "top_brands": brands[:8],
+            "top_creators": creators[:8],
+            "needs_attention": needs_attention[:10],
+            "latest_activity": latest_activity,
         }
 
     return router

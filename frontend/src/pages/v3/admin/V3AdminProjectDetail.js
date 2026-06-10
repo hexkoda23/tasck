@@ -25,7 +25,7 @@ const normaliseAlignmentSnapshot = (snapshot, project) => ({
   scopeFlags: snapshot.scopeFlags || snapshot.scope_flags || [],
   sections: snapshot.sections || [],
   meta: snapshot.meta || 'AI-generated from connector phase data | Pending admin review',
-  title: snapshot.title || `"${project.title}" - Alignment Snapshot`,
+  title: snapshot.title || `"${project.title}": Alignment Snapshot`,
 });
 
 const buildCreatorMatches = (project, brand, alignmentSnapshot) => {
@@ -56,7 +56,7 @@ const buildCreatorMatches = (project, brand, alignmentSnapshot) => {
         `${creator.genre} gives the brand a credible cultural translation route, not a generic endorsement.`,
         `Reliability ${creator.reliability || '8.0'}/10, on-time rate ${creator.onTimeRate || 90}%, and rate card ${creator.rateCard || 'to confirm'} support planning confidence.`,
       ],
-      risks: creator.reliability < 8 ? ['Requires tighter manager follow-up and delivery milestones.'] : [],
+      risks: creator.reliability < 8 ? ['Requires tighter manager follow-up and deliverable check-ins.'] : [],
     };
   }).sort((a, b) => b.score - a.score);
 
@@ -107,7 +107,7 @@ const buildStrategySnapshot = (project, brand, creator, alignmentSnapshot) => {
       approved: false,
       content: {
         brandHeader: `${brand?.company?.split(' ')[0]?.toUpperCase() || 'BRAND'} x ${creatorName.toUpperCase()} x TASCK`,
-        title: `"${project.title}" - Strategy Snapshot v1`,
+        title: `"${project.title}": Strategy Snapshot v1`,
         meta: 'AI-generated from Alignment Snapshot, creator fit, and project requirements | Admin review required',
         concept: `${project.title} becomes a creator-led campaign authored with ${creatorName}. The strategy keeps ${brand?.company || 'the brand'} as the strategic owner while using ${creatorName}'s cultural authority to translate the approved Alignment Snapshot into content that can travel across ${channels.join(', ')}.\n\nThe campaign should lead with ${intelligence.key_marketing_focus} and convert it into a practical creative system: hero content, social cutdowns, audience participation, and a clear brand approval path before launch.`,
         deliverables: [
@@ -122,11 +122,11 @@ const buildStrategySnapshot = (project, brand, creator, alignmentSnapshot) => {
           { line: 'Activation logistics and contingency', amount: Math.round(project.estimatedValue * 0.07), pct: 7 },
           { line: 'TTA management fee', amount: Math.round(project.estimatedValue * 0.1), pct: 10 },
         ],
-        milestones: [
-          { milestone: 'Brand approves Strategy Snapshot', date: 'Within 3 business days' },
-          { milestone: 'Contracts issued to brand and creator', date: 'Within 5 business days' },
-          { milestone: 'Budget and timeline planning opens', date: 'Delivery phase' },
-          { milestone: 'Campaign launch window confirmed', date: 'Post-contract' },
+        deliveryPlan: [
+          { deliverableStep: 'Brand approves Strategy Snapshot', date: 'Within 3 business days' },
+          { deliverableStep: 'Contracts issued to brand and creator', date: 'Within 5 business days' },
+          { deliverableStep: 'Budget and timeline planning opens', date: 'Delivery phase' },
+          { deliverableStep: 'Campaign launch window confirmed', date: 'Post-contract' },
         ],
         successMetrics: kpis.length ? kpis.map((item) => ({ kpi: item.kpi, metric: item.kpi, target: item.target })) : [
           { kpi: 'Reach', metric: 'Unique impressions', target: 'Confirm with brand' },
@@ -241,7 +241,7 @@ const V3AdminProjectDetail = () => {
         { label: 'Project invoice paid', status: 'pending' },
       ];
       case 'deliver': return [
-        { label: 'All milestones complete', status: deliverables.every(d => d.status === 'approved') ? 'done' : 'pending' },
+        { label: 'All deliverable steps complete', status: deliverables.every(d => d.status === 'approved') ? 'done' : 'pending' },
         { label: 'All deliverables approved', status: deliverables.every(d => d.status === 'approved') ? 'done' : 'pending' },
         { label: 'All payments released', status: deliverables.every(d => d.paymentReleased) ? 'done' : 'pending' },
         { label: 'Final Report generated', status: finalReport ? 'done' : 'pending' },
@@ -499,9 +499,9 @@ const V3AdminProjectDetail = () => {
                           <table><thead><tr><th>Line</th><th>Amount</th><th>%</th></tr></thead>
                             <tbody>{v.content.budget.map((b, j) => <tr key={j}><td>{b.line}</td><td style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(b.amount)}</td><td>{b.pct}%</td></tr>)}</tbody>
                           </table>
-                          <h2>Timeline & milestones</h2>
-                          <table><thead><tr><th>Milestone</th><th>Date</th></tr></thead>
-                            <tbody>{v.content.milestones.map((m, j) => <tr key={j}><td>{m.milestone}</td><td style={{ fontFamily: "'JetBrains Mono', monospace" }}>{m.date}</td></tr>)}</tbody>
+                          <h2>Timeline and deliverables</h2>
+                          <table><thead><tr><th>Deliverable step</th><th>Date</th></tr></thead>
+                            <tbody>{v.content.deliveryPlan.map((m, j) => <tr key={j}><td>{m.deliverableStep}</td><td style={{ fontFamily: "'JetBrains Mono', monospace" }}>{m.date}</td></tr>)}</tbody>
                           </table>
                           <h2>Success metrics</h2>
                           <table><thead><tr><th>Brand KPI</th><th>Campaign metric</th><th>Target</th></tr></thead>

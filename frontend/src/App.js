@@ -47,6 +47,13 @@ import V3AdminScopeChange from './pages/v3/admin/V3AdminScopeChange';
 import V3AdminContractPreview from './pages/v3/admin/V3AdminContractPreview';
 import V3AdminBusinessCases from './pages/v3/admin/V3AdminBusinessCases';
 import V3AdminBusinessCaseDetail from './pages/v3/admin/V3AdminBusinessCaseDetail';
+import {
+  V3AdminMeetingsOverview,
+  V3AdminQualificationCalls,
+  V3AdminQualificationCallDetail,
+  V3AdminConnectorCalls,
+  V3AdminConnectorCallDetail,
+} from './pages/v3/admin/V3AdminMeetings';
 import V3BrandInreach from './pages/v3/V3BrandInreach';
 
 // V3 Brand Portal Pages
@@ -336,6 +343,11 @@ function AppRoutes() {
         <Route path="crm" element={<V3AdminCRM />} />
         <Route path="crm/opportunities" element={<V3AdminOpportunityScanner />} />
         <Route path="crm/:id" element={<V3AdminBrandDetail />} />
+        <Route path="meetings" element={<V3AdminMeetingsOverview />} />
+        <Route path="meetings/qualification" element={<V3AdminQualificationCalls />} />
+        <Route path="meetings/qualification/:meetingId" element={<V3AdminQualificationCallDetail />} />
+        <Route path="meetings/connector" element={<V3AdminConnectorCalls />} />
+        <Route path="meetings/connector/:meetingId" element={<V3AdminConnectorCallDetail />} />
         <Route path="business-cases" element={<V3AdminBusinessCases />} />
         <Route path="business-cases/:id" element={<V3AdminBusinessCaseDetail />} />
         <Route path="creators" element={<V3AdminCreators />} />

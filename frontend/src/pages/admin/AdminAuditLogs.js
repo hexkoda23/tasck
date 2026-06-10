@@ -4,12 +4,12 @@ import { Activity, Filter, Search, User, FileText, DollarSign, Shield, LogIn } f
 
 const auditLogs = [
   { id: 1, action: 'user_login', user: 'Tunde Balogun', role: 'Staff', details: 'Logged in from Lagos, Nigeria', ip: '102.89.xx.xx', timestamp: '2026-03-02 10:42:15' },
-  { id: 2, action: 'deal_created', user: 'Tunde Balogun', role: 'Staff', details: 'Created deal TK-2026-0052 - Star Lager Brand Partnership', ip: '102.89.xx.xx', timestamp: '2026-03-02 10:38:22' },
+  { id: 2, action: 'deal_created', user: 'Tunde Balogun', role: 'Staff', details: 'Created deal TK-2026-0052: Star Lager Brand Partnership', ip: '102.89.xx.xx', timestamp: '2026-03-02 10:38:22' },
   { id: 3, action: 'contract_signed', user: 'Adenike Ogunlesi', role: 'Brand', details: 'Signed contract CTR-2026-0042 for Guinness x Burna Boy', ip: '105.112.xx.xx', timestamp: '2026-03-02 10:15:00' },
   { id: 4, action: 'payment_released', user: 'System', role: 'System', details: 'Auto-released ₦187,500 to Kelechi Amadi-Obi for task completion', ip: 'System', timestamp: '2026-03-02 09:30:00' },
-  { id: 5, action: 'user_verified', user: 'Admin', role: 'Admin', details: 'Verified user Ibrahim Hassan - BVN confirmed', ip: '102.89.xx.xx', timestamp: '2026-03-02 09:15:00' },
+  { id: 5, action: 'user_verified', user: 'Admin', role: 'Admin', details: 'Verified user Ibrahim Hassan. BVN confirmed', ip: '102.89.xx.xx', timestamp: '2026-03-02 09:15:00' },
   { id: 6, action: 'deal_status_changed', user: 'Amaka Obi', role: 'Staff', details: 'Changed MTN deal status from Scoping to Awaiting Terms', ip: '102.89.xx.xx', timestamp: '2026-03-02 08:45:00' },
-  { id: 7, action: 'project_created', user: 'Mavin Records', role: 'Super Creative', details: 'Created project PRJ-2026-0024 - Artist Development Q2', ip: '105.112.xx.xx', timestamp: '2026-03-01 18:30:00' },
+  { id: 7, action: 'project_created', user: 'Mavin Records', role: 'Super Creative', details: 'Created project PRJ-2026-0024: Artist Development Q2', ip: '105.112.xx.xx', timestamp: '2026-03-01 18:30:00' },
   { id: 8, action: 'opportunity_filled', user: 'System', role: 'System', details: 'Opportunity "Lead Photographer" filled by Kelechi Amadi-Obi', ip: 'System', timestamp: '2026-03-01 16:20:00' },
   { id: 9, action: 'task_submitted', user: 'Kelechi Amadi-Obi', role: 'Creative', details: 'Submitted deliverables for Cadbury Social Campaign Set 3', ip: '102.89.xx.xx', timestamp: '2026-03-01 14:00:00' },
   { id: 10, action: 'wallet_funded', user: 'Mavin Records', role: 'Super Creative', details: 'Funded wallet with ₦5,000,000 via bank transfer', ip: '105.112.xx.xx', timestamp: '2026-03-01 11:00:00' },

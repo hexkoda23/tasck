@@ -32,6 +32,21 @@ const healthBadge = (h) => {
   return map[h] || map.new;
 };
 
+const brandCreatedAtTs = (value) => {
+  const ts = Date.parse(value || '');
+  return Number.isNaN(ts) ? 0 : ts;
+};
+
+const sortBrandsNewestFirst = (brandList = []) => {
+  return [...brandList].sort((a, b) => {
+    const newest = brandCreatedAtTs(b.created_at || b.createdAt) - brandCreatedAtTs(a.created_at || a.createdAt);
+    if (newest !== 0) {
+      return newest;
+    }
+    return (a.company || '').localeCompare(b.company || '');
+  });
+};
+
 const demoOverviewFromRows = (rows) => {
   const base = buildMockAdminOverview();
   const byStage = rows.reduce((acc, row) => ({ ...acc, [row.stage]: (acc[row.stage] || 0) + 1 }), {});
@@ -103,7 +118,7 @@ const demoBusinessOpportunities = [
     title: 'Campus Share Moments',
     pain_point: 'Public social listening shows students are sharing “Detty December on campus” content, but beverage brands are not owning the moment with a structured creator-led mechanic.',
     source: 'AI web discovery: culture calendars, student creator posts, retail activation mentions',
-    contact: 'Folake Adeniran - folake.adeniran@coca-cola.com',
+    contact: 'Folake Adeniran, folake.adeniran@coca-cola.com',
     estimated_value: 85000000,
     fit_score: 94,
     suggested_angle: 'Generate an Alignment Snapshot around campus storytelling, personalized sharing moments, and retail-to-social UGC.',
@@ -116,7 +131,7 @@ const demoBusinessOpportunities = [
     title: 'Data For Creators Push',
     pain_point: 'Creator economy conversations are highlighting high data spend as a barrier to consistent posting, especially among student creators and micro-influencers.',
     source: 'AI web discovery: creator forums, X posts, student tech blogs, telco campaign mentions',
-    contact: 'Kemi Adebayo - kemi.adebayo@mtn.com',
+    contact: 'Kemi Adebayo, kemi.adebayo@mtn.com',
     estimated_value: 120000000,
     fit_score: 91,
     suggested_angle: 'Position MTN as the network powering the next wave of Nigerian creators with a creator challenge and data-led conversion KPI.',
@@ -129,7 +144,7 @@ const demoBusinessOpportunities = [
     title: 'Nightlife Reboot',
     pain_point: 'Lagos nightlife content is fragmenting across TikTok, Instagram, and event pages; beer brands need cleaner cultural ownership and safer event-to-content reporting.',
     source: 'AI web discovery: nightlife event listings, creator content, venue pages, entertainment blogs',
-    contact: 'Funke Adebiyi - funke.adebiyi@heineken.com',
+    contact: 'Funke Adebiyi, funke.adebiyi@heineken.com',
     estimated_value: 98000000,
     fit_score: 88,
     suggested_angle: 'Build a Star-led nightlife content system with approved venues, creators, responsible-drinking controls, and measurable event attendance lift.',
@@ -142,7 +157,7 @@ const demoBusinessOpportunities = [
     title: 'Creator Finance Trust Gap',
     pain_point: 'Young creators are discussing inconsistent payment cycles and limited access to structured financial products for production, tax, and savings.',
     source: 'AI web discovery: creator newsletters, finance forums, LinkedIn posts, SME program pages',
-    contact: 'Obi Nwosu - obi.nwosu@accessbankplc.com',
+    contact: 'Obi Nwosu, obi.nwosu@accessbankplc.com',
     estimated_value: 64000000,
     fit_score: 83,
     suggested_angle: 'Create an Alignment Snapshot for a creator-finance education campaign with measurable account/product adoption signals.',
@@ -199,9 +214,17 @@ const V3AdminBusinessCases = () => {
     }
     const brandList = Array.isArray(b) ? b : [];
     const creatorList = Array.isArray(c) ? c : [];
-    setBrands(brandList);
+    const sortedBrands = sortBrandsNewestFirst(brandList);
+    setBrands(sortedBrands);
     setCreators(creatorList);
-    setForm((f) => ({ ...f, brand_id: brandList[0]?.id || '', creator_id: '' }));
+    const defaultBrand = sortedBrands[0];
+    setForm((f) => ({
+      ...f,
+      brand_id: defaultBrand?.id || '',
+      creator_id: '',
+      rm_id: defaultBrand?.rm_id || defaultBrand?.rmId || defaultBrand?.relationship_manager?.id || 'rm-temi',
+      engagement_track: defaultBrand?.engagement_track_default || defaultBrand?.engagementTrack || 'paid',
+    }));
     setNewOpen(true);
   };
 
@@ -284,13 +307,15 @@ const V3AdminBusinessCases = () => {
     setBusy(true);
     try {
       if (opportunity.source_type === 'scanner' && opportunity.brand_id) {
+        const brand = brands.find((b) => b.id === opportunity.brand_id) || fallbackBrands.find((b) => b.id === opportunity.brand_id);
+        const brandRmId = brand?.rm_id || brand?.rmId || brand?.relationship_manager?.id || 'rm-temi';
         const created = await v3CreateBusinessCase({
           brand_id: opportunity.brand_id,
           creator_id: null,
           title: opportunity.title,
           engagement_track: 'paid',
           estimated_value: Number(opportunity.estimated_value) || 75000000,
-          rm_id: 'rm-temi',
+          rm_id: brandRmId,
           connect_status: 'in_discovery',
           stated_intent: opportunity.pain_point,
           source: opportunity.source || 'SerpAPI opportunity scanner',
@@ -725,7 +750,12 @@ const V3AdminBusinessCases = () => {
             value={form.brand_id}
             onChange={(e) => {
               const brand = brands.find((b) => b.id === e.target.value);
-              setForm({ ...form, brand_id: e.target.value, engagement_track: brand?.engagement_track_default || 'paid' });
+              setForm({
+                ...form,
+                brand_id: e.target.value,
+                rm_id: brand?.rm_id || brand?.rmId || brand?.relationship_manager?.id || 'rm-temi',
+                engagement_track: brand?.engagement_track_default || brand?.engagementTrack || 'paid',
+              });
             }}
             className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
             data-testid="new-bc-brand"

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { v3Projects, v3AlignmentSnapshots, v3CreativeSnapshots, v3BriefResponses, getBrand, getCreator, getRM } from '../../../lib/v3data';
+import { v3Projects, v3AlignmentSnapshots, v3CreativeSnapshots, v3BriefResponses, getBrand, getCreator, getRM, formatNairaV3 } from '../../../lib/v3data';
 import { ChevronLeft, Sparkles, Plus, Lightbulb, MessageSquare, Target, Palette, Users, CheckCircle } from 'lucide-react';
 
 const V3AdminBrainstorm = () => {
@@ -35,6 +35,35 @@ const V3AdminBrainstorm = () => {
     { name: 'Tems', fit: 94, reason: 'Grammy-winner. Strong female audience. Nigerian roots + global reach. Ideal for "Share a Coke" emotional storytelling.', status: 'Recommended' },
     { name: 'Ayra Starr', fit: 88, reason: 'Gen-Z female audience. Nightlife/fashion crossover. Could anchor physical activation. Lower rate.', status: 'Alternate' },
     { name: 'Rema', fit: 93, reason: 'Pan-African resonance. Documentary-adjacent aesthetic. But better suited for Guinness-type repositioning.', status: 'Not recommended for this brief' },
+  ];
+
+  const contentPlan = [
+    { item: 'Hero creator film', format: '60 to 90 seconds', owner: 'Creative', status: 'Planned' },
+    { item: 'Social cutdowns', format: '6 vertical edits', owner: 'TASCK production', status: 'Planned' },
+    { item: 'Behind the scenes assets', format: '10 stills and clips', owner: 'Production team', status: 'Planned' },
+    { item: 'Posting guide', format: 'Captions, CTA, tags, timing', owner: 'TASCK strategy', status: 'Planned' },
+  ];
+
+  const budgetPlan = [
+    { line: 'Creator fee', amount: Math.round(project.estimatedValue * 0.28), owner: 'Negotiated by TASCK' },
+    { line: 'Production budget', amount: Math.round(project.estimatedValue * 0.22), owner: 'TASCK production' },
+    { line: 'Paid media and amplification', amount: Math.round(project.estimatedValue * 0.18), owner: 'Brand and TASCK' },
+    { line: 'Strategy Development Fee', amount: Math.max(4000000, Math.round(project.estimatedValue * 0.035)), owner: 'Brand payable before Strategy Snapshot' },
+  ];
+
+  const revenuePlan = {
+    brandBudget: project.estimatedValue,
+    creatorFee: budgetPlan[0].amount,
+    productionBudget: budgetPlan[1].amount,
+    strategyDevelopmentFee: budgetPlan[3].amount,
+    tasckManagementFee: Math.round(project.estimatedValue * 0.12),
+  };
+
+  const contractPlan = [
+    'Brand service agreement includes scope, approvals, payment schedule, usage rights, and reporting obligations.',
+    'Independent creator agreement includes creator deliverables, fee, usage, exclusivity, cancellation, and payment triggers.',
+    'Budget schedule carries creator fee, production spend, paid media, Strategy Development Fee, and TASCK management fee.',
+    'Deliverables schedule feeds Delivery and the Final Campaign Report.',
   ];
 
   return (
@@ -83,6 +112,67 @@ const V3AdminBrainstorm = () => {
                 className="flex-1 px-3 py-2.5 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A] transition-colors" data-testid="brainstorm-note-input" />
               <button className="v3-btn-primary" data-testid="brainstorm-add-note"><Plus className="w-3.5 h-3.5" /> Add</button>
               <button className="v3-btn-secondary"><Sparkles className="w-3.5 h-3.5" /> AI Suggest</button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="v3-card p-5">
+              <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-4">Content Plan</h3>
+              <div className="space-y-3">
+                {contentPlan.map(item => (
+                  <div key={item.item} className="p-3 rounded-lg bg-[#FAFAF7]">
+                    <div className="flex items-center justify-between gap-3 mb-1">
+                      <p className="text-[13px] font-medium text-[#1A1A1A]">{item.item}</p>
+                      <span className="text-[10px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">{item.status}</span>
+                    </div>
+                    <p className="text-[11px] text-[#8A8A8A]">{item.format} · {item.owner}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="v3-card p-5">
+              <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-4">Budget Plan</h3>
+              <div className="space-y-3">
+                {budgetPlan.map(item => (
+                  <div key={item.line} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-[#FAFAF7]">
+                    <div>
+                      <p className="text-[13px] font-medium text-[#1A1A1A]">{item.line}</p>
+                      <p className="text-[11px] text-[#8A8A8A]">{item.owner}</p>
+                    </div>
+                    <p className="text-[12px] text-[#1F4A3A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(item.amount)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="v3-card p-5">
+              <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-4">Revenue Plan</h3>
+              {[
+                ['Brand budget', revenuePlan.brandBudget],
+                ['Creator fee', revenuePlan.creatorFee],
+                ['Production budget', revenuePlan.productionBudget],
+                ['Strategy Development Fee', revenuePlan.strategyDevelopmentFee],
+                ['TASCK management fee', revenuePlan.tasckManagementFee],
+                ['Projected TASCK revenue', revenuePlan.strategyDevelopmentFee + revenuePlan.tasckManagementFee],
+              ].map(([label, amount]) => (
+                <div key={label} className="flex justify-between border-b border-[#E8E4DB] py-2 text-[12px] last:border-0">
+                  <span>{label}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(amount)}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="v3-card p-5">
+              <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-4">Contract Plan</h3>
+              <div className="space-y-2">
+                {contractPlan.map(item => (
+                  <div key={item} className="flex gap-2 text-[12px] text-[#5C5C5C] leading-relaxed">
+                    <CheckCircle className="w-3.5 h-3.5 text-[#1F4A3A] mt-0.5 flex-shrink-0" />
+                    <p>{item}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
