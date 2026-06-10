@@ -6,6 +6,20 @@ Premium product demo for "TASCK OS" — a creator campaign management platform f
 - **V2 (Next)**: AI-native command center — COMPLETE
 - **V3 (TASCK v3.2)**: Editorial AI-native platform with Business Case primitive + 4-stage pipeline + live backend — **NOW INCLUDES FULL TTA-USER WORKFLOW** (15 May 2026)
 
+## Update — 11 Feb 2026 (P0 round 3: dedupe + Plan phase + Alignment + Notifications)
+- **Importer dedupe**: BC ID changed from `(brand, descriptor, stage, ridx)` → `(brand, descriptor)`. Duplicate framing rows for the same logical opportunity (CJID Openness Index ×4 source rows, Civic Engagement ×2, Pan-African Festival ×2) merge into one business case. Latest-stage wins via `stage_order = {connect:0, frame:1, plan:2, deliver:3, closed:4}`. All merged source rows preserved in `source_rows[]`. Project record's stage mirrors the BC stage advance.
+- Result: business_cases 16→11 (zero dupes), projects 29→24 (only the legitimately-named "IMF" appears twice across different creator folders, MI Abaga + 121 SELAH).
+- **Frontend `V3AdminBusinessCaseDetail.js`**:
+  - Guarded `bundle.contract.parties.join(' • ')` → safe for string/null.
+  - Removed call to undefined `buildMockAlignmentSnapshot`. New `buildAlignmentSnapshotFromBusinessCase()` builds an editable snapshot from real BC fields (purpose, business context, market landscape, strategic entry, direction, creator approach, expected outcomes, commercial context, why focus matters, engagement model, next steps).
+  - Plan phase no longer crashes and always shows:
+    - "Strategy Development Fee — what it covers" explainer card (4 bullets + separate-from-project-fees note + raw fee from workbook + display value + engagement track + term/duration).
+    - Editable "Brainstorming" textarea (creative approaches / creators / risks / open questions / budget / timeline).
+    - Editable "Strategy" 9-section template (Executive Snapshot / Strategic Foundation / Growth Plan / Creator Strategy / Execution Roadmap / Commercial Overview / Tracking Plan / Risks & Mitigation / Next Steps).
+- **`V3NotificationCenter.js`**: Replaced the demo-data array (Dangote / Coca-Cola × Tems / Guinness × Rema / MTN / Star Lager / Rema / GTBank) with a live fetch from `/api/v3/metrics/admin-overview`. Real `needs_attention` + `latest_activity` items shown. Fixed invalid Tailwind classes `w-4.5/h-4.5` → explicit `size={18}` for Bell and `h-9 w-9` button + `min-w-[16px] h-4` badge.
+- **Verified API**: brands=8 (CRM-Partners only), business_cases=11 (no dupes), projects=24 (no logical dupes), tasks=10, fees=11, wallet=11, reports=5, insights=6, RMs=7, creators=33. 16/16 importer pytests pass.
+
+
 ## Update — 11 Feb 2026 (P0 round 2: clean BC/Pipeline titles & value formatting)
 - **Brand inference for `Framing - Partners` rows**: added explicit `LEAD_TO_ORG` map (Hamsudeen→NASCO, Zara→Coca Cola, Christiana Longe→CJID, Pedro Abramovay→Open Society Foundation, Louise Ehlers→OSF, Louis Ehlers→Open Society Foundations, Eunice Baker→Open Society Foundation, Ayisha Osori→OSIWA, Fiona Mbambo→Open Society Foundation, Akintunde Babatunde→CJID, Betty→Pernod Ricard - Chivas, …) plus context-keyword fallback (cocacola, nasco, chivas, cjid, osiwa, all smiles, etc.). Unmatched rows still get an `unlinked_brand_name`.
 - **Clean BC/project titles**: `_derive_project_descriptor` produces titles like "Northern Nigeria Growth Strategy", "Social Media Growth Plan", "Cornflakes Influencer Sales Campaign", "Openness Index Youth Conversation", "Regional Creative Network", "Pan-African Cultural Festival", "Art as Agency Fellowship", "Cross-Regional Creative Exchange", "Civic Creativity Initiative", "Relationship Opportunity". Final title format: `Organisation — Descriptor`. No more `Betty`, `Hamsudeen`, `Christiana` titles.

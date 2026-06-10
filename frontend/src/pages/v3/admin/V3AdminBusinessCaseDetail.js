@@ -570,6 +570,9 @@ const V3AdminBusinessCaseDetail = () => {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState(null);
   const [creators, setCreators] = useState([]);
+  // Plan-phase editable drafts (session-scoped)
+  const [planBrainstormText, setPlanBrainstormText] = useState('');
+  const [planStrategyDraft, setPlanStrategyDraft] = useState({});
 
   const reload = () => v3GetBusinessCase(id)
     .then((next) => {
@@ -893,6 +896,48 @@ const V3AdminBusinessCaseDetail = () => {
     }
   };
 
+  // Build an Alignment Snapshot from real business-case data when the
+  // backend doesn't have a saved snapshot yet. Sections follow the
+  // Project Alignment Snapshot template.
+  const buildAlignmentSnapshotFromBusinessCase = (bc) => {
+    const frame = bc?.frame || {};
+    const plan = bc?.plan || {};
+    const sec = (heading, body) => ({ heading, type: 'prose', content: body && String(body).trim() ? String(body) : 'Not provided' });
+    const arr = (v) => (Array.isArray(v) && v.length ? v.join(', ') : 'Not provided');
+    const brandLabel = bc?.brand_name || bc?.unlinked_brand_name || 'Unlinked brand';
+    const id = `align-${bc?.id || Math.random().toString(36).slice(2, 9)}`;
+    return {
+      id,
+      status: 'draft',
+      title: `${brandLabel} — Alignment Snapshot`,
+      meta: {
+        brand: brandLabel,
+        relationship_manager: bc?.rm_name || 'Unassigned',
+        stage: bc?.stage_label || bc?.stage || '—',
+        engagement: bc?.engagement_track || 'paid',
+      },
+      sections: [
+        sec('Purpose of this note', `Confirm strategic alignment with ${brandLabel} on ${bc?.title || 'the proposed project'} ahead of moving into Plan.`),
+        sec('Business context', frame.project_context),
+        sec('User & market landscape', frame.success_factors),
+        sec('Strategic entry point', frame.framework),
+        sec('Strategic direction', frame.project_goal),
+        sec('Creator approach (non-binding)', arr(plan.creator_shortlist)),
+        sec('Expected outcomes', frame.success_factors),
+        sec('Commercial context (directional)', bc?.value_label || (bc?.value_amount ? `${bc.value_currency || ''} ${bc.value_amount}` : null)),
+        sec('Why focus matters', bc?.next_action),
+        sec('Engagement model', `${bc?.engagement_track === 'grant' ? 'Grant-funded engagement.' : 'Paid strategy engagement.'} Strategy Development Fee covers planning before full execution.`),
+        sec('Next steps', bc?.next_action),
+      ],
+      scope_flags: [],
+      brand_comments: [],
+      approved_at: null,
+      approved_by: null,
+      approved_by_party: null,
+      sent_to_brand_at: null,
+    };
+  };
+
   const generateAlignmentDraft = async () => {
     setBusy(true);
     try {
@@ -901,20 +946,7 @@ const V3AdminBusinessCaseDetail = () => {
         await reload();
         flash('AI Alignment Snapshot generated.');
       } catch (e) {
-        const snapshot = buildMockAlignmentSnapshot({
-          id: c.id,
-          brandId: c.brand_id,
-          creatorId: c.creator_id,
-          title: c.title,
-          stage: 'frame',
-          engagement: c.engagement_track === 'grant' ? 'grant' : 'retainer',
-          estimatedValue: c.estimated_value,
-          rmId: c.rm_id,
-          createdAt: c.created_at,
-          daysInStage: c.days_in_stage,
-          nextAction: c.next_action,
-          health: c.health,
-        });
+        const snapshot = buildAlignmentSnapshotFromBusinessCase(c);
         setBundle((prev) => ({
           ...prev,
           alignment_snapshot: snapshot,
@@ -929,7 +961,7 @@ const V3AdminBusinessCaseDetail = () => {
             },
           },
         }));
-        flash('Demo mode: AI Alignment Snapshot generated from connector data.');
+        flash('Alignment Snapshot drafted from business-case data. Edit and send when ready.');
       }
     } finally {
       setBusy(false);
@@ -1934,8 +1966,84 @@ const V3AdminBusinessCaseDetail = () => {
       {/* PLAN */}
       {tab === 'plan' && (
         <>
+          {/* Strategy Development Fee — always-on explainer card */}
+          <Section title="Strategy Development Fee — what it covers">
+            <div className="space-y-2 text-[12px] text-[#1A1A1A] leading-relaxed" data-testid="bc-plan-sdf-explainer">
+              <p>This fee covers the planning and strategy work that turns the Alignment Snapshot into a brand-ready Strategy Snapshot.</p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>TTA brainstorms creative approaches, creators, channels, risks, and budget assumptions.</li>
+                <li>TTA confirms creator interest, availability, and indicative fees with the shortlist.</li>
+                <li>TTA develops the Creative Strategy Document collaboratively with the brand.</li>
+                <li>TTA coordinates approval and contract execution if the strategy is aligned.</li>
+              </ul>
+              <p className="text-[#6E6657]">
+                Full agency / project fees are <strong>separate</strong> from this fee. The Strategy Development Fee is invoiced before the Strategy Snapshot is shared with the brand.
+              </p>
+              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[#E8E4DB]">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Raw fee from workbook</p>
+                  <p className="text-[12px]">{c?.deliver?.fee_raw || c?.value_raw || 'Not provided'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Display value</p>
+                  <p className="text-[12px]">{c?.value_label || (c?.value_amount ? `${c?.value_currency === 'USD' ? '$' : '₦'}${c.value_amount.toLocaleString()}` : 'Not provided')}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Engagement track</p>
+                  <p className="text-[12px] capitalize">{c?.engagement_track || 'paid'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Term / duration</p>
+                  <p className="text-[12px]">{c?.plan?.confirmed_scope || 'Not provided'}</p>
+                </div>
+              </div>
+            </div>
+          </Section>
+
+          {/* Editable Brainstorming — always available */}
+          <Section title="Brainstorming">
+            <div className="space-y-3" data-testid="bc-plan-brainstorm-editable">
+              <p className="text-[11px] text-[#8A8A8A]">
+                Capture creative approaches, creators, ideas, risks, open questions, brand constraints, and timeline/budget assumptions.
+              </p>
+              <textarea
+                value={planBrainstormText}
+                onChange={(e) => setPlanBrainstormText(e.target.value)}
+                rows={6}
+                placeholder={`Creative approaches:\nPossible creators:\nRisks:\nOpen questions:\nBudget assumptions:\nTimeline assumptions:`}
+                className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white"
+                data-testid="bc-plan-brainstorm-input"
+              />
+              <p className="text-[10px] text-[#8A8A8A]">Saved locally to this session. Connect a backend save when ready.</p>
+            </div>
+          </Section>
+
+          {/* Editable Strategy — always available */}
+          <Section title="Strategy">
+            <div className="space-y-3" data-testid="bc-plan-strategy-editable">
+              <p className="text-[11px] text-[#8A8A8A]">Draft the brand-facing strategy. Sections follow the Strategy Snapshot template.</p>
+              {[
+                'Executive Snapshot', 'Strategic Foundation', 'Growth Plan',
+                'Creator Strategy', 'Execution Roadmap', 'Commercial Overview',
+                'Tracking Plan', 'Risks & Mitigation', 'Next Steps',
+              ].map((heading) => (
+                <div key={heading} className="p-3 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
+                  <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">{heading}</label>
+                  <textarea
+                    value={planStrategyDraft[heading] || ''}
+                    onChange={(e) => setPlanStrategyDraft({ ...planStrategyDraft, [heading]: e.target.value })}
+                    rows={3}
+                    placeholder={`${heading}…`}
+                    className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white"
+                    data-testid={`bc-plan-strategy-${heading.replace(/\s+/g, '-').toLowerCase()}`}
+                  />
+                </div>
+              ))}
+            </div>
+          </Section>
+
           {!isGrant && bundle.invoices?.filter((i) => i.kind === 'strategy_development_fee').length > 0 && (
-            <Section title="Strategy Development Fee">
+            <Section title="Strategy Development Fee — tracked invoice">
               {bundle.invoices
                 .filter((i) => i.kind === 'strategy_development_fee')
                 .map((inv) => (
@@ -2197,7 +2305,7 @@ const V3AdminBusinessCaseDetail = () => {
               }
             >
               <p className="text-[12px] text-[#8A8A8A] mb-2">Template: {bundle.contract.template} • Status: {bundle.contract.status}</p>
-              <p className="text-[12px] mb-2">Parties: {bundle.contract.parties.join(' • ')}</p>
+              <p className="text-[12px] mb-2">Parties: {Array.isArray(bundle.contract.parties) ? bundle.contract.parties.join(' • ') : (bundle.contract.parties || 'Not provided')}</p>
               <p className="text-[12px] mb-3">Value: {formatNairaV3(bundle.contract.value)}</p>
               {bundle.contract.ai_risk_flags?.length > 0 && (
                 <div className="p-3 bg-[#F2EAD8] rounded">

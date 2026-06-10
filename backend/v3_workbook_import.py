@@ -554,7 +554,7 @@ class WorkbookImporter:
             display_company = brand_company or unlinked_brand_name or "Unlinked"
             title = f"{display_company} — {descriptor}" if display_company and descriptor else (descriptor or display_company or f"Business Case #{ridx}")
 
-            bc_id = _det_id("bc", brand_id or f"unlinked-{_slug(unlinked_brand_name or '')}", _slug(descriptor), canonical_stage, str(ridx))
+            bc_id = _det_id("bc", brand_id or f"unlinked-{_slug(unlinked_brand_name or '')}", _slug(descriptor))
             brand = self.brands.get(brand_id, {}) if brand_id else {}
             track = derived_track
 
@@ -565,6 +565,30 @@ class WorkbookImporter:
                 rm_id = self._upsert_rm(effective_lead)
             if not rm_id:
                 rm_id = brand.get("rm_id")
+
+            # MERGE: if the same canonical (org, descriptor) already exists,
+            # advance to the latest stage and append source-row metadata. The
+            # logical opportunity is one business case across stages, not five.
+            stage_order = {"connect": 0, "frame": 1, "plan": 2, "deliver": 3, "closed": 4}
+            existing = self.business_cases.get(bc_id)
+            if existing:
+                existing.setdefault("source_rows", [{
+                    "sheet": existing.get("source_sheet"),
+                    "row": existing.get("source_row_number"),
+                }])
+                existing["source_rows"].append({"sheet": self.SHEET_FRAMING, "row": ridx})
+                if stage_order.get(canonical_stage, -1) > stage_order.get(existing.get("stage", ""), -1):
+                    existing["stage"] = canonical_stage
+                    existing["stage_label"] = stage_raw or existing.get("stage_label", "")
+                    # Mirror the stage advance onto the linked brand-project.
+                    proj_id = _det_id("proj", "brand", bc_id)
+                    proj = self.projects.get(proj_id)
+                    if proj:
+                        proj["stage"] = canonical_stage
+                        proj["stage_label"] = stage_raw or proj.get("stage_label", "")
+                if not existing.get("next_action") and notes:
+                    existing["next_action"] = notes
+                continue
 
             self.business_cases[bc_id] = {
                 "id": bc_id,
