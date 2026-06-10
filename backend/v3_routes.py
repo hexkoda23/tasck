@@ -522,7 +522,28 @@ def make_v3_router(db):
         if not creator:
             raise HTTPException(404, "Creator not found")
         briefs = await db.v3_creative_briefs.find({"creator_id": creator_id}, {"_id": 0}).to_list(100)
-        return {"creator": creator, "briefs": briefs}
+        # Linked projects from imported CRM (Super Creatives - Framing) + creator-linked BC projects
+        creator_name_lower = (creator.get("name") or "").lower()
+        all_projects = await db.v3_projects.find({}, {"_id": 0}).to_list(1000)
+        projects = []
+        for p in all_projects:
+            if p.get("creator_id") == creator_id:
+                projects.append(p)
+                continue
+            folder = (p.get("folder") or p.get("creator_name") or "").lower()
+            if creator_name_lower and creator_name_lower in folder:
+                projects.append(p)
+        # Linked business cases (Super Creative as recommended creator)
+        bc_links = await db.v3_business_cases.find(
+            {"$or": [{"creator_id": creator_id}, {"recommended_creator_id": creator_id}]},
+            {"_id": 0}
+        ).to_list(200)
+        return {
+            "creator": creator,
+            "briefs": briefs,
+            "projects": projects,
+            "business_cases": bc_links,
+        }
 
     class CreatorCreate(BaseModel):
         name: str
@@ -3639,6 +3660,310 @@ Produce the opportunity card JSON.
     async def list_meetings():
         rows = await db.v3_meetings.find({}, {"_id": 0}).to_list(1000)
         return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
+
+    # ------------------------------------------------------------------------
+    # Meeting Detail + Workflow Routes
+    # ------------------------------------------------------------------------
+    RECOMMENDED_QUESTIONS_BY_TYPE: Dict[str, List[str]] = {
+        "qualification": [
+            "What is the main business objective behind this conversation?",
+            "Which audience segment are you trying to influence first?",
+            "What behaviour do you want the audience to change?",
+            "What is currently not working in your market, messaging, or growth approach?",
+            "What channels are currently most important to the brand?",
+            "What KPIs would make this project successful?",
+            "What timeline are you working toward?",
+            "Is there an approved budget range or strategy development budget?",
+            "Who is the final decision maker?",
+            "What would make this engagement a success for your team?",
+        ],
+        "connector": [
+            "What is the strongest opportunity TTA should focus on?",
+            "Which user segment should be prioritised and why?",
+            "What are the key audience insights already known?",
+            "What creator profile would be credible for this audience?",
+            "What budget or commercial constraints should shape the recommendation?",
+            "What risks would derail the project?",
+            "What must be clarified before the Alignment Snapshot is approved?",
+            "What are the next approval steps after alignment?",
+        ],
+        "plan": [
+            "Which strategic approach should lead: ambassador-led, creator-led, community-led, merchant-first, or hybrid?",
+            "Which creators should be shortlisted and why?",
+            "What selection criteria matter most?",
+            "What content formats and platforms should be prioritised?",
+            "What funnel or conversion behaviour should be measured?",
+            "What budget categories need approval?",
+            "What execution phases should be recommended?",
+            "What contracts or approvals are needed before launch?",
+        ],
+    }
+
+    async def _hydrate_meeting(meeting: Dict[str, Any]) -> Dict[str, Any]:
+        """Attach linked CRM context: brand, business case, RM, contact, project."""
+        out = {**meeting}
+        # Ensure suggested questions exist
+        if not out.get("suggested_questions"):
+            mtype = (out.get("meeting_type") or out.get("type") or "qualification").lower()
+            out["suggested_questions"] = RECOMMENDED_QUESTIONS_BY_TYPE.get(mtype, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"])
+
+        if out.get("brand_id"):
+            brand = await db.v3_brands.find_one({"id": out["brand_id"]}, {"_id": 0})
+            if brand:
+                out["brand"] = brand
+                if not out.get("entity_name"):
+                    out["entity_name"] = brand.get("company") or brand.get("name") or ""
+
+        if out.get("business_case_id"):
+            bc = await db.v3_business_cases.find_one({"id": out["business_case_id"]}, {"_id": 0})
+            if bc:
+                out["business_case"] = bc
+                if not out.get("business_case_title"):
+                    out["business_case_title"] = bc.get("title", "")
+
+        if out.get("rm_id"):
+            rm = await db.v3_rms.find_one({"id": out["rm_id"]}, {"_id": 0})
+            if rm:
+                out["rm"] = rm
+                if not out.get("rm_name"):
+                    out["rm_name"] = rm.get("name", "")
+
+        if out.get("contact_id"):
+            contact = await db.v3_contacts.find_one({"id": out["contact_id"]}, {"_id": 0})
+            if contact:
+                out["contact"] = contact
+
+        # Build candidate_snapshot for qualification calls from brand discovery context
+        if not out.get("candidate_snapshot") and out.get("brand"):
+            b = out["brand"]
+            snap = {}
+            for label, key in [
+                ("Company", "company"),
+                ("Website", "website"),
+                ("Industry", "industry"),
+                ("Primary contact", "primary_contact"),
+                ("Role", "role"),
+                ("Email", "email"),
+                ("Phone", "phone"),
+                ("LinkedIn", "linkedin"),
+                ("Key marketing focus", "key_marketing_focus"),
+                ("Primary target audience", "primary_target_audience"),
+                ("Current relationship status", "current_relationship_status"),
+                ("Desired relationship status", "desired_relationship_status"),
+                ("Likelihood to work with TTA", "likelihood_to_work_with_tta"),
+                ("Connect status", "connect_status"),
+                ("Next action", "next_action"),
+                ("Notes", "notes"),
+            ]:
+                val = b.get(key)
+                if isinstance(val, list):
+                    val = ", ".join(str(x) for x in val if x)
+                if val:
+                    snap[label] = val
+            if snap:
+                out["candidate_snapshot"] = snap
+
+        # Compute contact_completeness percentage
+        contact_fields = [out.get("contact_name"), out.get("contact_email"), out.get("contact_phone"), out.get("meeting_link")]
+        filled = sum(1 for f in contact_fields if f)
+        out["contact_completeness"] = int((filled / len(contact_fields)) * 100)
+
+        return out
+
+    @router.get("/meetings/{meeting_id}")
+    async def get_meeting(meeting_id: str):
+        m = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not m:
+            raise HTTPException(404, "Meeting not found")
+        return await _hydrate_meeting(m)
+
+    class MeetingCreate(BaseModel):
+        title: str
+        meeting_type: str = "qualification"  # qualification | connector | plan
+        stage: Optional[str] = None
+        entity_name: Optional[str] = ""
+        business_case_title: Optional[str] = ""
+        business_case_id: Optional[str] = None
+        brand_id: Optional[str] = None
+        rm_id: Optional[str] = None
+        contact_name: Optional[str] = ""
+        contact_email: Optional[str] = ""
+        contact_phone: Optional[str] = ""
+        scheduled_for: Optional[str] = None
+        duration_minutes: Optional[int] = 30
+        meeting_link: Optional[str] = ""
+        agenda: Optional[str] = ""
+
+    @router.post("/meetings")
+    async def create_meeting(payload: MeetingCreate):
+        mid = f"meeting-{uuid.uuid4().hex[:10]}"
+        stage_default = "before_crm" if payload.meeting_type == "qualification" else "connect"
+        doc = {
+            "id": mid,
+            "title": payload.title,
+            "meeting_type": payload.meeting_type,
+            "type": payload.meeting_type,
+            "stage": payload.stage or stage_default,
+            "entity_name": payload.entity_name or "",
+            "business_case_title": payload.business_case_title or "",
+            "business_case_id": payload.business_case_id,
+            "brand_id": payload.brand_id,
+            "rm_id": payload.rm_id,
+            "contact_name": payload.contact_name or "",
+            "contact_email": payload.contact_email or "",
+            "contact_phone": payload.contact_phone or "",
+            "scheduled_for": payload.scheduled_for,
+            "duration_minutes": payload.duration_minutes or 30,
+            "meeting_link": payload.meeting_link or "",
+            "agenda": payload.agenda or "",
+            "notes": payload.agenda or "",
+            "status": "scheduled",
+            "qualification_status": "pending",
+            "suggested_questions": RECOMMENDED_QUESTIONS_BY_TYPE.get(payload.meeting_type, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"]),
+            "transcript": "",
+            "analysis": {},
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        await db.v3_meetings.insert_one({**doc})
+        return await _hydrate_meeting(doc)
+
+    class MeetingContactUpdate(BaseModel):
+        contact_name: Optional[str] = None
+        contact_email: Optional[str] = None
+        contact_phone: Optional[str] = None
+        meeting_link: Optional[str] = None
+        scheduled_for: Optional[str] = None
+
+    @router.patch("/meetings/{meeting_id}/contact")
+    async def update_meeting_contact(meeting_id: str, payload: MeetingContactUpdate):
+        updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+        if not updates:
+            raise HTTPException(400, "No fields to update")
+        updates["updated_at"] = _now_iso()
+        result = await db.v3_meetings.update_one({"id": meeting_id}, {"$set": updates})
+        if result.matched_count == 0:
+            raise HTTPException(404, "Meeting not found")
+        m = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        return await _hydrate_meeting(m)
+
+    class TranscriptPayload(BaseModel):
+        transcript: str
+
+    @router.post("/meetings/{meeting_id}/transcript")
+    async def upload_meeting_transcript(meeting_id: str, payload: TranscriptPayload):
+        result = await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"transcript": payload.transcript, "updated_at": _now_iso()}}
+        )
+        if result.matched_count == 0:
+            raise HTTPException(404, "Meeting not found")
+        return {"ok": True}
+
+    @router.post("/meetings/{meeting_id}/analyze")
+    async def analyze_meeting_transcript(meeting_id: str):
+        m = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not m:
+            raise HTTPException(404, "Meeting not found")
+        transcript = m.get("transcript", "")
+        mi = _extract_marketing_intelligence(transcript)
+        text = (transcript or "").strip()
+        readiness = 0
+        readiness += 10 if "objective" in text.lower() or "goal" in text.lower() else 0
+        readiness += 10 if "audience" in text.lower() or "consumer" in text.lower() else 0
+        readiness += 10 if any(c.lower() in text.lower() for c in ["instagram", "tiktok", "youtube", "x", "ooh", "tv", "radio"]) else 0
+        readiness += 10 if any(k.lower() in text.lower() for k in ["kpi", "reach", "engagement", "lift", "conversion"]) else 0
+        readiness += 10 if any(b.lower() in text.lower() for b in ["budget", "fee", "naira", "₦", "$"]) else 0
+        readiness += 10 if "decision" in text.lower() or "approve" in text.lower() else 0
+        readiness += 15 if len(text) >= 400 else (10 if len(text) >= 200 else 0)
+        readiness += 25 if len(text) >= 800 else 0
+        readiness = min(readiness, 100)
+        missing = []
+        if "audience" not in text.lower():
+            missing.append("Audience")
+        if "budget" not in text.lower():
+            missing.append("Budget")
+        if "kpi" not in text.lower() and "metric" not in text.lower():
+            missing.append("KPIs")
+        if "decision" not in text.lower():
+            missing.append("Decision maker")
+        summary = mi.get("source_excerpt") or text[:280] or "Transcript not provided yet."
+        analysis = {
+            "summary": summary,
+            "readiness_score": readiness,
+            "missingContext": missing,
+            "followUpQuestions": [
+                f"Clarify {item}." for item in missing
+            ],
+            "ai_outputs": [
+                f"Key marketing focus → {mi['key_marketing_focus']}",
+                f"Primary target audience → {mi['primary_target_audience']}",
+                f"Channels → {', '.join(mi['key_marketing_channels'])}",
+                f"KPIs → {', '.join(k['kpi'] for k in mi['marketing_kpis'])}",
+            ],
+            "marketing_intelligence": mi,
+            "generated_at": _now_iso(),
+        }
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {
+                "analysis": analysis,
+                "readiness_score": readiness,
+                "status": "transcribed",
+                "updated_at": _now_iso(),
+            }}
+        )
+        return {**analysis, "readiness_score": readiness}
+
+    @router.post("/meetings/{meeting_id}/questions/regenerate")
+    async def regenerate_meeting_questions(meeting_id: str):
+        m = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not m:
+            raise HTTPException(404, "Meeting not found")
+        mtype = (m.get("meeting_type") or m.get("type") or "qualification").lower()
+        questions = RECOMMENDED_QUESTIONS_BY_TYPE.get(mtype, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"])
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"suggested_questions": questions, "updated_at": _now_iso()}}
+        )
+        return {"suggested_questions": questions}
+
+    @router.post("/meetings/{meeting_id}/qualification/accept")
+    async def accept_qualification_meeting(meeting_id: str):
+        result = await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {
+                "qualification_status": "accepted",
+                "status": "accepted",
+                "accepted_at": _now_iso(),
+                "updated_at": _now_iso(),
+            }}
+        )
+        if result.matched_count == 0:
+            raise HTTPException(404, "Meeting not found")
+        return {"ok": True, "qualification_status": "accepted"}
+
+    @router.post("/meetings/{meeting_id}/qualification/reschedule")
+    async def reschedule_qualification_meeting(meeting_id: str):
+        result = await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {
+                "qualification_status": "rescheduled",
+                "status": "scheduled",
+                "rescheduled_at": _now_iso(),
+                "updated_at": _now_iso(),
+            }}
+        )
+        if result.matched_count == 0:
+            raise HTTPException(404, "Meeting not found")
+        return {"ok": True, "qualification_status": "rescheduled"}
+
+    @router.post("/meetings/{meeting_id}/qualification/delete")
+    async def delete_qualification_meeting(meeting_id: str):
+        result = await db.v3_meetings.delete_one({"id": meeting_id})
+        if result.deleted_count == 0:
+            raise HTTPException(404, "Meeting not found")
+        return {"ok": True}
 
     @router.get("/projects")
     async def list_projects():

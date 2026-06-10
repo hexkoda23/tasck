@@ -412,6 +412,233 @@ TASCK Authorized Signatory: ______________________
 Date: ______________________`;
 };
 
+const ContractRiskRow = ({ level, text }) => {
+  const tone = level === 'high'
+    ? 'bg-[#F5D9D2] text-[#B54A37] border-[#E0B0A4]'
+    : level === 'medium'
+      ? 'bg-[#F2EAD8] text-[#7A5F23] border-[#E5D6AC]'
+      : 'bg-[#F4F2EC] text-[#6E6657] border-[#E8E4DB]';
+  return (
+    <div className={`flex items-start gap-2 rounded border p-2 text-[12px] ${tone}`}>
+      <ShieldAlert className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+      <span className="leading-relaxed">{text}</span>
+    </div>
+  );
+};
+
+const ContractSummaryCard = ({ bundle }) => {
+  const contract = bundle.contract || {};
+  const c = bundle.business_case || {};
+  const brand = bundle.brand || {};
+  const creator = bundle.creator || {};
+  const isGrant = c.engagement_track === 'grant';
+
+  const formatValue = () => {
+    if (contract.value) {
+      const ccy = contract.currency || 'NGN';
+      if (ccy === 'USD') return `$${Math.round(contract.value).toLocaleString()}`;
+      return formatNairaV3(contract.value);
+    }
+    return c.value_label || (c.value_amount ? formatNairaV3(c.value_amount) : 'Not yet quantified');
+  };
+
+  const STATUS_TONE = {
+    signed: 'bg-[#DDE7E2] text-[#1F4A3A]',
+    active: 'bg-[#DDE7E2] text-[#1F4A3A]',
+    completed: 'bg-[#F4F2EC] text-[#6E6657]',
+    pending_legal: 'bg-[#F2EAD8] text-[#7A5F23]',
+    draft_needed: 'bg-[#F5D9D2] text-[#B54A37]',
+    not_started: 'bg-[#F4F2EC] text-[#6E6657]',
+  };
+  const statusLabel = {
+    signed: 'Signed',
+    active: 'Active',
+    completed: 'Completed',
+    pending_legal: 'Pending legal',
+    draft_needed: 'Draft needed',
+    not_started: 'Not started',
+  };
+  const status = contract.status || c.plan?.contract_status || 'not_started';
+
+  // Build party list
+  const tasckParty = 'TASCK Africa (Agency)';
+  const brandParty = brand.company || brand.name || 'Brand party — pending';
+  const creatorParty = creator.name || creator.creator_name || (c.recommended_creator_name || null);
+  const parties = [tasckParty, brandParty, creatorParty].filter(Boolean);
+
+  // AI risk flags (heuristic based on missing CRM context)
+  const riskFlags = [];
+  if (!contract.value && !c.value_amount && !c.value_label) {
+    riskFlags.push({ level: 'high', text: 'Contract value is not quantified — confirm with brand before signing.' });
+  }
+  if (!creatorParty && c.stage !== 'connect' && c.stage !== 'frame') {
+    riskFlags.push({ level: 'medium', text: 'No creative attached — select creator before drafting creator contract.' });
+  }
+  if (!c.frame?.alignment_snapshot_status || c.frame?.alignment_snapshot_status !== 'approved') {
+    riskFlags.push({ level: 'medium', text: 'Alignment Snapshot not yet approved by brand — risk of late scope changes.' });
+  }
+  if (isGrant && contract.value && contract.value > 0) {
+    riskFlags.push({ level: 'low', text: 'Grant track: confirm funder pays creator directly (not TASCK).' });
+  }
+  if (status === 'draft_needed' || status === 'not_started') {
+    riskFlags.push({ level: 'medium', text: 'Contract draft not yet prepared. Generate one via the AI contract studio below.' });
+  }
+  if (!brand.email && !brand.primary_contact_email) {
+    riskFlags.push({ level: 'low', text: 'No brand signatory email on file — contact details required for e-sign.' });
+  }
+
+  // Next actions
+  const nextActions = [];
+  if (status === 'not_started' || status === 'draft_needed') nextActions.push('Generate brand contract via AI contract studio.');
+  if (creatorParty && (status === 'not_started' || status === 'draft_needed')) nextActions.push('Generate creator contract.');
+  if (status === 'pending_legal') nextActions.push('Resolve legal review comments, then move to signature.');
+  if (status === 'signed' || status === 'active') nextActions.push('Track delivery milestones and invoice schedule.');
+  if (riskFlags.length > 0) nextActions.push('Address risk flags listed below before signature.');
+
+  return (
+    <Section title="Contract summary">
+      <div data-testid="bc-contract-summary" className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Template</p>
+            <p className="text-[12px] text-[#1A1A1A] mt-1">
+              {creatorParty ? 'Brand + Creator dual contract' : 'Brand service agreement'}
+            </p>
+          </div>
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Status</p>
+            <span className={`inline-flex mt-1 rounded px-2 py-0.5 text-[11px] font-medium ${STATUS_TONE[status] || STATUS_TONE.not_started}`}>
+              {statusLabel[status] || status}
+            </span>
+          </div>
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Engagement track</p>
+            <p className="text-[12px] text-[#1A1A1A] mt-1 capitalize">{c.engagement_track || 'paid'}</p>
+          </div>
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Total value</p>
+            <p className="text-[13px] font-semibold text-[#1A1A1A] mt-1" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatValue()}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Parties</p>
+            <ul className="space-y-1">
+              {parties.map((p, i) => (
+                <li key={i} className="text-[12px] text-[#1A1A1A] flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#1F4A3A]" />
+                  {p}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Contract summary</p>
+            <p className="text-[12px] text-[#1A1A1A] leading-relaxed">
+              {(contract.agreement_description && contract.agreement_description !== 'None' && contract.agreement_description !== 'none')
+                ? contract.agreement_description
+                : `${tasckParty} engages ${brandParty}${creatorParty ? ` and ${creatorParty}` : ''} to deliver "${c.title || 'Campaign'}" in line with the approved Alignment + Strategy Snapshots.`}
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Scope</p>
+            <p className="text-[12px] text-[#1A1A1A] leading-relaxed">
+              {c.frame?.confirmed_scope || c.plan?.confirmed_scope || c.connect?.stated_intent ||
+                `Deliver the agreed campaign for ${brandParty} per the Alignment + Strategy Snapshots, including creative production, channel rollout, and reporting.`}
+            </p>
+          </div>
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Payment terms</p>
+            <p className="text-[12px] text-[#1A1A1A] leading-relaxed">
+              {isGrant
+                ? 'Grant track — Strategy Development Fee is waived. Funder pays creator directly via TASCK-approved invoice schedule.'
+                : `Strategy Development Fee invoiced before Strategy Snapshot share. Project fee billed per milestone (typically 40% on signature / 40% on production / 20% on delivery). Net 15 days.`}
+            </p>
+            {c.value_raw && (
+              <p className="text-[10px] text-[#8A8A8A] mt-2">
+                Raw value from workbook: <span className="font-mono">{c.value_raw}</span>
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Rights & usage</p>
+            <p className="text-[12px] text-[#1A1A1A] leading-relaxed">
+              Brand receives exclusive usage rights to all approved campaign deliverables for the agreed media window. Creator retains portfolio-only rights post-campaign. Out-of-window usage triggers a documented usage extension.
+            </p>
+          </div>
+          <div className="rounded border border-[#E8E4DB] p-3">
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Approvals</p>
+            <ul className="space-y-1 text-[12px] text-[#1A1A1A]">
+              <li className="flex items-center gap-2">
+                <span className={c.connect?.connect_status === 'qualified_to_frame' ? 'text-[#1F4A3A]' : 'text-[#8A8A8A]'}>
+                  {c.connect?.connect_status === 'qualified_to_frame' ? '✓' : '○'}
+                </span>
+                Connect → Frame qualification
+              </li>
+              <li className="flex items-center gap-2">
+                <span className={c.frame?.alignment_snapshot_status === 'approved' ? 'text-[#1F4A3A]' : 'text-[#8A8A8A]'}>
+                  {c.frame?.alignment_snapshot_status === 'approved' ? '✓' : '○'}
+                </span>
+                Alignment Snapshot approved
+              </li>
+              <li className="flex items-center gap-2">
+                <span className={c.plan?.creative_snapshot_status === 'approved' ? 'text-[#1F4A3A]' : 'text-[#8A8A8A]'}>
+                  {c.plan?.creative_snapshot_status === 'approved' ? '✓' : '○'}
+                </span>
+                Strategy Snapshot approved
+              </li>
+              <li className="flex items-center gap-2">
+                <span className={status === 'signed' || status === 'active' ? 'text-[#1F4A3A]' : 'text-[#8A8A8A]'}>
+                  {status === 'signed' || status === 'active' ? '✓' : '○'}
+                </span>
+                Contract signed
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        {riskFlags.length > 0 && (
+          <div>
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2 flex items-center gap-1">
+              <ShieldAlert className="w-3.5 h-3.5" /> AI risk flags ({riskFlags.length})
+            </p>
+            <div className="space-y-2">
+              {riskFlags.map((r, i) => <ContractRiskRow key={i} level={r.level} text={r.text} />)}
+            </div>
+          </div>
+        )}
+
+        {nextActions.length > 0 && (
+          <div className="rounded border border-[#E8E4DB] bg-[#FAFAF7] p-3">
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Next actions</p>
+            <ul className="space-y-1">
+              {nextActions.map((a, i) => (
+                <li key={i} className="text-[12px] text-[#1A1A1A] flex items-start gap-2">
+                  <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-[#1F4A3A] flex-shrink-0" />
+                  <span>{a}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {contract.source_sheet && (
+          <p className="text-[10px] text-[#8A8A8A] pt-2 border-t border-[#F1ECDF]">
+            Source: {contract.source_sheet} · row {contract.source_row_number}
+          </p>
+        )}
+      </div>
+    </Section>
+  );
+};
+
 const DeliveryContractStudio = ({ bundle, busy }) => {
   const [activeKind, setActiveKind] = useState(null);
   const [drafts, setDrafts] = useState({});
@@ -589,14 +816,13 @@ const V3AdminBusinessCaseDetail = () => {
 
   useEffect(() => {
     reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   useEffect(() => {
     if (bundle?.business_case?.stage) {
       setTab(stageToTab(bundle.business_case.stage));
     }
-  }, [bundle?.business_case?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [bundle?.business_case?.id, bundle?.business_case?.stage]);
 
   if (error)
     return (
@@ -1404,7 +1630,7 @@ const V3AdminBusinessCaseDetail = () => {
   };
 
   const selectDemoCreator = (creatorId) => {
-    const selected = creators.find((cr) => cr.id === creatorId) || fallbackCreators.find((cr) => cr.id === creatorId);
+    const selected = creators.find((cr) => cr.id === creatorId);
     if (!selected) return;
     setBundle((prev) => {
       if (!prev) return prev;
@@ -1422,7 +1648,7 @@ const V3AdminBusinessCaseDetail = () => {
   };
 
   const createDemoBrief = ({ creatorId, briefText }) => {
-    const selected = creators.find((cr) => cr.id === creatorId) || fallbackCreators.find((cr) => cr.id === creatorId);
+    const selected = creators.find((cr) => cr.id === creatorId);
     setBundle((prev) => {
       if (!prev) return prev;
       const creator = selected || prev.creator;
@@ -1927,7 +2153,7 @@ const V3AdminBusinessCaseDetail = () => {
                       <div className="flex items-start justify-between gap-3">
                         <div>
                           <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">{section?.heading || `Section ${comment.section_index + 1}`}</p>
-                          {comment.quoted_text && <p className="text-[12px] text-[#6E6657] mt-1">"{comment.quoted_text}"</p>}
+                          {comment.quoted_text && <p className="text-[12px] text-[#6E6657] mt-1">&ldquo;{comment.quoted_text}&rdquo;</p>}
                           <p className="text-[13px] text-[#1A1A1A] mt-1">{comment.comment}</p>
                           {comment.suggested_text && <p className="text-[12px] text-[#1F4A3A] mt-1">Suggested: {comment.suggested_text}</p>}
                         </div>
@@ -2148,6 +2374,8 @@ const V3AdminBusinessCaseDetail = () => {
             onDemoContract={createDemoContract}
             creativeBriefCount={creativeBriefs.length}
           />
+
+          <ContractSummaryCard bundle={bundle} />
 
           {bundle.brainstorm_round && (
             <Section title="Brainstorm planning">
@@ -2410,6 +2638,7 @@ const V3AdminBusinessCaseDetail = () => {
             </div>
           )}
 
+          <ContractSummaryCard bundle={bundle} />
           <DeliveryContractStudio bundle={bundle} busy={busy} />
 
           <Section
@@ -2717,7 +2946,7 @@ const PlanStageActions = ({
 }) => {
   const c = bundle.business_case;
   const creatorList = Array.isArray(creators) ? creators : [];
-  const fallbackCreatorList = creatorList.length ? creatorList : fallbackCreators;
+  const fallbackCreatorList = creatorList;
   const hasBrainstorm = !!bundle.brainstorm_round;
   const hasBrief = !!bundle.creative_brief;
   const hasResponse = !!bundle.creative_brief?.creator_response;
@@ -2965,58 +3194,6 @@ const PlanStageActions = ({
 
   if (!hasBrief && !hasSnapshot) {
     return renderBriefComposer(true);
-
-    return (
-      <div className="v3-card p-6 mb-4 border-[#C49B5F]" data-testid="bc-plan-action-brief">
-        <h3 className="text-[13px] font-semibold uppercase tracking-wider mb-2 text-[#1A1A1A]">Next: send Creative Brief</h3>
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <select
-            value={selectedCreator}
-            onChange={(e) => setSelectedCreator(e.target.value)}
-            className="px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white"
-            data-testid="bc-brief-creator"
-          >
-            <option value="">Pick a creator</option>
-            {fallbackCreatorList.map((cr) => (
-              <option key={cr.id} value={cr.id}>{cr.name} ({cr.tier})</option>
-            ))}
-          </select>
-        </div>
-        <textarea
-          value={briefText}
-          onChange={(e) => setBriefText(e.target.value)}
-          placeholder="Brief — write the one-paragraph creative ask you want to send the creator."
-          rows={4}
-          className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white mb-3"
-          data-testid="bc-brief-text"
-        />
-        <div className="flex gap-2 mb-3">
-          <button onClick={generateBriefText} type="button" className="v3-btn-secondary" data-testid="bc-generate-brief-text">
-            <Sparkles className="w-3.5 h-3.5" /> Generate Brief
-          </button>
-          <button onClick={() => downloadBrief(briefText || 'Generate or write a brief first.')} type="button" className="v3-btn-secondary" data-testid="bc-download-brief-draft">
-            <Download className="w-3.5 h-3.5" /> Download
-          </button>
-        </div>
-        <button
-          onClick={async () => {
-            if (!selectedCreator || !briefText) return;
-            try {
-              await v3CreateBrief({ business_case_id: c.id, creator_id: selectedCreator, brief_text: briefText });
-            } catch (e) {
-              // Demo/local preview continues without a running V3 backend.
-            }
-            onDemoBrief({ creatorId: selectedCreator, briefText });
-            setBriefText('');
-          }}
-          disabled={busy || !selectedCreator || !briefText}
-          className="v3-btn-primary"
-          data-testid="bc-send-brief"
-        >
-          <FileText className="w-3.5 h-3.5" /> Send Creative Brief
-        </button>
-      </div>
-    );
   }
 
   if (hasBrief && hasSnapshot && !snapshotApproved) {

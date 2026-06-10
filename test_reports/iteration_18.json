@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 18 — TASCK v3.3 admin meeting workflow + creator detail + business case Plan/Delivery contract summary. Backend: 11/11 new endpoint tests PASS + importer 16/16 PASS. Frontend: Qualification Call Detail, Connector Call Detail, Creator Detail (MI), and Business Case Detail (Plan + Delivery tabs) all render correctly with the required real CRM data and contract summary card. ONE frontend bug discovered: /v3/admin/business-cases LIST page renders 'No business cases match these filters' even though backend returns 19 BCs (deep-link to bc-{id} works fine). Smoke pages /v3/admin/overview and /v3/admin/projects compile clean.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "V3AdminBusinessCases (list page)",
+        "issue": "Page shows 'No business cases match these filters.' with default 'All' / 'All tracks' tabs even though GET /api/v3/business-cases returns 19 items. Backend items have stage='connect' and track=null — filter logic likely rejects null track values when 'All tracks' is selected, or 'All' stage tab is not matching any stage. Deep-link /v3/admin/business-cases/{id} still works perfectly, so the issue is isolated to the list-page filter logic.",
+        "selector": "/v3/admin/business-cases",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v3_iter18_meetings.py",
+    "/app/test_reports/pytest/iter18_results.xml",
+    "/app/backend/tests/test_workbook_importer.py"
+  ],
+  "action_items": [
+    "FIX (HIGH): /app/frontend/src/pages/v3/admin/V3AdminBusinessCases.js — the default 'All / All tracks' filter combination must include cases whose `track` is null/None. Currently filtering them out so the list looks empty despite 19 BCs in the API. Recommended: when selected track === 'all', skip the track equality check entirely (or treat null track as a match against 'all')."
+  ],
+  "critical_code_review_comments": [
+    "v3_routes.py is now ~3920 lines after the meeting workflow additions. Strongly recommended to split it into per-resource routers (meetings_router, creators_router, business_cases_router, contracts_router) for maintainability — same recommendation carried from iter 16/17.",
+    "POST /api/v3/meetings uses the field name `meeting_type` (qualification|connector|plan). Confusing because the rest of the meeting payload uses `kind` in db (e.g. brand_welcome, strategy_development_fee_invoice). Consider aliasing `kind` -> `meeting_type` in the Pydantic model for API ergonomics.",
+    "Frontend list filter logic (V3AdminBusinessCases) must tolerate API rows where stage/track are nullable — the importer leaves track=null on Connect-stage BCs, and the list page should still show them."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v3_iter18_meetings.py (NEW — 11 tests, all PASS)"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 new endpoint tests pass + 16/16 importer tests pass)",
+    "frontend": "85% (1 list-page filter bug; all detail pages, qualification/connector calls, creator detail, business case Plan + Delivery render correctly)"
+  },
+  "test_credentials": "Not required — /v3/admin/* is unprotected in preview env per problem statement.",
+  "seed_data_creation": "Tests create+delete TEST_-prefixed meetings (qualification + connector + lifecycle + transcript) and clean up via /qualification/delete. Importer-loaded data untouched.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend meeting workflow is solid — GET/POST/PATCH/transcript/analyze/regenerate/accept/reschedule/delete all return the right shapes. GET /api/v3/creators/{id} now returns creator+projects+business_cases (MI has 6 projects). On the FE, qualification & connector detail pages, Creator Detail (MI), and BC Plan + Delivery (incl. ContractSummaryCard with Template/Status/Engagement track/Total value/Parties/Scope/Payment terms/Rights/Approvals/AI Risk Flags/Next Actions) all look great. ONLY remaining issue: the BC LIST page filter at /v3/admin/business-cases hides all rows whose track is null. Deep-links to /v3/admin/business-cases/{id} still work, so this is purely a list-page filter regression.",
+  "rca of the issue": "Bug: /v3/admin/business-cases shows 'No business cases match these filters.'. RCA: Backend returns 19 BCs but with `track: null` and `stage: 'connect'`. The list page filter logic in V3AdminBusinessCases.js intersects selected stage + selected track. The default selected stage='all' + track='all' combination should be a pass-through. Most likely the track-equality check does `item.track === 'all'` instead of short-circuiting when filter==='all', so any BC with track=null/undefined is filtered out. Mitigation: in the filter callback, return true when filterTrack === 'all' before doing any equality check on item.track. Reproduction: open /v3/admin/business-cases — empty state shown despite 19 cases existing (verified via curl GET /api/v3/business-cases returning count=19)."
+}
