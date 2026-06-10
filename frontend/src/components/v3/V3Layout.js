@@ -167,7 +167,7 @@ const V3Layout = ({ portal }) => {
       </aside>
 
       <div className="v3-main">
-        <div className="v3-topbar sticky top-0 z-20 bg-[#FAFAF7]/80 backdrop-blur-md border-b border-[#E8E4DB] px-6 py-2.5 flex items-center gap-3 min-w-0 overflow-hidden">
+        <div className="v3-topbar sticky top-0 z-20 bg-[#FAFAF7]/80 backdrop-blur-md border-b border-[#E8E4DB] px-6 py-2.5 flex items-center gap-3 min-w-0">
           <button
             onClick={() => {
               const event = new KeyboardEvent('keydown', { key: 'k', metaKey: true, bubbles: true });

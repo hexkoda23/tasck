@@ -1010,15 +1010,39 @@ class WorkbookImporter:
 
     def _add_meeting(self, brand_id, contact_id, contact_name, rm_id, meeting_type, status, notes, ridx):
         mid = _det_id("meeting", brand_id, contact_id or "", meeting_type)
+        brand = self.brands.get(brand_id, {})
+        entity_name = brand.get("company") or brand.get("name") or contact_name or ""
+        rm_name = self.rms.get(rm_id, {}).get("name") if rm_id else ""
+        # Find a linked business case for this brand to populate business_case_title
+        bc_title = ""
+        bc_id_link = None
+        for bc in self.business_cases.values():
+            if bc.get("brand_id") == brand_id:
+                bc_title = bc.get("title", "")
+                bc_id_link = bc.get("id")
+                break
+        title_map = {
+            "qualification": f"Qualification Call: {entity_name}".strip(": "),
+            "connector": f"Business Call (Connector): {entity_name}".strip(": "),
+        }
         self.meetings[mid] = {
             "id": mid,
+            "title": title_map.get(meeting_type, f"{(meeting_type or 'meeting').title()}: {entity_name}".strip(": ")),
+            "meeting_type": meeting_type,
+            "type": meeting_type,
+            "stage": "before_crm" if meeting_type == "qualification" else "connect",
+            "entity_name": entity_name,
+            "entity_type": "brand",
             "brand_id": brand_id,
+            "business_case_id": bc_id_link,
+            "business_case_title": bc_title,
             "contact_id": contact_id,
             "contact_name": contact_name,
             "rm_id": rm_id,
-            "type": meeting_type,
+            "rm_name": rm_name,
             "status": status,
             "notes": notes or "",
+            "agenda": notes or "",
             "scheduled_for": None,
             "source_sheet": self.SHEET_BRANDS,
             "source_row_number": ridx,

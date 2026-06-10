@@ -6,6 +6,20 @@ Premium product demo for "TASCK OS" — a creator campaign management platform f
 - **V2 (Next)**: AI-native command center — COMPLETE
 - **V3 (TASCK v3.2)**: Editorial AI-native platform with Business Case primitive + 4-stage pipeline + live backend — **NOW INCLUDES FULL TTA-USER WORKFLOW** (15 May 2026)
 
+## Update — 11 Feb 2026 (P0 round 4: workflow + alignment + notifications)
+- **Critical crash fixes**
+  - `V3DocumentSurface`: now safely renders the `meta` prop whether it's a string, number, array, or object. Previously rendered raw `{brand, relationship_manager, stage, engagement}` objects → "Objects are not valid as a React child" crash on Generate Alignment Snapshot. Object meta is now formatted as `key: value · key: value`.
+  - `V3AdminBusinessCaseDetail.js`: `bundle.contract.parties.join` guarded; Plan phase no longer crashes when array fields are undefined.
+- **Notification dropdown z-index/clipping**: removed `overflow-hidden` from `V3Layout.js` topbar so the absolute-positioned notification panel renders above the main content. `V3NotificationCenter.js` now pulls real `needs_attention` + `latest_activity` from `/api/v3/metrics/admin-overview`; explicit Bell `size={18}` and `h-9 w-9` button with badge in `min-w-[16px] h-4`.
+- **Connect phase enrichment** (replaces sparse "Connect — Discovery" card):
+  - Brand context grid: brand, primary contact, role, email, phone, LinkedIn, RM, connect status, relationship status, likelihood, source sheet/row, notes & next actions.
+  - Marketing intelligence grid: focus, target audience, channels, KPIs, desired status, stated intent.
+  - Discovery checklist: 8-item auto-checked based on imported data (decision maker / brand challenge / target audience / KPIs / budget / next action / RM / ready-for-frame).
+  - "Add interaction / schedule meeting" button routes to `/v3/admin/meetings?brand_id=...&business_case_id=...&mode=new&type=connector`.
+- **Meetings importer**: `_add_meeting` now writes `title`, `meeting_type`, `entity_name`, `business_case_title`, `rm_name`, `stage`, `agenda` so the Meetings page shows proper context per card instead of `?`.
+- **Verified**: 16/16 importer pytests pass. BCs=11, projects=24, meetings=13 all with clean labels. No React object/`.join` crashes anywhere in the admin BC detail flow.
+
+
 ## Update — 11 Feb 2026 (P0 round 3: dedupe + Plan phase + Alignment + Notifications)
 - **Importer dedupe**: BC ID changed from `(brand, descriptor, stage, ridx)` → `(brand, descriptor)`. Duplicate framing rows for the same logical opportunity (CJID Openness Index ×4 source rows, Civic Engagement ×2, Pan-African Festival ×2) merge into one business case. Latest-stage wins via `stage_order = {connect:0, frame:1, plan:2, deliver:3, closed:4}`. All merged source rows preserved in `source_rows[]`. Project record's stage mirrors the BC stage advance.
 - Result: business_cases 16→11 (zero dupes), projects 29→24 (only the legitimately-named "IMF" appears twice across different creator folders, MI Abaga + 121 SELAH).

@@ -1690,47 +1690,112 @@ const V3AdminBusinessCaseDetail = () => {
       {/* CONNECT */}
       {tab === 'connect' && (
         <>
-        <Section title="Connect — Discovery">
-          <dl className="grid grid-cols-2 gap-4 text-[13px]">
-            <div>
-              <dt className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Source</dt>
-              <dd>{c.connect?.source || '—'}</dd>
-            </div>
-            <div>
-              <dt className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Connect status</dt>
-              <dd className="flex items-center gap-2">
-                <span>{c.connect?.connect_status || '—'}</span>
-                {c.stage === 'connect' && c.connect?.connect_status !== 'qualified_to_frame' && (
-                  <button
-                    onClick={wrap(() => v3SetConnectStatus(c.id, 'qualified_to_frame'))}
-                    disabled={busy}
-                    className="text-[10px] px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A] hover:bg-[#C5D6CE]"
-                    data-testid="bc-mark-qualified"
-                  >
-                    Mark Qualified
-                  </button>
-                )}
-              </dd>
-            </div>
+        {/* Brand & contact context — sourced from CRM workbook */}
+        <Section title="Brand context">
+          <dl className="grid grid-cols-2 gap-4 text-[13px]" data-testid="bc-connect-brand-context">
+            {[
+              ['Brand / organisation', bundle.brand?.company || c.brand_name || c.unlinked_brand_name],
+              ['Primary contact', bundle.brand?.primary_contact],
+              ['Contact role', bundle.brand?.role],
+              ['Email', bundle.brand?.email],
+              ['Phone', bundle.brand?.phone],
+              ['LinkedIn', bundle.brand?.linkedin],
+              ['Relationship manager', c.rm_name || bundle.brand?.relationship_manager_name],
+              ['Connect status', bundle.brand?.connect_status || c.connect?.connect_status],
+              ['Relationship status', bundle.brand?.status],
+              ['Likelihood to work with TTA', bundle.brand?.likelihood_to_work_with_tta],
+              ['Source sheet', bundle.brand?.source_sheet || c.source_sheet],
+              ['Source row', bundle.brand?.source_row_number || c.source_row_number],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">{label}</dt>
+                <dd className="text-[13px] text-[#1A1A1A]">{value && String(value).trim() ? value : <span className="text-[#8A8A8A]">Not provided</span>}</dd>
+              </div>
+            ))}
             <div className="col-span-2">
-              <dt className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Stated intent</dt>
-              <dd className="text-[#1A1A1A]">{c.connect?.stated_intent || '—'}</dd>
+              <dt className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Notes &amp; next actions</dt>
+              <dd className="text-[13px] text-[#1A1A1A] whitespace-pre-wrap">{bundle.brand?.notes_and_next_actions || c.next_action || <span className="text-[#8A8A8A]">Not provided</span>}</dd>
             </div>
           </dl>
-          {bundle.interactions?.length > 0 && (
-            <div className="mt-6 space-y-2">
-              <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Interactions</p>
+        </Section>
+
+        {/* Marketing intelligence — from CRM workbook */}
+        <Section title="Marketing intelligence">
+          <dl className="grid grid-cols-2 gap-4 text-[13px]" data-testid="bc-connect-intelligence">
+            {[
+              ['Key marketing focus', bundle.brand?.key_marketing_focus],
+              ['Primary target audience', bundle.brand?.primary_target_audience],
+              ['Key marketing channels', Array.isArray(bundle.brand?.key_marketing_channels) ? bundle.brand.key_marketing_channels.join(', ') : bundle.brand?.key_marketing_channels],
+              ['Marketing KPIs', Array.isArray(bundle.brand?.marketing_kpis) ? bundle.brand.marketing_kpis.map((k) => typeof k === 'object' ? `${k.kpi}: ${k.target}` : k).join(', ') : bundle.brand?.marketing_kpis],
+              ['Desired relationship status', bundle.brand?.desired_relationship_status],
+              ['Stated intent / opportunity', c.connect?.stated_intent || c.next_action],
+            ].map(([label, value]) => (
+              <div key={label} className={label === 'Stated intent / opportunity' ? 'col-span-2' : ''}>
+                <dt className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">{label}</dt>
+                <dd className="text-[13px] text-[#1A1A1A]">{value && String(value).trim() ? value : <span className="text-[#8A8A8A]">Not provided</span>}</dd>
+              </div>
+            ))}
+          </dl>
+        </Section>
+
+        {/* Discovery checklist */}
+        <Section title="Discovery checklist">
+          <ul className="space-y-2 text-[13px]" data-testid="bc-connect-checklist">
+            {[
+              ['Decision maker identified', !!bundle.brand?.primary_contact],
+              ['Brand challenge understood', !!bundle.brand?.key_marketing_focus],
+              ['Target audience captured', !!bundle.brand?.primary_target_audience],
+              ['KPIs captured', !!bundle.brand?.marketing_kpis],
+              ['Budget or fee expectation captured', !!(c.value_amount || c.value_label || c.value_raw)],
+              ['Next action agreed', !!(c.next_action || bundle.brand?.notes_and_next_actions)],
+              ['RM assigned', !!(c.rm_name || bundle.brand?.relationship_manager_name)],
+              ['Ready for Frame', (c.connect?.connect_status === 'qualified_to_frame') || c.stage !== 'connect'],
+            ].map(([label, done]) => (
+              <li key={label} className="flex items-center gap-2">
+                <span className={`inline-block w-4 h-4 rounded border-2 flex-shrink-0 ${done ? 'bg-[#1F4A3A] border-[#1F4A3A]' : 'border-[#D4CDBF]'}`} />
+                <span className={done ? 'text-[#1A1A1A]' : 'text-[#8A8A8A]'}>{label}</span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+
+        {/* Connect actions */}
+        <Section title="Connect — Discovery actions">
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => navigate(`/v3/admin/meetings?brand_id=${c.brand_id || ''}&business_case_id=${c.id}&mode=new&type=connector`)}
+              className="v3-btn-secondary"
+              data-testid="bc-connect-add-interaction"
+            >
+              Add interaction / schedule meeting
+            </button>
+            {c.stage === 'connect' && c.connect?.connect_status !== 'qualified_to_frame' && (
+              <button
+                onClick={wrap(() => v3SetConnectStatus(c.id, 'qualified_to_frame'))}
+                disabled={busy}
+                className="v3-btn-secondary"
+                data-testid="bc-mark-qualified"
+              >
+                Mark qualified
+              </button>
+            )}
+          </div>
+          {bundle.interactions?.length > 0 ? (
+            <div className="space-y-2">
+              <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Interactions linked to this business case</p>
               {bundle.interactions.map((i) => (
                 <div key={i.id} className="p-3 border border-[#E8E4DB] rounded" data-testid={`bc-interaction-${i.id}`}>
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-[12px] font-medium">{i.title}</span>
-                    <span className="text-[10px] text-[#8A8A8A]">{(i.date_iso || '').slice(0, 10)}</span>
+                    <span className="text-[10px] text-[#8A8A8A]">{(i.date_iso || '').slice(0, 10) || 'Date not provided'}</span>
                   </div>
-                  <p className="text-[11px] text-[#8A8A8A] mb-1">{i.author}</p>
-                  <p className="text-[12px] text-[#6E6657] line-clamp-3 whitespace-pre-wrap">{i.content}</p>
+                  <p className="text-[11px] text-[#8A8A8A] mb-1">{i.author || 'Author not provided'}</p>
+                  <p className="text-[12px] text-[#6E6657] line-clamp-3 whitespace-pre-wrap">{i.content || 'No notes captured.'}</p>
                 </div>
               ))}
             </div>
+          ) : (
+            <p className="text-[12px] text-[#8A8A8A]">No interactions logged yet. Use “Add interaction / schedule meeting” above to start the discovery trail.</p>
           )}
           {c.stage === 'connect' && (
             <button
@@ -1739,7 +1804,7 @@ const V3AdminBusinessCaseDetail = () => {
               className="v3-btn-primary mt-6"
               data-testid="bc-advance-frame"
             >
-              Finish Connector & Open Frame <ChevronRight className="w-4 h-4" />
+              Finish Connector &amp; Open Frame <ChevronRight className="w-4 h-4" />
             </button>
           )}
         </Section>
