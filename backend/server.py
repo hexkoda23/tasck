@@ -17,6 +17,7 @@ from models import (
 )
 from seed_data import get_seed_data
 from v3_routes import make_v3_router
+from v3_workbook_import import WorkbookImporter
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -70,6 +71,12 @@ async def seed_database():
 async def startup_event():
     await seed_database()
     await v3_router.seed_v3()
+    # Import real CRM workbook data (idempotent — safe to run every boot)
+    try:
+        await WorkbookImporter.import_all(db)
+        logger.info("Workbook import completed.")
+    except Exception as exc:
+        logger.warning(f"Workbook import skipped or failed: {exc}")
     logger.info("TASCK OS API started successfully (v1+v2+v3)")
 
 @app.on_event("shutdown")

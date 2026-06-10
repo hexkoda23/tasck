@@ -14,8 +14,7 @@ import {
   v3SendStrategySnapshotToBrand, v3ResolveStrategySnapshotComment, v3UpdateInvoice,
   v3UpdateDeliverable,
 } from '../../../lib/v3api';
-import { buildMockAlignmentSnapshot, buildMockBusinessCaseBundle, formatNairaV3, v3Creators as fallbackCreators } from '../../../lib/v3data';
-import { getStoredDemoBundle, saveStoredDemoBundle } from '../../../lib/v3demoStore';
+import { formatNairaV3 } from '../../../lib/v3data';
 import V3DocumentSurface from '../../../components/v3/V3DocumentSurface';
 import {
   ArrowLeft, ChevronRight, CheckCircle2, Clock, AlertTriangle, FileText,
@@ -578,45 +577,16 @@ const V3AdminBusinessCaseDetail = () => {
       setError(null);
     })
     .catch((e) => {
-      const fallback = getStoredDemoBundle(id) || buildMockBusinessCaseBundle(id);
-      if (fallback) {
-        setBundle(fallback);
-        setError(null);
-        return;
-      }
-      setError(e.message);
+      setError(e.message || 'Failed to load business case.');
     });
 
   useEffect(() => {
-    v3GetCreators().then((list) => setCreators(Array.isArray(list) ? list : fallbackCreators)).catch(() => setCreators(fallbackCreators));
+    v3GetCreators().then((list) => setCreators(Array.isArray(list) ? list : [])).catch(() => setCreators([]));
   }, []);
 
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  useEffect(() => {
-    if (bundle?.business_case?.id && ['mock', 'demo'].includes(bundle.source)) {
-      saveStoredDemoBundle(bundle);
-    }
-  }, [bundle]);
-
-  useEffect(() => {
-    const syncStoredBundle = () => {
-      const stored = getStoredDemoBundle(id);
-      if (!stored) return;
-      setBundle((current) => {
-        if (!current || ['mock', 'demo'].includes(current.source)) return stored;
-        return current;
-      });
-    };
-    window.addEventListener('storage', syncStoredBundle);
-    window.addEventListener('focus', syncStoredBundle);
-    return () => {
-      window.removeEventListener('storage', syncStoredBundle);
-      window.removeEventListener('focus', syncStoredBundle);
-    };
   }, [id]);
 
   useEffect(() => {

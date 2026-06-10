@@ -1,25 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { v3Brands as fallbackBrands, v3RMs, getProjectsForBrand, getRM } from '../../../lib/v3data';
-import { v3GetBrands, v3CreateBrand } from '../../../lib/v3api';
+import { v3GetBrands, v3CreateBrand, v3ListRelationshipManagers } from '../../../lib/v3api';
 import { useV3Resource } from '../../../lib/useV3Resource';
 import V3Modal from '../../../components/v3/V3Modal';
-import { Search, Plus, ArrowUpDown, Sparkles } from 'lucide-react';
+import { Search, Plus, ArrowUpDown, Sparkles, Users } from 'lucide-react';
 
-// Normalises both API and mock shapes so the rest of the component is unaware
-// of the source.
+// Normalises API brand shape for the component
 const normaliseBrand = (b) => ({
   id: b.id,
   company: b.company || b.brand_name || 'Unnamed brand',
   industry: b.industry || 'Uncategorised',
   primaryContact: b.primary_contact || b.primaryContact,
   role: b.role,
-  leadScore: b.lead_score || b.leadScore,
+  leadScore: b.lead_score || b.leadScore || 0,
   createdAt: b.created_at || b.createdAt || null,
   lastInteraction: b.last_interaction || b.lastInteraction,
   engagementTrack: b.engagement_track_default || 'paid',
-  rmId: b.rm_id || b.rmId || b.relationship_manager?.id || 'rm-temi',
-  relationshipManager: b.relationship_manager || getRM(b.rm_id || b.rmId) || v3RMs[0],
+  rmId: b.rm_id || b.relationship_manager?.id || 'rm-temi',
+  relationshipManager: b.relationship_manager || { name: b.relationship_manager_name || 'Unassigned' },
 });
 
 const brandCreatedAtTs = (value) => {
@@ -32,26 +30,55 @@ const V3AdminCRM = () => {
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('score');
   const [trackFilter, setTrackFilter] = useState('all');
+  const [rms, setRMs] = useState([]);
 
-  const { data: brands, source, setData } = useV3Resource(() => v3GetBrands(), fallbackBrands);
+  const { data: brands, source, setData } = useV3Resource(() => v3GetBrands(), []);
   const brandList = Array.isArray(brands) ? brands : [];
   const normalised = brandList.map(normaliseBrand);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({ company: '', industry: '', primary_contact: '', role: '', email: '', rm_id: 'rm-temi', engagement_track_default: 'paid' });
+  const [form, setForm] = useState({
+    company: '',
+    industry: '',
+    primary_contact: '',
+    role: '',
+    email: '',
+    rm_id: '',
+    engagement_track_default: 'paid',
+  });
   const [submitting, setSubmitting] = useState(false);
   const [createdAccount, setCreatedAccount] = useState(null);
+
+  // Load RMs from API for the dropdown
+  useEffect(() => {
+    v3ListRelationshipManagers()
+      .then((data) => {
+        setRMs(Array.isArray(data) ? data : []);
+        if (Array.isArray(data) && data.length > 0) {
+          setForm((f) => ({ ...f, rm_id: f.rm_id || data[0].id }));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const submitBrand = async () => {
     if (!form.company || !form.industry || !form.primary_contact) return;
     setSubmitting(true);
     try {
       const created = await v3CreateBrand(form);
-      // Refresh list and navigate to detail
-      const updated = await v3GetBrands();
-      setData(updated);
+      // Optimistically prepend the new brand to the list
+      setData((prev) => [created, ...(Array.isArray(prev) ? prev : [])]);
       setCreatedAccount(created.account || null);
       setAddOpen(false);
+      setForm({
+        company: '',
+        industry: '',
+        primary_contact: '',
+        role: '',
+        email: '',
+        rm_id: rms[0]?.id || '',
+        engagement_track_default: 'paid',
+      });
       navigate(`/v3/admin/crm/${created.id}`);
     } catch (e) {
       alert(e.response?.data?.detail || e.message);
@@ -61,22 +88,22 @@ const V3AdminCRM = () => {
   };
 
   const filtered = normalised
-    .filter((b) =>
-      (trackFilter === 'all' || b.engagementTrack === trackFilter) &&
-      (b.company.toLowerCase().includes(search.toLowerCase()) ||
-        (b.primaryContact || '').toLowerCase().includes(search.toLowerCase()))
+    .filter(
+      (b) =>
+        (trackFilter === 'all' || b.engagementTrack === trackFilter) &&
+        (b.company.toLowerCase().includes(search.toLowerCase()) ||
+          (b.primaryContact || '').toLowerCase().includes(search.toLowerCase()))
     )
     .sort((a, b) => {
       const newestFirst = brandCreatedAtTs(b.createdAt) - brandCreatedAtTs(a.createdAt);
-      if (newestFirst !== 0) {
-        return newestFirst;
-      }
+      if (newestFirst !== 0) return newestFirst;
       return sortBy === 'score'
         ? (b.leadScore || 0) - (a.leadScore || 0)
         : a.company.localeCompare(b.company);
     });
 
-  const scoreColor = (score) => (score >= 70 ? '#1F4A3A' : score >= 40 ? '#C49B5F' : '#B54A37');
+  const scoreColor = (score) =>
+    score >= 70 ? '#1F4A3A' : score >= 40 ? '#C49B5F' : '#B54A37';
   const trackPill = (track) =>
     track === 'grant'
       ? { label: 'Grant', bg: '#F2EAD8', fg: '#7A5F23' }
@@ -84,130 +111,170 @@ const V3AdminCRM = () => {
 
   return (
     <>
-    <div data-testid="v3-admin-crm">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">CRM</p>
-          <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>Brands</h1>
-          <p className="text-[#8A8A8A] text-sm">
-            {normalised.length} brands in pipeline
-            {source === 'api' && (
-              <span className="ml-2 text-[10px] inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]" data-testid="crm-live-badge">
-                <Sparkles className="w-3 h-3" /> live
-              </span>
-            )}
-          </p>
-        </div>
-        <button className="v3-btn-primary" data-testid="add-brand-btn" onClick={() => setAddOpen(true)}>
-          <Plus className="w-4 h-4" /> Add Brand
-        </button>
-        <button
-          className="v3-btn-secondary"
-          data-testid="scrape-opportunities-btn"
-          onClick={() => navigate('/v3/admin/crm/opportunities')}
-        >
-          <Sparkles className="w-4 h-4" /> Scan Opportunities
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8A8A8A]" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search brands or contacts..."
-            className="w-full pl-10 pr-4 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A] transition-colors"
-            data-testid="crm-search"
-          />
-        </div>
-        <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg" data-testid="crm-track-filter">
-          {[
-            { k: 'all', label: 'All' },
-            { k: 'paid', label: 'Paid Strategy' },
-            { k: 'grant', label: 'Grant' },
-          ].map((t) => (
-            <button
-              key={t.k}
-              onClick={() => setTrackFilter(t.k)}
-              className={`text-[11px] px-3 py-1 rounded transition-colors ${trackFilter === t.k ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
-              data-testid={`crm-track-${t.k}`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <button
-          onClick={() => setSortBy(sortBy === 'score' ? 'name' : 'score')}
-          className="v3-btn-secondary"
-          data-testid="crm-sort"
-        >
-          <ArrowUpDown className="w-3.5 h-3.5" /> {sortBy === 'score' ? 'By Score' : 'A–Z'}
-        </button>
-      </div>
-
-      {/* Brand list */}
-      <div className="space-y-2">
-        {filtered.map((brand) => {
-          const projects = getProjectsForBrand(brand.id);
-          const tp = trackPill(brand.engagementTrack);
-          return (
-            <button
-              key={brand.id}
-              onClick={() => navigate(`/v3/admin/crm/${brand.id}`)}
-              className="w-full v3-card p-4 text-left flex items-center gap-4 hover:border-[#D4CDBF] transition-colors group"
-              data-testid={`crm-brand-${brand.id}`}
-            >
-              <div
-                className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
-                style={{ background: `${scoreColor(brand.leadScore)}12`, border: `1.5px solid ${scoreColor(brand.leadScore)}30` }}
-              >
+      <div data-testid="v3-admin-crm">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">CRM</p>
+            <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>
+              Brands
+            </h1>
+            <p className="text-[#8A8A8A] text-sm">
+              {normalised.length} brands in pipeline
+              {source === 'api' && (
                 <span
-                  className="text-[11px] font-bold"
-                  style={{ color: scoreColor(brand.leadScore), fontFamily: "'JetBrains Mono', monospace" }}
+                  className="ml-2 text-[10px] inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]"
+                  data-testid="crm-live-badge"
                 >
-                  {brand.leadScore}
+                  <Sparkles className="w-3 h-3" /> live
                 </span>
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[14px] font-medium text-[#1A1A1A]">{brand.company}</span>
-                  <span className="text-[10px] text-[#8A8A8A] px-2 py-0.5 rounded bg-[#F4F2EC]">{brand.industry}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: tp.bg, color: tp.fg }} data-testid={`crm-track-pill-${brand.id}`}>
-                    {tp.label}
-                  </span>
-                </div>
-                <p className="text-[12px] text-[#8A8A8A] mt-0.5">
-                  {brand.primaryContact} / {brand.role}
-                </p>
-                <p className="text-[11px] text-[#6E6657] mt-1">
-                  Relationship Manager: {brand.relationshipManager?.name || 'Temi Bakare'}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-4 flex-shrink-0">
-                {projects.length > 0 && (
-                  <span className="text-[11px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">
-                    {projects.length} project{projects.length > 1 ? 's' : ''}
-                  </span>
-                )}
-                <span className="text-[10px] text-[#8A8A8A]">{brand.lastInteraction}</span>
-              </div>
+              )}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button className="v3-btn-primary" data-testid="add-brand-btn" onClick={() => setAddOpen(true)}>
+              <Plus className="w-4 h-4" /> Add Brand
             </button>
-          );
-        })}
+            <button
+              className="v3-btn-secondary"
+              data-testid="scrape-opportunities-btn"
+              onClick={() => navigate('/v3/admin/crm/opportunities')}
+            >
+              <Sparkles className="w-4 h-4" /> Scan Opportunities
+            </button>
+          </div>
+        </div>
+
+        {/* Filters */}
+        <div className="flex items-center gap-3 mb-6">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8A8A8A]" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search brands or contacts..."
+              className="w-full pl-10 pr-4 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A] transition-colors"
+              data-testid="crm-search"
+            />
+          </div>
+          <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg" data-testid="crm-track-filter">
+            {[
+              { k: 'all', label: 'All' },
+              { k: 'paid', label: 'Paid Strategy' },
+              { k: 'grant', label: 'Grant' },
+            ].map((t) => (
+              <button
+                key={t.k}
+                onClick={() => setTrackFilter(t.k)}
+                className={`text-[11px] px-3 py-1 rounded transition-colors ${
+                  trackFilter === t.k ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'
+                }`}
+                data-testid={`crm-track-${t.k}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setSortBy(sortBy === 'score' ? 'name' : 'score')}
+            className="v3-btn-secondary"
+            data-testid="crm-sort"
+          >
+            <ArrowUpDown className="w-3.5 h-3.5" /> {sortBy === 'score' ? 'By Score' : 'A–Z'}
+          </button>
+        </div>
+
+        {/* Brand list */}
+        {filtered.length === 0 ? (
+          <div className="v3-card p-12 text-center" data-testid="crm-empty-state">
+            <Users className="w-10 h-10 text-[#C4BDB3] mx-auto mb-3" />
+            <p className="text-[15px] font-medium text-[#1A1A1A] mb-1">
+              {search || trackFilter !== 'all' ? 'No brands match your filter' : 'No brands in CRM yet'}
+            </p>
+            <p className="text-[13px] text-[#8A8A8A]">
+              {search || trackFilter !== 'all'
+                ? 'Try adjusting your search or filter.'
+                : 'Add your first brand to get started.'}
+            </p>
+            {!search && trackFilter === 'all' && (
+              <button className="v3-btn-primary mt-4" onClick={() => setAddOpen(true)}>
+                <Plus className="w-4 h-4" /> Add Brand
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {filtered.map((brand) => {
+              const tp = trackPill(brand.engagementTrack);
+              return (
+                <button
+                  key={brand.id}
+                  onClick={() => navigate(`/v3/admin/crm/${brand.id}`)}
+                  className="w-full v3-card p-4 text-left flex items-center gap-4 hover:border-[#D4CDBF] transition-colors group"
+                  data-testid={`crm-brand-${brand.id}`}
+                >
+                  <div
+                    className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{
+                      background: `${scoreColor(brand.leadScore)}12`,
+                      border: `1.5px solid ${scoreColor(brand.leadScore)}30`,
+                    }}
+                  >
+                    <span
+                      className="text-[11px] font-bold"
+                      style={{ color: scoreColor(brand.leadScore), fontFamily: "'JetBrains Mono', monospace" }}
+                    >
+                      {brand.leadScore || '—'}
+                    </span>
+                  </div>
+
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[14px] font-medium text-[#1A1A1A]">{brand.company}</span>
+                      <span className="text-[10px] text-[#8A8A8A] px-2 py-0.5 rounded bg-[#F4F2EC]">
+                        {brand.industry}
+                      </span>
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded"
+                        style={{ background: tp.bg, color: tp.fg }}
+                        data-testid={`crm-track-pill-${brand.id}`}
+                      >
+                        {tp.label}
+                      </span>
+                    </div>
+                    <p className="text-[12px] text-[#8A8A8A] mt-0.5">
+                      {brand.primaryContact || 'No contact'} {brand.role ? `/ ${brand.role}` : ''}
+                    </p>
+                    <p className="text-[11px] text-[#6E6657] mt-1">
+                      RM: {brand.relationshipManager?.name || 'Unassigned'}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-4 flex-shrink-0">
+                    {brand.lastInteraction && (
+                      <span className="text-[10px] text-[#8A8A8A]">{brand.lastInteraction}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
-    </div>
 
       {createdAccount && (
-        <div className="fixed bottom-5 right-5 z-50 v3-card p-4 max-w-sm shadow-lg" data-testid="brand-account-created">
+        <div
+          className="fixed bottom-5 right-5 z-50 v3-card p-4 max-w-sm shadow-lg"
+          data-testid="brand-account-created"
+        >
           <p className="text-[12px] font-semibold text-[#1A1A1A] mb-1">Brand portal account created</p>
           <p className="text-[11px] text-[#6E6657]">Welcome email queued with login details.</p>
-          <p className="text-[11px] mt-2" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{createdAccount.username}</p>
-          <button onClick={() => setCreatedAccount(null)} className="v3-btn-secondary text-[11px] mt-3">Dismiss</button>
+          <p className="text-[11px] mt-2" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+            {createdAccount.username}
+          </p>
+          <button onClick={() => setCreatedAccount(null)} className="v3-btn-secondary text-[11px] mt-3">
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -219,8 +286,19 @@ const V3AdminCRM = () => {
         testid="add-brand-modal"
         footer={
           <>
-            <button onClick={() => setAddOpen(false)} className="v3-btn-secondary" data-testid="add-brand-cancel">Cancel</button>
-            <button onClick={submitBrand} disabled={submitting} className="v3-btn-primary" data-testid="add-brand-submit">
+            <button
+              onClick={() => setAddOpen(false)}
+              className="v3-btn-secondary"
+              data-testid="add-brand-cancel"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={submitBrand}
+              disabled={submitting}
+              className="v3-btn-primary"
+              data-testid="add-brand-submit"
+            >
               {submitting ? 'Saving…' : 'Create Brand'}
             </button>
           </>
@@ -235,7 +313,9 @@ const V3AdminCRM = () => {
             { k: 'email', label: 'Contact email (optional)', placeholder: 'name@brand.com' },
           ].map((f) => (
             <div key={f.k}>
-              <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">{f.label}</label>
+              <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+                {f.label}
+              </label>
               <input
                 type="text"
                 value={form[f.k]}
@@ -247,27 +327,42 @@ const V3AdminCRM = () => {
             </div>
           ))}
           <div>
-            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Relationship Manager</label>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+              Relationship Manager
+            </label>
             <select
               value={form.rm_id}
               onChange={(e) => setForm({ ...form, rm_id: e.target.value })}
               className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
               data-testid="add-brand-rm"
             >
-              {v3RMs.map((rm) => (
-                <option key={rm.id} value={rm.id}>{rm.name}</option>
+              {rms.length === 0 && (
+                <option value="">Loading relationship managers…</option>
+              )}
+              {rms.map((rm) => (
+                <option key={rm.id} value={rm.id}>
+                  {rm.name}
+                </option>
               ))}
             </select>
-            <p className="text-[11px] text-[#8A8A8A] mt-1">This RM owns the brand relationship, follow-ups, meetings, and first Business Case handoff.</p>
+            <p className="text-[11px] text-[#8A8A8A] mt-1">
+              This RM owns the brand relationship, follow-ups, meetings, and first Business Case handoff.
+            </p>
           </div>
           <div>
-            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Engagement track default</label>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+              Engagement track default
+            </label>
             <div className="flex gap-2">
               {['paid', 'grant'].map((t) => (
                 <button
                   key={t}
                   onClick={() => setForm({ ...form, engagement_track_default: t })}
-                  className={`flex-1 px-3 py-2 text-[12px] rounded-lg border transition-colors ${form.engagement_track_default === t ? 'bg-[#1F4A3A] text-white border-[#1F4A3A]' : 'bg-white border-[#E8E4DB] text-[#6E6657]'}`}
+                  className={`flex-1 px-3 py-2 text-[12px] rounded-lg border transition-colors ${
+                    form.engagement_track_default === t
+                      ? 'bg-[#1F4A3A] text-white border-[#1F4A3A]'
+                      : 'bg-white border-[#E8E4DB] text-[#6E6657]'
+                  }`}
                   data-testid={`add-brand-track-${t}`}
                 >
                   {t === 'paid' ? 'Paid Strategy' : 'Grant'}
