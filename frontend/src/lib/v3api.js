@@ -20,6 +20,7 @@ v3.interceptors.response.use((response) => {
 export const v3GetBrands = (params) => v3.get('/brands', { params }).then(r => r.data);
 export const v3GetBrand = (brandId) => v3.get(`/brands/${brandId}`).then(r => r.data);
 export const v3CreateBrand = (payload) => v3.post('/brands', payload).then(r => r.data);
+export const v3DeleteBrand = (brandId) => v3.delete(`/brands/${brandId}`).then(r => r.data);
 export const v3ChangeBrandPassword = (payload) => v3.post('/brand-accounts/change-password', payload).then(r => r.data);
 export const v3ListEmailOutbox = (params) => v3.get('/email-outbox', { params }).then(r => r.data);
 export const v3GetContacts = (brandId) => v3.get('/contacts', { params: { brand_id: brandId } }).then(r => r.data);

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
-import { v3GetBrand, v3CreateInteraction, v3ListRelationshipManagers } from '../../../lib/v3api';
+import { v3GetBrand, v3CreateInteraction, v3ListRelationshipManagers, v3DeleteBrand } from '../../../lib/v3api';
 import {
   ChevronLeft,
   Mail,
@@ -12,6 +12,7 @@ import {
   Plus,
   X,
   MessageSquare,
+  Trash2,
 } from 'lucide-react';
 import V3Modal from '../../../components/v3/V3Modal';
 
@@ -50,6 +51,8 @@ const V3AdminBrandDetail = () => {
   const [loading, setLoading] = useState(true);
   const [interactionOpen, setInteractionOpen] = useState(false);
   const [submittingInteraction, setSubmittingInteraction] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [interactionForm, setInteractionForm] = useState({
     type: 'call',
     date_iso: new Date().toISOString().slice(0, 10),
@@ -64,16 +67,18 @@ const V3AdminBrandDetail = () => {
 
   useEffect(() => {
     setLoading(true);
+    let mounted = true;
     v3GetBrand(id)
       .then((data) => {
+        if (!mounted) return;
         setBundle(data);
-        // Pre-populate BC dropdown if only one
         if (data?.business_cases?.length === 1) {
           setInteractionForm((f) => ({ ...f, business_case_id: data.business_cases[0].id }));
         }
       })
-      .catch(() => setBundle(null))
-      .finally(() => setLoading(false));
+      .catch(() => mounted && setBundle(null))
+      .finally(() => mounted && setLoading(false));
+    return () => { mounted = false; };
   }, [id]);
 
   const submitInteraction = async () => {
@@ -109,6 +114,17 @@ const V3AdminBrandDetail = () => {
       alert(e.response?.data?.detail || e.message);
     } finally {
       setSubmittingInteraction(false);
+    }
+  };
+
+  const handleDeleteBrand = async () => {
+    setDeleting(true);
+    try {
+      await v3DeleteBrand(id);
+      navigate('/v3/admin/crm');
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message || 'Failed to delete brand.');
+      setDeleting(false);
     }
   };
 
@@ -148,12 +164,24 @@ const V3AdminBrandDetail = () => {
   return (
     <>
       <div data-testid="v3-brand-detail">
-        <button
-          onClick={() => navigate('/v3/admin/crm')}
-          className="inline-flex items-center gap-1.5 text-[#8A8A8A] text-[12px] mb-6 hover:text-[#5C5C5C]"
-        >
-          <ChevronLeft className="w-3.5 h-3.5" /> All brands
-        </button>
+        <div className="flex items-center justify-between mb-6">
+          <button
+            onClick={() => navigate('/v3/admin/crm')}
+            className="inline-flex items-center gap-1.5 text-[#8A8A8A] text-[12px] hover:text-[#5C5C5C]"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" /> All brands
+          </button>
+          <button
+            onClick={() => setDeleteConfirmOpen(true)}
+            disabled={deleting}
+            className="inline-flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg border border-[#E0B0A4] bg-[#FBF1EE] text-[#B54A37] hover:bg-[#F5D9D2] transition-colors disabled:opacity-50"
+            data-testid="brand-delete-button"
+            title="Delete this brand and all its linked records"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {deleting ? 'Deleting…' : 'Delete brand'}
+          </button>
+        </div>
         <div className="flex gap-8">
           {/* Left sidebar */}
           <div className="w-[280px] flex-shrink-0 space-y-5">
@@ -383,7 +411,7 @@ const V3AdminBrandDetail = () => {
                   <span className="text-[11px] font-semibold uppercase tracking-wider">AI Assist</span>
                 </div>
                 <p className="text-[12px] text-[#5C5C5C] mb-3">
-                  This lead hasn't been contacted recently. Draft a follow-up?
+                  This lead hasn&apos;t been contacted recently. Draft a follow-up?
                 </p>
                 <button className="v3-btn-primary text-[12px]">
                   <Sparkles className="w-3.5 h-3.5" /> Draft Follow-Up
@@ -557,6 +585,51 @@ const V3AdminBrandDetail = () => {
           </div>
         </div>
       </V3Modal>
+
+      {/* Delete confirmation modal */}
+      {deleteConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          data-testid="brand-delete-confirm"
+        >
+          <div className="v3-card w-full max-w-md bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-[#FBF1EE] flex items-center justify-center flex-shrink-0">
+                <Trash2 className="w-5 h-5 text-[#B54A37]" />
+              </div>
+              <div>
+                <h3 className="text-[16px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Delete this brand?
+                </h3>
+                <p className="text-[12px] text-[#6E6657] mt-1 leading-relaxed">
+                  <strong>{brand.company}</strong> and all its linked records (contacts, business cases,
+                  interactions, meetings, contracts, projects, fees, wallet, reports, tasks, queued emails)
+                  will be permanently removed. This cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-[#F1ECDF]">
+              <button
+                onClick={() => setDeleteConfirmOpen(false)}
+                disabled={deleting}
+                className="v3-btn-secondary text-[12px]"
+                data-testid="brand-delete-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteBrand}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#B54A37] text-white text-[12px] font-medium hover:bg-[#9E3E2D] disabled:opacity-50"
+                data-testid="brand-delete-confirm-button"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {deleting ? 'Deleting…' : 'Yes, delete brand'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

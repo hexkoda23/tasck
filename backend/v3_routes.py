@@ -305,6 +305,39 @@ def make_v3_router(db):
             "opportunities": opportunities,
         }
 
+    @router.delete("/brands/{brand_id}")
+    async def delete_brand(brand_id: str):
+        """Delete a brand and ALL its linked records (contacts, business cases,
+        interactions, email outbox, opportunities, brand account, meetings).
+        Returns the counts of removed records per collection."""
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+
+        # Cascade delete linked records
+        removed: Dict[str, int] = {}
+        related: List[Tuple[str, Dict[str, Any]]] = [
+            ("v3_brands", {"id": brand_id}),
+            ("v3_contacts", {"brand_id": brand_id}),
+            ("v3_business_cases", {"brand_id": brand_id}),
+            ("v3_interactions", {"brand_id": brand_id}),
+            ("v3_brand_accounts", {"brand_id": brand_id}),
+            ("v3_email_outbox", {"brand_id": brand_id}),
+            ("v3_opportunities", {"brand_id": brand_id}),
+            ("v3_meetings", {"brand_id": brand_id}),
+            ("v3_projects", {"brand_id": brand_id}),
+            ("v3_contracts", {"brand_id": brand_id}),
+            ("v3_fees", {"brand_id": brand_id}),
+            ("v3_wallet", {"brand_id": brand_id}),
+            ("v3_reports", {"brand_id": brand_id}),
+            ("v3_tasks", {"brand_id": brand_id}),
+        ]
+        for collection, query in related:
+            result = await db[collection].delete_many(query)
+            if result.deleted_count:
+                removed[collection] = result.deleted_count
+        return {"ok": True, "brand_id": brand_id, "removed": removed}
+
     class BrandCreate(BaseModel):
         company: str
         industry: str
