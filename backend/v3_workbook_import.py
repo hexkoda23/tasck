@@ -1227,7 +1227,13 @@ class WorkbookImporter:
 
         async def _upsert_many(collection: str, docs: Dict[str, Dict[str, Any]]) -> int:
             for doc in docs.values():
-                await db[collection].update_one({"id": doc["id"]}, {"$set": doc}, upsert=True)
+                # Preserve the original `created_at` on re-import so user-created
+                # records keep their relative timeline. Only stamp it on first insert.
+                doc_for_set = {k: v for k, v in doc.items() if k != "created_at"}
+                update_ops: Dict[str, Any] = {"$set": doc_for_set}
+                if "created_at" in doc:
+                    update_ops["$setOnInsert"] = {"created_at": doc["created_at"]}
+                await db[collection].update_one({"id": doc["id"]}, update_ops, upsert=True)
             return len(docs)
 
         counts = {
