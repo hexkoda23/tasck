@@ -6,6 +6,23 @@ Premium product demo for "TASCK OS" — a creator campaign management platform f
 - **V2 (Next)**: AI-native command center — COMPLETE
 - **V3 (TASCK v3.2)**: Editorial AI-native platform with Business Case primitive + 4-stage pipeline + live backend — **NOW INCLUDES FULL TTA-USER WORKFLOW** (15 May 2026)
 
+## Update — 11 Feb 2026 (P0 round 5: Projects dashboard + Project Detail workspace + Connect-stage discovery + AI questions)
+- **Projects page rewrite** (`V3AdminProjects.js`): removed all placeholder/debug text. Now a proper dashboard with: header + 4-card stat strip (Total / Total value / CRM Framing / Super Creatives), pill-button filters (Stage + Source) with counts, 2-column responsive card grid showing source pill + stage pill + brand × creator label + clean title + RM/track/days-in-stage strip + italic next-action footer. Cards link to BC detail when `business_case_id` exists, else Project detail.
+- **Project Detail page rewrite** (`V3AdminProjectDetail.js`): API-driven workspace per spec. Header (category / company × creator / title), 6-KPI strip (Stage / Engagement / RM / Value / Created / Days in stage), per-stage Exit Conditions card, 8 tabs (Overview / Timeline / Alignment / Plan / Contracts / Delivery / Financials / Closure), Overview tab with Quick Summary, next-action card, context/goal/success-factors, creator shortlist chips, "Open linked business case" button, AI Assist sidebar with 5-item activity tracker and Recent AI Activity card. Removed dependency on undefined `buildMockAlignmentSnapshot` / `getMockMarketingIntelligence`.
+- **Connect-stage discovery records**: `derive_connect_business_cases` now creates a Connect-stage discovery card for every CRM brand (was only firing for un-linked brands). Stage is forced to `connect` instead of varying by `likelihood`. Result: 8 brands → 8 Connect business cases on top of 11 framing-derived BCs = 19 total. Business Cases page's Connect filter is no longer empty.
+- **Meetings scheduling — AI recommended questions**: `ScheduleModal` now shows a curated set of stage-aware discovery prompts (qualification / connector / plan) with an "Insert into agenda" button that prepends them into the agenda textarea. Questions chosen to capture data needed for Alignment + Strategy Snapshots.
+- **Verified**: 16/16 importer pytests pass. Counts after re-import — brands=8, business_cases=19 (8 connect / 4 frame / 2 plan / 2 deliver / 3 closed), projects=24, meetings=13 with proper titles + RM. UI smoke screenshots confirm Projects page header/stats/filters/cards render correctly, Business Cases Connect filter populated, notification dropdown z-index visible.
+
+### Carry-over for next round (explicit per user — UI template upgrades, not crashes)
+- Full 11-section editable Alignment Snapshot editor with table widgets for Audience Segmentation.
+- 7-phase Brainstorm round UI with creator scoring table + auto-elimination rule (conversion < 3).
+- Full Strategy Snapshot editor with Growth Plan / Creator Strategy / Execution Roadmap / Commercial Overview budget tables.
+- Strategy Development Fee editor with raw/parsed fee, payment status, term, what-it-covers/excludes fields.
+- Contract template with AI risk flag panel + parties/value display.
+- CRM Brand "Add Interaction" → ScheduleModal pre-fill via URL params (`?brand_id=…&business_case_id=…&mode=new`).
+- "Meeting not found" detail route bug fix.
+
+
 ## Update — 11 Feb 2026 (P0 round 4: workflow + alignment + notifications)
 - **Critical crash fixes**
   - `V3DocumentSurface`: now safely renders the `meta` prop whether it's a string, number, array, or object. Previously rendered raw `{brand, relationship_manager, stage, engagement}` objects → "Objects are not valid as a React child" crash on Generate Alignment Snapshot. Object meta is now formatted as `key: value · key: value`.

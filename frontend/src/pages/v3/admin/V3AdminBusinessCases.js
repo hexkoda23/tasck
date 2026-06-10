@@ -1,5 +1,5 @@
 // Admin Business Cases — the v3.2 spec primitive (live from /api/v3)
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   v3ListBusinessCases, v3AdminOverview, v3GetBrands, v3GetCreators,
@@ -62,6 +62,7 @@ const V3AdminBusinessCases = () => {
   const [grantOpportunities, setGrantOpportunities] = useState([]);
   const [businessAgentOpen, setBusinessAgentOpen] = useState(false);
   const [businessOpportunities, setBusinessOpportunities] = useState([]);
+  const fetchedRef = useRef(false);
   const [form, setForm] = useState({
     brand_id: '', creator_id: '', title: '', engagement_track: 'paid',
     estimated_value: 100000000, rm_id: 'rm-temi',

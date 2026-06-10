@@ -145,6 +145,41 @@ const AnalysisCard = ({ analysis, score }) => {
   );
 };
 
+const RECOMMENDED_QUESTIONS = {
+  qualification: [
+    'What is the main business objective behind this conversation?',
+    'Which audience segment are you trying to influence first?',
+    'What behaviour do you want the audience to change?',
+    'What is currently not working in your market, messaging, or growth approach?',
+    'What channels are currently most important to the brand?',
+    'What KPIs would make this project successful?',
+    'What timeline are you working toward?',
+    'Is there an approved budget range or strategy development budget?',
+    'Who is the final decision maker?',
+    'What would make this engagement a success for your team?',
+  ],
+  connector: [
+    'What is the strongest opportunity TTA should focus on?',
+    'Which user segment should be prioritised and why?',
+    'What are the key audience insights already known?',
+    'What creator profile would be credible for this audience?',
+    'What budget or commercial constraints should shape the recommendation?',
+    'What risks would derail the project?',
+    'What must be clarified before the Alignment Snapshot is approved?',
+    'What are the next approval steps after alignment?',
+  ],
+  plan: [
+    'Which strategic approach should lead: ambassador-led, creator-led, community-led, merchant-first, or hybrid?',
+    'Which creators should be shortlisted and why?',
+    'What selection criteria matter most?',
+    'What content formats and platforms should be prioritised?',
+    'What funnel or conversion behaviour should be measured?',
+    'What budget categories need approval?',
+    'What execution phases should be recommended?',
+    'What contracts or approvals are needed before launch?',
+  ],
+};
+
 const ScheduleModal = ({ mode, onClose, onSaved }) => {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -288,6 +323,31 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               }
             />
           </label>
+
+          {/* AI recommended questions — feeds Alignment & Strategy Snapshots */}
+          <div className="md:col-span-2 p-4 rounded-lg bg-[#F4F2EC] border border-[#E8E4DB]" data-testid="schedule-ai-questions">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[11px] uppercase tracking-wider text-[#1F4A3A] font-semibold">AI recommended questions</p>
+              <button
+                type="button"
+                onClick={() => {
+                  const set = RECOMMENDED_QUESTIONS[form.meeting_type === 'qualification' ? 'qualification' : (form.stage === 'plan' ? 'plan' : 'connector')] || [];
+                  const block = set.map((q, i) => `${i + 1}. ${q}`).join('\n');
+                  setForm((f) => ({ ...f, agenda: (f.agenda ? f.agenda + '\n\n' : '') + block }));
+                }}
+                className="text-[10px] px-2 py-1 rounded bg-[#1F4A3A] text-white hover:bg-[#1A1A1A]"
+                data-testid="schedule-insert-questions"
+              >
+                Insert into agenda
+              </button>
+            </div>
+            <p className="text-[11px] text-[#6E6657] mb-2">These prompts capture the details needed to generate the Alignment Snapshot and Strategy Snapshot. Edit, reorder, or drop them as needed.</p>
+            <ol className="list-decimal pl-5 space-y-1 text-[12px] text-[#1A1A1A]">
+              {(RECOMMENDED_QUESTIONS[form.meeting_type === 'qualification' ? 'qualification' : (form.stage === 'plan' ? 'plan' : 'connector')] || []).map((q, i) => (
+                <li key={i}>{q}</li>
+              ))}
+            </ol>
+          </div>
         </div>
         <div className="flex flex-col sm:flex-row justify-end gap-2 mt-5">
           <button onClick={onClose} className="v3-btn-secondary">

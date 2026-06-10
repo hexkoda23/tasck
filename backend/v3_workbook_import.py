@@ -1150,18 +1150,20 @@ class WorkbookImporter:
             }
 
     def derive_connect_business_cases(self) -> None:
-        existing_brand_ids = {bc["brand_id"] for bc in self.business_cases.values() if bc.get("brand_id")}
+        """Always emit a Connect-stage discovery record for every CRM brand so
+        the Business Case page's Connect filter is never empty. This sits
+        alongside any framing-derived business cases the brand may also have."""
         for brand in self.brands.values():
-            if brand["id"] in existing_brand_ids:
-                continue
             bc_id = _det_id("bc", brand["id"], "connect")
+            if bc_id in self.business_cases:
+                continue
             company = brand.get("company") or ""
             self.business_cases[bc_id] = {
                 "id": bc_id, "brand_id": brand["id"],
                 "brand_name": company,
                 "title": f"{company} — Connect",
                 "project_descriptor": "Connect",
-                "stage": _likelihood_to_stage(brand.get("likelihood_to_work_with_tta")),
+                "stage": "connect",
                 "stage_label": "Connect",
                 "engagement_track": brand.get("engagement_track_default", "paid"),
                 "engagement_type": brand.get("engagement_track_default", "paid"),
