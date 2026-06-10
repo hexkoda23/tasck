@@ -1,146 +1,555 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { v3Brands, v3Interactions, v3RMs, getProjectsForBrand, getRM, v3Stages, formatNairaV3 } from '../../../lib/v3data';
-import { v3GetBrand } from '../../../lib/v3api';
-import { ChevronLeft, Mail, Phone, Globe, Building2, Sparkles } from 'lucide-react';
+import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
+import { v3GetBrand, v3CreateInteraction, v3ListRelationshipManagers } from '../../../lib/v3api';
+import {
+  ChevronLeft,
+  Mail,
+  Phone,
+  Globe,
+  Building2,
+  Sparkles,
+  Plus,
+  X,
+  MessageSquare,
+} from 'lucide-react';
+import V3Modal from '../../../components/v3/V3Modal';
 
 const normaliseBrand = (b) => ({
   ...b,
   primaryContact: b.primaryContact || b.primary_contact,
   leadScore: b.leadScore || b.lead_score || 0,
   lastInteraction: b.lastInteraction || b.last_interaction,
-  decisionMakers: b.decisionMakers || [{ name: b.primary_contact || b.primaryContact, role: b.role || 'Primary contact', note: 'primary' }],
-  leadScoreFactors: b.leadScoreFactors || [{ factor: 'CRM intake', detail: b.status || 'Captured in CRM' }],
-  rmId: b.rm_id || b.rmId || b.relationship_manager?.id || 'rm-temi',
-  relationshipManager: b.relationship_manager || getRM(b.rm_id || b.rmId) || v3RMs[0],
+  decisionMakers: b.decisionMakers || [
+    { name: b.primary_contact || b.primaryContact, role: b.role || 'Primary contact', note: 'primary' },
+  ],
+  leadScoreFactors: b.leadScoreFactors || [
+    { factor: 'CRM intake', detail: b.status || 'Captured in CRM' },
+  ],
+  rmId: b.rm_id || b.relationship_manager?.id || 'rm-temi',
+  relationshipManager: b.relationship_manager || {
+    name: b.relationship_manager_name || 'Unassigned',
+    email: b.relationship_manager_email || '',
+    initials: (b.relationship_manager_name || 'U').substring(0, 2).toUpperCase(),
+  },
 });
+
+const INTERACTION_TYPES = [
+  { value: 'call', label: 'Phone Call' },
+  { value: 'meeting', label: 'Meeting' },
+  { value: 'email', label: 'Email' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'note', label: 'Internal Note' },
+  { value: 'follow_up', label: 'Follow-Up' },
+];
 
 const V3AdminBrandDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const fallbackBrand = v3Brands.find(b => b.id === id);
-  const [bundle, setBundle] = useState(fallbackBrand ? { brand: fallbackBrand, contacts: [], business_cases: getProjectsForBrand(id), interactions: v3Interactions[id] || [], emails: [] } : null);
+  const [bundle, setBundle] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [interactionOpen, setInteractionOpen] = useState(false);
+  const [submittingInteraction, setSubmittingInteraction] = useState(false);
+  const [interactionForm, setInteractionForm] = useState({
+    type: 'call',
+    date_iso: new Date().toISOString().slice(0, 10),
+    title: '',
+    summary: '',
+    participants: '',
+    transcript: '',
+    next_action: '',
+    business_case_id: '',
+    create_meeting: false,
+  });
 
   useEffect(() => {
-    v3GetBrand(id).then(setBundle).catch(() => {});
+    setLoading(true);
+    v3GetBrand(id)
+      .then((data) => {
+        setBundle(data);
+        // Pre-populate BC dropdown if only one
+        if (data?.business_cases?.length === 1) {
+          setInteractionForm((f) => ({ ...f, business_case_id: data.business_cases[0].id }));
+        }
+      })
+      .catch(() => setBundle(null))
+      .finally(() => setLoading(false));
   }, [id]);
 
-  if (!bundle?.brand) return <div className="p-8 text-[#8A8A8A]">Brand not found.</div>;
+  const submitInteraction = async () => {
+    if (!interactionForm.title || !interactionForm.type) return;
+    setSubmittingInteraction(true);
+    try {
+      const payload = {
+        brand_id: id,
+        ...interactionForm,
+        participants: interactionForm.participants
+          ? interactionForm.participants.split(',').map((s) => s.trim()).filter(Boolean)
+          : [],
+      };
+      const created = await v3CreateInteraction(payload);
+      // Optimistically prepend interaction
+      setBundle((prev) => ({
+        ...prev,
+        interactions: [created, ...(prev?.interactions || [])],
+      }));
+      setInteractionOpen(false);
+      setInteractionForm({
+        type: 'call',
+        date_iso: new Date().toISOString().slice(0, 10),
+        title: '',
+        summary: '',
+        participants: '',
+        transcript: '',
+        next_action: '',
+        business_case_id: '',
+        create_meeting: false,
+      });
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message);
+    } finally {
+      setSubmittingInteraction(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="p-8 text-center text-[#8A8A8A] text-[13px]" data-testid="v3-brand-detail-loading">
+        Loading brand…
+      </div>
+    );
+  }
+
+  if (!bundle?.brand) {
+    return (
+      <div className="p-8" data-testid="v3-brand-detail-not-found">
+        <button
+          onClick={() => navigate('/v3/admin/crm')}
+          className="inline-flex items-center gap-1.5 text-[#8A8A8A] text-[12px] mb-6 hover:text-[#5C5C5C]"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" /> All brands
+        </button>
+        <div className="v3-card p-8 text-center">
+          <p className="text-[#8A8A8A] text-[14px]">Brand not found.</p>
+          <button className="v3-btn-secondary mt-4" onClick={() => navigate('/v3/admin/crm')}>
+            Back to CRM
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const brand = normaliseBrand(bundle.brand);
-  const projects = bundle.business_cases || getProjectsForBrand(id);
-  const interactions = bundle.interactions || v3Interactions[id] || [];
+  const projects = bundle.business_cases || [];
+  const interactions = bundle.interactions || [];
   const emails = bundle.emails || [];
   const scoreColor = brand.leadScore >= 70 ? '#1F4A3A' : brand.leadScore >= 40 ? '#C49B5F' : '#B54A37';
 
   return (
-    <div data-testid="v3-brand-detail">
-      <button onClick={() => navigate('/v3/admin/crm')} className="inline-flex items-center gap-1.5 text-[#8A8A8A] text-[12px] mb-6 hover:text-[#5C5C5C]"><ChevronLeft className="w-3.5 h-3.5" /> All brands</button>
-      <div className="flex gap-8">
-        <div className="w-[280px] flex-shrink-0 space-y-5">
-          <div>
-            <h1 className="text-xl font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{brand.company}</h1>
-            <p className="text-[12px] text-[#8A8A8A] mt-1">{brand.industry}</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="w-14 h-14 rounded-full flex items-center justify-center" style={{ background: `${scoreColor}12`, border: `2px solid ${scoreColor}30` }}>
-              <span className="text-lg font-bold" style={{ color: scoreColor, fontFamily: "'JetBrains Mono', monospace" }}>{brand.leadScore}</span>
+    <>
+      <div data-testid="v3-brand-detail">
+        <button
+          onClick={() => navigate('/v3/admin/crm')}
+          className="inline-flex items-center gap-1.5 text-[#8A8A8A] text-[12px] mb-6 hover:text-[#5C5C5C]"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" /> All brands
+        </button>
+        <div className="flex gap-8">
+          {/* Left sidebar */}
+          <div className="w-[280px] flex-shrink-0 space-y-5">
+            <div>
+              <h1
+                className="text-xl font-semibold text-[#1A1A1A]"
+                style={{ fontFamily: "'Fraunces', serif" }}
+              >
+                {brand.company}
+              </h1>
+              <p className="text-[12px] text-[#8A8A8A] mt-1">{brand.industry || 'Uncategorised'}</p>
             </div>
-            <div><p className="text-[11px] text-[#8A8A8A]">Lead Score</p><p className="text-[12px] text-[#5C5C5C]">{brand.status}</p></div>
-          </div>
-          <div className="v3-card p-4 space-y-2 text-[12px]">
-            <div className="flex items-center gap-2"><Building2 className="w-3.5 h-3.5 text-[#8A8A8A]" /><span className="text-[#5C5C5C]">{brand.hq}</span></div>
-            <div className="flex items-center gap-2"><Mail className="w-3.5 h-3.5 text-[#8A8A8A]" /><span className="text-[#5C5C5C]">{brand.email}</span></div>
-            <div className="flex items-center gap-2"><Phone className="w-3.5 h-3.5 text-[#8A8A8A]" /><span className="text-[#5C5C5C]">{brand.phone}</span></div>
-            <div className="flex items-center gap-2"><Globe className="w-3.5 h-3.5 text-[#8A8A8A]" /><span className="text-[#5C5C5C]">{brand.website}</span></div>
-          </div>
-          <div className="v3-card p-4">
-            <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Relationship Manager</p>
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-[#DDE7E2] text-[#1F4A3A] flex items-center justify-center text-[11px] font-semibold">
-                {brand.relationshipManager?.initials || 'TB'}
+              <div
+                className="w-14 h-14 rounded-full flex items-center justify-center"
+                style={{ background: `${scoreColor}12`, border: `2px solid ${scoreColor}30` }}
+              >
+                <span
+                  className="text-lg font-bold"
+                  style={{ color: scoreColor, fontFamily: "'JetBrains Mono', monospace" }}
+                >
+                  {brand.leadScore || '—'}
+                </span>
               </div>
               <div>
-                <p className="text-[13px] text-[#1A1A1A] font-medium">{brand.relationshipManager?.name || 'Temi Bakare'}</p>
-                <p className="text-[11px] text-[#6E6657]">{brand.relationshipManager?.email || 'temi.bakare@tasck.com'}</p>
+                <p className="text-[11px] text-[#8A8A8A]">Lead Score</p>
+                <p className="text-[12px] text-[#5C5C5C]">{brand.status || 'Active'}</p>
               </div>
             </div>
-          </div>
-          <div className="v3-card p-4">
-            <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Decision Makers</p>
-            {brand.decisionMakers.map((dm, i) => (
-              <div key={i} className="py-1.5 border-b border-[#F4F2EC] last:border-0">
-                <p className="text-[12px] text-[#1A1A1A] font-medium">{dm.name}</p>
-                <p className="text-[10px] text-[#8A8A8A]">{dm.role}{dm.note ? ` (${dm.note})` : ''}</p>
-              </div>
-            ))}
-          </div>
-          <div className="v3-card p-4">
-            <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Lead Score Factors</p>
-            {brand.leadScoreFactors.map((f, i) => (
-              <div key={i} className="py-1.5 border-b border-[#F4F2EC] last:border-0">
-                <p className="text-[12px] text-[#1A1A1A]">{f.factor}</p>
-                <p className="text-[10px] text-[#8A8A8A]">{f.detail}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="flex-1 min-w-0">
-          {projects.length > 0 && (
-            <div className="mb-6">
-              <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Projects</h2>
-              {projects.map(proj => {
-                const stage = v3Stages.find(s => s.key === proj.stage);
-                return (
-                  <button key={proj.id} onClick={() => navigate(`/v3/admin/projects/${proj.id}`)} className="w-full v3-card p-4 text-left flex items-center gap-3 hover:border-[#D4CDBF] transition-colors mb-2">
-                    <div className="w-2 h-8 rounded-full" style={{ background: stage?.color }} />
-                    <div className="flex-1"><p className="text-[13px] font-medium text-[#1A1A1A]">{proj.title}</p><p className="text-[11px] text-[#8A8A8A]">{stage?.label || proj.stage} &middot; {formatNairaV3(proj.estimatedValue || proj.estimated_value || 0)}</p></div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {emails.length > 0 && (
-            <div className="mb-6">
-              <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Queued Emails</h2>
-              {emails.slice(0, 4).map(email => (
-                <div key={email.id} className="v3-card p-4 mb-2">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="text-[13px] font-medium text-[#1A1A1A]">{email.subject}</p>
-                    <span className="text-[10px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">{email.status}</span>
-                  </div>
-                  <p className="text-[11px] text-[#8A8A8A]">{email.to}</p>
+            <div className="v3-card p-4 space-y-2 text-[12px]">
+              {brand.hq && (
+                <div className="flex items-center gap-2">
+                  <Building2 className="w-3.5 h-3.5 text-[#8A8A8A]" />
+                  <span className="text-[#5C5C5C]">{brand.hq}</span>
                 </div>
-              ))}
+              )}
+              {brand.email && (
+                <div className="flex items-center gap-2">
+                  <Mail className="w-3.5 h-3.5 text-[#8A8A8A]" />
+                  <span className="text-[#5C5C5C]">{brand.email}</span>
+                </div>
+              )}
+              {brand.phone && (
+                <div className="flex items-center gap-2">
+                  <Phone className="w-3.5 h-3.5 text-[#8A8A8A]" />
+                  <span className="text-[#5C5C5C]">{brand.phone}</span>
+                </div>
+              )}
+              {brand.website && (
+                <div className="flex items-center gap-2">
+                  <Globe className="w-3.5 h-3.5 text-[#8A8A8A]" />
+                  <span className="text-[#5C5C5C]">{brand.website}</span>
+                </div>
+              )}
+              {!brand.hq && !brand.email && !brand.phone && !brand.website && (
+                <p className="text-[#8A8A8A] italic">No contact details provided.</p>
+              )}
             </div>
-          )}
-          <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Interaction History</h2>
-          {interactions.length > 0 ? interactions.map(int => (
-            <div key={int.id} className="v3-card p-4 mb-2">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#8A8A8A] capitalize">{int.type.replace('_', ' ')}</span>
-                <span className="text-[11px] text-[#8A8A8A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{int.dateISO || int.date_iso}</span>
-                <span className="text-[11px] text-[#5C5C5C] ml-auto">{int.author}</span>
+            <div className="v3-card p-4">
+              <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">
+                Relationship Manager
+              </p>
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-[#DDE7E2] text-[#1F4A3A] flex items-center justify-center text-[11px] font-semibold">
+                  {brand.relationshipManager?.initials || '?'}
+                </div>
+                <div>
+                  <p className="text-[13px] text-[#1A1A1A] font-medium">
+                    {brand.relationshipManager?.name || 'Unassigned'}
+                  </p>
+                  {brand.relationshipManager?.email && (
+                    <p className="text-[11px] text-[#6E6657]">{brand.relationshipManager.email}</p>
+                  )}
+                </div>
               </div>
-              <p className="text-[13px] font-medium text-[#1A1A1A] mb-1">{int.title}</p>
-              <pre className="text-[12px] text-[#5C5C5C] leading-relaxed whitespace-pre-wrap font-sans max-h-48 overflow-y-auto">{int.content}</pre>
             </div>
-          )) : (
-            <div className="v3-card p-6 text-center">
-              <p className="text-[#8A8A8A] text-[13px]">No interactions recorded yet.</p>
-              <button className="v3-btn-secondary mt-3 text-[12px]">Add Interaction</button>
+            {/* Contacts from API */}
+            {(bundle.contacts || []).length > 0 && (
+              <div className="v3-card p-4">
+                <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Contacts</p>
+                {(bundle.contacts || []).map((c, i) => (
+                  <div key={c.id || i} className="py-1.5 border-b border-[#F4F2EC] last:border-0">
+                    <p className="text-[12px] text-[#1A1A1A] font-medium">{c.name}</p>
+                    <p className="text-[10px] text-[#8A8A8A]">
+                      {c.role}
+                      {c.is_primary ? ' (primary)' : ''}
+                    </p>
+                    {c.email && <p className="text-[10px] text-[#6E6657]">{c.email}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {brand.decisionMakers?.length > 0 && (bundle.contacts || []).length === 0 && (
+              <div className="v3-card p-4">
+                <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Decision Makers</p>
+                {brand.decisionMakers.map((dm, i) => (
+                  <div key={i} className="py-1.5 border-b border-[#F4F2EC] last:border-0">
+                    <p className="text-[12px] text-[#1A1A1A] font-medium">{dm.name}</p>
+                    <p className="text-[10px] text-[#8A8A8A]">
+                      {dm.role}
+                      {dm.note ? ` (${dm.note})` : ''}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Main content */}
+          <div className="flex-1 min-w-0">
+            {/* Business Cases */}
+            {projects.length > 0 && (
+              <div className="mb-6">
+                <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">
+                  Business Cases
+                </h2>
+                {projects.map((proj) => {
+                  const stage = v3Stages.find((s) => s.key === proj.stage);
+                  return (
+                    <button
+                      key={proj.id}
+                      onClick={() => navigate(`/v3/admin/projects/${proj.id}`)}
+                      className="w-full v3-card p-4 text-left flex items-center gap-3 hover:border-[#D4CDBF] transition-colors mb-2"
+                    >
+                      <div className="w-2 h-8 rounded-full" style={{ background: stage?.color || '#C4BDB3' }} />
+                      <div className="flex-1">
+                        <p className="text-[13px] font-medium text-[#1A1A1A]">{proj.title}</p>
+                        <p className="text-[11px] text-[#8A8A8A]">
+                          {stage?.label || proj.stage} &middot;{' '}
+                          {formatNairaV3(proj.estimatedValue || proj.estimated_value || 0)}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Queued Emails */}
+            {emails.length > 0 && (
+              <div className="mb-6">
+                <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">
+                  Queued Emails
+                </h2>
+                {emails.slice(0, 4).map((email) => (
+                  <div key={email.id} className="v3-card p-4 mb-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[13px] font-medium text-[#1A1A1A]">{email.subject}</p>
+                      <span className="text-[10px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">
+                        {email.status}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#8A8A8A]">{email.to}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Interaction History */}
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider">
+                Interaction History
+              </h2>
+              <button
+                className="v3-btn-primary text-[11px]"
+                data-testid="add-interaction-btn"
+                onClick={() => setInteractionOpen(true)}
+              >
+                <Plus className="w-3.5 h-3.5" /> Add Interaction
+              </button>
             </div>
-          )}
-          {/* Follow-up drafter */}
-          {brand.leadScore < 75 && (
-            <div className="mt-4 v3-ai-panel">
-              <div className="flex items-center gap-2 mb-2"><Sparkles className="w-3.5 h-3.5 text-[#1F4A3A]" /><span className="text-[11px] font-semibold uppercase tracking-wider">AI Assist</span></div>
-              <p className="text-[12px] text-[#5C5C5C] mb-3">This lead hasn't been contacted recently. Draft a follow-up?</p>
-              <button className="v3-btn-primary text-[12px]"><Sparkles className="w-3.5 h-3.5" /> Draft Follow-Up</button>
-            </div>
-          )}
+
+            {interactions.length > 0 ? (
+              interactions.map((int) => (
+                <div key={int.id} className="v3-card p-4 mb-2">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#8A8A8A] capitalize">
+                      {(int.type || '').replace('_', ' ')}
+                    </span>
+                    <span
+                      className="text-[11px] text-[#8A8A8A]"
+                      style={{ fontFamily: "'JetBrains Mono', monospace" }}
+                    >
+                      {int.dateISO || int.date_iso}
+                    </span>
+                    {int.author && (
+                      <span className="text-[11px] text-[#5C5C5C] ml-auto">{int.author}</span>
+                    )}
+                  </div>
+                  <p className="text-[13px] font-medium text-[#1A1A1A] mb-1">{int.title}</p>
+                  {(int.content || int.summary) && (
+                    <pre className="text-[12px] text-[#5C5C5C] leading-relaxed whitespace-pre-wrap font-sans max-h-48 overflow-y-auto">
+                      {int.content || int.summary}
+                    </pre>
+                  )}
+                  {int.next_action && (
+                    <p className="text-[11px] text-[#1F4A3A] mt-2 font-medium">
+                      Next: {int.next_action}
+                    </p>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="v3-card p-8 text-center" data-testid="interactions-empty">
+                <MessageSquare className="w-8 h-8 text-[#C4BDB3] mx-auto mb-3" />
+                <p className="text-[#8A8A8A] text-[13px] mb-1">No interactions recorded yet.</p>
+                <p className="text-[12px] text-[#8A8A8A]">
+                  Use the Add Interaction button to log your first contact.
+                </p>
+              </div>
+            )}
+
+            {/* AI Assist panel for low-score brands */}
+            {brand.leadScore > 0 && brand.leadScore < 75 && (
+              <div className="mt-4 v3-ai-panel">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-3.5 h-3.5 text-[#1F4A3A]" />
+                  <span className="text-[11px] font-semibold uppercase tracking-wider">AI Assist</span>
+                </div>
+                <p className="text-[12px] text-[#5C5C5C] mb-3">
+                  This lead hasn't been contacted recently. Draft a follow-up?
+                </p>
+                <button className="v3-btn-primary text-[12px]">
+                  <Sparkles className="w-3.5 h-3.5" /> Draft Follow-Up
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* Add Interaction Modal */}
+      <V3Modal
+        open={interactionOpen}
+        onClose={() => setInteractionOpen(false)}
+        title="Add Interaction"
+        subtitle={`Log a touchpoint with ${brand.company}`}
+        testid="add-interaction-modal"
+        footer={
+          <>
+            <button
+              onClick={() => setInteractionOpen(false)}
+              className="v3-btn-secondary"
+              data-testid="add-interaction-cancel"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={submitInteraction}
+              disabled={submittingInteraction || !interactionForm.title}
+              className="v3-btn-primary"
+              data-testid="add-interaction-submit"
+            >
+              {submittingInteraction ? 'Saving…' : 'Save Interaction'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+                Type
+              </label>
+              <select
+                value={interactionForm.type}
+                onChange={(e) => setInteractionForm({ ...interactionForm, type: e.target.value })}
+                className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+                data-testid="interaction-type"
+              >
+                {INTERACTION_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+                Date
+              </label>
+              <input
+                type="date"
+                value={interactionForm.date_iso}
+                onChange={(e) => setInteractionForm({ ...interactionForm, date_iso: e.target.value })}
+                className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+                data-testid="interaction-date"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+              Title / Subject *
+            </label>
+            <input
+              type="text"
+              value={interactionForm.title}
+              onChange={(e) => setInteractionForm({ ...interactionForm, title: e.target.value })}
+              placeholder="e.g. Discovery call — initial brief discussion"
+              className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+              data-testid="interaction-title"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+              Summary
+            </label>
+            <textarea
+              value={interactionForm.summary}
+              onChange={(e) => setInteractionForm({ ...interactionForm, summary: e.target.value })}
+              placeholder="Key points from the interaction…"
+              rows={3}
+              className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A] resize-y"
+              data-testid="interaction-summary"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+              Participants (comma-separated)
+            </label>
+            <input
+              type="text"
+              value={interactionForm.participants}
+              onChange={(e) => setInteractionForm({ ...interactionForm, participants: e.target.value })}
+              placeholder="e.g. Funke Adebiyi, Tope Martins"
+              className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+              data-testid="interaction-participants"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+              Transcript / Notes
+            </label>
+            <textarea
+              value={interactionForm.transcript}
+              onChange={(e) => setInteractionForm({ ...interactionForm, transcript: e.target.value })}
+              placeholder="Paste call transcript or detailed notes here…"
+              rows={4}
+              className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A] resize-y"
+              data-testid="interaction-transcript"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+              Next Action
+            </label>
+            <input
+              type="text"
+              value={interactionForm.next_action}
+              onChange={(e) => setInteractionForm({ ...interactionForm, next_action: e.target.value })}
+              placeholder="e.g. Send Alignment Snapshot by Friday"
+              className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+              data-testid="interaction-next-action"
+            />
+          </div>
+          {projects.length > 0 && (
+            <div>
+              <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+                Link to Business Case (optional)
+              </label>
+              <select
+                value={interactionForm.business_case_id}
+                onChange={(e) =>
+                  setInteractionForm({ ...interactionForm, business_case_id: e.target.value })
+                }
+                className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+                data-testid="interaction-bc"
+              >
+                <option value="">— None —</option>
+                {projects.map((bc) => (
+                  <option key={bc.id} value={bc.id}>
+                    {bc.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              type="checkbox"
+              id="create-meeting"
+              checked={interactionForm.create_meeting}
+              onChange={(e) =>
+                setInteractionForm({ ...interactionForm, create_meeting: e.target.checked })
+              }
+              className="w-4 h-4 accent-[#1F4A3A]"
+              data-testid="interaction-create-meeting"
+            />
+            <label htmlFor="create-meeting" className="text-[12px] text-[#5C5C5C]">
+              Also create a linked meeting record
+            </label>
+          </div>
+        </div>
+      </V3Modal>
+    </>
   );
 };
+
 export default V3AdminBrandDetail;

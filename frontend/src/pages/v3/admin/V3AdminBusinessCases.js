@@ -6,11 +6,9 @@ import {
   v3CreateBusinessCase, v3ListOpportunityCandidates,
 } from '../../../lib/v3api';
 import {
-  formatNairaV3, v3Stages, v3Brands as fallbackBrands, v3Creators as fallbackCreators,
-  buildMockBusinessCases, buildMockAdminOverview, getRM,
+  formatNairaV3, v3Stages,
 } from '../../../lib/v3data';
-import { applyStoredDemoRows, saveStoredDemoBundle } from '../../../lib/v3demoStore';
-import { candidateToBusinessOpportunity, demoOpportunityCandidates } from '../../../lib/v3opportunityDemo';
+import { candidateToBusinessOpportunity } from '../../../lib/v3opportunityDemo';
 import V3Modal from '../../../components/v3/V3Modal';
 import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search } from 'lucide-react';
 
@@ -47,124 +45,6 @@ const sortBrandsNewestFirst = (brandList = []) => {
   });
 };
 
-const demoOverviewFromRows = (rows) => {
-  const base = buildMockAdminOverview();
-  const byStage = rows.reduce((acc, row) => ({ ...acc, [row.stage]: (acc[row.stage] || 0) + 1 }), {});
-  const paid = rows.filter((row) => row.engagement_track !== 'grant');
-  const grants = rows.filter((row) => row.engagement_track === 'grant');
-  return {
-    ...base,
-    business_cases_total: rows.length,
-    paid_count: paid.length,
-    paid_total_value: paid.reduce((sum, row) => sum + (Number(row.estimated_value) || 0), 0),
-    grant_count: grants.length,
-    grant_total_value: grants.reduce((sum, row) => sum + (Number(row.estimated_value) || 0), 0),
-    by_stage: byStage,
-  };
-};
-
-const demoGrantOpportunities = [
-  {
-    id: 'grant-african-creative-economy',
-    title: 'African Creative Economy Growth Fund',
-    funder: 'Pan-African Culture & Innovation Facility',
-    amount: 75000000,
-    deadline: '2026-07-18',
-    source: 'culturefund.africa/opportunities/creative-economy-growth',
-    fit_score: 94,
-    angle: 'Supports TASCK creator infrastructure, talent discovery, and reporting tools for youth culture campaigns.',
-    status: 'new',
-  },
-  {
-    id: 'grant-youth-digital-jobs',
-    title: 'Youth Digital Jobs & Media Skills Grant',
-    funder: 'West Africa Digital Skills Alliance',
-    amount: 48000000,
-    deadline: '2026-08-02',
-    source: 'wadsa.org/grants/youth-digital-media',
-    fit_score: 89,
-    angle: 'Good fit for creator onboarding, production training, campaign operations, and measurable employment outcomes.',
-    status: 'new',
-  },
-  {
-    id: 'grant-women-culture-commerce',
-    title: 'Women In Culture Commerce Accelerator',
-    funder: 'Global Inclusive Markets Lab',
-    amount: 62000000,
-    deadline: '2026-06-29',
-    source: 'inclusivemarkets.example/apply/women-culture-commerce',
-    fit_score: 86,
-    angle: 'Can fund campaigns and creator partnerships led by women, plus brand access for women-owned creative businesses.',
-    status: 'new',
-  },
-  {
-    id: 'grant-climate-storytelling',
-    title: 'Climate Storytelling For African Cities',
-    funder: 'Green Futures Media Trust',
-    amount: 35000000,
-    deadline: '2026-09-10',
-    source: 'greenfuturemedia.org/open-calls/african-cities',
-    fit_score: 81,
-    angle: 'Useful for TASCK documentary briefs, creator-led climate storytelling, and brand-funded impact reporting.',
-    status: 'new',
-  },
-];
-
-const demoBusinessOpportunities = [
-  {
-    id: 'opp-cocacola-campus-share',
-    brand_id: 'brand-cocacola',
-    company: 'Coca-Cola Nigeria Limited',
-    title: 'Campus Share Moments',
-    pain_point: 'Public social listening shows students are sharing “Detty December on campus” content, but beverage brands are not owning the moment with a structured creator-led mechanic.',
-    source: 'AI web discovery: culture calendars, student creator posts, retail activation mentions',
-    contact: 'Folake Adeniran, folake.adeniran@coca-cola.com',
-    estimated_value: 85000000,
-    fit_score: 94,
-    suggested_angle: 'Generate an Alignment Snapshot around campus storytelling, personalized sharing moments, and retail-to-social UGC.',
-    status: 'new',
-  },
-  {
-    id: 'opp-mtn-data-youth',
-    brand_id: 'brand-mtn',
-    company: 'MTN Nigeria Communications PLC',
-    title: 'Data For Creators Push',
-    pain_point: 'Creator economy conversations are highlighting high data spend as a barrier to consistent posting, especially among student creators and micro-influencers.',
-    source: 'AI web discovery: creator forums, X posts, student tech blogs, telco campaign mentions',
-    contact: 'Kemi Adebayo, kemi.adebayo@mtn.com',
-    estimated_value: 120000000,
-    fit_score: 91,
-    suggested_angle: 'Position MTN as the network powering the next wave of Nigerian creators with a creator challenge and data-led conversion KPI.',
-    status: 'new',
-  },
-  {
-    id: 'opp-star-nightlife-reboot',
-    brand_id: 'brand-star',
-    company: 'Nigerian Breweries PLC (Star Lager)',
-    title: 'Nightlife Reboot',
-    pain_point: 'Lagos nightlife content is fragmenting across TikTok, Instagram, and event pages; beer brands need cleaner cultural ownership and safer event-to-content reporting.',
-    source: 'AI web discovery: nightlife event listings, creator content, venue pages, entertainment blogs',
-    contact: 'Funke Adebiyi, funke.adebiyi@heineken.com',
-    estimated_value: 98000000,
-    fit_score: 88,
-    suggested_angle: 'Build a Star-led nightlife content system with approved venues, creators, responsible-drinking controls, and measurable event attendance lift.',
-    status: 'new',
-  },
-  {
-    id: 'opp-access-finance-culture',
-    brand_id: 'brand-access',
-    company: 'Access Bank PLC',
-    title: 'Creator Finance Trust Gap',
-    pain_point: 'Young creators are discussing inconsistent payment cycles and limited access to structured financial products for production, tax, and savings.',
-    source: 'AI web discovery: creator newsletters, finance forums, LinkedIn posts, SME program pages',
-    contact: 'Obi Nwosu, obi.nwosu@accessbankplc.com',
-    estimated_value: 64000000,
-    fit_score: 83,
-    suggested_angle: 'Create an Alignment Snapshot for a creator-finance education campaign with measurable account/product adoption signals.',
-    status: 'new',
-  },
-];
-
 const V3AdminBusinessCases = () => {
   const navigate = useNavigate();
   const [cases, setCases] = useState([]);
@@ -179,9 +59,9 @@ const V3AdminBusinessCases = () => {
   const [creators, setCreators] = useState([]);
   const [busy, setBusy] = useState(false);
   const [grantAgentRan, setGrantAgentRan] = useState(false);
-  const [grantOpportunities, setGrantOpportunities] = useState(demoGrantOpportunities);
+  const [grantOpportunities, setGrantOpportunities] = useState([]);
   const [businessAgentOpen, setBusinessAgentOpen] = useState(false);
-  const [businessOpportunities, setBusinessOpportunities] = useState(demoBusinessOpportunities);
+  const [businessOpportunities, setBusinessOpportunities] = useState([]);
   const [form, setForm] = useState({
     brand_id: '', creator_id: '', title: '', engagement_track: 'paid',
     estimated_value: 100000000, rm_id: 'rm-temi',
@@ -190,14 +70,14 @@ const V3AdminBusinessCases = () => {
 
   const reload = () =>
     Promise.all([v3ListBusinessCases(), v3AdminOverview()]).then(([cs, ov]) => {
-      setCases(Array.isArray(cs) ? cs : buildMockBusinessCases());
-      setOverview(ov && typeof ov === 'object' && !Array.isArray(ov) ? ov : buildMockAdminOverview());
+      const csList = Array.isArray(cs) ? cs : [];
+      // Sort newest-first on the client side as well
+      csList.sort((a, b) => Date.parse(b.created_at || '') - Date.parse(a.created_at || '') || 0);
+      setCases(csList);
+      setOverview(ov && typeof ov === 'object' && !Array.isArray(ov) ? ov : null);
       setError(null);
-    }).catch(() => {
-      const rows = applyStoredDemoRows(buildMockBusinessCases());
-      setCases(rows);
-      setOverview(demoOverviewFromRows(rows));
-      setError(null);
+    }).catch((e) => {
+      setError('Backend unavailable. Please check your connection.');
     });
 
   useEffect(() => {
@@ -205,16 +85,17 @@ const V3AdminBusinessCases = () => {
   }, []);
 
   const openNew = async () => {
-    let b = fallbackBrands;
-    let c = fallbackCreators;
+    let b = [], c = [];
     try {
       [b, c] = await Promise.all([v3GetBrands(), v3GetCreators()]);
     } catch (e) {
-      // Demo fallback keeps the workflow visible when the API is not running.
+      // API unavailable — brand and creator lists will be empty
     }
     const brandList = Array.isArray(b) ? b : [];
     const creatorList = Array.isArray(c) ? c : [];
-    const sortedBrands = sortBrandsNewestFirst(brandList);
+    const sortedBrands = [...brandList].sort(
+      (a, z) => Date.parse(z.created_at || '') - Date.parse(a.created_at || '') || 0
+    );
     setBrands(sortedBrands);
     setCreators(creatorList);
     const defaultBrand = sortedBrands[0];
@@ -222,8 +103,8 @@ const V3AdminBusinessCases = () => {
       ...f,
       brand_id: defaultBrand?.id || '',
       creator_id: '',
-      rm_id: defaultBrand?.rm_id || defaultBrand?.rmId || defaultBrand?.relationship_manager?.id || 'rm-temi',
-      engagement_track: defaultBrand?.engagement_track_default || defaultBrand?.engagementTrack || 'paid',
+      rm_id: defaultBrand?.rm_id || defaultBrand?.relationship_manager?.id || 'rm-temi',
+      engagement_track: defaultBrand?.engagement_track_default || 'paid',
     }));
     setNewOpen(true);
   };

@@ -1,60 +1,152 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { v3Projects, v3Brands, v3Creators, v3RMs, v3Stages, getBrand, getCreator, getRM, formatNairaV3 } from '../../../lib/v3data';
-import { AlertCircle, ArrowRight, Clock, FolderOpen, GitBranch, TrendingUp, Users } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
+import { v3AdminOverview } from '../../../lib/v3api';
+import { FolderOpen, GitBranch, TrendingUp, Users, Clock } from 'lucide-react';
 
 const V3AdminOverview = () => {
-  const navigate = useNavigate();
-  const needsAttention = v3Projects.filter(p => p.nextAction);
-  const totalValue = v3Projects.reduce((a, p) => a + p.estimatedValue, 0);
+  const [overview, setOverview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    v3AdminOverview()
+      .then(data => {
+        setOverview(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to load admin overview:', err);
+        setError('Could not load overview data.');
+        setLoading(false);
+      });
+  }, []);
+
+  /* ── Loading ── */
+  if (loading) {
+    return (
+      <div data-testid="v3-admin-overview" className="flex flex-col items-center justify-center py-24 gap-3">
+        <div className="w-5 h-5 rounded-full border-2 border-[#1F4A3A] border-t-transparent animate-spin" />
+        <p className="text-[12px] text-[#8A8A8A]">Loading overview…</p>
+      </div>
+    );
+  }
+
+  /* ── Error ── */
+  if (error) {
+    return (
+      <div data-testid="v3-admin-overview" className="flex flex-col items-center justify-center py-24 gap-2">
+        <p className="text-[13px] text-[#B54A37]">{error}</p>
+        <button
+          onClick={() => { setLoading(true); setError(null); v3AdminOverview().then(d => { setOverview(d); setLoading(false); }).catch(() => { setError('Could not load overview data.'); setLoading(false); }); }}
+          className="text-[11px] text-[#1F4A3A] underline underline-offset-2"
+        >
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  /* ── Empty state ── */
+  const isEmpty = !overview || overview.business_cases_total === 0;
+  if (isEmpty) {
+    return (
+      <div data-testid="v3-admin-overview">
+        <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Admin Control Centre</p>
+        <h1 className="v3-heading text-2xl mb-1" style={{ fontFamily: "'Fraunces', serif" }}>Today</h1>
+        <p className="text-[#8A8A8A] text-sm mb-8">No projects yet. Create a business case to get started.</p>
+        <div className="v3-card p-10 flex flex-col items-center gap-2">
+          <FolderOpen className="w-8 h-8 text-[#D4CDBF]" strokeWidth={1} />
+          <p className="text-[13px] text-[#8A8A8A]">Nothing here yet</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Derived values ── */
+  const totalValue = (overview.paid_total_value || 0) + (overview.grant_total_value || 0);
+  const byStage = overview.by_stage || {};
+
+  const statCards = [
+    {
+      label: 'Total Projects',
+      value: overview.business_cases_total ?? 0,
+      icon: FolderOpen,
+      color: '#1F4A3A',
+    },
+    {
+      label: 'Pipeline Value',
+      value: formatNairaV3(totalValue),
+      icon: TrendingUp,
+      color: '#C49B5F',
+    },
+    {
+      label: 'Paid Deals',
+      value: overview.paid_count ?? 0,
+      icon: Users,
+      color: '#567B3F',
+    },
+    {
+      label: 'Grant Projects',
+      value: overview.grant_count ?? 0,
+      icon: Clock,
+      color: '#9B9380',
+    },
+  ];
+
+  /* ── Stage distribution from API by_stage ── */
   const stageDistribution = v3Stages.map(s => ({
-    ...s, count: v3Projects.filter(p => p.stage === s.key).length,
-    value: v3Projects.filter(p => p.stage === s.key).reduce((a, p) => a + p.estimatedValue, 0),
+    ...s,
+    count: byStage[s.key]?.count ?? 0,
+    value: byStage[s.key]?.value ?? 0,
   }));
 
   return (
     <div data-testid="v3-admin-overview">
       <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Admin Control Centre</p>
       <h1 className="v3-heading text-2xl mb-1" style={{ fontFamily: "'Fraunces', serif" }}>Today</h1>
-      <p className="text-[#8A8A8A] text-sm mb-8">What needs your attention right now.</p>
+      <p className="text-[#8A8A8A] text-sm mb-8">Platform snapshot.</p>
 
-      {/* Quick stats with sparklines */}
+      {/* Quick stats */}
       <div className="grid grid-cols-4 gap-4 mb-8">
-        {[
-          { label: 'Active Projects', value: v3Projects.length, icon: FolderOpen, color: '#1F4A3A', spark: [4, 5, 6, 7, 8, 10], change: '+2 this month' },
-          { label: 'Pipeline Value', value: formatNairaV3(totalValue), icon: TrendingUp, color: '#C49B5F', spark: [400, 520, 650, 780, 950, 1195], change: '+₦245M this month' },
-          { label: 'Brands', value: v3Brands.length, icon: Users, color: '#9B9380', spark: [3, 4, 5, 6, 8, 10], change: '+2 this month' },
-          { label: 'Creators', value: v3Creators.length, icon: Users, color: '#567B3F', spark: [5, 5, 6, 7, 8, 10], change: '+2 this month' },
-        ].map((s, i) => {
+        {statCards.map((s, i) => {
           const Icon = s.icon;
-          const maxSpark = Math.max(...s.spark);
           return (
             <div key={i} className="v3-card p-5">
               <div className="flex items-center gap-2 mb-3">
                 <Icon className="w-4 h-4" style={{ color: s.color }} strokeWidth={1.5} />
                 <span className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">{s.label}</span>
               </div>
-              <div className="flex items-end justify-between">
-                <div>
-                  <p className="text-[#1A1A1A] text-xl font-semibold" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{s.value}</p>
-                  <p className="text-[10px] text-[#1F4A3A] mt-1">{s.change}</p>
-                </div>
-                {/* Sparkline */}
-                <svg width="60" height="28" viewBox="0 0 60 28" fill="none" className="flex-shrink-0">
-                  <polyline
-                    points={s.spark.map((v, j) => `${j * (60 / (s.spark.length - 1))},${28 - (v / maxSpark) * 24}`).join(' ')}
-                    stroke={s.color}
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    fill="none"
-                  />
-                  <circle cx={60} cy={28 - (s.spark[s.spark.length - 1] / maxSpark) * 24} r="2" fill={s.color} />
-                </svg>
-              </div>
+              <p
+                className="text-[#1A1A1A] text-xl font-semibold"
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                {s.value}
+              </p>
             </div>
           );
         })}
+      </div>
+
+      {/* Value breakdown */}
+      <div className="grid grid-cols-2 gap-4 mb-8">
+        <div className="v3-card p-5">
+          <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Paid Total Value</p>
+          <p
+            className="text-[#1A1A1A] text-xl font-semibold"
+            style={{ fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            {formatNairaV3(overview.paid_total_value ?? 0)}
+          </p>
+        </div>
+        <div className="v3-card p-5">
+          <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Grant Total Value</p>
+          <p
+            className="text-[#1A1A1A] text-xl font-semibold"
+            style={{ fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            {formatNairaV3(overview.grant_total_value ?? 0)}
+          </p>
+        </div>
       </div>
 
       {/* Pipeline at a glance */}
@@ -65,80 +157,40 @@ const V3AdminOverview = () => {
         </div>
         <div className="flex gap-3">
           {stageDistribution.map(s => (
-            <div key={s.key} className="flex-1 p-3 rounded-lg" style={{ background: `${s.color}08`, border: `1px solid ${s.color}20` }}>
+            <div
+              key={s.key}
+              className="flex-1 p-3 rounded-lg"
+              style={{ background: `${s.color}08`, border: `1px solid ${s.color}20` }}
+            >
               <div className="flex items-center gap-2 mb-1">
                 <div className="w-2 h-2 rounded-full" style={{ background: s.color }} />
                 <span className="text-[11px] font-medium" style={{ color: s.color }}>{s.label}</span>
               </div>
-              <p className="text-lg font-semibold text-[#1A1A1A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{s.count}</p>
-              <p className="text-[10px] text-[#8A8A8A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(s.value)}</p>
+              <p
+                className="text-lg font-semibold text-[#1A1A1A]"
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                {s.count}
+              </p>
+              <p
+                className="text-[10px] text-[#8A8A8A]"
+                style={{ fontFamily: "'JetBrains Mono', monospace" }}
+              >
+                {formatNairaV3(s.value)}
+              </p>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Needs attention */}
+      {/* Needs attention — coming soon */}
       <div className="mb-8">
-        <div className="flex items-center gap-2 mb-4">
-          <AlertCircle className="w-4 h-4 text-[#C49B5F]" strokeWidth={1.5} />
-          <h2 className="text-[13px] font-semibold text-[#1A1A1A]">Needs your attention</h2>
-          <span className="text-[10px] text-[#8A8A8A] ml-auto">{needsAttention.length} items</span>
-        </div>
-        <div className="space-y-2">
-          {needsAttention.map(proj => {
-            const brand = getBrand(proj.brandId);
-            const stage = v3Stages.find(s => s.key === proj.stage);
-            return (
-              <button
-                key={proj.id}
-                onClick={() => navigate(`/v3/admin/projects/${proj.id}`)}
-                className="w-full v3-card p-4 text-left flex items-center gap-4 hover:border-[#D4CDBF] transition-colors group"
-                data-testid={`attention-${proj.id}`}
-              >
-                <div className="w-2 h-full rounded-full flex-shrink-0" style={{ background: stage?.color, minHeight: 40 }} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-[13px] font-medium text-[#1A1A1A]">{brand?.company?.split(' ')[0]}</span>
-                    <span className="text-[11px] text-[#8A8A8A]">—</span>
-                    <span className="text-[13px] text-[#5C5C5C] truncate" style={{ fontFamily: "'Fraunces', serif" }}>{proj.title}</span>
-                  </div>
-                  <p className="text-[12px] text-[#8A8A8A]">{proj.nextAction}</p>
-                </div>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className={`text-[10px] px-2 py-0.5 rounded ${proj.engagement === 'retainer' ? 'v3-badge-retainer' : 'v3-badge-direct'}`}>
-                    {proj.engagement}
-                  </span>
-                  <span className="text-[10px] text-[#8A8A8A] flex items-center gap-1"><Clock className="w-3 h-3" />{proj.daysInStage}d</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-[#D4CDBF] opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Recent activity */}
-      <div>
-        <h2 className="text-[13px] font-semibold text-[#1A1A1A] mb-3">Recent activity</h2>
-        <div className="space-y-1">
-          {[
-            { time: '2 hours ago', text: 'Temi Bakare generated Alignment Snapshot for Coca-Cola × Tems', stage: 'frame' },
-            { time: '5 hours ago', text: 'Adaeze Obi drafted Strategy Snapshot v1 for Guinness × Rema', stage: 'plan' },
-            { time: '1 day ago', text: 'MTN approved all remaining deliverables for Lagos Unlimited', stage: 'deliver' },
-            { time: '1 day ago', text: 'Rema submitted brief response for Made of More: Africa', stage: 'plan' },
-            { time: '2 days ago', text: 'Femi Oladipo sent Creator Brief to Davido for Access Bank project', stage: 'plan' },
-            { time: '3 days ago', text: 'Star Lager × Ayra Starr — Port Harcourt show deliverable uploaded', stage: 'deliver' },
-            { time: '4 days ago', text: 'Dangote CRM record created — discovery call scheduled', stage: 'connect' },
-          ].map((item, i) => {
-            const stageColor = v3Stages.find(s => s.key === item.stage)?.color;
-            return (
-              <div key={i} className="flex items-start gap-3 py-2 px-1 rounded-lg hover:bg-[#F4F2EC] transition-colors">
-                <span className="text-[10px] text-[#8A8A8A] w-20 flex-shrink-0 pt-0.5" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{item.time}</span>
-                <div className="w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0" style={{ background: stageColor }} />
-                <span className="text-[13px] text-[#5C5C5C]">{item.text}</span>
-              </div>
-            );
-          })}
+        <h2 className="text-[13px] font-semibold text-[#1A1A1A] mb-3">Needs your attention</h2>
+        <div
+          className="v3-card p-6 flex flex-col items-center gap-2"
+          style={{ background: '#F4F2EC' }}
+        >
+          <p className="text-[12px] text-[#8A8A8A]">Coming soon — action items will appear here.</p>
         </div>
       </div>
     </div>

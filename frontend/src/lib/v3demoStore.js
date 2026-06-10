@@ -1,46 +1,36 @@
-const STORE_KEY = 'tasck_v3_demo_business_case_bundles';
+// v3demoStore.js — DEPRECATED
+// This module previously stored "demo" business case bundles in localStorage.
+// It has been replaced by real API data from the backend.
+// All exports are now no-ops to prevent breaking imports during migration.
+// Pages that used these should be updated to use v3GetBusinessCase() from v3api.js.
 
-const canUseStorage = () => typeof window !== 'undefined' && !!window.localStorage;
+const _warn = (fn) => {
+  console.warn(`[v3demoStore] ${fn}() is deprecated and has no effect. Use the real API instead.`);
+};
 
-const readStore = () => {
-  if (!canUseStorage()) return {};
+export const getStoredDemoBundle = (_id) => {
+  _warn('getStoredDemoBundle');
+  return null;
+};
+
+export const listStoredDemoBundles = () => {
+  _warn('listStoredDemoBundles');
+  return [];
+};
+
+export const saveStoredDemoBundle = (_bundle) => {
+  _warn('saveStoredDemoBundle');
+};
+
+export const clearStoredDemoBundles = () => {
+  _warn('clearStoredDemoBundles');
+  // Also clear any leftover localStorage key from old demo sessions
   try {
-    return JSON.parse(window.localStorage.getItem(STORE_KEY) || '{}') || {};
-  } catch (e) {
-    return {};
-  }
+    localStorage.removeItem('tasck_v3_demo_business_case_bundles');
+  } catch (e) {}
 };
-
-const writeStore = (store) => {
-  if (!canUseStorage()) return;
-  window.localStorage.setItem(STORE_KEY, JSON.stringify(store));
-};
-
-export const getStoredDemoBundle = (id) => {
-  if (!id) return null;
-  return readStore()[id] || null;
-};
-
-export const listStoredDemoBundles = () => Object.values(readStore()).filter(Boolean);
-
-export const saveStoredDemoBundle = (bundle) => {
-  const id = bundle?.business_case?.id;
-  if (!id) return;
-  const store = readStore();
-  store[id] = {
-    ...bundle,
-    source: 'demo',
-    demo_saved_at: new Date().toISOString(),
-  };
-  writeStore(store);
-};
-
-export const clearStoredDemoBundles = () => writeStore({});
 
 export const applyStoredDemoRows = (rows) => {
-  const store = readStore();
-  return rows.map((row) => {
-    const stored = store[row.id]?.business_case;
-    return stored ? { ...row, ...stored } : row;
-  });
+  _warn('applyStoredDemoRows');
+  return rows;
 };

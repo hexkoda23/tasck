@@ -1,6 +1,5 @@
 // TASCK OS v3 — Frontend API Client
 // Wraps every /api/v3/* endpoint. Always returns plain data (response.data).
-// Pages can fall back to v3data.js mocks if a call fails (progressive layering).
 
 import axios from 'axios';
 
@@ -12,7 +11,7 @@ const v3 = axios.create({ baseURL: V3, headers: { 'Content-Type': 'application/j
 v3.interceptors.response.use((response) => {
   const data = response.data;
   if (typeof data === 'string' && data.trim().startsWith('<')) {
-    return Promise.reject(new Error('V3 backend unavailable; using demo workflow data.'));
+    return Promise.reject(new Error('Backend unavailable. Please check your connection.'));
   }
   return response;
 });
@@ -111,8 +110,17 @@ export const v3AcceptQualificationMeeting = (meetingId, payload = {}) => v3.post
 export const v3RescheduleQualificationMeeting = (meetingId, payload) => v3.post(`/meetings/${meetingId}/qualification/reschedule`, payload).then(r => r.data);
 export const v3DeleteQualificationMeeting = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/qualification/delete`, payload).then(r => r.data);
 
-// -------- Admin --------
-export const v3ResetDemo = () => v3.post('/admin/reset-demo').then(r => r.data);
+// -------- Relationship Managers --------
+export const v3ListRelationshipManagers = () => v3.get('/relationship-managers').then(r => r.data);
+
+// -------- Admin Auth --------
+export const v3AdminLogin = (payload) => v3.post('/auth/admin-login', payload).then(r => r.data);
+export const v3BrandLogin = (payload) => v3.post('/auth/brand-login', payload).then(r => r.data);
+
+// -------- Admin utilities --------
+export const v3ApproveBrand = (brandId) => v3.post(`/brands/${brandId}/approve`).then(r => r.data);
+export const v3ReassignRM = (brandId, rmId) => v3.patch(`/brands/${brandId}/rm`, { rm_id: rmId }).then(r => r.data);
+// (v3ResetDemo has been removed — use the real workbook import instead)
 
 // -------- Metrics --------
 export const v3AdminOverview = () => v3.get('/metrics/admin-overview').then(r => r.data);
