@@ -6,7 +6,45 @@ Premium product demo for "TASCK OS" — a creator campaign management platform f
 - **V2 (Next)**: AI-native command center — COMPLETE
 - **V3 (TASCK v3.2)**: Editorial AI-native platform with Business Case primitive + 4-stage pipeline + live backend — **NOW INCLUDES FULL TTA-USER WORKFLOW** (15 May 2026)
 
-## Update — 11 Feb 2026 (P0 round 5: Projects dashboard + Project Detail workspace + Connect-stage discovery + AI questions)
+## Update — 11 Feb 2026 (P0 round 7: Meeting Detail backend + Creator Detail rewrite + Contract Summary card)
+Resolves the "Meeting not found" 404 blocker, completes the v3 admin workflow links, and ships the requested deep CRM-driven workspaces.
+
+- **Backend — full meeting workflow routes** (`v3_routes.py`, ~+260 lines):
+  - `GET /api/v3/meetings/{meeting_id}` — returns fully hydrated meeting: brand + business_case + rm + contact objects, suggested_questions array, candidate_snapshot (16-field discovery dict built from brand CRM context), computed contact_completeness 0-100.
+  - `POST /api/v3/meetings` — create from frontend ScheduleModal with `meeting_type` (qualification|connector|plan); auto-attaches stage-aware suggested_questions.
+  - `PATCH /api/v3/meetings/{meeting_id}/contact` — partial update for contact fields; recomputes contact_completeness.
+  - `POST /api/v3/meetings/{meeting_id}/transcript` — store transcript text.
+  - `POST /api/v3/meetings/{meeting_id}/analyze` — runs the existing `_extract_marketing_intelligence` deterministic CRM extractor (focus, audience, channels, KPIs). Computes a 0-100 `readiness_score` from keyword density + length. Returns summary, missingContext, followUpQuestions, ai_outputs, marketing_intelligence.
+  - `POST /api/v3/meetings/{meeting_id}/questions/regenerate` — refresh suggested_questions per meeting_type.
+  - `POST /api/v3/meetings/{meeting_id}/qualification/accept|reschedule|delete` — Pernod Ricard QC accept-into-CRM, reschedule, and delete flows now wired end-to-end.
+- **Backend — `GET /api/v3/creators/{creator_id}`** now returns linked `projects` (Super Creatives - Framing rows matched by folder/name) and linked `business_cases` (where creator_id or recommended_creator_id matches). MI Abaga gets 6 projects.
+- **Frontend — `V3AdminCreatorDetail.js` full rewrite** (≈300 lines) using imported CRM data only:
+  - Header card: avatar initial, name, role/tier/current+desired relationship pills, raw fee from workbook, RM name.
+  - Identity & contact (creative name, role, primary_contact, email, phone, linkedin, website, RM).
+  - Relationship status card (Current/Desired).
+  - Creative & talent profile (key_marketing_focus, primary_target_audience, decision_making_process, current_creative_talent_process, key_marketing_channels chips).
+  - Linked projects with title + folder + stage pill + budget; click routes to BC detail when business_case_id exists.
+  - Linked business cases (when creator is recommended).
+  - Commercials column (raw fee, parsed amount + currency, tier, total linked project value).
+  - Fit & scoring (relationship maturity %, engagement load count, commercial signal Disclosed/Pending).
+  - Source / provenance (source_sheet, workbook, row number, imported_at).
+  - Quick actions (mailto, tel, LinkedIn, Schedule a meeting → routes back to Meetings with ?creator_id&mode=new).
+- **Frontend — `V3AdminBusinessCaseDetail.js` Contract Summary card** (mounted in Plan + Delivery tabs):
+  - Template (Brand service vs. Brand + Creator dual), Status pill (signed/active/pending_legal/draft_needed/not_started), Engagement track (Paid/Grant), Total value (uses contract.value or BC.value_label / value_amount).
+  - Parties (TASCK Africa + brand company + creator name when present).
+  - Contract summary text (uses contract.agreement_description; falls back to generated wording when null/None).
+  - Scope (uses c.frame.confirmed_scope / c.plan.confirmed_scope / connect.stated_intent).
+  - Payment terms (paid vs grant track wording; raw value from workbook printed below).
+  - Rights & usage standard template.
+  - Approvals checklist with ✓/○ for Connect→Frame, Alignment Snapshot, Strategy Snapshot, Contract signed.
+  - AI Risk Flags (color-coded high/medium/low) — heuristics: missing value, missing creative, alignment not approved, grant + creator-paid mismatch, draft not yet prepared, missing signatory email.
+  - Next actions list with chevron bullets.
+  - Source row info footer.
+- **Cleanups** in `V3AdminBusinessCaseDetail.js`: removed 3 references to the undefined `fallbackCreators` array, deleted ~50 lines of unreachable code after `return renderBriefComposer(true)`, escaped problem quotes, fixed `set-state-in-effect` lint by adding stage to deps.
+- **Verified**: 16/16 importer pytest + 11/11 new meeting-route pytest PASS. Backend curl confirms `GET /api/v3/meetings/{id}` returns full bundle (brand, contact, RM, suggested_questions). Frontend screenshots confirm: Qualification Call detail loads with Pernod Ricard CRM data and 60% readiness score, Connector Call detail loads with linked records, Creator Detail (MI) renders with 6 linked projects + $50k fee + Platinum tier + Source row 3, BC Delivery tab shows full Contract Summary card with all 11 required sections. BC list page still renders 19 BCs (8/4/2/2/3 by stage).
+
+
+
 - **Projects page rewrite** (`V3AdminProjects.js`): removed all placeholder/debug text. Now a proper dashboard with: header + 4-card stat strip (Total / Total value / CRM Framing / Super Creatives), pill-button filters (Stage + Source) with counts, 2-column responsive card grid showing source pill + stage pill + brand × creator label + clean title + RM/track/days-in-stage strip + italic next-action footer. Cards link to BC detail when `business_case_id` exists, else Project detail.
 - **Project Detail page rewrite** (`V3AdminProjectDetail.js`): API-driven workspace per spec. Header (category / company × creator / title), 6-KPI strip (Stage / Engagement / RM / Value / Created / Days in stage), per-stage Exit Conditions card, 8 tabs (Overview / Timeline / Alignment / Plan / Contracts / Delivery / Financials / Closure), Overview tab with Quick Summary, next-action card, context/goal/success-factors, creator shortlist chips, "Open linked business case" button, AI Assist sidebar with 5-item activity tracker and Recent AI Activity card. Removed dependency on undefined `buildMockAlignmentSnapshot` / `getMockMarketingIntelligence`.
 - **Connect-stage discovery records**: `derive_connect_business_cases` now creates a Connect-stage discovery card for every CRM brand (was only firing for un-linked brands). Stage is forced to `connect` instead of varying by `likelihood`. Result: 8 brands → 8 Connect business cases on top of 11 framing-derived BCs = 19 total. Business Cases page's Connect filter is no longer empty.
