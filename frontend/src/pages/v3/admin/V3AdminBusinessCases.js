@@ -6,7 +6,7 @@ import {
   v3CreateBusinessCase, v3ListOpportunityCandidates,
 } from '../../../lib/v3api';
 import {
-  formatNairaV3, v3Stages,
+  formatNairaV3, formatValueV3, v3Stages,
 } from '../../../lib/v3data';
 import { candidateToBusinessOpportunity } from '../../../lib/v3opportunityDemo';
 import V3Modal from '../../../components/v3/V3Modal';
@@ -588,9 +588,9 @@ const V3AdminBusinessCases = () => {
                   className="text-[12px] font-semibold text-[#1F4A3A]"
                   style={{ fontFamily: "'JetBrains Mono', monospace" }}
                 >
-                  {formatNairaV3(c.estimated_value)}
+                  {formatValueV3(c)}
                 </p>
-                <p className="text-[10px] text-[#8A8A8A] mt-0.5">{c.days_in_stage}d in stage</p>
+                <p className="text-[10px] text-[#8A8A8A] mt-0.5">{Number.isFinite(c.days_in_stage) ? c.days_in_stage : 0}d in stage</p>
               </div>
               <ArrowRight className="w-4 h-4 text-[#8A8A8A] flex-shrink-0" />
             </button>

@@ -76,7 +76,9 @@ def _parse_fee(value: Any) -> Tuple[Optional[float], Optional[str]]:
     if not s or s in {"nil", "free", "n/a", "none"}:
         return None, None
     currency = "USD" if ("$" in s or "usd" in s) else ("NGN" if ("₦" in s or "naira" in s or "ngn" in s) else None)
-    m = re.search(r"([\d,]+(?:\.\d+)?)\s*(k|m|million|thousand)?", s)
+    # Tolerate stray whitespace inside numbers like "$350, 000".
+    s_cleaned = re.sub(r"(?<=\d),\s+(?=\d)", ",", s)
+    m = re.search(r"([\d,]+(?:\.\d+)?)\s*(k|m|million|thousand)?", s_cleaned)
     if not m:
         return None, currency
     try:
@@ -98,6 +100,132 @@ def _likelihood_to_stage(value: Any) -> str:
     if "project identified" in s or "move to framing" in s:
         return "frame"
     return "connect"
+
+
+# ---------------------------------------------------------------------------
+# Brand resolution from `Framing - Partners` rows.
+#
+# Each framing row has a `Partner Lead` (person) and rich `Project Context`.
+# We never create a brand from these. Instead we resolve the row to a real
+# CRM brand using:
+#   1. Explicit lead-name → org map (people we know from the workbook).
+#   2. Project-context keyword → org slug (e.g. "cocacola" → coca-cola).
+# Result is a tuple `(brand_slug, unlinked_org_name)`. If the resolved org
+# exists in `CRM - Partners` it becomes `brand_id`; otherwise it falls back
+# to `unlinked_brand_name` so the UI can still show a proper company label
+# like "NASCO" without polluting `v3_brands`.
+# ---------------------------------------------------------------------------
+
+LEAD_TO_ORG: Dict[str, str] = {
+    "hamsudeen": "NASCO",
+    "zara": "Coca Cola",
+    "zara uwana": "Coca Cola",
+    "dr chika nwadi": "All Smiles Signature",
+    "dr chika": "All Smiles Signature",
+    "chika nwadi": "All Smiles Signature",
+    "pedro abramovay": "Open Society Foundation",
+    "pedro abramovay fanii osf test": "Open Society Foundation",
+    "louise ehlers": "OSF",
+    "louis ehlers": "Open Society Foundations",
+    "eunice baker": "Open Society Foundation",
+    "ayisha osori": "Open Sociey Initiatives for West Africa (OSIWA), for OSF",
+    "fiona mbambo": "Open Society Foundation",
+    "binaifer nowrojie": "OSF",
+    "christiana": "CJID",
+    "christiana longe": "CJID",
+    "christiana longe cjid": "CJID",
+    "akintunde babatunde": "CJID",
+    "busola ajibola": "CJID",
+    "felix adejumo": "Coca Cola",
+    "elizabeth anthony": "Pernod Ricard - Chivas",
+    "betty": "Pernod Ricard - Chivas",
+}
+
+CONTEXT_ORG_KEYWORDS: List[Tuple[str, str]] = [
+    ("cocacola", "Coca Cola"),
+    ("coca cola", "Coca Cola"),
+    ("coca-cola", "Coca Cola"),
+    ("all smiles", "All Smiles Signature"),
+    ("cjid", "CJID"),
+    ("openness index", "CJID"),
+    ("osiwa", "Open Sociey Initiatives for West Africa (OSIWA), for OSF"),
+    ("nasco", "NASCO"),
+    ("cornflakes", "NASCO"),
+    ("chivas", "Pernod Ricard - Chivas"),
+    ("pernod ricard", "Pernod Ricard - Chivas"),
+]
+
+# Lead/context → clean project descriptor.  Order matters (most specific first).
+TITLE_KEYWORD_RULES: List[Tuple[str, str]] = [
+    ("northern nigeria", "Northern Nigeria Growth Strategy"),
+    ("kano", "Northern Nigeria Growth Strategy"),
+    ("cocacola", "Northern Nigeria Growth Strategy"),
+    ("dentistry", "Social Media Growth Plan"),
+    ("all smiles", "Social Media Growth Plan"),
+    ("cornflakes", "Cornflakes Influencer Sales Campaign"),
+    ("300m boxes", "Cornflakes Influencer Sales Campaign"),
+    ("influencer to drive co", "Cornflakes Influencer Sales Campaign"),
+    ("openness index", "Openness Index Youth Conversation"),
+    ("revive civic engagement", "Youth Civic Engagement Campaign"),
+    ("create awareness", "Youth Civic Engagement Campaign"),
+    ("creates a first of its kind", "Openness Index Youth Conversation"),
+    ("connect  5 super creatives", "Regional Creative Network"),
+    ("connect 5 super creatives", "Regional Creative Network"),
+    ("commission african creatives", "Pan-African Cultural Festival"),
+    ("re-entering nigeria", "Art as Agency Fellowship"),
+    ("art as agency", "Art as Agency Fellowship"),
+    ("super creatives in the focus", "Cross-Regional Creative Exchange"),
+    ("fundable initiative", "Pan-African Cultural Festival"),
+    ("chivas", "Relationship Opportunity"),
+    ("civic creativity", "Civic Creativity Initiative"),
+    ("geopolitical zones", "Civic Creativity Initiative"),
+]
+
+
+def _resolve_org_from_row(lead: str, folder: str, context: str, goal: str) -> Optional[str]:
+    """Return canonical organisation name (display label) for a framing row."""
+    blob = " ".join([lead, folder, context, goal]).lower()
+    lead_k = (lead or "").strip().lower()
+    folder_k = (folder or "").strip().lower()
+    if lead_k in LEAD_TO_ORG:
+        return LEAD_TO_ORG[lead_k]
+    if folder_k in LEAD_TO_ORG:
+        return LEAD_TO_ORG[folder_k]
+    for kw, org in CONTEXT_ORG_KEYWORDS:
+        if kw in blob:
+            return org
+    return None
+
+
+def _derive_project_descriptor(context: str, goal: str, lead: str, folder: str, fee_raw: str) -> str:
+    blob = " ".join([context, goal, lead, folder]).lower()
+    for kw, descriptor in TITLE_KEYWORD_RULES:
+        if kw in blob:
+            return descriptor
+    # Fallback: take first 6 words of project_goal, capitalised, or context
+    src = (goal or context or "").strip()
+    if src:
+        words = src.split()[:8]
+        return " ".join(w.strip(".,;:") for w in words).strip().capitalize() or "Strategic Opportunity"
+    return "Strategic Opportunity"
+
+
+def _compute_value_display(fee_raw: str, fee_amount: Optional[float], fee_currency: Optional[str],
+                           budget_raw: str, budget_amount: Optional[float], budget_currency: Optional[str]):
+    """Return (display_amount, display_currency, display_label, engagement_track)."""
+    text = (fee_raw or "") + " " + (budget_raw or "")
+    low = text.lower()
+    # Percentage fees: don't fake a Naira amount
+    pct_match = re.search(r"(\d+(?:\.\d+)?)\s*%", text)
+    if pct_match:
+        return None, None, f"{pct_match.group(1)}% of total project budget", ("grant" if "grant" in low else "paid")
+    track = "grant" if any(k in low for k in ("grant", "total grant", "grant policy", "grant for")) else "paid"
+    # Prefer fee amount; fall back to budget
+    amount = fee_amount if fee_amount else budget_amount
+    currency = fee_currency or budget_currency
+    if amount and currency == "USD":
+        return amount, "USD", None, track
+    return amount, currency or ("NGN" if track == "paid" else None), None, track
 
 
 def _framing_stage_canon(value: Any) -> str:
@@ -358,7 +486,6 @@ class WorkbookImporter:
         for ridx, row in enumerate(rows[1:], start=2):
             if not any(c is not None and _norm(c) for c in row):
                 continue
-            useful += 1
             folder = _norm(row[c_folder]) if c_folder is not None and c_folder < len(row) else ""
             lead = _norm(row[c_lead]) if c_lead is not None and c_lead < len(row) else ""
             stage_raw = _norm(row[c_stage]) if c_stage is not None and c_stage < len(row) else ""
@@ -369,17 +496,43 @@ class WorkbookImporter:
             effective_folder = folder or last_folder
             effective_lead = lead or last_lead
 
+            project_context = _norm(row[c_context]) if c_context is not None and c_context < len(row) else ""
+            project_goal = _norm(row[c_goal]) if c_goal is not None and c_goal < len(row) else ""
+            notes = _norm(row[c_notes]) if c_notes is not None and c_notes < len(row) else ""
+
+            # Skip rows that have neither a project context nor a goal nor any
+            # interesting content beyond the stage label — these are visual
+            # spacers in the workbook, not real business cases.
+            has_substance = bool(project_context or project_goal or notes)
+            if not has_substance and not (folder or lead):
+                self.skipped.append({"sheet": self.SHEET_FRAMING, "row": ridx, "reason": "blank_row"})
+                continue
+            if not has_substance and stage_raw and not project_context and not project_goal and not notes:
+                # row with only "Framing" stage but no project content
+                self.skipped.append({"sheet": self.SHEET_FRAMING, "row": ridx, "reason": "stage_only"})
+                continue
+
+            useful += 1
+
             # CRITICAL RULE: NEVER create a brand from `Framing - Partners`.
-            # `Partner Folder` and `Partner Lead` are almost always people names
-            # (Betty, Hamsudeen, Christiana Longe, Pedro Abramovay, etc.), NOT
-            # companies. Brand records ONLY come from `CRM - Partners`.
-            brand_id = self._match_brand(effective_lead, effective_folder)
+            # Resolve the row to a known organisation via the lead-name map and
+            # project-context keywords; everything else stays an "unlinked"
+            # business case so the UI still has a proper company label
+            # without polluting `v3_brands`.
+            org_label = _resolve_org_from_row(effective_lead, effective_folder, project_context, project_goal)
+            brand_id: Optional[str] = None
             unlinked_brand_name: Optional[str] = None
-            if not brand_id:
-                if not (effective_lead or effective_folder):
-                    self.skipped.append({"sheet": self.SHEET_FRAMING, "row": ridx, "reason": "no_brand_match"})
-                    continue
-                unlinked_brand_name = effective_folder or effective_lead
+            if org_label:
+                # Try to match the resolved org against existing CRM brands.
+                for b in self.brands.values():
+                    if b.get("company", "").lower() == org_label.lower():
+                        brand_id = b["id"]
+                        break
+                if not brand_id:
+                    unlinked_brand_name = org_label
+            else:
+                # No resolution at all → store the lead/folder text as a soft label
+                unlinked_brand_name = effective_folder or effective_lead or "Unlinked"
 
             canonical_stage = _framing_stage_canon(stage_raw)
             fee_raw = _norm(row[c_fee]) if c_fee is not None and c_fee < len(row) else ""
@@ -391,25 +544,51 @@ class WorkbookImporter:
             report_raw = _norm(row[c_report]) if c_report is not None and c_report < len(row) else ""
             feedback_raw = _norm(row[c_feedback]) if c_feedback is not None and c_feedback < len(row) else ""
 
-            bc_id = _det_id("bc", brand_id or f"unlinked-{_slug(unlinked_brand_name or '')}", _slug(effective_folder or effective_lead or ridx), canonical_stage)
+            display_amount, display_currency, value_label, derived_track = _compute_value_display(
+                fee_raw, fee_amount, fee_currency, budget_raw, budget_amount, budget_currency,
+            )
+
+            # Build a clean title: `Organisation — Project Descriptor`.
+            descriptor = _derive_project_descriptor(project_context, project_goal, effective_lead, effective_folder, fee_raw)
+            brand_company = self.brands.get(brand_id, {}).get("company") if brand_id else None
+            display_company = brand_company or unlinked_brand_name or "Unlinked"
+            title = f"{display_company} — {descriptor}" if display_company and descriptor else (descriptor or display_company or f"Business Case #{ridx}")
+
+            bc_id = _det_id("bc", brand_id or f"unlinked-{_slug(unlinked_brand_name or '')}", _slug(descriptor), canonical_stage, str(ridx))
             brand = self.brands.get(brand_id, {}) if brand_id else {}
-            title = effective_folder or f"{brand.get('company', '')} — {effective_lead}".strip(" —") or f"Business Case #{ridx}"
-            track = "grant" if "grant" in fee_raw.lower() or "grant" in budget_raw.lower() else "paid"
+            track = derived_track
+
+            # RM resolution priority: explicit lead canonical name (only if it's
+            # a real RM, not a person partner-lead) → brand RM → None.
+            rm_id = None
+            if effective_lead and effective_lead.lower() not in LEAD_TO_ORG:
+                rm_id = self._upsert_rm(effective_lead)
+            if not rm_id:
+                rm_id = brand.get("rm_id")
 
             self.business_cases[bc_id] = {
                 "id": bc_id,
                 "brand_id": brand_id,
+                "brand_name": display_company,
                 "unlinked_brand_name": unlinked_brand_name,
                 "partner_lead": effective_lead,
                 "partner_folder": effective_folder,
                 "title": title,
+                "project_descriptor": descriptor,
                 "stage": canonical_stage,
                 "stage_label": stage_raw,
                 "engagement_track": track,
-                "estimated_value": fee_amount or budget_amount or 0,
-                "rm_id": self._upsert_rm(effective_lead) or brand.get("rm_id"),
-                "next_action": _norm(row[c_notes]) if c_notes is not None and c_notes < len(row) else "",
+                "engagement_type": track,
+                "estimated_value": display_amount or 0,
+                "value_amount": display_amount,
+                "value_currency": display_currency,
+                "value_label": value_label,
+                "value_raw": fee_raw or budget_raw,
+                "rm_id": rm_id,
+                "rm_name": (self.rms[rm_id]["name"] if rm_id and rm_id in self.rms else brand.get("relationship_manager_name") or ""),
+                "next_action": notes,
                 "health": "on_track",
+                "days_in_stage": 0,
                 "connect": {
                     "status": brand.get("status") or "Connecting",
                     "intelligence": brand.get("key_marketing_focus") or "",
@@ -417,8 +596,8 @@ class WorkbookImporter:
                     "suggested_outreach": "",
                 },
                 "frame": {
-                    "project_context": _norm(row[c_context]) if c_context is not None and c_context < len(row) else "",
-                    "project_goal": _norm(row[c_goal]) if c_goal is not None and c_goal < len(row) else "",
+                    "project_context": project_context,
+                    "project_goal": project_goal,
                     "success_factors": _norm(row[c_success]) if c_success is not None and c_success < len(row) else "",
                     "framework": _norm(row[c_framework]) if c_framework is not None and c_framework < len(row) else "",
                     "alignment_snapshot_status": "approved" if canonical_stage in {"plan", "deliver", "closed"} else None,
@@ -470,21 +649,25 @@ class WorkbookImporter:
             self.projects[pid] = {
                 "id": pid,
                 "title": title,
+                "project_descriptor": descriptor,
                 "brand_id": brand_id,
+                "brand_name": display_company,
                 "unlinked_brand_name": unlinked_brand_name,
-                "company": brand.get("company") or unlinked_brand_name or "",
+                "company": display_company,
                 "creator_id": None,
                 "source_type": "brand_project",
                 "business_case_id": bc_id,
                 "stage": canonical_stage,
                 "stage_label": stage_raw,
                 "engagement_track": track,
-                "relationship_manager_name": brand.get("relationship_manager_name") or _norm(effective_lead),
-                "rm_id": self.business_cases[bc_id]["rm_id"],
+                "engagement_type": track,
+                "relationship_manager_name": (self.rms[rm_id]["name"] if rm_id and rm_id in self.rms else brand.get("relationship_manager_name") or ""),
+                "rm_id": rm_id,
+                "rm_name": (self.rms[rm_id]["name"] if rm_id and rm_id in self.rms else brand.get("relationship_manager_name") or ""),
                 "partner_lead": effective_lead,
                 "partner_folder": effective_folder,
-                "project_context": _norm(row[c_context]) if c_context is not None and c_context < len(row) else "",
-                "project_goal": _norm(row[c_goal]) if c_goal is not None and c_goal < len(row) else "",
+                "project_context": project_context,
+                "project_goal": project_goal,
                 "success_factors": _norm(row[c_success]) if c_success is not None and c_success < len(row) else "",
                 "confirmed_framework": _norm(row[c_framework]) if c_framework is not None and c_framework < len(row) else "",
                 "confirmed_scope": _norm(row[c_scope]) if c_scope is not None and c_scope < len(row) else "",
@@ -495,7 +678,12 @@ class WorkbookImporter:
                 "fee_raw": fee_raw,
                 "fee_amount": fee_amount,
                 "fee_currency": fee_currency,
-                "estimated_value": fee_amount or budget_amount or 0,
+                "value_amount": display_amount,
+                "value_currency": display_currency,
+                "value_label": value_label,
+                "estimated_value": display_amount or 0,
+                "next_action": notes,
+                "days_in_stage": 0,
                 "agreement_status": agreement_raw,
                 "report_status": report_raw,
                 "feedback_status": feedback_raw,
@@ -666,21 +854,33 @@ class WorkbookImporter:
                 if folder_lower and (folder_lower == c["name"].lower() or folder_lower in c["name"].lower()):
                     creator_id = c["id"]
                     break
+            creator_value_amount = budget_amount
+            creator_value_currency = budget_currency
             self.projects[pid] = {
                 "id": pid,
                 "title": project_name or effective_folder,
+                "project_descriptor": project_name or effective_folder,
                 "working_title": not bool(project_name),
                 "folder": effective_folder,
                 "brand_id": None,
+                "brand_name": effective_folder,
+                "company": effective_folder,
                 "creator_id": creator_id,
                 "creator_name": effective_folder,
                 "source_type": "creator_project",
                 "stage": canonical_stage,
                 "stage_label": stage_raw,
+                "engagement_track": "direct",
+                "engagement_type": "direct",
                 "notes": _norm(row[c_notes]) if c_notes is not None and c_notes < len(row) else "",
+                "next_action": _norm(row[c_notes]) if c_notes is not None and c_notes < len(row) else "",
                 "budget_raw": budget_raw,
                 "budget_amount": budget_amount,
                 "budget_currency": budget_currency,
+                "value_amount": creator_value_amount,
+                "value_currency": creator_value_currency,
+                "estimated_value": creator_value_amount or 0,
+                "days_in_stage": 0,
                 "budget_lines": _norm(row[c_lines]) if c_lines is not None and c_lines < len(row) else "",
                 "agreement_status": _norm(row[c_agreement]) if c_agreement is not None and c_agreement < len(row) else "",
                 "source_workbook": WORKBOOK_FILENAME,
@@ -902,21 +1102,30 @@ class WorkbookImporter:
             }
 
     def derive_connect_business_cases(self) -> None:
-        existing_brand_ids = {bc["brand_id"] for bc in self.business_cases.values()}
+        existing_brand_ids = {bc["brand_id"] for bc in self.business_cases.values() if bc.get("brand_id")}
         for brand in self.brands.values():
             if brand["id"] in existing_brand_ids:
                 continue
             bc_id = _det_id("bc", brand["id"], "connect")
+            company = brand.get("company") or ""
             self.business_cases[bc_id] = {
                 "id": bc_id, "brand_id": brand["id"],
-                "title": f"{brand.get('company')} — Connect",
+                "brand_name": company,
+                "title": f"{company} — Connect",
+                "project_descriptor": "Connect",
                 "stage": _likelihood_to_stage(brand.get("likelihood_to_work_with_tta")),
                 "stage_label": "Connect",
                 "engagement_track": brand.get("engagement_track_default", "paid"),
+                "engagement_type": brand.get("engagement_track_default", "paid"),
                 "estimated_value": 0,
+                "value_amount": None,
+                "value_currency": None,
+                "value_label": None,
                 "rm_id": brand.get("rm_id"),
+                "rm_name": brand.get("relationship_manager_name", ""),
                 "next_action": brand.get("notes_and_next_actions") or "",
                 "health": "on_track",
+                "days_in_stage": 0,
                 "connect": {
                     "status": brand.get("status") or "Connecting",
                     "intelligence": brand.get("key_marketing_focus") or "",

@@ -14,13 +14,30 @@ export const v3Stages = [
   { key: 'closed', label: 'Closed', color: '#B54A37' },
 ];
 
-// Currency formatter
+// Currency formatter — handles USD ($), Naira (₦), and percentage labels
 export const formatNairaV3 = (amount) => {
   if (amount == null || Number.isNaN(Number(amount))) return '₦0';
   if (amount >= 1000000000) return `₦${(amount / 1000000000).toFixed(1)}B`;
   if (amount >= 1000000) return `₦${(amount / 1000000).toFixed(0)}M`;
   if (amount >= 1000) return `₦${(amount / 1000).toFixed(0)}K`;
   return `₦${amount}`;
+};
+
+// Generic value formatter for business cases / projects.
+// Honors a `value_label` override (e.g. "10% of total project budget"),
+// USD currency, or falls back to the Naira formatter.
+export const formatValueV3 = (record) => {
+  if (!record) return '—';
+  if (record.value_label) return record.value_label;
+  const currency = record.value_currency || record.fee_currency || record.budget_currency;
+  const amount = record.value_amount ?? record.estimated_value ?? record.fee_amount ?? record.budget_amount ?? 0;
+  if (!amount) return record.value_raw || '—';
+  if (currency === 'USD') {
+    if (amount >= 1000000) return `$${(amount / 1000000).toFixed(1)}M`;
+    if (amount >= 1000) return `$${(amount / 1000).toFixed(0)}K`;
+    return `$${amount}`;
+  }
+  return formatNairaV3(amount);
 };
 
 // Temporary empty exports to get app to compile

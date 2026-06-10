@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
+import { v3Stages, formatNairaV3, formatValueV3 } from '../../../lib/v3data';
 import { v3ListBusinessCases } from '../../../lib/v3api';
 import { Clock, Loader2 } from 'lucide-react';
 
@@ -8,8 +8,11 @@ const V3AdminPipeline = () => {
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
+  const fetchedRef = useRef(false);
 
   useEffect(() => {
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
     v3ListBusinessCases({})
       .then((data) => {
         setProjects(Array.isArray(data) ? data : data?.items || []);
@@ -71,6 +74,11 @@ const V3AdminPipeline = () => {
             <div className="space-y-2">
               {col.projects.map((proj) => {
                 const pid = proj.id || proj._id;
+                const brandLabel = proj.brand_name || proj.unlinked_brand_name || proj.brand_id?.slice(0, 8) || 'Brand';
+                const trackLabel = proj.engagement_track || proj.engagement_type;
+                const daysInStage = Number.isFinite(proj.days_in_stage) ? proj.days_in_stage : 0;
+                const valueDisplay = formatValueV3(proj);
+                const rmName = proj.rm_name || proj.relationship_manager_name || '';
                 return (
                   <button
                     key={pid}
@@ -80,19 +88,19 @@ const V3AdminPipeline = () => {
                   >
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-[13px] font-medium text-[#1A1A1A]">
-                        {proj.brand_name
-                          ? proj.brand_name.split(' ')[0]
-                          : proj.brand_id?.slice(0, 8) || 'Brand'}
+                        {brandLabel}
                       </span>
-                      {proj.engagement_type && (
+                      {trackLabel && (
                         <span
                           className={`text-[10px] px-2 py-0.5 rounded ${
-                            proj.engagement_type === 'retainer'
-                              ? 'v3-badge-retainer'
-                              : 'v3-badge-direct'
+                            trackLabel === 'grant'
+                              ? 'bg-[#F2EAD8] text-[#7A5F23]'
+                              : trackLabel === 'direct'
+                                ? 'bg-[#EEEAE0] text-[#6E6657]'
+                                : 'bg-[#DDE7E2] text-[#1F4A3A]'
                           }`}
                         >
-                          {proj.engagement_type}
+                          {trackLabel === 'grant' ? 'Grant' : trackLabel === 'direct' ? 'Direct' : 'Paid'}
                         </span>
                       )}
                     </div>
@@ -100,34 +108,29 @@ const V3AdminPipeline = () => {
                       className="text-[13px] text-[#5C5C5C] mb-2"
                       style={{ fontFamily: "'Fraunces', serif" }}
                     >
-                      {proj.title}
+                      {proj.project_descriptor || proj.title}
                     </p>
-                    {proj.creator_name && (
+                    {proj.creator_name && proj.source_type !== 'brand_project' && (
                       <p className="text-[11px] text-[#8A8A8A] mb-2">with {proj.creator_name}</p>
                     )}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        {proj.rm_name && (
-                          <div className="w-5 h-5 rounded-full bg-[#F4F2EC] flex items-center justify-center text-[8px] font-semibold text-[#5C5C5C]">
-                            {proj.rm_name
-                              .split(' ')
-                              .map((n) => n[0])
-                              .join('')}
+                        {rmName && (
+                          <div className="w-5 h-5 rounded-full bg-[#F4F2EC] flex items-center justify-center text-[8px] font-semibold text-[#5C5C5C]" title={`RM: ${rmName}`}>
+                            {rmName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()}
                           </div>
                         )}
-                        {proj.days_in_stage != null && (
-                          <span className="text-[10px] text-[#8A8A8A] flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {proj.days_in_stage}d
-                          </span>
-                        )}
+                        <span className="text-[10px] text-[#8A8A8A] flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {daysInStage}d in stage
+                        </span>
                       </div>
-                      {proj.estimated_value > 0 && (
+                      {valueDisplay !== '—' && (
                         <span
                           className="text-[11px] text-[#1A1A1A]"
                           style={{ fontFamily: "'JetBrains Mono', monospace" }}
                         >
-                          {formatNairaV3(proj.estimated_value)}
+                          {valueDisplay}
                         </span>
                       )}
                     </div>

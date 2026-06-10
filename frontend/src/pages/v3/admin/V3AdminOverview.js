@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
 import { v3AdminOverview } from '../../../lib/v3api';
 import { FolderOpen, GitBranch, TrendingUp, Users, Clock } from 'lucide-react';
@@ -7,8 +7,11 @@ const V3AdminOverview = () => {
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const fetchedRef = useRef(false);
 
   useEffect(() => {
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
     v3AdminOverview()
       .then(data => {
         setOverview(data);
@@ -183,15 +186,56 @@ const V3AdminOverview = () => {
         </div>
       </div>
 
-      {/* Needs attention — coming soon */}
-      <div className="mb-8">
+      {/* Needs attention */}
+      <div className="mb-8" data-testid="overview-needs-attention">
         <h2 className="text-[13px] font-semibold text-[#1A1A1A] mb-3">Needs your attention</h2>
-        <div
-          className="v3-card p-6 flex flex-col items-center gap-2"
-          style={{ background: '#F4F2EC' }}
-        >
-          <p className="text-[12px] text-[#8A8A8A]">Coming soon — action items will appear here.</p>
-        </div>
+        {(overview.needs_attention || []).length === 0 ? (
+          <div className="v3-card p-6 text-center" style={{ background: '#F4F2EC' }}>
+            <p className="text-[12px] text-[#8A8A8A]">Everything is on track.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {(overview.needs_attention || []).slice(0, 6).map((item, i) => (
+              <div key={`${item.id}-${i}`} className="v3-card p-4" data-testid={`overview-attention-${i}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium text-[#1A1A1A] truncate">{item.title || 'Untitled'}</p>
+                    <p className="text-[11px] text-[#6E6657] mt-0.5">{item.message}</p>
+                  </div>
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-[#F2EAD8] text-[#7A5F23] flex-shrink-0">
+                    {(item.type || '').replace(/_/g, ' ')}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Recent activity */}
+      <div className="mb-8" data-testid="overview-recent-activity">
+        <h2 className="text-[13px] font-semibold text-[#1A1A1A] mb-3">Recent activity</h2>
+        {(overview.latest_activity || []).length === 0 ? (
+          <div className="v3-card p-6 text-center" style={{ background: '#F4F2EC' }}>
+            <p className="text-[12px] text-[#8A8A8A]">No recent activity. Run the CRM workbook import to populate data.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {(overview.latest_activity || []).slice(0, 8).map((item, i) => (
+              <div key={i} className="v3-card p-3 flex items-center justify-between gap-3" data-testid={`overview-activity-${i}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A] flex-shrink-0">
+                    {(item.type || '').replace(/_/g, ' ')}
+                  </span>
+                  <span className="text-[12px] text-[#1A1A1A] truncate">{item.title || 'Untitled'}</span>
+                </div>
+                <span className="text-[10px] text-[#8A8A8A] flex-shrink-0" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                  {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

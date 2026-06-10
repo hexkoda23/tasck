@@ -6,6 +6,17 @@ Premium product demo for "TASCK OS" — a creator campaign management platform f
 - **V2 (Next)**: AI-native command center — COMPLETE
 - **V3 (TASCK v3.2)**: Editorial AI-native platform with Business Case primitive + 4-stage pipeline + live backend — **NOW INCLUDES FULL TTA-USER WORKFLOW** (15 May 2026)
 
+## Update — 11 Feb 2026 (P0 round 2: clean BC/Pipeline titles & value formatting)
+- **Brand inference for `Framing - Partners` rows**: added explicit `LEAD_TO_ORG` map (Hamsudeen→NASCO, Zara→Coca Cola, Christiana Longe→CJID, Pedro Abramovay→Open Society Foundation, Louise Ehlers→OSF, Louis Ehlers→Open Society Foundations, Eunice Baker→Open Society Foundation, Ayisha Osori→OSIWA, Fiona Mbambo→Open Society Foundation, Akintunde Babatunde→CJID, Betty→Pernod Ricard - Chivas, …) plus context-keyword fallback (cocacola, nasco, chivas, cjid, osiwa, all smiles, etc.). Unmatched rows still get an `unlinked_brand_name`.
+- **Clean BC/project titles**: `_derive_project_descriptor` produces titles like "Northern Nigeria Growth Strategy", "Social Media Growth Plan", "Cornflakes Influencer Sales Campaign", "Openness Index Youth Conversation", "Regional Creative Network", "Pan-African Cultural Festival", "Art as Agency Fellowship", "Cross-Regional Creative Exchange", "Civic Creativity Initiative", "Relationship Opportunity". Final title format: `Organisation — Descriptor`. No more `Betty`, `Hamsudeen`, `Christiana` titles.
+- **Value & engagement formatting**: `_compute_value_display` returns `(amount, currency, label, track)`. Percentage fees stored as `value_label="10% of total project budget"` (no fake Naira). USD fees keep `currency="USD"`. New `formatValueV3()` frontend helper renders `$300K`, `25% of total project budget`, or `₦2M` correctly.
+- **Frontend Pipeline rewrite**: full brand name (no first-word truncation), proper engagement badges (Paid/Grant/Direct), days-in-stage shows "0d in stage" not bare "d in stage", project_descriptor instead of full title in card body.
+- **Overview "Needs your attention" + "Recent activity"** now render real items from `/api/v3/metrics/admin-overview` (replaces "coming soon" placeholder).
+- **Fee parser hardening**: `_parse_fee` tolerates "$350, 000" with stray whitespace inside numbers.
+- **React strict-mode race fix**: added `fetchedRef` guard in Overview/Pipeline/Projects pages so the initial API call always settles even in dev double-invoke.
+- **Verified**: 8 brands (CRM-Partners only, RM all set), 29 projects (16 brand + 13 creator), 16 business cases, by_stage 0/5/2/5/4, paid 13 / grant 3. Importer pytests: 16/16 ✓.
+
+
 ## Latest Update — 11 Feb 2026 (P0 Importer Hygiene)
 - **`v3_workbook_import.py`**: `parse_framing()` no longer creates phantom brands from people names (Betty, Hamsudeen, Christiana Longe, Pedro Abramovay, Fiona Mbambo). `v3_brands` is sourced **exclusively** from `CRM - Partners` (`Partner / Company or Organisation` column). Framing rows without a matching brand keep `brand_id: null` and store `unlinked_brand_name`, `partner_lead`, `partner_folder` instead.
 - **Brand-side projects**: Each `Framing - Partners` row now also produces a `v3_projects` record (source_type=`brand_project`) so the Projects page is never empty. Creator projects tagged with `source_type=creator_project`.

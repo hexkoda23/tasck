@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v3ListProjects, v3GetBrands, v3GetCreators, v3ListRelationshipManagers } from '../../../lib/v3api';
-import { formatNairaV3 } from '../../../lib/v3data';
+import { formatValueV3 } from '../../../lib/v3data';
 import { FolderOpen, Filter } from 'lucide-react';
 
 const stageMeta = {
@@ -127,9 +127,9 @@ const V3AdminProjects = () => {
             const sp = sourceTypePill[sourceKey] || sourceTypePill.business_case;
             const brand = p.brand_id ? brandsById[p.brand_id] : null;
             const creator = p.creator_id ? creatorsById[p.creator_id] : null;
-            const rmName = (p.rm_id && rmsById[p.rm_id]?.name) || p.relationship_manager_name || brand?.relationship_manager_name || '—';
-            const companyLabel = brand?.company || brand?.name || p.company || p.unlinked_brand_name || (creator ? creator.name : '—');
-            const value = p.estimated_value ?? p.budget_amount ?? p.fee_amount ?? 0;
+            const rmName = (p.rm_id && rmsById[p.rm_id]?.name) || p.rm_name || p.relationship_manager_name || brand?.relationship_manager_name || '—';
+            const companyLabel = brand?.company || brand?.name || p.brand_name || p.company || p.unlinked_brand_name || (creator ? creator.name : '—');
+            const valueDisplay = formatValueV3(p);
             const target = p.business_case_id
               ? `/v3/admin/business-cases/${p.business_case_id}`
               : `/v3/admin/projects/${p.id}`;
@@ -168,7 +168,7 @@ const V3AdminProjects = () => {
                 </div>
                 <div className="flex-shrink-0 text-right">
                   <p className="text-[12px] font-semibold text-[#1F4A3A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                    {value ? formatNairaV3(value) : '—'}
+                    {valueDisplay}
                   </p>
                 </div>
               </button>
