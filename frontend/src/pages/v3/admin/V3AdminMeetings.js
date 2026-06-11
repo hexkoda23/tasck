@@ -13,6 +13,7 @@ import {
   Upload,
   UserPlus,
   Loader2,
+  X,
 } from 'lucide-react';
 import {
   v3ListMeetings,
@@ -215,8 +216,11 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
       data-testid="meeting-schedule-modal"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="v3-card w-full max-w-3xl bg-white p-6 shadow-2xl">
+      <div className="v3-card w-full max-w-3xl bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
             <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">
@@ -229,8 +233,13 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               {mode === 'qualification' ? 'Qualification Call' : 'Business Call: Connector'}
             </h2>
           </div>
-          <button onClick={onClose} className="v3-btn-secondary text-[11px]">
-            Close
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-lg border border-[#E8E4DB] text-[#6E6657] hover:bg-[#F4F2EC] hover:text-[#1A1A1A] transition-colors"
+            data-testid="meeting-schedule-modal-close"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -291,12 +300,18 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
               Duration (min)
             </span>
-            <input
-              className="w-full px-3 py-2 rounded-lg border border-[#E8E4DB] text-[13px]"
+            <select
+              data-testid="schedule-duration-select"
+              className="w-full px-3 py-2 rounded-lg border border-[#E8E4DB] text-[13px] bg-white"
               value={form.duration_minutes}
-              onChange={set('duration_minutes')}
-              type="number"
-            />
+              onChange={(e) => setForm((prev) => ({ ...prev, duration_minutes: Number(e.target.value) }))}
+            >
+              {Array.from({ length: 36 }, (_, i) => (i + 1) * 5).map((mins) => (
+                <option key={mins} value={mins}>
+                  {mins} minutes
+                </option>
+              ))}
+            </select>
           </label>
           <label className="space-y-1 md:col-span-2">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
@@ -516,6 +531,7 @@ const QualificationRow = ({ call }) => {
 };
 
 export const V3AdminQualificationCalls = () => {
+  const navigate = useNavigate();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -534,6 +550,13 @@ export const V3AdminQualificationCalls = () => {
 
   return (
     <div data-testid="v3-admin-qualification-calls">
+      <button
+        onClick={() => navigate('/v3/admin/meetings')}
+        className="v3-btn-secondary text-[11px] mb-4"
+        data-testid="qualification-calls-back-btn"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to Meetings
+      </button>
       <PageHeader
         title="Qualification Calls"
         subtitle="First calls used to decide if a scanned company, creative, or Super Creative should enter TASCK."
@@ -616,6 +639,7 @@ const ConnectorRow = ({ call }) => {
 };
 
 export const V3AdminConnectorCalls = () => {
+  const navigate = useNavigate();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -634,6 +658,13 @@ export const V3AdminConnectorCalls = () => {
 
   return (
     <div data-testid="v3-admin-connector-calls">
+      <button
+        onClick={() => navigate('/v3/admin/meetings')}
+        className="v3-btn-secondary text-[11px] mb-4"
+        data-testid="connector-calls-back-btn"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to Meetings
+      </button>
       <PageHeader
         title="Business Call: Connector"
         subtitle="Business calls used to gather the brand details needed for the Alignment Snapshot."
