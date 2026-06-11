@@ -78,6 +78,124 @@ def _fallback_creator_email(creator: Dict[str, Any]) -> str:
     return f"{_slug(creator.get('name', 'creator'))}@creator.tasck.demo"
 
 
+CRM_VISIBLE_BRAND_STATUSES = {
+    "crm_accepted",
+    "business_call_pending",
+    "business_call_scheduled",
+    "business_case_active",
+}
+
+QUALIFICATION_QUESTION_SETS = {
+    "brand": [
+        "What does the brand sell and who is the buyer?",
+        "What is the current marketing challenge?",
+        "What campaign or partnership are they looking for?",
+        "What channels matter most: Instagram, TikTok, YouTube, X, events, retail, etc.?",
+        "What is the expected KPI: awareness, reach, engagement, conversion, sales, community, leads?",
+        "What budget range is realistic?",
+        "Who makes the decision?",
+        "What timeline are they working with?",
+        "What would make TASCK a good fit?",
+        "Any red flags: no budget, unclear need, wrong category, not responsive?",
+    ],
+    "creator": [
+        "What content categories are strongest for you?",
+        "What platforms do you actively post on?",
+        "Audience demographics and geography?",
+        "Average reach/engagement?",
+        "Past brand collaborations?",
+        "Standard rates and what affects pricing?",
+        "Availability for campaigns?",
+        "Production capabilities?",
+        "Usage rights/exclusivity comfort?",
+        "Any categories you avoid?",
+        "Preferred communication method?",
+        "Why TASCK should work with you?",
+    ],
+}
+
+BUSINESS_CALL_QUESTIONS = [
+    "What is the key marketing focus?",
+    "Who is the primary target audience?",
+    "Which channels matter most?",
+    "Which KPIs will prove success?",
+    "What budget range is realistic?",
+    "What timeline are they working with?",
+    "Who are the decision makers?",
+    "What product or service details must creators understand?",
+    "What brand positioning should the strategy protect?",
+    "What creator style feels credible for the brand?",
+    "What risk or compliance constraints must be respected?",
+    "How does the content approval process work?",
+]
+
+CREATOR_FIT_QUESTIONS = [
+    "What fee or rate is realistic for this campaign?",
+    "What availability or schedule constraints should TASCK plan around?",
+    "Which deliverables can the creator produce confidently?",
+    "What timeline constraints could affect delivery?",
+    "What usage rights are included or excluded?",
+    "Are there exclusivity or category conflicts?",
+    "What past category experience is relevant?",
+    "What content style would best fit this brand?",
+    "What production needs must be budgeted?",
+    "What payment terms are required?",
+    "Any risk or brand-safety concerns?",
+]
+
+DEFAULT_FINAL_REPORT_CHECKLIST = [
+    "Deliverables completed",
+    "KPIs documented",
+    "Creator output linked",
+    "Brand approval received",
+    "Creator confirmation received",
+    "Budget/fees recorded",
+    "Learnings captured",
+    "Next steps captured",
+]
+
+
+def _crm_visible_brand_query() -> Dict[str, Any]:
+    return {
+        "$or": [
+            {"status": {"$in": sorted(CRM_VISIBLE_BRAND_STATUSES)}},
+            {"status": {"$exists": False}},
+            {"status": {"$nin": [
+                "qualification_pending",
+                "qualification_scheduled",
+                "qualification_rescheduled",
+                "disqualified",
+                "deleted",
+            ]}},
+        ]
+    }
+
+
+def _approved_creator_query() -> Dict[str, Any]:
+    return {
+        "$or": [
+            {"status": {"$in": [
+                "approved",
+                "brief_sent",
+                "brief_accepted",
+                "creator_fit_call_pending",
+                "creator_fit_accepted",
+            ]}},
+            {"status": {"$exists": False}},
+            {"pipeline_status": "approved"},
+        ]
+    }
+
+
+def _required_missing_fields(text: str, required: List[Tuple[str, List[str]]]) -> List[str]:
+    lower = text.lower()
+    missing = []
+    for label, markers in required:
+        if not any(marker in lower for marker in markers):
+            missing.append(label)
+    return missing
+
+
 def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
     """Deterministic transcript extraction used by the demo AI layer.
 
@@ -262,12 +380,18 @@ def make_v3_router(db):
     async def list_brands(
         engagement: Optional[str] = None,
         rm_id: Optional[str] = None,
+        crm_only: bool = False,
+        status: Optional[str] = None,
         x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
         x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
     ):
         query: Dict[str, Any] = {}
         if engagement:
             query["engagement_track_default"] = engagement
+        if status:
+            query["status"] = {"$in": [item.strip() for item in status.split(",") if item.strip()]}
+        elif crm_only:
+            query.update(_crm_visible_brand_query())
 
         # Super admin sees all. Relationship manager sees assigned workbook records.
         if x_admin_role == "relationship_manager" and x_admin_id:
@@ -431,6 +555,133 @@ def make_v3_router(db):
             "welcome_email_id": welcome["id"],
         }
 
+    class BrandQualificationCandidateCreate(BrandCreate):
+        notes: Optional[str] = None
+        source: str = "manual_brand"
+        call_purpose: Optional[str] = None
+
+    async def create_brand_qualification_meeting(
+        *,
+        brand: Dict[str, Any],
+        source: str,
+        candidate_snapshot: Optional[Dict[str, Any]] = None,
+        notes: str = "",
+        reviewed_by: str = "admin",
+    ) -> Dict[str, Any]:
+        mid = f"meeting-{uuid.uuid4().hex[:10]}"
+        questions = QUALIFICATION_QUESTION_SETS["brand"]
+        doc = {
+            "id": mid,
+            "title": f"Brand Qualification: {brand.get('company') or brand.get('name') or 'New brand'}",
+            "meeting_type": "qualification",
+            "type": "qualification",
+            "stage": "before_crm",
+            "entity_type": "brand",
+            "qualification_entity_type": "brand",
+            "source": source,
+            "entity_name": brand.get("company") or "",
+            "business_case_title": "",
+            "business_case_id": None,
+            "brand_id": brand.get("id"),
+            "rm_id": brand.get("rm_id") or reviewed_by,
+            "contact_name": brand.get("primary_contact") or "",
+            "contact_email": brand.get("email") or "",
+            "contact_phone": brand.get("phone") or "",
+            "contact_role": brand.get("role") or "",
+            "scheduled_for": None,
+            "duration_minutes": 30,
+            "meeting_link": "",
+            "agenda": notes,
+            "notes": notes,
+            "meeting_notes": notes,
+            "status": "pending",
+            "qualification_status": "pending",
+            "decision_status": "pending",
+            "reschedule_count": 0,
+            "max_reschedules": 3,
+            "suggested_questions": questions,
+            "next_questions": questions,
+            "transcript": "",
+            "analysis": {},
+            "ai_recommendation": None,
+            "ai_reasons": [],
+            "missing_information": [],
+            "candidate_snapshot": candidate_snapshot or {
+                "Company": brand.get("company"),
+                "Industry": brand.get("industry"),
+                "Website": brand.get("website"),
+                "Primary contact": brand.get("primary_contact"),
+                "Email": brand.get("email"),
+                "Phone": brand.get("phone"),
+                "Source": source,
+            },
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        await db.v3_meetings.insert_one({**doc})
+        await db.v3_brands.update_one(
+            {"id": brand["id"]},
+            {
+                "$set": {"qualification_status": "pending", "updated_at": _now_iso()},
+                "$addToSet": {"qualification_meeting_ids": mid},
+            },
+        )
+        return await _hydrate_meeting(doc)
+
+    @router.post("/brands/qualification-candidates")
+    async def create_brand_qualification_candidate(payload: BrandQualificationCandidateCreate):
+        brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+        rm = await _relationship_manager(payload.rm_id)
+        doc = {
+            "id": brand_id,
+            "company": payload.company,
+            "industry": payload.industry,
+            "website": payload.website or "",
+            "hq": payload.hq or "",
+            "primary_contact": payload.primary_contact,
+            "role": payload.role,
+            "email": payload.email or "",
+            "phone": payload.phone or "",
+            "status": "qualification_pending",
+            "qualification_status": "pending",
+            "lead_score": payload.lead_score,
+            "last_interaction": "awaiting qualification",
+            "engagement_track_default": payload.engagement_track_default,
+            "source": payload.source,
+            "notes": payload.notes or "",
+            "reschedule_count": 0,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "rm_id": rm.get("id", ""),
+            "relationship_manager": rm,
+            "relationshipManager": rm,
+            "relationship_manager_name": rm.get("name", ""),
+            "relationship_manager_email": rm.get("email", ""),
+            "communication_methods": {
+                "email": payload.email or "",
+                "phone": payload.phone or "",
+                "website": payload.website or "",
+            },
+        }
+        await db.v3_brands.insert_one({**doc})
+        await db.v3_contacts.insert_one({
+            "id": f"ct-{uuid.uuid4().hex[:8]}",
+            "brand_id": brand_id,
+            "name": payload.primary_contact,
+            "role": payload.role,
+            "email": payload.email or "",
+            "phone": payload.phone or "",
+            "is_primary": True,
+            "decision_seniority": "lead",
+        })
+        meeting = await create_brand_qualification_meeting(
+            brand=doc,
+            source=payload.source,
+            notes=payload.call_purpose or payload.notes or "",
+        )
+        updated = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        return {"brand": updated or doc, "meeting": meeting, "meeting_id": meeting["id"]}
+
     async def ensure_brand_account(brand: Dict[str, Any]) -> Dict[str, Any]:
         existing = await db.v3_brand_accounts.find_one({"brand_id": brand["id"]}, {"_id": 0})
         if existing:
@@ -523,12 +774,18 @@ def make_v3_router(db):
     @router.get("/creators")
     async def list_creators(
         tier: Optional[str] = None,
+        approved_only: bool = False,
+        status: Optional[str] = None,
         x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
         x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
     ):
         query: Dict[str, Any] = {}
         if tier:
             query["tier"] = tier
+        if status:
+            query["status"] = {"$in": [item.strip() for item in status.split(",") if item.strip()]}
+        elif approved_only:
+            query.update(_approved_creator_query())
         if x_admin_role == "relationship_manager" and x_admin_id:
             extracted_rm_id = x_admin_id[6:] if x_admin_id.startswith("admin-") else x_admin_id
             query["rm_id"] = extracted_rm_id
@@ -629,6 +886,119 @@ def make_v3_router(db):
         }
         await db.v3_creators.insert_one({**doc})
         return doc
+
+    class CreatorQualificationCandidateCreate(CreatorCreate):
+        id: Optional[str] = None
+        source: str = "manual_creator"
+        discovered_for_business_case_id: Optional[str] = None
+
+    async def create_creator_qualification_meeting(
+        *,
+        creator: Dict[str, Any],
+        source: str,
+    ) -> Dict[str, Any]:
+        mid = f"meeting-{uuid.uuid4().hex[:10]}"
+        questions = QUALIFICATION_QUESTION_SETS["creator"]
+        contact_email = creator.get("email") or creator.get("manager_email") or ""
+        doc = {
+            "id": mid,
+            "title": f"Creator Qualification: {creator.get('name') or 'New creator'}",
+            "meeting_type": "qualification",
+            "type": "qualification",
+            "stage": "before_crm",
+            "entity_type": "creator",
+            "qualification_entity_type": "creator",
+            "source": source,
+            "entity_name": creator.get("name") or "",
+            "business_case_id": creator.get("discovered_for_business_case_id"),
+            "business_case_title": "",
+            "creator_id": creator.get("id"),
+            "brand_id": None,
+            "rm_id": creator.get("rm_id") or "",
+            "contact_name": creator.get("manager_name") or creator.get("name") or "",
+            "contact_email": contact_email,
+            "contact_phone": creator.get("phone") or "",
+            "scheduled_for": None,
+            "duration_minutes": 30,
+            "meeting_link": "",
+            "agenda": "",
+            "notes": "",
+            "meeting_notes": "",
+            "status": "pending",
+            "qualification_status": "pending",
+            "decision_status": "pending",
+            "reschedule_count": 0,
+            "max_reschedules": 3,
+            "suggested_questions": questions,
+            "next_questions": questions,
+            "transcript": "",
+            "analysis": {},
+            "ai_recommendation": None,
+            "ai_reasons": [],
+            "missing_information": [],
+            "candidate_snapshot": {
+                "Creator": creator.get("name"),
+                "Genre": creator.get("genre"),
+                "Platforms": ", ".join(creator.get("platforms") or []),
+                "Audience": creator.get("audience"),
+                "Rate card": creator.get("rate_card"),
+                "Email": contact_email,
+                "Source": source,
+            },
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        await db.v3_meetings.insert_one({**doc})
+        await db.v3_creators.update_one(
+            {"id": creator["id"]},
+            {
+                "$set": {"status": "qualification_pending", "pipeline_status": "pending_review", "updated_at": _now_iso()},
+                "$addToSet": {"qualification_meeting_ids": mid},
+            },
+        )
+        return await _hydrate_meeting(doc)
+
+    @router.post("/creators/qualification-candidates")
+    async def create_creator_qualification_candidate(payload: CreatorQualificationCandidateCreate):
+        creator_id = payload.id or f"creator-{uuid.uuid4().hex[:8]}"
+        existing = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0})
+        doc = {
+            "id": creator_id,
+            "name": payload.name,
+            "tier": "candidate" if payload.tier == "discovered" else payload.tier,
+            "genre": payload.genre,
+            "location": payload.location,
+            "fit_score": 70,
+            "on_time_rate": 0,
+            "brand_satisfaction": 0,
+            "repeat_brand_count": 0,
+            "rate_card": payload.rate_card,
+            "reliability": 0,
+            "platforms": payload.platforms,
+            "email": payload.email,
+            "manager_name": payload.manager_name,
+            "manager_email": payload.manager_email,
+            "phone": payload.phone,
+            "audience": payload.audience,
+            "categories": payload.categories,
+            "past_brand_work": payload.past_brand_work,
+            "notes": payload.notes,
+            "source_links": payload.source_links,
+            "discovery_notes": payload.discovery_notes,
+            "status": "qualification_pending",
+            "pipeline_status": "pending_review",
+            "source": payload.source,
+            "discovered_for_business_case_id": payload.discovered_for_business_case_id,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        if existing:
+            await db.v3_creators.update_one({"id": creator_id}, {"$set": {**doc, "created_at": existing.get("created_at", doc["created_at"])}})
+        else:
+            await db.v3_creators.insert_one({**doc})
+        creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) or doc
+        meeting = await create_creator_qualification_meeting(creator=creator, source=payload.source)
+        return {"creator": creator, "meeting": meeting, "meeting_id": meeting["id"]}
 
     class CreatorWebSearchPayload(BaseModel):
         business_case_id: Optional[str] = None
@@ -735,7 +1105,8 @@ def make_v3_router(db):
             if existing:
                 doc = {**doc, **existing, "pipeline_status": existing.get("pipeline_status", "approved")}
             elif payload.auto_store:
-                doc["pipeline_status"] = "approved"
+                doc["status"] = "qualification_pending"
+                doc["pipeline_status"] = "pending_review"
                 await db.v3_creators.insert_one({**doc})
             discovered.append(doc)
         if case:
@@ -751,7 +1122,7 @@ def make_v3_router(db):
         if not case:
             raise HTTPException(404, "Business case not found")
         mi = _marketing_intelligence_from_case(case)
-        creators = await db.v3_creators.find({}, {"_id": 0}).to_list(500)
+        creators = await db.v3_creators.find(_approved_creator_query(), {"_id": 0}).to_list(500)
         haystack = " ".join([
             str(mi.get("key_marketing_focus", "")),
             str(mi.get("primary_target_audience", "")),
@@ -1802,9 +2173,9 @@ def make_v3_router(db):
         bf = case.get("closure", {}).get("brand_feedback_received")
         cf = case.get("closure", {}).get("creator_feedback_received")
         for it in items:
-            if it["item"] == "Brand feedback received" and bf:
+            if it["item"] in {"Brand feedback received", "Brand approval received"} and bf:
                 it["status"] = "done"
-            if it["item"] == "Creator feedback received" and cf:
+            if it["item"] in {"Creator feedback received", "Creator confirmation received"} and cf:
                 it["status"] = "done"
         done = len([i for i in items if i["status"] == "done"])
         pct = round((done / max(len(items), 1)) * 100)
@@ -2051,7 +2422,7 @@ def make_v3_router(db):
     # GENERATE Final Report (templated from BC's actual artefacts)
     # ------------------------------------------------------------------------
     class FinalReportGenerate(BaseModel):
-        kpis: Optional[List[Dict[str, Any]]] = None  # optional override
+        kpis: Optional[List[Dict[str, Any]]] = None
 
     @router.post("/business-cases/{bc_id}/final-report/generate")
     async def generate_final_report(bc_id: str, payload: FinalReportGenerate):
@@ -2093,16 +2464,22 @@ def make_v3_router(db):
             ),
             "kpis": kpis,
             "closure_checklist": [
-                {"item": "Final report delivered", "status": "done"},
-                {"item": "All invoices settled", "status": "done"},
-                {"item": "All creator payments released", "status": "done" if all(d.get("payment_released") for d in approved) else "pending"},
-                {"item": "Contracts archived", "status": "done"},
-                {"item": "Brand feedback received", "status": "done" if case.get("closure", {}).get("brand_feedback_received") else "pending"},
-                {"item": "Creator feedback received", "status": "done" if case.get("closure", {}).get("creator_feedback_received") else "pending"},
-                {"item": "Assets archived", "status": "done"},
-                {"item": "Post-mortem logged", "status": "pending"},
+                {"item": item, "status": "pending"}
+                for item in DEFAULT_FINAL_REPORT_CHECKLIST
             ],
+            "workbook_mapping_todo": "Map this default checklist to crm template.xlsx when the workbook is added.",
         }
+        for item in report["closure_checklist"]:
+            if item["item"] == "Deliverables completed" and approved and len(approved) == len(deliverables):
+                item["status"] = "done"
+            if item["item"] == "KPIs documented" and kpis:
+                item["status"] = "done"
+            if item["item"] == "Brand approval received" and case.get("closure", {}).get("brand_feedback_received"):
+                item["status"] = "done"
+            if item["item"] == "Creator confirmation received" and case.get("closure", {}).get("creator_feedback_received"):
+                item["status"] = "done"
+            if item["item"] == "Budget/fees recorded" and case.get("estimated_value") is not None:
+                item["status"] = "done"
         await db.v3_final_reports.insert_one({**report})
         # initial pct calc
         done = len([i for i in report["closure_checklist"] if i["status"] == "done"])
@@ -3352,6 +3729,130 @@ Produce the opportunity card JSON.
                 "role": contact_role,
                 "email": contact_email,
                 "phone": contact_phone,
+                "status": "qualification_pending",
+                "qualification_status": "pending",
+                "lead_score": candidate.get("brand_confidence") or candidate.get("confidence_score", 65),
+                "last_interaction": "awaiting qualification",
+                "engagement_track_default": "paid",
+                "source": "opportunity_scanner",
+                "key_marketing_focus": candidate.get("key_marketing_focus"),
+                "primary_target_audience": candidate.get("primary_target_audience"),
+                "key_marketing_channels": candidate.get("key_marketing_channels"),
+                "marketing_kpis": candidate.get("marketing_kpis"),
+                "likelihood_to_work_with_tta": candidate.get("likelihood_to_work_with_tta"),
+                "desired_relationship_status": "Qualification required",
+                "brand_type": candidate.get("brand_type"),
+                "reschedule_count": 0,
+                "created_at": _now_iso(),
+                "updated_at": _now_iso(),
+            }
+            await db.v3_brands.insert_one({**brand})
+            await db.v3_contacts.insert_one({
+                "id": f"ct-{uuid.uuid4().hex[:8]}",
+                "brand_id": brand_id,
+                "name": contact_name,
+                "role": contact_role,
+                "email": contact_email,
+                "phone": contact_phone,
+                "linkedin": contact_linkedin,
+                "is_primary": True,
+                "decision_seniority": "lead",
+                "connect_status": "Stranger",
+            })
+        else:
+            updates = {
+                "status": "qualification_pending",
+                "qualification_status": "pending",
+                "source": brand.get("source") or "opportunity_scanner",
+                "updated_at": _now_iso(),
+            }
+            for key in [
+                "key_marketing_focus", "primary_target_audience", "key_marketing_channels",
+                "marketing_kpis", "likelihood_to_work_with_tta", "brand_type",
+            ]:
+                incoming = candidate.get(key)
+                if incoming and not brand.get(key):
+                    updates[key] = incoming
+            await db.v3_brands.update_one({"id": brand["id"]}, {"$set": updates})
+            brand = await db.v3_brands.find_one({"id": brand["id"]}, {"_id": 0}) or brand
+
+        existing_opp = await db.v3_opportunities.find_one({"candidate_id": candidate_id}, {"_id": 0})
+        if existing_opp:
+            opportunity = existing_opp
+        else:
+            opportunity = {
+                "id": f"opp-{uuid.uuid4().hex[:8]}",
+                "candidate_id": candidate_id,
+                "scan_id": candidate.get("scan_id"),
+                "brand_id": brand["id"],
+                "company": brand.get("company"),
+                "title": candidate.get("campaign_name") or "Scanned marketing opportunity",
+                "query": candidate.get("query", ""),
+                "problem": candidate.get("pain_point"),
+                "pain_point": candidate.get("pain_point"),
+                "suggested_angle": candidate.get("suggested_opportunity_angle"),
+                "suggested_opportunity_angle": candidate.get("suggested_opportunity_angle"),
+                "source": candidate.get("source_url"),
+                "source_url": candidate.get("source_url"),
+                "contact": brand.get("email") or contact_email or "Marketing Team",
+                "estimated_value": 75000000,
+                "fit_score": candidate.get("confidence_score", 65),
+                "status": "qualification_pending",
+                "created_at": _now_iso(),
+            }
+            await db.v3_opportunities.insert_one({**opportunity})
+
+        snapshot = {
+            "Brand": brand.get("company"),
+            "Signal": candidate.get("signal_summary") or candidate.get("why_this_matters"),
+            "Campaign": candidate.get("campaign_name"),
+            "Pain point": candidate.get("pain_point"),
+            "Suggested angle": candidate.get("suggested_opportunity_angle"),
+            "Source URL": candidate.get("source_url"),
+            "Website": brand.get("website"),
+            "Contact email": contact_email,
+            "Contact phone": contact_phone,
+        }
+        meeting = await create_brand_qualification_meeting(
+            brand=brand,
+            source="opportunity_scanner",
+            candidate_snapshot={k: v for k, v in snapshot.items() if v},
+            notes=candidate.get("why_this_matters") or candidate.get("pain_point") or "",
+            reviewed_by=payload.reviewed_by or "admin",
+        )
+        await db.v3_opportunity_candidates.update_one(
+            {"id": candidate_id},
+            {"$set": {
+                "status": "qualification_pending",
+                "pipeline_state": "meeting_booked",
+                "reviewed_at": _now_iso(),
+                "reviewed_by": payload.reviewed_by,
+                "accepted_brand_id": brand["id"],
+                "opportunity_id": opportunity["id"],
+                "qualification_meeting_id": meeting["id"],
+            }},
+        )
+        updated = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
+        return {
+            "candidate": updated,
+            "brand": brand,
+            "opportunity": opportunity,
+            "meeting": meeting,
+            "meeting_id": meeting["id"],
+            "qualification_meeting_id": meeting["id"],
+        }
+        if not brand:
+            brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+            brand = {
+                "id": brand_id,
+                "company": partner_name or "Discovered Brand",
+                "industry": candidate.get("industry") or "Other",
+                "website": candidate.get("website") or (f"https://{candidate.get('source_domain')}" if candidate.get("source_domain") else candidate.get("source_url", "")),
+                "hq": candidate.get("country") or "Nigeria",
+                "primary_contact": contact_name,
+                "role": contact_role,
+                "email": contact_email,
+                "phone": contact_phone,
                 "status": "Lead - accepted scanned opportunity",
                 "lead_score": candidate.get("brand_confidence") or candidate.get("confidence_score", 65),
                 "last_interaction": "just now",
@@ -3689,36 +4190,39 @@ Produce the opportunity card JSON.
         return sorted(rows, key=lambda r: r.get("name", ""))
 
     @router.get("/meetings")
-    async def list_meetings():
-        rows = await db.v3_meetings.find({}, {"_id": 0}).to_list(1000)
+    async def list_meetings(
+        meeting_type: Optional[str] = None,
+        stage: Optional[str] = None,
+        brand_id: Optional[str] = None,
+        creator_id: Optional[str] = None,
+        business_case_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        qualification_entity_type: Optional[str] = None,
+        decision_status: Optional[str] = None,
+    ):
+        query: Dict[str, Any] = {}
+        for key, value in [
+            ("meeting_type", meeting_type),
+            ("stage", stage),
+            ("brand_id", brand_id),
+            ("creator_id", creator_id),
+            ("business_case_id", business_case_id),
+            ("entity_type", entity_type),
+            ("qualification_entity_type", qualification_entity_type),
+            ("decision_status", decision_status),
+        ]:
+            if value:
+                query[key] = value
+        rows = await db.v3_meetings.find(query, {"_id": 0}).to_list(1000)
         return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
 
     # ------------------------------------------------------------------------
     # Meeting Detail + Workflow Routes
     # ------------------------------------------------------------------------
     RECOMMENDED_QUESTIONS_BY_TYPE: Dict[str, List[str]] = {
-        "qualification": [
-            "What is the main business objective behind this conversation?",
-            "Which audience segment are you trying to influence first?",
-            "What behaviour do you want the audience to change?",
-            "What is currently not working in your market, messaging, or growth approach?",
-            "What channels are currently most important to the brand?",
-            "What KPIs would make this project successful?",
-            "What timeline are you working toward?",
-            "Is there an approved budget range or strategy development budget?",
-            "Who is the final decision maker?",
-            "What would make this engagement a success for your team?",
-        ],
-        "connector": [
-            "What is the strongest opportunity TTA should focus on?",
-            "Which user segment should be prioritised and why?",
-            "What are the key audience insights already known?",
-            "What creator profile would be credible for this audience?",
-            "What budget or commercial constraints should shape the recommendation?",
-            "What risks would derail the project?",
-            "What must be clarified before the Alignment Snapshot is approved?",
-            "What are the next approval steps after alignment?",
-        ],
+        "qualification": QUALIFICATION_QUESTION_SETS["brand"],
+        "connector": BUSINESS_CALL_QUESTIONS,
+        "creator_fit": CREATOR_FIT_QUESTIONS,
         "plan": [
             "Which strategic approach should lead: ambassador-led, creator-led, community-led, merchant-first, or hybrid?",
             "Which creators should be shortlisted and why?",
@@ -3737,7 +4241,10 @@ Produce the opportunity card JSON.
         # Ensure suggested questions exist
         if not out.get("suggested_questions"):
             mtype = (out.get("meeting_type") or out.get("type") or "qualification").lower()
-            out["suggested_questions"] = RECOMMENDED_QUESTIONS_BY_TYPE.get(mtype, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"])
+            if mtype == "qualification" and out.get("qualification_entity_type") == "creator":
+                out["suggested_questions"] = QUALIFICATION_QUESTION_SETS["creator"]
+            else:
+                out["suggested_questions"] = RECOMMENDED_QUESTIONS_BY_TYPE.get(mtype, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"])
 
         if out.get("brand_id"):
             brand = await db.v3_brands.find_one({"id": out["brand_id"]}, {"_id": 0})
@@ -3752,6 +4259,13 @@ Produce the opportunity card JSON.
                 out["business_case"] = bc
                 if not out.get("business_case_title"):
                     out["business_case_title"] = bc.get("title", "")
+
+        if out.get("creator_id"):
+            creator = await db.v3_creators.find_one({"id": out["creator_id"]}, {"_id": 0})
+            if creator:
+                out["creator"] = creator
+                if not out.get("entity_name"):
+                    out["entity_name"] = creator.get("name") or creator.get("creator_name") or ""
 
         if out.get("rm_id"):
             rm = await db.v3_rms.find_one({"id": out["rm_id"]}, {"_id": 0})
@@ -3811,53 +4325,151 @@ Produce the opportunity card JSON.
 
     class MeetingCreate(BaseModel):
         title: str
-        meeting_type: str = "qualification"  # qualification | connector | plan
+        meeting_type: str = "qualification"
         stage: Optional[str] = None
+        entity_type: Optional[str] = None
+        qualification_entity_type: Optional[str] = None
+        source: Optional[str] = None
         entity_name: Optional[str] = ""
         business_case_title: Optional[str] = ""
         business_case_id: Optional[str] = None
         brand_id: Optional[str] = None
+        creator_id: Optional[str] = None
         rm_id: Optional[str] = None
         contact_name: Optional[str] = ""
+        contact_role: Optional[str] = ""
         contact_email: Optional[str] = ""
         contact_phone: Optional[str] = ""
         scheduled_for: Optional[str] = None
         duration_minutes: Optional[int] = 30
         meeting_link: Optional[str] = ""
         agenda: Optional[str] = ""
+        meeting_notes: Optional[str] = ""
+        parent_meeting_id: Optional[str] = None
+        max_reschedules: Optional[int] = 3
 
     @router.post("/meetings")
     async def create_meeting(payload: MeetingCreate):
         mid = f"meeting-{uuid.uuid4().hex[:10]}"
-        stage_default = "before_crm" if payload.meeting_type == "qualification" else "connect"
+        stage_default = "before_crm" if payload.meeting_type == "qualification" else ("plan" if payload.meeting_type == "creator_fit" else "connect")
+        qualification_entity_type = (
+            payload.qualification_entity_type or payload.entity_type or "brand"
+            if payload.meeting_type == "qualification"
+            else payload.qualification_entity_type
+        )
+        entity_type = payload.entity_type or qualification_entity_type or ("creator" if payload.meeting_type == "creator_fit" else "brand")
+        if payload.meeting_type == "qualification" and qualification_entity_type == "creator":
+            questions = QUALIFICATION_QUESTION_SETS["creator"]
+        else:
+            questions = RECOMMENDED_QUESTIONS_BY_TYPE.get(payload.meeting_type, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"])
         doc = {
             "id": mid,
             "title": payload.title,
             "meeting_type": payload.meeting_type,
             "type": payload.meeting_type,
             "stage": payload.stage or stage_default,
+            "entity_type": entity_type,
+            "qualification_entity_type": qualification_entity_type,
+            "source": payload.source or "manual",
             "entity_name": payload.entity_name or "",
             "business_case_title": payload.business_case_title or "",
             "business_case_id": payload.business_case_id,
             "brand_id": payload.brand_id,
+            "creator_id": payload.creator_id,
             "rm_id": payload.rm_id,
             "contact_name": payload.contact_name or "",
+            "contact_role": payload.contact_role or "",
             "contact_email": payload.contact_email or "",
             "contact_phone": payload.contact_phone or "",
             "scheduled_for": payload.scheduled_for,
             "duration_minutes": payload.duration_minutes or 30,
             "meeting_link": payload.meeting_link or "",
             "agenda": payload.agenda or "",
-            "notes": payload.agenda or "",
+            "notes": payload.meeting_notes or payload.agenda or "",
+            "meeting_notes": payload.meeting_notes or "",
+            "parent_meeting_id": payload.parent_meeting_id,
             "status": "scheduled",
             "qualification_status": "pending",
-            "suggested_questions": RECOMMENDED_QUESTIONS_BY_TYPE.get(payload.meeting_type, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"]),
+            "decision_status": "pending",
+            "reschedule_count": 0,
+            "max_reschedules": payload.max_reschedules or 3,
+            "suggested_questions": questions,
+            "next_questions": questions,
             "transcript": "",
             "analysis": {},
+            "ai_recommendation": None,
+            "ai_reasons": [],
+            "missing_information": [],
             "created_at": _now_iso(),
             "updated_at": _now_iso(),
         }
         await db.v3_meetings.insert_one({**doc})
+        if payload.meeting_type == "qualification" and payload.brand_id:
+            await db.v3_brands.update_one(
+                {"id": payload.brand_id},
+                {
+                    "$set": {
+                        "status": "qualification_scheduled" if payload.scheduled_for else "qualification_pending",
+                        "qualification_status": "scheduled" if payload.scheduled_for else "pending",
+                        "updated_at": _now_iso(),
+                    },
+                    "$addToSet": {"qualification_meeting_ids": mid},
+                },
+            )
+        if payload.meeting_type == "qualification" and payload.creator_id:
+            await db.v3_creators.update_one(
+                {"id": payload.creator_id},
+                {
+                    "$set": {
+                        "status": "qualification_scheduled" if payload.scheduled_for else "qualification_pending",
+                        "pipeline_status": "pending_review",
+                        "updated_at": _now_iso(),
+                    },
+                    "$addToSet": {"qualification_meeting_ids": mid},
+                },
+            )
+        if payload.meeting_type == "connector" and payload.brand_id:
+            await db.v3_brands.update_one(
+                {"id": payload.brand_id},
+                {
+                    "$set": {
+                        "status": "business_call_scheduled" if payload.scheduled_for else "business_call_pending",
+                        "updated_at": _now_iso(),
+                    },
+                    "$addToSet": {"business_call_meeting_ids": mid},
+                },
+            )
+        if payload.meeting_type == "creator_fit":
+            if payload.creator_id:
+                await db.v3_creators.update_one(
+                    {"id": payload.creator_id},
+                    {"$set": {"status": "creator_fit_call_pending", "updated_at": _now_iso()}},
+                )
+            if payload.business_case_id:
+                await db.v3_business_cases.update_one(
+                    {"id": payload.business_case_id},
+                    {"$addToSet": {"creator_fit_meeting_ids": mid, "plan.creator_fit_meeting_ids": mid}, "$set": {"updated_at": _now_iso()}},
+                )
+        if payload.scheduled_for and payload.contact_email:
+            kind = {
+                "qualification": "qualification_call_invite",
+                "connector": "business_call_invite",
+                "creator_fit": "creator_fit_call_invite",
+            }.get(payload.meeting_type, "meeting_invite")
+            await queue_email(
+                to=payload.contact_email,
+                subject=f"TASCK {doc['title']}",
+                body=(
+                    f"Hello {payload.contact_name or 'there'},\n\n"
+                    f"Your TASCK meeting is scheduled for {payload.scheduled_for}.\n"
+                    f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}\n\n"
+                    f"Purpose: {payload.agenda or doc['title']}"
+                ),
+                kind=kind,
+                brand_id=payload.brand_id,
+                creator_id=payload.creator_id,
+                business_case_id=payload.business_case_id,
+            )
         return await _hydrate_meeting(doc)
 
     class MeetingContactUpdate(BaseModel):
@@ -3866,6 +4478,8 @@ Produce the opportunity card JSON.
         contact_phone: Optional[str] = None
         meeting_link: Optional[str] = None
         scheduled_for: Optional[str] = None
+        contact_role: Optional[str] = None
+        meeting_notes: Optional[str] = None
 
     @router.patch("/meetings/{meeting_id}/contact")
     async def update_meeting_contact(meeting_id: str, payload: MeetingContactUpdate):
@@ -3900,33 +4514,124 @@ Produce the opportunity card JSON.
         transcript = m.get("transcript", "")
         mi = _extract_marketing_intelligence(transcript)
         text = (transcript or "").strip()
+        lower = text.lower()
         readiness = 0
-        readiness += 10 if "objective" in text.lower() or "goal" in text.lower() else 0
-        readiness += 10 if "audience" in text.lower() or "consumer" in text.lower() else 0
-        readiness += 10 if any(c.lower() in text.lower() for c in ["instagram", "tiktok", "youtube", "x", "ooh", "tv", "radio"]) else 0
-        readiness += 10 if any(k.lower() in text.lower() for k in ["kpi", "reach", "engagement", "lift", "conversion"]) else 0
-        readiness += 10 if any(b.lower() in text.lower() for b in ["budget", "fee", "naira", "₦", "$"]) else 0
-        readiness += 10 if "decision" in text.lower() or "approve" in text.lower() else 0
+        readiness += 10 if "objective" in lower or "goal" in lower or "focus" in lower else 0
+        readiness += 10 if "audience" in lower or "consumer" in lower or "buyer" in lower else 0
+        readiness += 10 if any(c.lower() in lower for c in ["instagram", "tiktok", "youtube", "x", "ooh", "tv", "radio", "events", "retail"]) else 0
+        readiness += 10 if any(k.lower() in lower for k in ["kpi", "reach", "engagement", "lift", "conversion", "sales", "leads"]) else 0
+        readiness += 10 if any(b.lower() in lower for b in ["budget", "fee", "rate", "naira", "₦", "$"]) else 0
+        readiness += 10 if "decision" in lower or "approve" in lower or "authority" in lower else 0
         readiness += 15 if len(text) >= 400 else (10 if len(text) >= 200 else 0)
         readiness += 25 if len(text) >= 800 else 0
         readiness = min(readiness, 100)
-        missing = []
-        if "audience" not in text.lower():
-            missing.append("Audience")
-        if "budget" not in text.lower():
-            missing.append("Budget")
-        if "kpi" not in text.lower() and "metric" not in text.lower():
-            missing.append("KPIs")
-        if "decision" not in text.lower():
-            missing.append("Decision maker")
+        meeting_type = (m.get("meeting_type") or m.get("type") or "qualification").lower()
+        entity_type = (m.get("qualification_entity_type") or m.get("entity_type") or "brand").lower()
+        if meeting_type == "connector":
+            required = [
+                ("Marketing focus", ["focus", "objective", "goal", "challenge"]),
+                ("Target audience", ["audience", "consumer", "buyer"]),
+                ("Channels", ["instagram", "tiktok", "youtube", "channel", "events", "retail"]),
+                ("KPIs", ["kpi", "metric", "reach", "engagement", "conversion", "sales", "leads"]),
+                ("Budget", ["budget", "fee", "naira", "₦", "$"]),
+                ("Timeline", ["timeline", "date", "launch", "deadline"]),
+                ("Decision maker", ["decision", "approve", "authority"]),
+            ]
+        elif meeting_type == "creator_fit":
+            required = [
+                ("Creator fee", ["fee", "rate", "budget", "naira", "₦", "$"]),
+                ("Availability", ["available", "availability", "schedule", "timeline"]),
+                ("Deliverables", ["deliverable", "post", "video", "content"]),
+                ("Usage rights", ["usage", "rights", "license"]),
+                ("Conflicts", ["conflict", "exclusivity", "exclusive"]),
+                ("Payment terms", ["payment", "terms", "invoice"]),
+            ]
+        elif entity_type == "creator":
+            required = [
+                ("Platforms", ["instagram", "tiktok", "youtube", "x", "platform"]),
+                ("Audience", ["audience", "demographic", "followers"]),
+                ("Rates", ["rate", "fee", "budget"]),
+                ("Availability", ["available", "availability", "schedule"]),
+                ("Past collaborations", ["brand", "collaboration", "campaign"]),
+                ("Communication route", ["email", "phone", "whatsapp", "manager"]),
+            ]
+        else:
+            required = [
+                ("Brand offer", ["sell", "product", "service", "buyer"]),
+                ("Marketing challenge", ["challenge", "problem", "objective", "goal"]),
+                ("Channels", ["instagram", "tiktok", "youtube", "x", "events", "retail", "channel"]),
+                ("KPIs", ["kpi", "metric", "reach", "engagement", "conversion", "sales", "leads"]),
+                ("Budget", ["budget", "fee", "naira", "₦", "$"]),
+                ("Timeline", ["timeline", "date", "launch", "deadline"]),
+                ("Decision maker", ["decision", "approve", "authority"]),
+            ]
+        missing = _required_missing_fields(text, required)
+        risk_flags = []
+        for label, markers in [
+            ("No budget or budget too low", ["no budget", "too low", "cannot afford", "free only"]),
+            ("Opt-out or low intent", ["not interested", "opt out", "maybe later", "no longer"]),
+            ("No authority", ["no authority", "not the decision maker", "cannot approve"]),
+            ("Unavailable", ["unavailable", "no capacity", "fully booked"]),
+            ("Conflict or brand safety issue", ["conflict", "unsafe", "controversy", "exclusive with"]),
+        ]:
+            if any(marker in lower for marker in markers):
+                risk_flags.append(label)
         summary = mi.get("source_excerpt") or text[:280] or "Transcript not provided yet."
+        reschedule_count = int(m.get("reschedule_count") or 0)
+        max_reschedules = int(m.get("max_reschedules") or 3)
+        if meeting_type == "connector":
+            accept_recommendation = "proceed_to_business_case"
+            decline_recommendation = "delete_brand"
+        elif meeting_type == "creator_fit":
+            accept_recommendation = "accept_creator_for_project"
+            decline_recommendation = "reject_creator_for_project"
+        elif entity_type == "creator":
+            accept_recommendation = "approve_creator"
+            decline_recommendation = "decline_creator"
+        else:
+            accept_recommendation = "accept_to_crm"
+            decline_recommendation = "delete_candidate"
+        if not text:
+            ai_recommendation = "reschedule" if reschedule_count < max_reschedules else decline_recommendation
+            ai_reasons = ["Transcript is empty, so TASCK cannot make a reliable decision."]
+        elif reschedule_count >= max_reschedules:
+            ai_recommendation = decline_recommendation
+            ai_reasons = ["Maximum reschedules reached; the next normal path is delete, decline, or reject."]
+        elif risk_flags:
+            ai_recommendation = decline_recommendation
+            ai_reasons = [f"Risk detected: {item}." for item in risk_flags]
+        elif missing:
+            ai_recommendation = "reschedule"
+            ai_reasons = [f"Missing required information: {', '.join(missing)}."]
+        elif readiness >= 55:
+            ai_recommendation = accept_recommendation
+            ai_reasons = ["Transcript includes enough decision, fit, budget, timeline, and marketing context."]
+        else:
+            ai_recommendation = "reschedule" if reschedule_count < max_reschedules else decline_recommendation
+            ai_reasons = ["Transcript is still too thin for a confident decision."]
+        next_questions = [f"Clarify {item}." for item in missing] or (
+            CREATOR_FIT_QUESTIONS if meeting_type == "creator_fit"
+            else QUALIFICATION_QUESTION_SETS["creator"] if entity_type == "creator" and meeting_type == "qualification"
+            else BUSINESS_CALL_QUESTIONS if meeting_type == "connector"
+            else QUALIFICATION_QUESTION_SETS["brand"]
+        )
         analysis = {
             "summary": summary,
             "readiness_score": readiness,
+            "detected_fields": mi,
+            "missing_information": missing,
+            "risk_flags": risk_flags,
+            "ai_recommendation": ai_recommendation,
+            "ai_reasons": ai_reasons,
+            "next_questions": next_questions,
+            "decision_payload": {
+                "meeting_type": meeting_type,
+                "entity_type": entity_type,
+                "reschedule_count": reschedule_count,
+                "max_reschedules": max_reschedules,
+            },
             "missingContext": missing,
-            "followUpQuestions": [
-                f"Clarify {item}." for item in missing
-            ],
+            "followUpQuestions": next_questions,
             "ai_outputs": [
                 f"Key marketing focus → {mi['key_marketing_focus']}",
                 f"Primary target audience → {mi['primary_target_audience']}",
@@ -3941,6 +4646,11 @@ Produce the opportunity card JSON.
             {"$set": {
                 "analysis": analysis,
                 "readiness_score": readiness,
+                "missing_information": missing,
+                "risk_flags": risk_flags,
+                "ai_recommendation": ai_recommendation,
+                "ai_reasons": ai_reasons,
+                "next_questions": next_questions,
                 "status": "transcribed",
                 "updated_at": _now_iso(),
             }}
@@ -3960,42 +4670,348 @@ Produce the opportunity card JSON.
         )
         return {"suggested_questions": questions}
 
+    class MeetingDecisionPayload(BaseModel):
+        reason: Optional[str] = None
+        scheduled_for: Optional[str] = None
+        meeting_link: Optional[str] = None
+        actor: str = "admin"
+
+    async def create_reschedule_child(meeting: Dict[str, Any], payload: MeetingDecisionPayload) -> Dict[str, Any]:
+        reschedule_count = int(meeting.get("reschedule_count") or 0)
+        max_reschedules = int(meeting.get("max_reschedules") or 3)
+        if reschedule_count >= max_reschedules:
+            raise HTTPException(400, "Maximum reschedules reached")
+        child_id = f"meeting-{uuid.uuid4().hex[:10]}"
+        next_count = reschedule_count + 1
+        child = {
+            **meeting,
+            "id": child_id,
+            "parent_meeting_id": meeting["id"],
+            "reschedule_count": next_count,
+            "scheduled_for": payload.scheduled_for,
+            "meeting_link": payload.meeting_link or meeting.get("meeting_link", ""),
+            "status": "pending",
+            "qualification_status": "pending" if meeting.get("meeting_type") == "qualification" else meeting.get("qualification_status", "pending"),
+            "decision_status": "pending",
+            "decision_reason": payload.reason or "",
+            "transcript": "",
+            "analysis": {},
+            "ai_recommendation": None,
+            "ai_reasons": [],
+            "missing_information": meeting.get("missing_information") or [],
+            "suggested_questions": meeting.get("next_questions") or meeting.get("suggested_questions") or [],
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+        child.pop("_id", None)
+        await db.v3_meetings.insert_one({**child})
+        await db.v3_meetings.update_one(
+            {"id": meeting["id"]},
+            {"$set": {
+                "status": "rescheduled",
+                "qualification_status": "rescheduled" if meeting.get("meeting_type") == "qualification" else meeting.get("qualification_status", ""),
+                "decision_status": "rescheduled",
+                "rescheduled_at": _now_iso(),
+                "reschedule_count": next_count,
+                "child_meeting_id": child_id,
+                "updated_at": _now_iso(),
+            }},
+        )
+        if meeting.get("brand_id"):
+            await db.v3_brands.update_one(
+                {"id": meeting["brand_id"]},
+                {"$set": {"status": "qualification_rescheduled" if meeting.get("meeting_type") == "qualification" else "business_call_scheduled", "updated_at": _now_iso()}},
+            )
+        if meeting.get("creator_id") and meeting.get("meeting_type") == "qualification":
+            await db.v3_creators.update_one(
+                {"id": meeting["creator_id"]},
+                {"$set": {"status": "qualification_rescheduled", "pipeline_status": "pending_review", "updated_at": _now_iso()}},
+            )
+        return await _hydrate_meeting(child)
+
     @router.post("/meetings/{meeting_id}/qualification/accept")
     async def accept_qualification_meeting(meeting_id: str):
-        result = await db.v3_meetings.update_one(
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        entity_type = (meeting.get("qualification_entity_type") or meeting.get("entity_type") or "brand").lower()
+        accepted_at = _now_iso()
+        if entity_type == "creator":
+            creator_id = meeting.get("creator_id")
+            if not creator_id:
+                raise HTTPException(400, "Creator qualification meeting is missing creator_id")
+            await db.v3_creators.update_one(
+                {"id": creator_id},
+                {"$set": {
+                    "status": "approved",
+                    "pipeline_status": "approved",
+                    "qualification_summary": (meeting.get("analysis") or {}).get("summary", ""),
+                    "qualification_transcript": meeting.get("transcript", ""),
+                    "approved_at": accepted_at,
+                    "updated_at": accepted_at,
+                }},
+            )
+            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0})
+            if creator:
+                await queue_email(
+                    to=_fallback_creator_email(creator),
+                    subject="Welcome to TASCK Creator Portal",
+                    body=(
+                        f"Hello {creator.get('name') or 'there'},\n\n"
+                        "Your TASCK creator profile has been approved. You can review briefs, contracts, deliverables, and messages in the creator portal."
+                    ),
+                    kind="creator_welcome",
+                    creator_id=creator_id,
+                )
+            response = {"ok": True, "qualification_status": "accepted", "creator": creator}
+        else:
+            brand_id = meeting.get("brand_id")
+            if not brand_id:
+                raise HTTPException(400, "Brand qualification meeting is missing brand_id")
+            await db.v3_brands.update_one(
+                {"id": brand_id},
+                {"$set": {
+                    "status": "crm_accepted",
+                    "qualification_status": "accepted",
+                    "crm_accepted_at": accepted_at,
+                    "last_interaction": "qualification accepted",
+                    "updated_at": accepted_at,
+                }},
+            )
+            brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+            if brand:
+                await ensure_brand_account(brand)
+            await db.v3_interactions.insert_one({
+                "id": f"int-{uuid.uuid4().hex[:8]}",
+                "brand_id": brand_id,
+                "business_case_id": None,
+                "type": "qualification_call",
+                "title": "Brand qualification accepted",
+                "author": "Meeting Intelligence",
+                "date_iso": accepted_at,
+                "content": (
+                    f"{(meeting.get('analysis') or {}).get('summary', 'Qualification accepted.')}\n\n"
+                    f"Transcript:\n{meeting.get('transcript', '')}"
+                ),
+                "next_action": "Move Brand to Business Call",
+            })
+            response = {"ok": True, "qualification_status": "accepted", "brand": brand}
+        await db.v3_meetings.update_one(
             {"id": meeting_id},
             {"$set": {
                 "qualification_status": "accepted",
+                "decision_status": "accepted",
                 "status": "accepted",
-                "accepted_at": _now_iso(),
-                "updated_at": _now_iso(),
-            }}
+                "accepted_at": accepted_at,
+                "updated_at": accepted_at,
+            }},
         )
-        if result.matched_count == 0:
-            raise HTTPException(404, "Meeting not found")
-        return {"ok": True, "qualification_status": "accepted"}
+        return response
 
     @router.post("/meetings/{meeting_id}/qualification/reschedule")
-    async def reschedule_qualification_meeting(meeting_id: str):
-        result = await db.v3_meetings.update_one(
-            {"id": meeting_id},
-            {"$set": {
-                "qualification_status": "rescheduled",
-                "status": "scheduled",
-                "rescheduled_at": _now_iso(),
-                "updated_at": _now_iso(),
-            }}
-        )
-        if result.matched_count == 0:
+    async def reschedule_qualification_meeting(meeting_id: str, payload: MeetingDecisionPayload = MeetingDecisionPayload()):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
             raise HTTPException(404, "Meeting not found")
-        return {"ok": True, "qualification_status": "rescheduled"}
+        child = await create_reschedule_child(meeting, payload)
+        return {"ok": True, "qualification_status": "rescheduled", "meeting": child, "meeting_id": child["id"]}
 
     @router.post("/meetings/{meeting_id}/qualification/delete")
-    async def delete_qualification_meeting(meeting_id: str):
-        result = await db.v3_meetings.delete_one({"id": meeting_id})
-        if result.deleted_count == 0:
+    async def delete_qualification_meeting(meeting_id: str, payload: MeetingDecisionPayload = MeetingDecisionPayload()):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
             raise HTTPException(404, "Meeting not found")
+        if meeting.get("brand_id"):
+            await db.v3_brands.update_one(
+                {"id": meeting["brand_id"]},
+                {"$set": {"status": "deleted", "deleted_reason": payload.reason or "Qualification deleted", "updated_at": _now_iso()}},
+            )
+            await db.v3_meetings.delete_many({"brand_id": meeting["brand_id"], "meeting_type": "qualification"})
+        elif meeting.get("creator_id"):
+            await db.v3_creators.update_one(
+                {"id": meeting["creator_id"]},
+                {"$set": {"status": "declined", "pipeline_status": "declined", "deleted_reason": payload.reason or "Qualification declined", "updated_at": _now_iso()}},
+            )
+            await db.v3_meetings.delete_many({"creator_id": meeting["creator_id"], "meeting_type": "qualification"})
+        else:
+            await db.v3_meetings.delete_one({"id": meeting_id})
         return {"ok": True}
+
+    @router.post("/meetings/{meeting_id}/business/proceed")
+    async def proceed_business_call(meeting_id: str):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        if meeting.get("business_case_id"):
+            case = await db.v3_business_cases.find_one({"id": meeting["business_case_id"]}, {"_id": 0})
+            return {"ok": True, "business_case": case, "business_case_id": meeting["business_case_id"]}
+        brand_id = meeting.get("brand_id")
+        if not brand_id:
+            raise HTTPException(400, "Business Call is missing brand_id")
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        analysis = meeting.get("analysis") or {}
+        mi = analysis.get("marketing_intelligence") or analysis.get("detected_fields") or _extract_marketing_intelligence(meeting.get("transcript", ""))
+        bc_id = f"bc-{uuid.uuid4().hex[:8]}"
+        now = _now_iso()
+        case = {
+            "id": bc_id,
+            "brand_id": brand_id,
+            "creator_id": None,
+            "title": meeting.get("business_case_title") or f"{brand.get('company', 'Brand')} business case",
+            "stage": "connect",
+            "engagement_track": brand.get("engagement_track_default") or "paid",
+            "estimated_value": 0,
+            "rm_id": meeting.get("rm_id") or brand.get("rm_id") or "admin",
+            "created_at": now,
+            "days_in_stage": 0,
+            "next_action": "Review Business Call extraction and move to Frame when ready.",
+            "health": "new",
+            "scope_creep_locked": False,
+            "source_meeting_id": meeting_id,
+            "qualification_meeting_ids": brand.get("qualification_meeting_ids", []),
+            "business_call_meeting_ids": [meeting_id],
+            "creator_fit_meeting_ids": [],
+            "brand_contact_snapshot": {
+                "primary_contact": brand.get("primary_contact"),
+                "role": brand.get("role"),
+                "email": brand.get("email"),
+                "phone": brand.get("phone"),
+            },
+            "marketing_intelligence": mi,
+            "selected_creator_ids": [],
+            "creator_shortlist": [],
+            "alignment_snapshot_status": "draft",
+            "strategy_snapshot_status": "draft",
+            "contract_status": "draft",
+            "deliverables_status": "not_started",
+            "final_report_status": "draft",
+            "connect": {
+                "source": "business_call",
+                "source_meeting_id": meeting_id,
+                "connect_status": "qualified_to_frame",
+                "stated_intent": analysis.get("summary") or meeting.get("agenda") or "",
+                "transcript": meeting.get("transcript", ""),
+                "analysis": analysis,
+                "marketing_intelligence": mi,
+            },
+            "frame": {},
+            "plan": {
+                "brainstorm": {},
+                "selected_creator_ids": [],
+                "creator_fit_meeting_ids": [],
+            },
+            "deliver": {},
+            "closure": {
+                "final_report_checklist": DEFAULT_FINAL_REPORT_CHECKLIST,
+                "crm_template_mapping_todo": "Map this checklist to crm template.xlsx when the workbook is added.",
+            },
+            "timeline": [{"at": now, "event": "business_case_created_from_business_call", "meeting_id": meeting_id}],
+            "updated_at": now,
+        }
+        await db.v3_business_cases.insert_one({**case})
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"business_case_id": bc_id, "decision_status": "proceeded", "status": "proceeded", "updated_at": now}},
+        )
+        await db.v3_brands.update_one(
+            {"id": brand_id},
+            {"$set": {"status": "business_case_active", "updated_at": now}},
+        )
+        await db.v3_interactions.insert_one({
+            "id": f"int-{uuid.uuid4().hex[:8]}",
+            "brand_id": brand_id,
+            "business_case_id": bc_id,
+            "type": "business_call",
+            "title": "Business Call accepted into Business Case",
+            "author": "Meeting Intelligence",
+            "date_iso": now,
+            "content": f"{analysis.get('summary', 'Business Call accepted.')}\n\nTranscript:\n{meeting.get('transcript', '')}",
+            "next_action": "Generate Alignment Snapshot",
+        })
+        return {"ok": True, "business_case": case, "business_case_id": bc_id}
+
+    @router.post("/meetings/{meeting_id}/business/reschedule")
+    async def reschedule_business_call(meeting_id: str, payload: MeetingDecisionPayload = MeetingDecisionPayload()):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        child = await create_reschedule_child(meeting, payload)
+        return {"ok": True, "decision_status": "rescheduled", "meeting": child, "meeting_id": child["id"]}
+
+    @router.post("/meetings/{meeting_id}/business/delete")
+    async def delete_business_call_brand(meeting_id: str, payload: MeetingDecisionPayload = MeetingDecisionPayload()):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        if meeting.get("brand_id"):
+            await db.v3_brands.update_one(
+                {"id": meeting["brand_id"]},
+                {"$set": {"status": "deleted", "deleted_reason": payload.reason or "Business Call deleted", "updated_at": _now_iso()}},
+            )
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"decision_status": "deleted", "status": "deleted", "updated_at": _now_iso()}},
+        )
+        return {"ok": True, "decision_status": "deleted"}
+
+    @router.post("/meetings/{meeting_id}/creator-fit/accept")
+    async def accept_creator_fit(meeting_id: str):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        if not meeting.get("business_case_id") or not meeting.get("creator_id"):
+            raise HTTPException(400, "Creator Fit Call requires business_case_id and creator_id")
+        now = _now_iso()
+        await db.v3_business_cases.update_one(
+            {"id": meeting["business_case_id"]},
+            {
+                "$addToSet": {
+                    "selected_creator_ids": meeting["creator_id"],
+                    "creator_fit_meeting_ids": meeting_id,
+                    "plan.selected_creator_ids": meeting["creator_id"],
+                    "plan.creator_fit_meeting_ids": meeting_id,
+                    "plan.creator_fit_accepted_ids": meeting["creator_id"],
+                },
+                "$set": {"updated_at": now},
+            },
+        )
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"decision_status": "accepted", "status": "accepted", "accepted_at": now, "updated_at": now}},
+        )
+        return {"ok": True, "decision_status": "accepted"}
+
+    @router.post("/meetings/{meeting_id}/creator-fit/reschedule")
+    async def reschedule_creator_fit(meeting_id: str, payload: MeetingDecisionPayload = MeetingDecisionPayload()):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        child = await create_reschedule_child(meeting, payload)
+        return {"ok": True, "decision_status": "rescheduled", "meeting": child, "meeting_id": child["id"]}
+
+    @router.post("/meetings/{meeting_id}/creator-fit/reject")
+    async def reject_creator_fit(meeting_id: str, payload: MeetingDecisionPayload = MeetingDecisionPayload()):
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        if meeting.get("business_case_id") and meeting.get("creator_id"):
+            await db.v3_business_cases.update_one(
+                {"id": meeting["business_case_id"]},
+                {
+                    "$pull": {
+                        "selected_creator_ids": meeting["creator_id"],
+                        "plan.selected_creator_ids": meeting["creator_id"],
+                    },
+                    "$set": {"updated_at": _now_iso()},
+                },
+            )
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"decision_status": "declined", "status": "declined", "decision_reason": payload.reason or "", "updated_at": _now_iso()}},
+        )
+        return {"ok": True, "decision_status": "declined"}
 
     @router.get("/projects")
     async def list_projects():

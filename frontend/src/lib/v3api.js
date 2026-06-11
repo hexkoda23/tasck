@@ -20,13 +20,15 @@ v3.interceptors.response.use((response) => {
 export const v3GetBrands = (params) => v3.get('/brands', { params }).then(r => r.data);
 export const v3GetBrand = (brandId) => v3.get(`/brands/${brandId}`).then(r => r.data);
 export const v3CreateBrand = (payload) => v3.post('/brands', payload).then(r => r.data);
+export const v3CreateBrandQualificationCandidate = (payload) => v3.post('/brands/qualification-candidates', payload).then(r => r.data);
 export const v3DeleteBrand = (brandId) => v3.delete(`/brands/${brandId}`).then(r => r.data);
 export const v3ChangeBrandPassword = (payload) => v3.post('/brand-accounts/change-password', payload).then(r => r.data);
 export const v3ListEmailOutbox = (params) => v3.get('/email-outbox', { params }).then(r => r.data);
 export const v3GetContacts = (brandId) => v3.get('/contacts', { params: { brand_id: brandId } }).then(r => r.data);
-export const v3GetCreators = (tier) => v3.get('/creators', { params: { tier } }).then(r => r.data);
+export const v3GetCreators = (params) => v3.get('/creators', { params: typeof params === 'string' ? { tier: params } : params }).then(r => r.data);
 export const v3GetCreator = (creatorId) => v3.get(`/creators/${creatorId}`).then(r => r.data);
 export const v3CreateCreator = (payload) => v3.post('/creators', payload).then(r => r.data);
+export const v3CreateCreatorQualificationCandidate = (payload) => v3.post('/creators/qualification-candidates', payload).then(r => r.data);
 export const v3SearchWebCreators = (payload) => v3.post('/creators/search-web', payload).then(r => r.data);
 export const v3SuggestCreatorMatches = (bcId) => v3.post(`/business-cases/${bcId}/ai/creator-matches`).then(r => r.data);
 
@@ -111,6 +113,12 @@ export const v3RegenerateMeetingQuestions = (meetingId) => v3.post(`/meetings/${
 export const v3AcceptQualificationMeeting = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/qualification/accept`, payload).then(r => r.data);
 export const v3RescheduleQualificationMeeting = (meetingId, payload) => v3.post(`/meetings/${meetingId}/qualification/reschedule`, payload).then(r => r.data);
 export const v3DeleteQualificationMeeting = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/qualification/delete`, payload).then(r => r.data);
+export const v3ProceedBusinessCall = (meetingId) => v3.post(`/meetings/${meetingId}/business/proceed`).then(r => r.data);
+export const v3RescheduleBusinessCall = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/business/reschedule`, payload).then(r => r.data);
+export const v3DeleteBusinessCall = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/business/delete`, payload).then(r => r.data);
+export const v3AcceptCreatorFitCall = (meetingId) => v3.post(`/meetings/${meetingId}/creator-fit/accept`).then(r => r.data);
+export const v3RescheduleCreatorFitCall = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/creator-fit/reschedule`, payload).then(r => r.data);
+export const v3RejectCreatorFitCall = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/creator-fit/reject`, payload).then(r => r.data);
 
 // -------- Relationship Managers --------
 export const v3ListRelationshipManagers = () => v3.get('/relationship-managers').then(r => r.data);

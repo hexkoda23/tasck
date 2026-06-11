@@ -25,15 +25,35 @@ import {
   v3RescheduleQualificationMeeting,
   v3DeleteQualificationMeeting,
   v3SaveMeetingContact,
+  v3ProceedBusinessCall,
+  v3RescheduleBusinessCall,
+  v3DeleteBusinessCall,
+  v3AcceptCreatorFitCall,
+  v3RescheduleCreatorFitCall,
+  v3RejectCreatorFitCall,
 } from '../../../lib/v3api';
 
 const statusTone = (value) => {
-  if (['accepted', 'transcribed', 'ready_for_alignment', 'creative_brief_ready'].includes(value))
+  if (['accepted', 'transcribed', 'ready_for_alignment', 'creative_brief_ready', 'proceeded'].includes(value))
     return 'bg-[#DDE7E2] text-[#1F4A3A]';
   if (['needs_follow_up_meeting', 'needs contact', 'scheduled', 'pending'].includes(value))
     return 'bg-[#F2EAD8] text-[#7A5F23]';
+  if (['deleted', 'declined', 'rejected'].includes(value))
+    return 'bg-[#F5D9D2] text-[#B54A37]';
   return 'bg-[#F4F2EC] text-[#6E6657]';
 };
+
+const decisionLabel = (value) => ({
+  accept_to_crm: 'Accept Brand into CRM',
+  approve_creator: 'Approve Creator',
+  proceed_to_business_case: 'Proceed to Business Case',
+  accept_creator_for_project: 'Accept Creator for Project',
+  reschedule: 'Reschedule',
+  delete_candidate: 'Delete Candidate',
+  delete_brand: 'Delete Brand',
+  decline_creator: 'Decline Creator',
+  reject_creator_for_project: 'Reject Creator for Project',
+}[value] || String(value || '').replace(/_/g, ' '));
 
 const Badge = ({ children, tone }) => (
   <span
@@ -132,6 +152,31 @@ const AnalysisCard = ({ analysis, score }) => {
           </div>
         </div>
       )}
+      {analysis.risk_flags?.length > 0 && (
+        <div>
+          <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider mb-2">
+            Risk flags
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {analysis.risk_flags.map((item) => (
+              <Badge key={item} tone="bg-[#F5D9D2] text-[#B54A37]">
+                {item}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+      {analysis.ai_recommendation && (
+        <div className="rounded-lg border border-[#DDE7E2] bg-[#F5FAF7] p-3">
+          <p className="text-[10px] text-[#1F4A3A] uppercase tracking-wider mb-1">AI recommendation</p>
+          <p className="text-[13px] font-semibold text-[#1A1A1A]">{decisionLabel(analysis.ai_recommendation)}</p>
+          {analysis.ai_reasons?.length > 0 && (
+            <ul className="mt-2 space-y-1 text-[12px] text-[#6E6657]">
+              {analysis.ai_reasons.map((reason) => <li key={reason}>{reason}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
       {(analysis.followUpQuestions?.length > 0 || analysis.nextQuestions?.length > 0) && (
         <div>
           <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider mb-2">
@@ -148,26 +193,54 @@ const AnalysisCard = ({ analysis, score }) => {
 
 const RECOMMENDED_QUESTIONS = {
   qualification: [
-    'What is the main business objective behind this conversation?',
-    'Which audience segment are you trying to influence first?',
-    'What behaviour do you want the audience to change?',
-    'What is currently not working in your market, messaging, or growth approach?',
-    'What channels are currently most important to the brand?',
-    'What KPIs would make this project successful?',
-    'What timeline are you working toward?',
-    'Is there an approved budget range or strategy development budget?',
-    'Who is the final decision maker?',
-    'What would make this engagement a success for your team?',
+    'What does the brand sell and who is the buyer?',
+    'What is the current marketing challenge?',
+    'What campaign or partnership are they looking for?',
+    'What channels matter most: Instagram, TikTok, YouTube, X, events, retail, etc.?',
+    'What is the expected KPI: awareness, reach, engagement, conversion, sales, community, leads?',
+    'What budget range is realistic?',
+    'Who makes the decision?',
+    'What timeline are they working with?',
+    'What would make TASCK a good fit?',
+    'Any red flags: no budget, unclear need, wrong category, not responsive?',
+  ],
+  creatorQualification: [
+    'What content categories are strongest for you?',
+    'What platforms do you actively post on?',
+    'Audience demographics and geography?',
+    'Average reach/engagement?',
+    'Past brand collaborations?',
+    'Standard rates and what affects pricing?',
+    'Availability for campaigns?',
+    'Production capabilities?',
+    'Usage rights/exclusivity comfort?',
+    'Any categories you avoid?',
+    'Preferred communication method?',
+    'Why TASCK should work with you?',
   ],
   connector: [
-    'What is the strongest opportunity TTA should focus on?',
-    'Which user segment should be prioritised and why?',
-    'What are the key audience insights already known?',
-    'What creator profile would be credible for this audience?',
-    'What budget or commercial constraints should shape the recommendation?',
-    'What risks would derail the project?',
-    'What must be clarified before the Alignment Snapshot is approved?',
-    'What are the next approval steps after alignment?',
+    'What is the key marketing focus?',
+    'Who is the primary target audience?',
+    'Which channels matter most?',
+    'Which KPIs will prove success?',
+    'What budget range is realistic?',
+    'What timeline are they working with?',
+    'Who are the decision makers?',
+    'What product or service details must creators understand?',
+    'What brand positioning should the strategy protect?',
+    'What creator style feels credible for the brand?',
+    'What risk or compliance constraints must be respected?',
+    'How does the content approval process work?',
+  ],
+  creator_fit: [
+    'What fee or rate is realistic for this campaign?',
+    'What availability or schedule constraints should TASCK plan around?',
+    'Which deliverables can the creator produce confidently?',
+    'What usage rights are included or excluded?',
+    'Are there exclusivity or category conflicts?',
+    'What production needs must be budgeted?',
+    'What payment terms are required?',
+    'Any risk or brand-safety concerns?',
   ],
   plan: [
     'Which strategic approach should lead: ambassador-led, creator-led, community-led, merchant-first, or hybrid?',
@@ -187,15 +260,19 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
     title:
       mode === 'qualification'
         ? 'Qualification Call: New candidate'
-        : 'Business Call: Connector',
-    stage: mode === 'connector' ? 'connect' : 'before_crm',
+        : mode === 'creator_fit'
+          ? 'Creator Fit Call: Selected creator'
+          : 'Business Call: Brand intake',
+    stage: mode === 'creator_fit' ? 'plan' : mode === 'connector' ? 'connect' : 'before_crm',
     entity_name: '',
     business_case_title: '',
     scheduled_for: '',
     duration_minutes: 30,
     meeting_link: '',
     agenda: '',
-    meeting_type: mode === 'qualification' ? 'qualification' : 'connector',
+    meeting_type: mode === 'creator_fit' ? 'creator_fit' : mode === 'qualification' ? 'qualification' : 'connector',
+    entity_type: mode === 'creator_fit' ? 'creator' : 'brand',
+    qualification_entity_type: mode === 'qualification' ? 'brand' : '',
   });
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -230,7 +307,7 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               className="v3-heading text-xl"
               style={{ fontFamily: "'Fraunces', serif" }}
             >
-              {mode === 'qualification' ? 'Qualification Call' : 'Business Call: Connector'}
+              {mode === 'qualification' ? 'Qualification Call' : mode === 'creator_fit' ? 'Creator Fit Call' : 'Business Call'}
             </h2>
           </div>
           <button
@@ -334,6 +411,8 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               placeholder={
                 mode === 'qualification'
                   ? 'Confirm interest, decision maker, contact details, fit, and whether they want TASCK follow-up.'
+                  : mode === 'creator_fit'
+                    ? 'Confirm creator fee, schedule, deliverables, rights, conflicts, production needs, payment terms, and risks.'
                   : 'Collect objective, audience, channels, KPIs, timeline, budget, approval owner, and constraints.'
               }
             />
@@ -346,7 +425,7 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               <button
                 type="button"
                 onClick={() => {
-                  const set = RECOMMENDED_QUESTIONS[form.meeting_type === 'qualification' ? 'qualification' : (form.stage === 'plan' ? 'plan' : 'connector')] || [];
+                  const set = RECOMMENDED_QUESTIONS[form.meeting_type === 'qualification' ? 'qualification' : form.meeting_type] || [];
                   const block = set.map((q, i) => `${i + 1}. ${q}`).join('\n');
                   setForm((f) => ({ ...f, agenda: (f.agenda ? f.agenda + '\n\n' : '') + block }));
                 }}
@@ -358,7 +437,7 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
             </div>
             <p className="text-[11px] text-[#6E6657] mb-2">These prompts capture the details needed to generate the Alignment Snapshot and Strategy Snapshot. Edit, reorder, or drop them as needed.</p>
             <ol className="list-decimal pl-5 space-y-1 text-[12px] text-[#1A1A1A]">
-              {(RECOMMENDED_QUESTIONS[form.meeting_type === 'qualification' ? 'qualification' : (form.stage === 'plan' ? 'plan' : 'connector')] || []).map((q, i) => (
+              {(RECOMMENDED_QUESTIONS[form.meeting_type === 'qualification' ? 'qualification' : form.meeting_type] || []).map((q, i) => (
                 <li key={i}>{q}</li>
               ))}
             </ol>
@@ -373,8 +452,10 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : mode === 'qualification' ? (
               'Schedule Qualification Call'
+            ) : mode === 'creator_fit' ? (
+              'Schedule Creator Fit Call'
             ) : (
-              'Schedule Connector Business Call'
+              'Schedule Business Call'
             )}
           </button>
         </div>
@@ -385,14 +466,14 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
 
 // ─── Overview ────────────────────────────────────────────────────────────────
 
-const MeetingOverviewCard = ({ icon: Icon, eyebrow, title, description, count, button, onClick }) => (
+const MeetingOverviewCard = ({ icon: Icon, eyebrow, title, description, count, button, onClick, tone = 'business' }) => (
   <button
     onClick={onClick}
-    className="v3-card p-6 text-left hover:border-[#D4CDBF] transition-colors group"
+    className={`v3-floating-card v3-meeting-${tone} p-6 text-left group`}
     data-testid={`meeting-entry-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
   >
     <div className="flex items-start gap-4">
-      <span className="w-12 h-12 rounded-xl bg-[#DDE7E2] inline-flex items-center justify-center shrink-0">
+      <span className="w-12 h-12 rounded-xl bg-white/70 inline-flex items-center justify-center shrink-0 border border-white">
         <Icon className="w-5 h-5 text-[#1F4A3A]" strokeWidth={1.5} />
       </span>
       <span className="min-w-0 flex-1">
@@ -419,17 +500,19 @@ const MeetingOverviewCard = ({ icon: Icon, eyebrow, title, description, count, b
 
 export const V3AdminMeetingsOverview = () => {
   const navigate = useNavigate();
-  const [counts, setCounts] = useState({ qualification: 0, connector: 0 });
+  const [counts, setCounts] = useState({ qualification: 0, connector: 0, creatorFit: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       v3ListMeetings({ meeting_type: 'qualification' }).catch(() => []),
       v3ListMeetings({ meeting_type: 'connector' }).catch(() => []),
-    ]).then(([qualData, connData]) => {
+      v3ListMeetings({ meeting_type: 'creator_fit' }).catch(() => []),
+    ]).then(([qualData, connData, creatorFitData]) => {
       setCounts({
         qualification: Array.isArray(qualData) ? qualData.length : 0,
         connector: Array.isArray(connData) ? connData.length : 0,
+        creatorFit: Array.isArray(creatorFitData) ? creatorFitData.length : 0,
       });
       setLoading(false);
     });
@@ -439,9 +522,9 @@ export const V3AdminMeetingsOverview = () => {
     <div data-testid="v3-admin-meetings-overview">
       <PageHeader
         title="Meetings"
-        subtitle="Track calls before CRM and Connector business calls that feed Alignment Snapshot readiness."
+        subtitle="Track qualification, Business Calls, and Creator Fit Calls with clear decisions and follow-ups."
       />
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
         <MeetingOverviewCard
           icon={UserPlus}
           eyebrow="Before CRM"
@@ -450,15 +533,27 @@ export const V3AdminMeetingsOverview = () => {
           count={loading ? '…' : counts.qualification}
           button="Open Qualification Calls"
           onClick={() => navigate('/v3/admin/meetings/qualification')}
+          tone="qualification"
         />
         <MeetingOverviewCard
           icon={Briefcase}
-          eyebrow="Business Case: Connector phase"
-          title="Business Call: Connector"
+          eyebrow="Connect phase"
+          title="Business Calls"
           description="Business calls used to gather the brand details needed for the Alignment Snapshot: objective, audience, channels, KPIs, budget, timeline, approval owner, and constraints."
           count={loading ? '…' : counts.connector}
-          button="Open Connector Calls"
+          button="Open Business Calls"
           onClick={() => navigate('/v3/admin/meetings/connector')}
+          tone="business"
+        />
+        <MeetingOverviewCard
+          icon={Sparkles}
+          eyebrow="Plan phase"
+          title="Creator Fit Calls"
+          description="Project-specific creator calls for fee, availability, deliverables, usage rights, conflicts, payment terms, and brand-safety concerns."
+          count={loading ? '…' : counts.creatorFit}
+          button="Open Creator Fit Calls"
+          onClick={() => navigate('/v3/admin/meetings/creator-fit')}
+          tone="creator-fit"
         />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-6">
@@ -472,7 +567,7 @@ export const V3AdminMeetingsOverview = () => {
         <div className="v3-card p-5">
           <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Rule</p>
           <p className="text-[13px] text-[#1A1A1A] leading-relaxed">
-            Connector call transcripts can create or update an admin-review Alignment Snapshot draft
+            Business Call transcripts can create or update an admin-review Alignment Snapshot draft
             when enough context exists.
           </p>
         </div>
@@ -534,6 +629,7 @@ export const V3AdminQualificationCalls = () => {
   const navigate = useNavigate();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [calls, setCalls] = useState([]);
+  const [qualTab, setQualTab] = useState('brand');
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
@@ -547,6 +643,7 @@ export const V3AdminQualificationCalls = () => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  const visibleCalls = calls.filter((call) => (call.qualification_entity_type || call.entity_type || 'brand') === qualTab);
 
   return (
     <div data-testid="v3-admin-qualification-calls">
@@ -559,29 +656,46 @@ export const V3AdminQualificationCalls = () => {
       </button>
       <PageHeader
         title="Qualification Calls"
-        subtitle="First calls used to decide if a scanned company, creative, or Super Creative should enter TASCK."
+        subtitle="First calls used to decide whether brands enter CRM and creators enter the approved creator database."
         action={
           <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
             <Plus className="w-4 h-4" /> Schedule Qualification Call
           </button>
         }
       />
+      <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg w-fit mb-5" data-testid="qualification-call-tabs">
+        {[
+          { key: 'brand', label: 'Brand Qualification' },
+          { key: 'creator', label: 'Creator Qualification' },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setQualTab(tab.key)}
+            className={`text-[11px] px-3 py-1.5 rounded transition-colors ${qualTab === tab.key ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
+            data-testid={`qualification-tab-${tab.key}`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
       {loading ? (
         <div className="flex items-center justify-center py-16 gap-2 text-[#8A8A8A]">
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-[12px]">Loading calls…</span>
         </div>
-      ) : calls.length === 0 ? (
+      ) : visibleCalls.length === 0 ? (
         <div className="v3-card p-10 flex flex-col items-center gap-2">
           <UserPlus className="w-8 h-8 text-[#D4CDBF]" strokeWidth={1} />
-          <p className="text-[13px] text-[#8A8A8A]">No qualification calls yet.</p>
+          <p className="text-[13px] text-[#8A8A8A]">No {qualTab === 'brand' ? 'brand' : 'creator'} qualification calls yet.</p>
           <p className="text-[11px] text-[#8A8A8A]">
-            Schedule a call to evaluate a new brand, creative, or Super Creative.
+            {qualTab === 'brand'
+              ? 'Manual brands and scanner candidates appear here before CRM.'
+              : 'Creator discovery candidates appear here before approval.'}
           </p>
         </div>
       ) : (
         <div className="space-y-2">
-          {calls.map((call) => (
+          {visibleCalls.map((call) => (
             <QualificationRow key={call.id || call._id} call={call} />
           ))}
         </div>
@@ -611,7 +725,7 @@ const ConnectorRow = ({ call }) => {
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="text-[14px] font-medium text-[#1A1A1A]">{call.title}</span>
-          <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Connector</Badge>
+          <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Business Call</Badge>
           {call.readiness_status && (
             <Badge>{call.readiness_status.replace(/_/g, ' ')}</Badge>
           )}
@@ -666,11 +780,11 @@ export const V3AdminConnectorCalls = () => {
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Meetings
       </button>
       <PageHeader
-        title="Business Call: Connector"
+        title="Business Calls"
         subtitle="Business calls used to gather the brand details needed for the Alignment Snapshot."
         action={
           <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
-            <Plus className="w-4 h-4" /> Schedule Connector Business Call
+            <Plus className="w-4 h-4" /> Schedule Business Call
           </button>
         }
       />
@@ -682,9 +796,9 @@ export const V3AdminConnectorCalls = () => {
       ) : calls.length === 0 ? (
         <div className="v3-card p-10 flex flex-col items-center gap-2">
           <Briefcase className="w-8 h-8 text-[#D4CDBF]" strokeWidth={1} />
-          <p className="text-[13px] text-[#8A8A8A]">No connector calls yet.</p>
+          <p className="text-[13px] text-[#8A8A8A]">No Business Calls yet.</p>
           <p className="text-[11px] text-[#8A8A8A]">
-            Schedule a connector business call to gather Alignment Snapshot context.
+            Move an accepted CRM brand into a Business Call to gather Alignment Snapshot context.
           </p>
         </div>
       ) : (
@@ -697,6 +811,92 @@ export const V3AdminConnectorCalls = () => {
       {scheduleOpen && (
         <ScheduleModal
           mode="connector"
+          onClose={() => setScheduleOpen(false)}
+          onSaved={load}
+        />
+      )}
+    </div>
+  );
+};
+
+export const V3AdminCreatorFitCalls = () => {
+  const navigate = useNavigate();
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [calls, setCalls] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    v3ListMeetings({ meeting_type: 'creator_fit' })
+      .then((data) => {
+        setCalls(Array.isArray(data) ? data : []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div data-testid="v3-admin-creator-fit-calls">
+      <button
+        onClick={() => navigate('/v3/admin/meetings')}
+        className="v3-btn-secondary text-[11px] mb-4"
+        data-testid="creator-fit-calls-back-btn"
+      >
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to Meetings
+      </button>
+      <PageHeader
+        title="Creator Fit Calls"
+        subtitle="Project-specific creator calls used after a creator accepts a brief."
+        action={
+          <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
+            <Plus className="w-4 h-4" /> Schedule Creator Fit Call
+          </button>
+        }
+      />
+      {loading ? (
+        <div className="flex items-center justify-center py-16 gap-2 text-[#8A8A8A]">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span className="text-[12px]">Loading calls…</span>
+        </div>
+      ) : calls.length === 0 ? (
+        <div className="v3-card p-10 flex flex-col items-center gap-2">
+          <Sparkles className="w-8 h-8 text-[#D4CDBF]" strokeWidth={1} />
+          <p className="text-[13px] text-[#8A8A8A]">No Creator Fit Calls yet.</p>
+          <p className="text-[11px] text-[#8A8A8A]">
+            Creator Fit Calls appear after brief acceptance and before Strategy Snapshot approval.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {calls.map((call) => (
+            <button
+              key={call.id || call._id}
+              onClick={() => navigate(`/v3/admin/meetings/creator-fit/${call.id || call._id}`)}
+              className="w-full v3-floating-card v3-meeting-creator-fit p-4 text-left flex flex-col lg:flex-row lg:items-center gap-4"
+              data-testid={`creator-fit-call-${call.id || call._id}`}
+            >
+              <div className="w-1 rounded-full bg-[#B54A37] lg:self-stretch min-h-10" />
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <span className="text-[14px] font-medium text-[#1A1A1A]">{call.title}</span>
+                  <Badge tone="bg-[#F5D9D2] text-[#B54A37]">Creator Fit Call</Badge>
+                  <Badge>{call.decision_status || call.status}</Badge>
+                </div>
+                <p className="text-[12px] text-[#8A8A8A]">
+                  {call.entity_name}
+                  {call.business_case_title ? `, ${call.business_case_title}` : ''}
+                </p>
+              </div>
+              <span className="v3-btn-secondary text-[11px]">Open call</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {scheduleOpen && (
+        <ScheduleModal
+          mode="creator_fit"
           onClose={() => setScheduleOpen(false)}
           onSaved={load}
         />
@@ -734,7 +934,7 @@ export const V3AdminQualificationCallDetail = () => {
     try {
       await v3UploadMeetingTranscript(meetingId, { transcript });
       const result = await v3AnalyzeMeetingTranscript(meetingId, {});
-      setMeeting((m) => ({ ...m, ...result, transcript }));
+      setMeeting((m) => ({ ...m, ...result, analysis: result, transcript }));
     } catch (err) {
       console.error('Analysis failed:', err);
     }
@@ -744,8 +944,9 @@ export const V3AdminQualificationCallDetail = () => {
   const handleAccept = async () => {
     setSaving(true);
     try {
-      await v3AcceptQualificationMeeting(meetingId, {});
+      const result = await v3AcceptQualificationMeeting(meetingId, {});
       setAccepted(true);
+      setMeeting((m) => ({ ...m, decision_status: 'accepted', qualification_status: 'accepted', ...result }));
     } catch (err) {
       console.error('Accept failed:', err);
     }
@@ -755,7 +956,8 @@ export const V3AdminQualificationCallDetail = () => {
   const handleReschedule = async () => {
     setSaving(true);
     try {
-      await v3RescheduleQualificationMeeting(meetingId, {});
+      const result = await v3RescheduleQualificationMeeting(meetingId, {});
+      if (result.meeting_id) navigate(`/v3/admin/meetings/qualification/${result.meeting_id}`);
     } catch (err) {
       console.error('Reschedule failed:', err);
     }
@@ -797,6 +999,10 @@ export const V3AdminQualificationCallDetail = () => {
 
   const snapshot = meeting.candidate_snapshot || {};
   const analysis = meeting.analysis || {};
+  const entityType = meeting.qualification_entity_type || meeting.entity_type || 'brand';
+  const maxReschedules = meeting.max_reschedules || 3;
+  const rescheduleCount = meeting.reschedule_count || 0;
+  const canReschedule = rescheduleCount < maxReschedules;
 
   return (
     <div className="space-y-5" data-testid="v3-admin-qualification-call-detail">
@@ -812,6 +1018,9 @@ export const V3AdminQualificationCallDetail = () => {
         action={
           <div className="flex flex-wrap gap-2">
             <Badge tone="bg-[#F2EAD8] text-[#7A5F23]">Qualification Call</Badge>
+            <Badge tone={entityType === 'creator' ? 'bg-[#F5D9D2] text-[#B54A37]' : 'bg-[#F2EAD8] text-[#7A5F23]'}>
+              {entityType === 'creator' ? 'Creator' : 'Brand'}
+            </Badge>
             <Badge tone="bg-[#F2EAD8] text-[#7A5F23]">Before CRM</Badge>
           </div>
         }
@@ -842,6 +1051,9 @@ export const V3AdminQualificationCallDetail = () => {
                 </p>
               </div>
             </div>
+            <p className="text-[11px] text-[#8A8A8A] mt-3">
+              Reschedules: {rescheduleCount} / {maxReschedules}
+            </p>
           </Section>
 
           {Object.keys(snapshot).length > 0 && (
@@ -866,11 +1078,16 @@ export const V3AdminQualificationCallDetail = () => {
                 className="v3-btn-secondary text-[11px]"
                 onClick={async () => {
                   try {
-                    await v3SaveMeetingContact(meetingId, {
+                    const updated = await v3SaveMeetingContact(meetingId, {
                       contact_name: meeting.contact_name,
                       contact_email: meeting.contact_email,
                       contact_phone: meeting.contact_phone,
+                      contact_role: meeting.contact_role,
+                      meeting_link: meeting.meeting_link,
+                      scheduled_for: meeting.scheduled_for,
+                      meeting_notes: meeting.meeting_notes,
                     });
+                    setMeeting(updated);
                   } catch (e) {
                     console.error(e);
                   }
@@ -882,23 +1099,40 @@ export const V3AdminQualificationCallDetail = () => {
           >
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {[
-                ['Contact name', meeting.contact_name],
-                ['Email', meeting.contact_email],
-                ['Phone / WhatsApp', meeting.contact_phone],
-                ['Meeting link', meeting.meeting_link],
-                ['Scheduled date', meeting.scheduled_for],
-                ['Contact completeness', meeting.contact_completeness != null ? `${meeting.contact_completeness}%` : null],
-              ]
-                .filter(([, v]) => v)
-                .map(([label, value]) => (
-                  <div key={label} className="rounded-lg border border-[#E8E4DB] p-3">
-                    <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">
-                      {label}
-                    </p>
-                    <p className="text-[12px] text-[#1A1A1A] break-words">{value}</p>
-                  </div>
-                ))}
+                ['contact_name', 'Contact name', 'Name'],
+                ['contact_role', 'Contact role', 'Marketing lead, manager, creator rep'],
+                ['contact_email', 'Email required for Meet and portal', 'name@example.com'],
+                ['contact_phone', 'Phone / WhatsApp', '+234...'],
+                ['meeting_link', 'Meeting link', 'https://meet.google.com/...'],
+                ['scheduled_for', 'Scheduled date', '2026-06-11T12:00'],
+              ].map(([key, label, placeholder]) => (
+                <label key={key} className="space-y-1">
+                  <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
+                  <input
+                    type={key === 'scheduled_for' ? 'datetime-local' : 'text'}
+                    value={meeting[key] || ''}
+                    onChange={(e) => setMeeting((m) => ({ ...m, [key]: e.target.value }))}
+                    placeholder={placeholder}
+                    className="w-full px-3 py-2 rounded-lg border border-[#E8E4DB] text-[13px]"
+                  />
+                </label>
+              ))}
+              <label className="space-y-1 md:col-span-2">
+                <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Meeting notes</span>
+                <textarea
+                  value={meeting.meeting_notes || meeting.notes || ''}
+                  onChange={(e) => setMeeting((m) => ({ ...m, meeting_notes: e.target.value }))}
+                  rows={3}
+                  className="w-full px-3 py-2 rounded-lg border border-[#E8E4DB] text-[13px]"
+                  placeholder="Admin notes before or during the call."
+                />
+              </label>
             </div>
+            {!meeting.contact_email && (
+              <p className="text-[11px] text-[#B54A37] mt-3">
+                Email is strongly recommended before scheduling Google Meet and portal messages.
+              </p>
+            )}
           </Section>
 
           {meeting.suggested_questions?.length > 0 && (
@@ -947,20 +1181,22 @@ export const V3AdminQualificationCallDetail = () => {
                 className="v3-btn-primary"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />{' '}
-                {accepted ? 'Accepted into CRM' : 'Accept into CRM'}
+                {accepted
+                  ? entityType === 'creator' ? 'Creator Approved' : 'Accepted into CRM'
+                  : entityType === 'creator' ? 'Approve Creator' : 'Accept Brand into CRM'}
               </button>
               <button
                 onClick={handleReschedule}
-                disabled={saving}
+                disabled={saving || !canReschedule}
                 className="v3-btn-secondary"
               >
-                <RotateCcw className="w-3.5 h-3.5" /> Reschedule
+                <RotateCcw className="w-3.5 h-3.5" /> {canReschedule ? 'Reschedule' : 'Max reschedules reached'}
               </button>
               <button
                 onClick={handleDelete}
                 className="v3-btn-secondary text-[#B54A37]"
               >
-                <Trash2 className="w-3.5 h-3.5" /> Delete Candidate
+                <Trash2 className="w-3.5 h-3.5" /> {entityType === 'creator' ? 'Decline Creator' : 'Delete Candidate'}
               </button>
             </div>
             {accepted && (
@@ -992,6 +1228,7 @@ export const V3AdminConnectorCallDetail = () => {
   const [loading, setLoading] = useState(true);
   const [transcript, setTranscript] = useState('');
   const [analyzing, setAnalyzing] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     v3GetMeeting(meetingId)
@@ -1009,11 +1246,69 @@ export const V3AdminConnectorCallDetail = () => {
     try {
       await v3UploadMeetingTranscript(meetingId, { transcript });
       const result = await v3AnalyzeMeetingTranscript(meetingId, {});
-      setMeeting((m) => ({ ...m, ...result, transcript }));
+      setMeeting((m) => ({ ...m, ...result, analysis: result, transcript }));
     } catch (err) {
       console.error('Analysis failed:', err);
     }
     setAnalyzing(false);
+  };
+
+  const isCreatorFit = meeting?.meeting_type === 'creator_fit';
+  const maxReschedules = meeting?.max_reschedules || 3;
+  const rescheduleCount = meeting?.reschedule_count || 0;
+  const canReschedule = rescheduleCount < maxReschedules;
+
+  const handleProceed = async () => {
+    setSaving(true);
+    try {
+      if (isCreatorFit) {
+        await v3AcceptCreatorFitCall(meetingId);
+        setMeeting((m) => ({ ...m, decision_status: 'accepted', status: 'accepted' }));
+      } else {
+        const result = await v3ProceedBusinessCall(meetingId);
+        if (result.business_case_id) navigate(`/v3/admin/business-cases/${result.business_case_id}`);
+      }
+    } catch (err) {
+      console.error('Proceed failed:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleBusinessReschedule = async () => {
+    if (!canReschedule) return;
+    setSaving(true);
+    try {
+      const result = isCreatorFit
+        ? await v3RescheduleCreatorFitCall(meetingId, {})
+        : await v3RescheduleBusinessCall(meetingId, {});
+      if (result.meeting_id) {
+        navigate(isCreatorFit ? `/v3/admin/meetings/creator-fit/${result.meeting_id}` : `/v3/admin/meetings/connector/${result.meeting_id}`);
+      }
+    } catch (err) {
+      console.error('Reschedule failed:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteOrReject = async () => {
+    const message = isCreatorFit ? 'Reject this creator for this project?' : 'Delete this brand from the Business Call flow?';
+    if (!window.confirm(message)) return;
+    setSaving(true);
+    try {
+      if (isCreatorFit) {
+        await v3RejectCreatorFitCall(meetingId, {});
+        navigate('/v3/admin/meetings/creator-fit');
+      } else {
+        await v3DeleteBusinessCall(meetingId, {});
+        navigate('/v3/admin/meetings/connector');
+      }
+    } catch (err) {
+      console.error('Delete failed:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (loading) {
@@ -1033,29 +1328,32 @@ export const V3AdminConnectorCallDetail = () => {
           onClick={() => navigate('/v3/admin/meetings/connector')}
           className="v3-btn-secondary mt-4 text-[11px]"
         >
-          Back to Connector Calls
+          Back to Business Calls
         </button>
       </div>
     );
   }
 
   const analysis = meeting.analysis || {};
+  const detailBackPath = isCreatorFit ? '/v3/admin/meetings/creator-fit' : '/v3/admin/meetings/connector';
 
   return (
     <div className="space-y-5" data-testid="v3-admin-connector-call-detail">
       <button
-        onClick={() => navigate('/v3/admin/meetings/connector')}
+        onClick={() => navigate(detailBackPath)}
         className="v3-btn-secondary text-[11px]"
       >
-        <ArrowLeft className="w-3.5 h-3.5" /> Back to Business Call: Connector
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to {isCreatorFit ? 'Creator Fit Calls' : 'Business Calls'}
       </button>
       <PageHeader
         title={meeting.title}
-        subtitle="Gather the details needed for the Alignment Snapshot."
+        subtitle={isCreatorFit ? 'Decide if this creator fits the project plan.' : 'Gather the details needed for the Alignment Snapshot.'}
         action={
           <div className="flex flex-wrap gap-2">
-            <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Business Call: Connector</Badge>
-            <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Business Case: Connector phase</Badge>
+            <Badge tone={isCreatorFit ? 'bg-[#F5D9D2] text-[#B54A37]' : 'bg-[#DDE7E2] text-[#1F4A3A]'}>
+              {isCreatorFit ? 'Creator Fit Call' : 'Business Call'}
+            </Badge>
+            <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">{isCreatorFit ? 'Plan phase' : 'Connect phase'}</Badge>
           </div>
         }
       />
@@ -1063,25 +1361,25 @@ export const V3AdminConnectorCallDetail = () => {
         <div className="space-y-5">
           <Section title="Call purpose">
             <p className="text-[13px] text-[#1A1A1A] leading-relaxed mb-3">
-              Gather the details needed for the Alignment Snapshot.
+              {isCreatorFit ? 'Validate the creator against this project before Strategy Snapshot approval.' : 'Gather the details needed for the Alignment Snapshot.'}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Admin checks</p>
                 <p className="text-[12px] mt-1">
-                  Objective, audience, channels, KPIs, timeline, budget, approval owner, constraints.
+                  {isCreatorFit ? 'Fee, availability, deliverables, rights, conflicts, payment terms, production needs.' : 'Objective, audience, channels, KPIs, timeline, budget, approval owner, constraints.'}
                 </p>
               </div>
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Transcript use</p>
                 <p className="text-[12px] mt-1">
-                  Draft/update Alignment Snapshot if enough context exists.
+                  {isCreatorFit ? 'Accept, reschedule, or reject this creator for this project.' : 'Draft/update Alignment Snapshot if enough context exists.'}
                 </p>
               </div>
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Next step</p>
                 <p className="text-[12px] mt-1">
-                  Review snapshot, send to company, move Business Case forward.
+                  {isCreatorFit ? 'Accepted creators can be included in the Strategy Snapshot.' : 'Review snapshot, send to company, move Business Case forward.'}
                 </p>
               </div>
             </div>
@@ -1160,26 +1458,43 @@ export const V3AdminConnectorCallDetail = () => {
               )}
             </Section>
           )}
-          <Section title="Alignment Snapshot handoff">
+          <Section title={isCreatorFit ? 'Creator Fit decision' : 'Business Case handoff'}>
             <p className="text-[13px] text-[#1A1A1A] leading-relaxed mb-3">
-              This is the Connector business call. A strong transcript should produce Alignment
-              Snapshot readiness and, when enough context exists, an admin-review draft.
+              {isCreatorFit
+                ? 'Use the recommendation and reasons to accept, reschedule, or reject this creator for the project.'
+                : 'A strong Business Call transcript should produce Alignment Snapshot readiness and, when enough context exists, open the Connect record.'}
             </p>
-            {meeting.business_case_id && (
+            <div className="grid grid-cols-1 gap-2">
               <button
-                onClick={() =>
-                  navigate(`/v3/admin/business-cases/${meeting.business_case_id}`)
-                }
-                className="v3-btn-primary w-full"
+                onClick={handleProceed}
+                disabled={saving}
+                className="v3-btn-primary"
               >
-                <Briefcase className="w-3.5 h-3.5" /> Open Business Case Connect
+                <Briefcase className="w-3.5 h-3.5" /> {isCreatorFit ? 'Accept Creator for Project' : meeting.business_case_id ? 'Open Business Case Connect' : 'Proceed to Business Case'}
               </button>
-            )}
+              <button
+                onClick={handleBusinessReschedule}
+                disabled={saving || !canReschedule}
+                className="v3-btn-secondary"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> {canReschedule ? 'Reschedule' : 'Max reschedules reached'}
+              </button>
+              <button
+                onClick={handleDeleteOrReject}
+                disabled={saving}
+                className="v3-btn-secondary text-[#B54A37]"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> {isCreatorFit ? 'Reject Creator for Project' : 'Delete Brand'}
+              </button>
+            </div>
+            <p className="text-[11px] text-[#8A8A8A] mt-3">Reschedules: {rescheduleCount} / {maxReschedules}</p>
           </Section>
         </div>
       </div>
     </div>
   );
 };
+
+export const V3AdminCreatorFitCallDetail = V3AdminConnectorCallDetail;
 
 export default V3AdminMeetingsOverview;

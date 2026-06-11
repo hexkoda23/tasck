@@ -53,6 +53,8 @@ import {
   V3AdminQualificationCallDetail,
   V3AdminConnectorCalls,
   V3AdminConnectorCallDetail,
+  V3AdminCreatorFitCalls,
+  V3AdminCreatorFitCallDetail,
 } from './pages/v3/admin/V3AdminMeetings';
 import V3BrandInreach from './pages/v3/V3BrandInreach';
 
@@ -348,6 +350,10 @@ function AppRoutes() {
         <Route path="meetings/qualification/:meetingId" element={<V3AdminQualificationCallDetail />} />
         <Route path="meetings/connector" element={<V3AdminConnectorCalls />} />
         <Route path="meetings/connector/:meetingId" element={<V3AdminConnectorCallDetail />} />
+        <Route path="meetings/business" element={<V3AdminConnectorCalls />} />
+        <Route path="meetings/business/:meetingId" element={<V3AdminConnectorCallDetail />} />
+        <Route path="meetings/creator-fit" element={<V3AdminCreatorFitCalls />} />
+        <Route path="meetings/creator-fit/:meetingId" element={<V3AdminCreatorFitCallDetail />} />
         <Route path="business-cases" element={<V3AdminBusinessCases />} />
         <Route path="business-cases/:id" element={<V3AdminBusinessCaseDetail />} />
         <Route path="creators" element={<V3AdminCreators />} />

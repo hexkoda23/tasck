@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { v3GetBrands, v3CreateBrand, v3ListRelationshipManagers } from '../../../lib/v3api';
+import { v3GetBrands, v3CreateBrandQualificationCandidate, v3ListRelationshipManagers } from '../../../lib/v3api';
 import { useV3Resource } from '../../../lib/useV3Resource';
 import V3Modal from '../../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles, Users } from 'lucide-react';
@@ -32,7 +32,7 @@ const V3AdminCRM = () => {
   const [trackFilter, setTrackFilter] = useState('all');
   const [rms, setRMs] = useState([]);
 
-  const { data: brands, source, setData } = useV3Resource(() => v3GetBrands(), []);
+  const { data: brands, source } = useV3Resource(() => v3GetBrands({ crm_only: true }), []);
   const brandList = Array.isArray(brands) ? brands : [];
   const normalised = brandList.map(normaliseBrand);
 
@@ -43,11 +43,16 @@ const V3AdminCRM = () => {
     primary_contact: '',
     role: '',
     email: '',
+    phone: '',
+    website: '',
+    hq: '',
+    notes: '',
+    call_purpose: '',
     rm_id: '',
     engagement_track_default: 'paid',
   });
   const [submitting, setSubmitting] = useState(false);
-  const [createdAccount, setCreatedAccount] = useState(null);
+  const [createdIntake, setCreatedIntake] = useState(null);
 
   // Load RMs from API for the dropdown
   useEffect(() => {
@@ -65,10 +70,8 @@ const V3AdminCRM = () => {
     if (!form.company || !form.industry || !form.primary_contact) return;
     setSubmitting(true);
     try {
-      const created = await v3CreateBrand(form);
-      // Optimistically prepend the new brand to the list
-      setData((prev) => [created, ...(Array.isArray(prev) ? prev : [])]);
-      setCreatedAccount(created.account || null);
+      const created = await v3CreateBrandQualificationCandidate({ ...form, source: 'manual_brand' });
+      setCreatedIntake(created);
       setAddOpen(false);
       setForm({
         company: '',
@@ -76,10 +79,15 @@ const V3AdminCRM = () => {
         primary_contact: '',
         role: '',
         email: '',
+        phone: '',
+        website: '',
+        hq: '',
+        notes: '',
+        call_purpose: '',
         rm_id: rms[0]?.id || '',
         engagement_track_default: 'paid',
       });
-      navigate(`/v3/admin/crm/${created.id}`);
+      navigate(`/v3/admin/meetings/qualification/${created.meeting_id}`);
     } catch (e) {
       alert(e.response?.data?.detail || e.message);
     } finally {
@@ -119,7 +127,7 @@ const V3AdminCRM = () => {
               Brands
             </h1>
             <p className="text-[#8A8A8A] text-sm">
-              {normalised.length} brands in pipeline
+              {normalised.length} accepted brands in CRM
               {source === 'api' && (
                 <span
                   className="ml-2 text-[10px] inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]"
@@ -194,7 +202,7 @@ const V3AdminCRM = () => {
             <p className="text-[13px] text-[#8A8A8A]">
               {search || trackFilter !== 'all'
                 ? 'Try adjusting your search or filter.'
-                : 'Add your first brand to get started.'}
+                : 'Accepted brands will appear here after qualification.'}
             </p>
             {!search && trackFilter === 'all' && (
               <button className="v3-btn-primary mt-4" onClick={() => setAddOpen(true)}>
@@ -262,17 +270,17 @@ const V3AdminCRM = () => {
         )}
       </div>
 
-      {createdAccount && (
+      {createdIntake && (
         <div
           className="fixed bottom-5 right-5 z-50 v3-card p-4 max-w-sm shadow-lg"
           data-testid="brand-account-created"
         >
-          <p className="text-[12px] font-semibold text-[#1A1A1A] mb-1">Brand portal account created</p>
-          <p className="text-[11px] text-[#6E6657]">Welcome email queued with login details.</p>
+          <p className="text-[12px] font-semibold text-[#1A1A1A] mb-1">Qualification call created</p>
+          <p className="text-[11px] text-[#6E6657]">The brand is waiting in Meetings before it appears in CRM.</p>
           <p className="text-[11px] mt-2" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-            {createdAccount.username}
+            {createdIntake.meeting_id}
           </p>
-          <button onClick={() => setCreatedAccount(null)} className="v3-btn-secondary text-[11px] mt-3">
+          <button onClick={() => setCreatedIntake(null)} className="v3-btn-secondary text-[11px] mt-3">
             Dismiss
           </button>
         </div>
@@ -281,8 +289,8 @@ const V3AdminCRM = () => {
       <V3Modal
         open={addOpen}
         onClose={() => setAddOpen(false)}
-        title="Add Brand"
-        subtitle="Capture the lead and continue to its first Business Case."
+        title="Add Brand for Qualification"
+        subtitle="Capture the lead and create its Brand Qualification Call before it enters CRM."
         testid="add-brand-modal"
         footer={
           <>
@@ -299,7 +307,7 @@ const V3AdminCRM = () => {
               className="v3-btn-primary"
               data-testid="add-brand-submit"
             >
-              {submitting ? 'Saving…' : 'Create Brand'}
+              {submitting ? 'Saving…' : 'Create Qualification Call'}
             </button>
           </>
         }
@@ -310,7 +318,10 @@ const V3AdminCRM = () => {
             { k: 'industry', label: 'Industry', placeholder: 'e.g. FMCG — Beverages' },
             { k: 'primary_contact', label: 'Primary contact', placeholder: 'e.g. Funke Adebiyi' },
             { k: 'role', label: 'Contact role', placeholder: 'e.g. Brand Manager, Star Lager' },
-            { k: 'email', label: 'Contact email (optional)', placeholder: 'name@brand.com' },
+            { k: 'email', label: 'Contact email (strongly recommended)', placeholder: 'name@brand.com' },
+            { k: 'phone', label: 'Phone / WhatsApp', placeholder: '+234...' },
+            { k: 'website', label: 'Website', placeholder: 'https://brand.com' },
+            { k: 'hq', label: 'HQ / location', placeholder: 'Lagos, Nigeria' },
           ].map((f) => (
             <div key={f.k}>
               <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
@@ -326,6 +337,19 @@ const V3AdminCRM = () => {
               />
             </div>
           ))}
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
+              Notes / source
+            </label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              placeholder="Where this lead came from, what they asked for, and what the qualification call should confirm."
+              rows={3}
+              className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+              data-testid="add-brand-notes"
+            />
+          </div>
           <div>
             <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
               Relationship Manager

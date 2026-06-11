@@ -312,13 +312,13 @@ const V3AdminOpportunityScanner = () => {
     try {
       const result = await v3AcceptOpportunityCandidate(candidate.id, { reviewed_by: 'admin' });
       setCandidates((current) => current.map((item) => (
-        item.id === candidate.id ? { ...item, ...result.candidate, status: 'accepted', pipeline_state: 'won', business_case_id: result.business_case_id } : item
+        item.id === candidate.id ? { ...item, ...result.candidate, status: 'qualification_pending', pipeline_state: 'meeting_booked', qualification_meeting_id: result.meeting_id } : item
       )));
       await loadCounts();
-      if (result.business_case_id) {
-        navigate(`/v3/admin/business-cases/${result.business_case_id}`);
+      if (result.meeting_id) {
+        navigate(`/v3/admin/meetings/qualification/${result.meeting_id}`);
       } else {
-        setActiveTab('won');
+        setActiveTab('meeting_booked');
       }
     } catch (e) {
       if (demoMode) {
@@ -873,7 +873,7 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
               Reviewing
             </button>
             <button onClick={onAccept} disabled={busy} className="v3-btn-primary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
-              <CheckCircle2 className="w-3.5 h-3.5" /> Accept to CRM →
+              <CheckCircle2 className="w-3.5 h-3.5" /> Proceed to Qualification Call →
             </button>
             <button onClick={onReject} disabled={busy} className="v3-btn-secondary text-[11px] ml-auto" data-testid={`opps-reject-${candidate.id}`}>
               <XCircle className="w-3.5 h-3.5" /> Dismiss
@@ -886,7 +886,7 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
               Outreach sent
             </button>
             <button onClick={onAccept} disabled={busy} className="v3-btn-primary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
-              <CheckCircle2 className="w-3.5 h-3.5" /> Accept to CRM →
+              <CheckCircle2 className="w-3.5 h-3.5" /> Proceed to Qualification Call →
             </button>
             <button onClick={onReject} disabled={busy} className="v3-btn-secondary text-[11px] ml-auto" data-testid={`opps-reject-${candidate.id}`}>
               Dismiss
@@ -899,13 +899,13 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
               Meeting booked
             </button>
             <button onClick={onAccept} disabled={busy} className="v3-btn-secondary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
-              Accept to CRM →
+              Proceed to Qualification Call →
             </button>
           </>
         )}
         {activeTab === 'meeting_booked' && (
           <button onClick={onAccept} disabled={busy} className="v3-btn-primary text-[11px]" data-testid={`opps-accept-${candidate.id}`}>
-            <CheckCircle2 className="w-3.5 h-3.5" /> Accept to CRM →
+            <CheckCircle2 className="w-3.5 h-3.5" /> Proceed to Qualification Call →
           </button>
         )}
         {activeTab === 'won' && (
