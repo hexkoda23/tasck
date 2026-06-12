@@ -99,18 +99,18 @@ QUALIFICATION_QUESTION_SETS = {
         "Any red flags: no budget, unclear need, wrong category, not responsive?",
     ],
     "creator": [
-        "What content categories are strongest for you?",
-        "What platforms do you actively post on?",
-        "Audience demographics and geography?",
-        "Average reach/engagement?",
-        "Past brand collaborations?",
-        "Standard rates and what affects pricing?",
-        "Availability for campaigns?",
-        "Production capabilities?",
-        "Usage rights/exclusivity comfort?",
-        "Any categories you avoid?",
-        "Preferred communication method?",
-        "Why TASCK should work with you?",
+        "Are you open to receiving TASCK briefs?",
+        "What kind of brand projects do you accept?",
+        "What platforms and content formats are strongest?",
+        "What is your fee or rate range?",
+        "Who manages bookings and contracts?",
+        "What is your typical availability and turnaround?",
+        "Any usage rights or exclusivity restrictions?",
+        "What would make a brand collaboration unacceptable?",
+        "What audience is strongest for you?",
+        "What past brand collaborations should TASCK know about?",
+        "What production support do you usually need?",
+        "Which categories do you avoid?",
     ],
 }
 
@@ -141,6 +141,18 @@ CREATOR_FIT_QUESTIONS = [
     "What production needs must be budgeted?",
     "What payment terms are required?",
     "Any risk or brand-safety concerns?",
+]
+
+CREATOR_BRIEFING_QUESTIONS = [
+    "What is your fee for this project?",
+    "What is your availability for the campaign timeline?",
+    "What deliverables are realistic?",
+    "What content formats would work best?",
+    "What usage rights or exclusivity limits do you require?",
+    "Do you have any conflict with the brand or category?",
+    "What production support do you need?",
+    "What approval or revision process do you prefer?",
+    "Are you willing to proceed with TASCK on this brief?",
 ]
 
 DEFAULT_FINAL_REPORT_CHECKLIST = [
@@ -1171,6 +1183,7 @@ def make_v3_router(db):
     async def list_business_cases(
         stage: Optional[str] = None,
         engagement: Optional[str] = None,
+        brand_id: Optional[str] = None,
         rm_id: Optional[str] = None,
         x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
         x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
@@ -1180,6 +1193,8 @@ def make_v3_router(db):
             query["stage"] = stage
         if engagement:
             query["engagement_track"] = engagement
+        if brand_id:
+            query["brand_id"] = brand_id
         if x_admin_role == "relationship_manager" and x_admin_id:
             extracted_rm_id = x_admin_id[6:] if x_admin_id.startswith("admin-") else x_admin_id
             query["rm_id"] = extracted_rm_id
@@ -1277,6 +1292,62 @@ def make_v3_router(db):
         }
         await db.v3_business_cases.insert_one({**doc})
         return doc
+
+    @router.post("/brands/{brand_id}/business-call")
+    async def move_brand_to_business_call(brand_id: str):
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        existing = await db.v3_business_cases.find_one(
+            {"brand_id": brand_id, "stage": "connect", "status": {"$ne": "deleted"}},
+            {"_id": 0},
+        )
+        if existing:
+            return {"ok": True, "business_case": existing, "business_case_id": existing["id"], "created": False}
+        now = _now_iso()
+        bc_id = f"bc-{uuid.uuid4().hex[:8]}"
+        doc = {
+            "id": bc_id,
+            "brand_id": brand_id,
+            "creator_id": None,
+            "title": f"{brand.get('company') or brand.get('name') or 'Brand'} — Business Call Connect",
+            "stage": "connect",
+            "engagement_track": brand.get("engagement_track_default") or "paid",
+            "estimated_value": 0,
+            "rm_id": brand.get("rm_id") or "admin",
+            "created_at": now,
+            "days_in_stage": 0,
+            "next_action": "Schedule Business Call — Connect.",
+            "health": "new",
+            "scope_creep_locked": False,
+            "brand_contact_snapshot": {
+                "primary_contact": brand.get("primary_contact") or brand.get("primaryContact") or "",
+                "role": brand.get("role") or "",
+                "email": brand.get("email") or "",
+                "phone": brand.get("phone") or "",
+                "website": brand.get("website") or "",
+            },
+            "connect": {
+                "source": "crm_brand",
+                "connect_status": "needs_business_call",
+                "stated_intent": brand.get("notes") or brand.get("key_marketing_focus") or "",
+                "brand_snapshot": brand,
+                "meeting_ids": [],
+                "marketing_intelligence": {},
+            },
+            "frame": {},
+            "plan": {},
+            "deliver": {},
+            "closure": {"final_report_checklist": DEFAULT_FINAL_REPORT_CHECKLIST},
+            "timeline": [{"at": now, "event": "brand_moved_to_business_call", "brand_id": brand_id}],
+            "updated_at": now,
+        }
+        await db.v3_business_cases.insert_one({**doc})
+        await db.v3_brands.update_one(
+            {"id": brand_id},
+            {"$set": {"status": "business_call_pending", "updated_at": now}, "$addToSet": {"business_case_ids": bc_id}},
+        )
+        return {"ok": True, "business_case": doc, "business_case_id": bc_id, "created": True}
 
     # ------------------------------------------------------------------------
     # STAGE ADVANCEMENT
@@ -2085,7 +2156,8 @@ def make_v3_router(db):
 
     class BrainstormCreate(BaseModel):
         business_case_id: str
-        scored_creators: List[BrainstormScore]
+        scored_creators: List[BrainstormScore] = Field(default_factory=list)
+        planning_fields: Dict[str, Any] = Field(default_factory=dict)
 
     @router.post("/brainstorm-rounds")
     async def create_brainstorm(payload: BrainstormCreate):
@@ -2105,6 +2177,7 @@ def make_v3_router(db):
             "id": bs_id,
             "business_case_id": payload.business_case_id,
             "status": "in_progress",
+            "planning_fields": payload.planning_fields,
             "current_phase": 4,
             "phases": [
                 {"phase": 1, "label": "Brief calibration", "status": "complete"},
@@ -2276,7 +2349,7 @@ def make_v3_router(db):
     # CONNECT-STAGE HELPERS
     # ------------------------------------------------------------------------
     class ConnectStatusPayload(BaseModel):
-        connect_status: str = Field(..., pattern="^(new_lead|in_discovery|qualified_to_frame|disqualified)$")
+        connect_status: str = Field(..., pattern="^(new_lead|needs_business_call|business_call_scheduled|in_discovery|qualified_to_frame|disqualified)$")
 
     @router.post("/business-cases/{bc_id}/connect/status")
     async def set_connect_status(bc_id: str, payload: ConnectStatusPayload):
@@ -2289,6 +2362,202 @@ def make_v3_router(db):
              "$push": {"timeline": {"at": _now_iso(), "event": "connect_status_changed", "to": payload.connect_status}}},
         )
         return {"ok": True}
+
+    class ConnectActionPayload(BaseModel):
+        meeting_id: Optional[str] = None
+        reason: Optional[str] = None
+        scheduled_for: Optional[str] = None
+        meeting_link: Optional[str] = None
+        contact_email: Optional[str] = None
+        contact_name: Optional[str] = None
+        agenda: Optional[str] = None
+
+    @router.post("/business-cases/{bc_id}/connect/promote")
+    async def promote_connect_to_frame(bc_id: str, payload: ConnectActionPayload = ConnectActionPayload()):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        now = _now_iso()
+        updates = {
+            "stage": "frame",
+            "connect.connect_status": "qualified_to_frame",
+            "connect.promoted_at": now,
+            "connect.promote_reason": payload.reason or "Business Call — Connect promoted to Frame.",
+            "next_action": STAGE_NEXT_ACTIONS["frame"],
+            "updated_at": now,
+        }
+        if payload.meeting_id:
+            updates["connect.source_meeting_id"] = payload.meeting_id
+            await db.v3_meetings.update_one(
+                {"id": payload.meeting_id},
+                {"$set": {"business_case_id": bc_id, "decision_status": "promoted", "status": "promoted", "updated_at": now}},
+            )
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": updates, "$push": {"timeline": {"at": now, "event": "connect_promoted_to_frame", "meeting_id": payload.meeting_id}}},
+        )
+        updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        return {"ok": True, "business_case": updated, "business_case_id": bc_id}
+
+    @router.post("/business-cases/{bc_id}/connect/reschedule")
+    async def reschedule_connect_business_call(bc_id: str, payload: ConnectActionPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0})
+        contact = case.get("brand_contact_snapshot") or {}
+        meeting = await create_meeting(MeetingCreate(
+            title=f"Business Call — Connect: {case.get('title', 'Business Case')}",
+            meeting_type="business_call",
+            stage="connect",
+            entity_type="brand",
+            business_case_id=bc_id,
+            brand_id=case.get("brand_id"),
+            rm_id=case.get("rm_id"),
+            entity_name=(brand or {}).get("company") or (brand or {}).get("name") or "",
+            business_case_title=case.get("title", ""),
+            contact_name=payload.contact_name or contact.get("primary_contact") or (brand or {}).get("primary_contact") or "",
+            contact_email=payload.contact_email or contact.get("email") or (brand or {}).get("email") or "",
+            contact_phone=contact.get("phone") or (brand or {}).get("phone") or "",
+            scheduled_for=payload.scheduled_for,
+            meeting_link=payload.meeting_link or "",
+            agenda=payload.agenda or "Confirm missing Connect details for Alignment Snapshot readiness.",
+            parent_meeting_id=payload.meeting_id,
+        ))
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {
+                    "connect.connect_status": "business_call_scheduled",
+                    "connect.reschedule_reason": payload.reason or "",
+                    "connect.latest_meeting_id": meeting["id"],
+                    "updated_at": _now_iso(),
+                },
+                "$addToSet": {"business_call_meeting_ids": meeting["id"], "connect.meeting_ids": meeting["id"]},
+                "$push": {"timeline": {"at": _now_iso(), "event": "connect_business_call_rescheduled", "meeting_id": meeting["id"]}},
+            },
+        )
+        return {"ok": True, "meeting": meeting, "meeting_id": meeting["id"], "business_case_id": bc_id}
+
+    @router.post("/business-cases/{bc_id}/connect/delete")
+    async def delete_connect_pipeline(bc_id: str, payload: ConnectActionPayload = ConnectActionPayload()):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        now = _now_iso()
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"status": "deleted", "connect.connect_status": "disqualified", "deleted_reason": payload.reason or "Deleted from Connect pipeline.", "updated_at": now},
+             "$push": {"timeline": {"at": now, "event": "connect_deleted", "reason": payload.reason or ""}}},
+        )
+        if case.get("brand_id"):
+            await db.v3_brands.update_one(
+                {"id": case["brand_id"]},
+                {"$set": {"status": "deleted", "deleted_reason": payload.reason or "Business Call — Connect deleted.", "updated_at": now}},
+            )
+        return {"ok": True, "business_case_id": bc_id, "status": "deleted"}
+
+    @router.post("/business-cases/{bc_id}/connect/send-meeting-email")
+    async def send_connect_meeting_email(bc_id: str, payload: ConnectActionPayload = ConnectActionPayload()):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0})
+        contact = case.get("brand_contact_snapshot") or {}
+        to_email = payload.contact_email or contact.get("email") or (brand or {}).get("email")
+        if not to_email:
+            raise HTTPException(400, "Brand email is required before sending meeting email")
+        email = await queue_email(
+            to=to_email,
+            subject=f"TASCK Business Call — Connect: {case.get('title', 'Business Case')}",
+            body=(
+                f"Hello {payload.contact_name or contact.get('primary_contact') or 'there'},\n\n"
+                "Welcome to TASCK. Your Business Call — Connect is where we confirm marketing focus, audience, channels, KPIs, budget, timeline, and approval process.\n\n"
+                f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}\n"
+                "Brand portal: /v3/brand/login\n"
+                "Temporary login details will be issued by TASCK operations."
+            ),
+            kind="business_call_welcome_meeting",
+            brand_id=case.get("brand_id"),
+            business_case_id=bc_id,
+        )
+        return {"ok": True, "email": email}
+
+    @router.post("/business-cases/{bc_id}/connect/send-reschedule-email")
+    async def send_connect_reschedule_email(bc_id: str, payload: ConnectActionPayload = ConnectActionPayload()):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0})
+        contact = case.get("brand_contact_snapshot") or {}
+        to_email = payload.contact_email or contact.get("email") or (brand or {}).get("email")
+        if not to_email:
+            raise HTTPException(400, "Brand email is required before sending reschedule email")
+        email = await queue_email(
+            to=to_email,
+            subject=f"Reschedule TASCK Business Call — Connect: {case.get('title', 'Business Case')}",
+            body=(
+                f"Hello {payload.contact_name or contact.get('primary_contact') or 'there'},\n\n"
+                f"We need to reschedule the Business Call — Connect because: {payload.reason or 'some required context is still missing'}.\n\n"
+                f"Proposed time: {payload.scheduled_for or 'To be confirmed'}\n"
+                f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}"
+            ),
+            kind="business_call_reschedule",
+            brand_id=case.get("brand_id"),
+            business_case_id=bc_id,
+        )
+        return {"ok": True, "email": email}
+
+    class CreatorBriefingDecisionPayload(BaseModel):
+        meeting_id: Optional[str] = None
+        creator_id: Optional[str] = None
+        reason: Optional[str] = None
+        scheduled_for: Optional[str] = None
+        meeting_link: Optional[str] = None
+
+    @router.post("/business-cases/{bc_id}/plan/creator-briefing/accept")
+    async def accept_creator_briefing_for_plan(bc_id: str, payload: CreatorBriefingDecisionPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        now = _now_iso()
+        update_doc: Dict[str, Any] = {
+            "$set": {"plan.creator_briefing_status": "accepted", "plan.creator_briefing_reason": payload.reason or "", "updated_at": now},
+            "$push": {"timeline": {"at": now, "event": "creator_briefing_accepted", "meeting_id": payload.meeting_id, "creator_id": payload.creator_id}},
+        }
+        if payload.creator_id:
+            update_doc["$addToSet"] = {"plan.creator_briefing_accepted_ids": payload.creator_id, "selected_creator_ids": payload.creator_id}
+        await db.v3_business_cases.update_one({"id": bc_id}, update_doc)
+        if payload.meeting_id:
+            await db.v3_meetings.update_one({"id": payload.meeting_id}, {"$set": {"decision_status": "accepted", "status": "accepted", "updated_at": now}})
+        return {"ok": True, "decision_status": "accepted", "business_case_id": bc_id}
+
+    @router.post("/business-cases/{bc_id}/plan/creator-briefing/reschedule")
+    async def reschedule_creator_briefing_for_plan(bc_id: str, payload: CreatorBriefingDecisionPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.creator_briefing_status": "rescheduled", "plan.creator_briefing_reason": payload.reason or "", "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": _now_iso(), "event": "creator_briefing_rescheduled", "meeting_id": payload.meeting_id}}},
+        )
+        return {"ok": True, "decision_status": "rescheduled", "business_case_id": bc_id}
+
+    @router.post("/business-cases/{bc_id}/plan/creator-briefing/decline")
+    async def decline_creator_briefing_for_plan(bc_id: str, payload: CreatorBriefingDecisionPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.creator_briefing_status": "declined", "plan.creator_briefing_reason": payload.reason or "", "updated_at": _now_iso()},
+             "$pull": {"selected_creator_ids": payload.creator_id, "plan.selected_creator_ids": payload.creator_id},
+             "$push": {"timeline": {"at": _now_iso(), "event": "creator_briefing_declined", "meeting_id": payload.meeting_id, "creator_id": payload.creator_id}}},
+        )
+        if payload.meeting_id:
+            await db.v3_meetings.update_one({"id": payload.meeting_id}, {"$set": {"decision_status": "declined", "status": "declined", "updated_at": _now_iso()}})
+        return {"ok": True, "decision_status": "declined", "business_case_id": bc_id}
 
     # ------------------------------------------------------------------------
     # SIMULATE CREATOR RESPONSE on a creative brief
@@ -4199,6 +4468,7 @@ Produce the opportunity card JSON.
         entity_type: Optional[str] = None,
         qualification_entity_type: Optional[str] = None,
         decision_status: Optional[str] = None,
+        status: Optional[str] = None,
     ):
         query: Dict[str, Any] = {}
         for key, value in [
@@ -4210,6 +4480,7 @@ Produce the opportunity card JSON.
             ("entity_type", entity_type),
             ("qualification_entity_type", qualification_entity_type),
             ("decision_status", decision_status),
+            ("status", status),
         ]:
             if value:
                 query[key] = value
@@ -4222,7 +4493,9 @@ Produce the opportunity card JSON.
     RECOMMENDED_QUESTIONS_BY_TYPE: Dict[str, List[str]] = {
         "qualification": QUALIFICATION_QUESTION_SETS["brand"],
         "connector": BUSINESS_CALL_QUESTIONS,
+        "business_call": BUSINESS_CALL_QUESTIONS,
         "creator_fit": CREATOR_FIT_QUESTIONS,
+        "creator_briefing": CREATOR_BRIEFING_QUESTIONS,
         "plan": [
             "Which strategic approach should lead: ambassador-led, creator-led, community-led, merchant-first, or hybrid?",
             "Which creators should be shortlisted and why?",
@@ -4330,6 +4603,11 @@ Produce the opportunity card JSON.
         entity_type: Optional[str] = None
         qualification_entity_type: Optional[str] = None
         source: Optional[str] = None
+        candidate_source: Optional[str] = None
+        source_candidate_id: Optional[str] = None
+        candidate_snapshot: Optional[Dict[str, Any]] = None
+        candidate_payload: Optional[Dict[str, Any]] = None
+        recommendation: Optional[Dict[str, Any]] = None
         entity_name: Optional[str] = ""
         business_case_title: Optional[str] = ""
         business_case_id: Optional[str] = None
@@ -4346,20 +4624,23 @@ Produce the opportunity card JSON.
         agenda: Optional[str] = ""
         meeting_notes: Optional[str] = ""
         parent_meeting_id: Optional[str] = None
+        reschedule_count: int = 0
         max_reschedules: Optional[int] = 3
 
     @router.post("/meetings")
     async def create_meeting(payload: MeetingCreate):
         mid = f"meeting-{uuid.uuid4().hex[:10]}"
-        stage_default = "before_crm" if payload.meeting_type == "qualification" else ("plan" if payload.meeting_type == "creator_fit" else "connect")
+        stage_default = "before_crm" if payload.meeting_type == "qualification" else ("plan" if payload.meeting_type in {"creator_fit", "creator_briefing"} else "connect")
         qualification_entity_type = (
             payload.qualification_entity_type or payload.entity_type or "brand"
             if payload.meeting_type == "qualification"
             else payload.qualification_entity_type
         )
-        entity_type = payload.entity_type or qualification_entity_type or ("creator" if payload.meeting_type == "creator_fit" else "brand")
+        entity_type = payload.entity_type or qualification_entity_type or ("creator" if payload.meeting_type in {"creator_fit", "creator_briefing"} else "brand")
         if payload.meeting_type == "qualification" and qualification_entity_type == "creator":
             questions = QUALIFICATION_QUESTION_SETS["creator"]
+        elif payload.meeting_type == "creator_briefing":
+            questions = CREATOR_BRIEFING_QUESTIONS
         else:
             questions = RECOMMENDED_QUESTIONS_BY_TYPE.get(payload.meeting_type, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"])
         doc = {
@@ -4371,6 +4652,10 @@ Produce the opportunity card JSON.
             "entity_type": entity_type,
             "qualification_entity_type": qualification_entity_type,
             "source": payload.source or "manual",
+            "candidate_source": payload.candidate_source or payload.source or "manual",
+            "source_candidate_id": payload.source_candidate_id,
+            "candidate_snapshot": payload.candidate_snapshot or {},
+            "candidate_payload": payload.candidate_payload or {},
             "entity_name": payload.entity_name or "",
             "business_case_title": payload.business_case_title or "",
             "business_case_id": payload.business_case_id,
@@ -4391,7 +4676,7 @@ Produce the opportunity card JSON.
             "status": "scheduled",
             "qualification_status": "pending",
             "decision_status": "pending",
-            "reschedule_count": 0,
+            "reschedule_count": payload.reschedule_count,
             "max_reschedules": payload.max_reschedules or 3,
             "suggested_questions": questions,
             "next_questions": questions,
@@ -4399,6 +4684,7 @@ Produce the opportunity card JSON.
             "analysis": {},
             "ai_recommendation": None,
             "ai_reasons": [],
+            "recommendation": payload.recommendation or {},
             "missing_information": [],
             "created_at": _now_iso(),
             "updated_at": _now_iso(),
@@ -4428,7 +4714,7 @@ Produce the opportunity card JSON.
                     "$addToSet": {"qualification_meeting_ids": mid},
                 },
             )
-        if payload.meeting_type == "connector" and payload.brand_id:
+        if payload.meeting_type in {"connector", "business_call"} and payload.brand_id:
             await db.v3_brands.update_one(
                 {"id": payload.brand_id},
                 {
@@ -4439,7 +4725,7 @@ Produce the opportunity card JSON.
                     "$addToSet": {"business_call_meeting_ids": mid},
                 },
             )
-        if payload.meeting_type == "creator_fit":
+        if payload.meeting_type in {"creator_fit", "creator_briefing"}:
             if payload.creator_id:
                 await db.v3_creators.update_one(
                     {"id": payload.creator_id},
@@ -4448,13 +4734,15 @@ Produce the opportunity card JSON.
             if payload.business_case_id:
                 await db.v3_business_cases.update_one(
                     {"id": payload.business_case_id},
-                    {"$addToSet": {"creator_fit_meeting_ids": mid, "plan.creator_fit_meeting_ids": mid}, "$set": {"updated_at": _now_iso()}},
+                    {"$addToSet": {"creator_fit_meeting_ids": mid, "plan.creator_fit_meeting_ids": mid}, "$set": {"updated_at": _now_iso(), "plan.creator_briefing_status": "scheduled"}},
                 )
         if payload.scheduled_for and payload.contact_email:
             kind = {
                 "qualification": "qualification_call_invite",
                 "connector": "business_call_invite",
+                "business_call": "business_call_invite",
                 "creator_fit": "creator_fit_call_invite",
+                "creator_briefing": "creator_briefing_call_invite",
             }.get(payload.meeting_type, "meeting_invite")
             await queue_email(
                 to=payload.contact_email,
@@ -4527,7 +4815,7 @@ Produce the opportunity card JSON.
         readiness = min(readiness, 100)
         meeting_type = (m.get("meeting_type") or m.get("type") or "qualification").lower()
         entity_type = (m.get("qualification_entity_type") or m.get("entity_type") or "brand").lower()
-        if meeting_type == "connector":
+        if meeting_type in {"connector", "business_call"}:
             required = [
                 ("Marketing focus", ["focus", "objective", "goal", "challenge"]),
                 ("Target audience", ["audience", "consumer", "buyer"]),
@@ -4537,7 +4825,7 @@ Produce the opportunity card JSON.
                 ("Timeline", ["timeline", "date", "launch", "deadline"]),
                 ("Decision maker", ["decision", "approve", "authority"]),
             ]
-        elif meeting_type == "creator_fit":
+        elif meeting_type in {"creator_fit", "creator_briefing"}:
             required = [
                 ("Creator fee", ["fee", "rate", "budget", "naira", "₦", "$"]),
                 ("Availability", ["available", "availability", "schedule", "timeline"]),
@@ -4545,6 +4833,7 @@ Produce the opportunity card JSON.
                 ("Usage rights", ["usage", "rights", "license"]),
                 ("Conflicts", ["conflict", "exclusivity", "exclusive"]),
                 ("Payment terms", ["payment", "terms", "invoice"]),
+                ("Project willingness", ["willing", "interested", "proceed", "accept", "open to"]),
             ]
         elif entity_type == "creator":
             required = [
@@ -4579,18 +4868,18 @@ Produce the opportunity card JSON.
         summary = mi.get("source_excerpt") or text[:280] or "Transcript not provided yet."
         reschedule_count = int(m.get("reschedule_count") or 0)
         max_reschedules = int(m.get("max_reschedules") or 3)
-        if meeting_type == "connector":
-            accept_recommendation = "proceed_to_business_case"
-            decline_recommendation = "delete_brand"
-        elif meeting_type == "creator_fit":
-            accept_recommendation = "accept_creator_for_project"
-            decline_recommendation = "reject_creator_for_project"
+        if meeting_type in {"connector", "business_call"}:
+            accept_recommendation = "promote"
+            decline_recommendation = "delete"
+        elif meeting_type in {"creator_fit", "creator_briefing"}:
+            accept_recommendation = "accept"
+            decline_recommendation = "decline"
         elif entity_type == "creator":
-            accept_recommendation = "approve_creator"
-            decline_recommendation = "decline_creator"
+            accept_recommendation = "accept"
+            decline_recommendation = "decline"
         else:
-            accept_recommendation = "accept_to_crm"
-            decline_recommendation = "delete_candidate"
+            accept_recommendation = "accept"
+            decline_recommendation = "delete"
         if not text:
             ai_recommendation = "reschedule" if reschedule_count < max_reschedules else decline_recommendation
             ai_reasons = ["Transcript is empty, so TASCK cannot make a reliable decision."]
@@ -4610,20 +4899,59 @@ Produce the opportunity card JSON.
             ai_recommendation = "reschedule" if reschedule_count < max_reschedules else decline_recommendation
             ai_reasons = ["Transcript is still too thin for a confident decision."]
         next_questions = [f"Clarify {item}." for item in missing] or (
-            CREATOR_FIT_QUESTIONS if meeting_type == "creator_fit"
+            CREATOR_BRIEFING_QUESTIONS if meeting_type == "creator_briefing"
+            else CREATOR_FIT_QUESTIONS if meeting_type == "creator_fit"
             else QUALIFICATION_QUESTION_SETS["creator"] if entity_type == "creator" and meeting_type == "qualification"
-            else BUSINESS_CALL_QUESTIONS if meeting_type == "connector"
+            else BUSINESS_CALL_QUESTIONS if meeting_type in {"connector", "business_call"}
             else QUALIFICATION_QUESTION_SETS["brand"]
         )
+        recommendation_label = {
+            ("connector", "promote"): "Promote to Frame",
+            ("business_call", "promote"): "Promote to Frame",
+            ("connector", "reschedule"): "Reschedule Business Call",
+            ("business_call", "reschedule"): "Reschedule Business Call",
+            ("connector", "delete"): "Delete Brand From Pipeline",
+            ("business_call", "delete"): "Delete Brand From Pipeline",
+            ("qualification", "accept"): "Add to Creator Roster" if entity_type == "creator" else "Accept to CRM",
+            ("qualification", "reschedule"): "Reschedule Creator Fit Call" if entity_type == "creator" else "Reschedule Qualification Call",
+            ("qualification", "decline"): "Decline Creator",
+            ("qualification", "delete"): "Delete Candidate",
+            ("creator_fit", "accept"): "Accept Creator for Strategy Snapshot",
+            ("creator_fit", "reschedule"): "Reschedule Creator Briefing Call",
+            ("creator_fit", "decline"): "Decline Creator for This Project",
+            ("creator_briefing", "accept"): "Accept Creator for Strategy Snapshot",
+            ("creator_briefing", "reschedule"): "Reschedule Creator Briefing Call",
+            ("creator_briefing", "decline"): "Decline Creator for This Project",
+        }.get((meeting_type, ai_recommendation), ai_recommendation.replace("_", " ").title())
+        creator_intelligence = {
+            "fee_context": "Captured" if any(word in lower for word in ["fee", "rate", "budget", "naira", "₦", "$"]) else "Missing",
+            "availability_context": "Captured" if any(word in lower for word in ["available", "availability", "schedule", "timeline"]) else "Missing",
+            "rights_context": "Captured" if any(word in lower for word in ["usage", "rights", "license", "exclusive"]) else "Missing",
+            "contact_context": "Captured" if any(word in lower for word in ["email", "phone", "whatsapp", "manager"]) else "Missing",
+        }
+        recommendation = {
+            "decision": ai_recommendation,
+            "label": recommendation_label,
+            "confidence": readiness,
+            "reasons": ai_reasons,
+            "missing_context": missing,
+            "summary": summary,
+            "next_questions": next_questions,
+            "risk_flags": risk_flags,
+            "marketing_intelligence": mi,
+            "creator_intelligence": creator_intelligence,
+        }
         analysis = {
             "summary": summary,
             "readiness_score": readiness,
+            "recommendation": recommendation,
             "detected_fields": mi,
             "missing_information": missing,
             "risk_flags": risk_flags,
             "ai_recommendation": ai_recommendation,
             "ai_reasons": ai_reasons,
             "next_questions": next_questions,
+            "creator_intelligence": creator_intelligence,
             "decision_payload": {
                 "meeting_type": meeting_type,
                 "entity_type": entity_type,
@@ -4650,6 +4978,7 @@ Produce the opportunity card JSON.
                 "risk_flags": risk_flags,
                 "ai_recommendation": ai_recommendation,
                 "ai_reasons": ai_reasons,
+                "recommendation": recommendation,
                 "next_questions": next_questions,
                 "status": "transcribed",
                 "updated_at": _now_iso(),
@@ -4663,7 +4992,10 @@ Produce the opportunity card JSON.
         if not m:
             raise HTTPException(404, "Meeting not found")
         mtype = (m.get("meeting_type") or m.get("type") or "qualification").lower()
-        questions = RECOMMENDED_QUESTIONS_BY_TYPE.get(mtype, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"])
+        if mtype == "qualification" and (m.get("qualification_entity_type") or m.get("entity_type")) == "creator":
+            questions = QUALIFICATION_QUESTION_SETS["creator"]
+        else:
+            questions = RECOMMENDED_QUESTIONS_BY_TYPE.get(mtype, RECOMMENDED_QUESTIONS_BY_TYPE["qualification"])
         await db.v3_meetings.update_one(
             {"id": meeting_id},
             {"$set": {"suggested_questions": questions, "updated_at": _now_iso()}}
@@ -4739,17 +5071,39 @@ Produce the opportunity card JSON.
         if entity_type == "creator":
             creator_id = meeting.get("creator_id")
             if not creator_id:
-                raise HTTPException(400, "Creator qualification meeting is missing creator_id")
+                creator_id = f"creator-{uuid.uuid4().hex[:8]}"
+            candidate_payload = meeting.get("candidate_payload") or {}
+            candidate_snapshot = meeting.get("candidate_snapshot") or {}
+            creator_doc = {
+                "id": creator_id,
+                "name": candidate_payload.get("name") or candidate_snapshot.get("name") or candidate_snapshot.get("Name") or meeting.get("entity_name") or "Approved Creator",
+                "tier": candidate_payload.get("tier") or "rising",
+                "genre": candidate_payload.get("genre") or candidate_payload.get("specialty") or candidate_snapshot.get("genre") or candidate_snapshot.get("Specialty") or "",
+                "location": candidate_payload.get("location") or candidate_snapshot.get("location") or candidate_snapshot.get("Location") or "",
+                "email": candidate_payload.get("email") or meeting.get("contact_email") or "",
+                "manager_name": candidate_payload.get("manager_name") or meeting.get("contact_name") or candidate_snapshot.get("managerName") or "",
+                "manager_email": candidate_payload.get("manager_email") or candidate_payload.get("managerEmail") or meeting.get("contact_email") or "",
+                "phone": candidate_payload.get("phone") or meeting.get("contact_phone") or "",
+                "rate_card": candidate_payload.get("rate_card") or candidate_payload.get("rateCard") or candidate_snapshot.get("rateCard") or "TBD",
+                "platforms": candidate_payload.get("platforms") or candidate_snapshot.get("platforms") or [],
+                "audience": candidate_payload.get("audience") or candidate_snapshot.get("audience") or "",
+                "categories": candidate_payload.get("categories") or candidate_snapshot.get("categories") or [],
+                "source_links": candidate_payload.get("source_links") or candidate_payload.get("sourceLinks") or candidate_snapshot.get("sourceLinks") or [],
+                "discovery_notes": candidate_payload.get("discovery_notes") or candidate_payload.get("discoveryNotes") or candidate_snapshot.get("discoveryNotes") or "",
+                "source": meeting.get("candidate_source") or "creator_fit_call",
+            }
             await db.v3_creators.update_one(
                 {"id": creator_id},
                 {"$set": {
+                    **creator_doc,
                     "status": "approved",
                     "pipeline_status": "approved",
                     "qualification_summary": (meeting.get("analysis") or {}).get("summary", ""),
                     "qualification_transcript": meeting.get("transcript", ""),
                     "approved_at": accepted_at,
                     "updated_at": accepted_at,
-                }},
+                }, "$setOnInsert": {"created_at": accepted_at}},
+                upsert=True,
             )
             creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0})
             if creator:
@@ -4758,7 +5112,10 @@ Produce the opportunity card JSON.
                     subject="Welcome to TASCK Creator Portal",
                     body=(
                         f"Hello {creator.get('name') or 'there'},\n\n"
-                        "Your TASCK creator profile has been approved. You can review briefs, contracts, deliverables, and messages in the creator portal."
+                        "Your TASCK creator profile has been approved.\n\n"
+                        "Creator Portal: /v3/creator\n"
+                        "Temporary login details will be issued by TASCK operations.\n\n"
+                        "You can review briefs, contracts, deliverables, final reports, and messages in the Creator Portal."
                     ),
                     kind="creator_welcome",
                     creator_id=creator_id,
@@ -4796,15 +5153,18 @@ Produce the opportunity card JSON.
                 "next_action": "Move Brand to Business Call",
             })
             response = {"ok": True, "qualification_status": "accepted", "brand": brand}
+        meeting_accept_updates = {
+            "qualification_status": "accepted",
+            "decision_status": "accepted",
+            "status": "accepted",
+            "accepted_at": accepted_at,
+            "updated_at": accepted_at,
+        }
+        if entity_type == "creator":
+            meeting_accept_updates["creator_id"] = response.get("creator", {}).get("id") if response.get("creator") else meeting.get("creator_id")
         await db.v3_meetings.update_one(
             {"id": meeting_id},
-            {"$set": {
-                "qualification_status": "accepted",
-                "decision_status": "accepted",
-                "status": "accepted",
-                "accepted_at": accepted_at,
-                "updated_at": accepted_at,
-            }},
+            {"$set": meeting_accept_updates},
         )
         return response
 

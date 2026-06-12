@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v3Creators, getProjectsForCreator } from '../../../lib/v3data';
-import { v3CreateCreator, v3GetCreators, v3SearchWebCreators } from '../../../lib/v3api';
-import { listStoredDemoCreators, saveStoredDemoCreator } from '../../../lib/v3creatorStore';
+import { v3CreateMeeting, v3GetCreators, v3SearchWebCreators } from '../../../lib/v3api';
+import { listStoredDemoCreators } from '../../../lib/v3creatorStore';
 import { useV3Resource } from '../../../lib/useV3Resource';
 import V3Modal from '../../../components/v3/V3Modal';
 import { Search, ArrowUpDown, Plus, Globe2, CheckCircle2, XCircle, Eye, ExternalLink } from 'lucide-react';
@@ -135,28 +135,11 @@ const toCreatePayload = (creator) => ({
   categories: creator.categories || [],
   past_brand_work: creator.pastBrandWork || creator.past_brand_work || [],
   notes: creator.discoveryNotes || creator.discovery_notes || creator.notes || creator.bio,
-  source: 'web_discovery_approved',
+  source: creator.source || 'creator_fit_candidate',
   source_links: creator.sourceLinks || creator.source_links || [],
   discovery_notes: creator.discoveryNotes || creator.discovery_notes || '',
-  pipeline_status: 'approved',
+  pipeline_status: 'pending_review',
 });
-
-const toStoredCreator = (creator, created) => {
-  const payload = toCreatePayload(creator);
-  return normaliseCreator({
-    ...creator,
-    ...created,
-    ...payload,
-    id: created?.id || creator.id,
-    source: 'web_discovery_approved',
-    pipeline_status: 'approved',
-    fit_score: creator.fitScore ?? creator.fit_score ?? created?.fit_score ?? 82,
-    reliability: creator.reliability ?? created?.reliability ?? 7.2,
-    on_time_rate: creator.onTimeRate ?? creator.on_time_rate ?? created?.on_time_rate ?? 0,
-    brand_satisfaction: creator.brandSatisfaction ?? creator.brand_satisfaction ?? created?.brand_satisfaction ?? 0,
-    repeat_brand_count: creator.repeatBrandCount ?? creator.repeat_brand_count ?? created?.repeat_brand_count ?? 0,
-  });
-};
 
 const V3AdminCreators = () => {
   const navigate = useNavigate();
@@ -182,7 +165,7 @@ const V3AdminCreators = () => {
     notes: '',
   });
 
-  const { data, source, setData } = useV3Resource(() => v3GetCreators(), v3Creators);
+  const { data, source } = useV3Resource(() => v3GetCreators({ approved_only: true }), v3Creators);
   const creatorList = Array.isArray(data) ? data : [];
   const storedCreators = listStoredDemoCreators();
   const mergedCreatorMap = new Map();
@@ -236,30 +219,46 @@ const V3AdminCreators = () => {
     }
   };
 
-  const approveDiscoveredCreator = async (creator) => {
+  const inviteCreatorFitCall = async (creator, candidateSource = 'web_creator') => {
     setSubmitting(true);
     try {
-      let created = null;
-      try {
-        created = await v3CreateCreator(toCreatePayload(creator));
-        try {
-          const updated = await v3GetCreators();
-          setData(updated);
-        } catch (e) {
-          setData((current) => [...(Array.isArray(current) ? current : []), created]);
-        }
-      } catch (e) {
-        created = toStoredCreator(creator);
-        setData((current) => [...(Array.isArray(current) ? current : []), created]);
-      }
-      const stored = toStoredCreator(creator, created);
-      saveStoredDemoCreator(stored);
+      const profile = normaliseCreator(creator);
+      const candidatePayload = toCreatePayload(profile);
+      const meeting = await v3CreateMeeting({
+        title: `Creator Fit Call: ${profile.name}`,
+        meeting_type: 'qualification',
+        entity_type: 'creator',
+        qualification_entity_type: 'creator',
+        stage: 'before_crm',
+        entity_name: profile.name,
+        contact_name: profile.managerName || profile.name,
+        contact_email: profile.managerEmail || profile.email || '',
+        contact_phone: profile.phone || '',
+        agenda: 'Confirm the creator wants to work with TASCK before adding to the creator roster.',
+        candidate_source: candidateSource,
+        source_candidate_id: profile.id,
+        candidate_snapshot: {
+          name: profile.name,
+          genre: profile.genre,
+          location: profile.location,
+          platforms: profile.platforms,
+          audience: profile.audience,
+          rateCard: profile.rateCard,
+          managerName: profile.managerName,
+          managerEmail: profile.managerEmail,
+          sourceLinks: profile.sourceLinks,
+          discoveryNotes: profile.discoveryNotes,
+        },
+        candidate_payload: candidatePayload,
+      });
       setDiscoveredCreators((current) => current.map((item) =>
-        item.id === creator.id ? { ...item, pipelineStatus: 'approved', approvedAt: new Date().toISOString() } : item
+        item.id === creator.id ? { ...item, pipelineStatus: 'creator_fit_call_pending', qualificationMeetingId: meeting.id } : item
       ));
       if (selectedDiscovery?.id === creator.id) {
-        setSelectedDiscovery({ ...creator, pipelineStatus: 'approved', approvedAt: new Date().toISOString() });
+        setSelectedDiscovery({ ...creator, pipelineStatus: 'creator_fit_call_pending', qualificationMeetingId: meeting.id });
       }
+      setAddOpen(false);
+      navigate(`/v3/admin/meetings/qualification/${meeting.id}`);
     } finally {
       setSubmitting(false);
     }
@@ -273,7 +272,7 @@ const V3AdminCreators = () => {
           <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">ROSTER</p>
           <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>Creators</h1>
           <p className="text-[#8A8A8A] text-sm">
-            {creators.length} creators &middot; {creators.filter(c => c.tier === 'super').length} super &middot; {creators.filter(c => c.tier === 'rising').length} rising
+            {creators.length} approved creators &middot; {creators.filter(c => c.tier === 'super').length} super &middot; {creators.filter(c => c.tier === 'rising').length} rising
             {source === 'api' && <span className="ml-2 text-[10px] text-[#1F4A3A] bg-[#DDE7E2] px-2 py-0.5 rounded">live</span>}
           </p>
         </div>
@@ -296,7 +295,7 @@ const V3AdminCreators = () => {
                 Scraped creators pending admin review
               </h2>
               <p className="text-[12px] text-[#6E6657] mt-1">
-                Review public creator profiles discovered from compliant demo sources. Approved profiles are saved into the admin creator database; rejected profiles stay out of the roster.
+                Review public creator profiles discovered from compliant demo sources. Profiles join the roster only after a Creator Fit Call is analyzed and accepted.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -320,7 +319,7 @@ const V3AdminCreators = () => {
                       <p className="text-[11px] text-[#8A8A8A]">{creator.genre} &middot; {creator.location}</p>
                     </div>
                     <span className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wider ${
-                      status === 'approved' ? 'bg-[#DDE7E2] text-[#1F4A3A]' :
+                      status === 'creator_fit_call_pending' ? 'bg-[#EEE7FF] text-[#4C3BA0]' :
                       status === 'rejected' ? 'bg-[#F5D9D2] text-[#B54A37]' :
                       'bg-[#F4F2EC] text-[#6E6657]'
                     }`}>
@@ -352,20 +351,20 @@ const V3AdminCreators = () => {
                       <Eye className="w-3.5 h-3.5" /> View details
                     </button>
                     <button
-                      onClick={() => approveDiscoveredCreator(creator)}
-                      disabled={submitting || status === 'approved'}
+                      onClick={() => inviteCreatorFitCall(creator, 'web_creator')}
+                      disabled={submitting || status === 'creator_fit_call_pending' || status === 'rejected'}
                       className="v3-btn-primary text-[11px]"
-                      data-testid={`creator-web-approve-${creator.id}`}
+                      data-testid={`creator-web-invite-${creator.id}`}
                     >
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Approve
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Invite to Creator Fit Call
                     </button>
                     <button
                       onClick={() => rejectDiscoveredCreator(creator.id)}
-                      disabled={status === 'approved' || status === 'rejected'}
+                      disabled={status === 'creator_fit_call_pending' || status === 'rejected'}
                       className="v3-btn-secondary text-[11px]"
                       data-testid={`creator-web-reject-${creator.id}`}
                     >
-                      <XCircle className="w-3.5 h-3.5" /> Reject
+                      <XCircle className="w-3.5 h-3.5" /> Not a fit
                     </button>
                   </div>
                 </div>
@@ -461,7 +460,7 @@ const V3AdminCreators = () => {
       open={!!selectedDiscovery}
       onClose={() => setSelectedDiscovery(null)}
       title={selectedDiscovery?.name || 'Discovered creator'}
-      subtitle="Web-discovered profile details for admin review before approving into the creator database."
+      subtitle="Web-discovered profile details before inviting the creator into a TASCK fit call."
       testid="creator-web-detail-modal"
       wide
       footer={
@@ -470,19 +469,19 @@ const V3AdminCreators = () => {
             <button onClick={() => setSelectedDiscovery(null)} className="v3-btn-secondary">Close</button>
             <button
               onClick={() => rejectDiscoveredCreator(selectedDiscovery.id)}
-              disabled={selectedDiscovery.pipelineStatus === 'approved' || selectedDiscovery.pipelineStatus === 'rejected'}
+              disabled={selectedDiscovery.pipelineStatus === 'creator_fit_call_pending' || selectedDiscovery.pipelineStatus === 'rejected'}
               className="v3-btn-secondary"
               data-testid="creator-web-detail-reject"
             >
-              <XCircle className="w-3.5 h-3.5" /> Reject
+              <XCircle className="w-3.5 h-3.5" /> Reject profile
             </button>
             <button
-              onClick={() => approveDiscoveredCreator(selectedDiscovery)}
-              disabled={submitting || selectedDiscovery.pipelineStatus === 'approved'}
+              onClick={() => inviteCreatorFitCall(selectedDiscovery, 'web_creator')}
+              disabled={submitting || selectedDiscovery.pipelineStatus === 'creator_fit_call_pending' || selectedDiscovery.pipelineStatus === 'rejected'}
               className="v3-btn-primary"
-              data-testid="creator-web-detail-approve"
+              data-testid="creator-web-detail-invite"
             >
-              <CheckCircle2 className="w-3.5 h-3.5" /> Approve into database
+              <CheckCircle2 className="w-3.5 h-3.5" /> Invite to Creator Fit Call
             </button>
           </>
         )
@@ -548,8 +547,8 @@ const V3AdminCreators = () => {
     <V3Modal
       open={addOpen}
       onClose={() => setAddOpen(false)}
-      title="Add Creator"
-      subtitle="Capture contact, manager, fit, and commercial details for the creator pipeline."
+      title="Add Creator Candidate"
+      subtitle="Capture details before sending the candidate to a Creator Fit Call. The roster record is created only after the call is accepted."
       testid="add-creator-modal"
       footer={
         <>
@@ -559,14 +558,16 @@ const V3AdminCreators = () => {
               if (!form.name || !form.genre) return;
               setSubmitting(true);
               try {
-                await v3CreateCreator({
+                await inviteCreatorFitCall({
                   ...form,
+                  id: `manual-${Date.now()}`,
                   platforms: form.platforms.split(',').map((p) => p.trim()).filter(Boolean),
                   rate_card: form.rate_card || 'TBD',
-                });
-                const updated = await v3GetCreators();
-                setData(updated);
-                setAddOpen(false);
+                  managerName: form.manager_name,
+                  managerEmail: form.manager_email,
+                  rateCard: form.rate_card || 'TBD',
+                  source: 'manual_creator',
+                }, 'manual_creator');
               } finally {
                 setSubmitting(false);
               }
@@ -575,7 +576,7 @@ const V3AdminCreators = () => {
             className="v3-btn-primary"
             data-testid="add-creator-submit"
           >
-            {submitting ? 'Saving...' : 'Save Creator'}
+            {submitting ? 'Creating call...' : 'Send to Creator Fit Call'}
           </button>
         </>
       }

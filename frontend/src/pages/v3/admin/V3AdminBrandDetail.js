@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
-import { v3GetBrand, v3CreateInteraction, v3CreateMeeting, v3ListRelationshipManagers, v3DeleteBrand } from '../../../lib/v3api';
+import { v3GetBrand, v3CreateInteraction, v3MoveBrandToBusinessCall, v3ListRelationshipManagers, v3DeleteBrand } from '../../../lib/v3api';
 import {
   ChevronLeft,
   Mail,
@@ -136,24 +136,10 @@ const V3AdminBrandDetail = () => {
       return;
     }
     try {
-      const meeting = await v3CreateMeeting({
-        title: `Business Call: ${brand.company || brand.name || 'Brand'}`,
-        meeting_type: 'connector',
-        stage: 'connect',
-        entity_type: 'brand',
-        source: 'crm_move_to_business_call',
-        entity_name: brand.company || brand.name || '',
-        brand_id: brand.id,
-        rm_id: brand.rm_id,
-        contact_name: brand.primary_contact || brand.primaryContact || '',
-        contact_role: brand.role || '',
-        contact_email: brand.email || '',
-        contact_phone: brand.phone || '',
-        agenda: 'Gather marketing focus, audience, channels, KPIs, budget, timeline, decision makers, creator style, risks, and approval process.',
-      });
-      navigate(`/v3/admin/meetings/connector/${meeting.id}`);
+      const result = await v3MoveBrandToBusinessCall(brand.id);
+      navigate(`/v3/admin/business-cases/${result.business_case_id}/connect`);
     } catch (e) {
-      alert(e.response?.data?.detail || e.message || 'Failed to create Business Call.');
+      alert(e.response?.data?.detail || e.message || 'Failed to create Business Call — Connect.');
     }
   };
 

@@ -884,6 +884,102 @@ div:has(> a[href*="utm_source=emergent"]) {
   border-radius: 12px;
 }
 
+.v3-floating-card {
+  --meeting-accent: #1F4A3A;
+  --meeting-tint: #F7FAF8;
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, #FFFFFF 0%, var(--meeting-tint) 100%);
+  border: 1px solid color-mix(in srgb, var(--meeting-accent) 24%, #E8E4DB);
+  border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(26, 26, 26, 0.08);
+  animation: v3-card-float 0.7s ease both;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.v3-floating-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 5px;
+  background: var(--meeting-accent);
+}
+
+.v3-floating-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--meeting-accent);
+  box-shadow: 0 20px 40px rgba(26, 26, 26, 0.12);
+}
+
+.v3-meeting-qualification {
+  --meeting-accent: #C49B5F;
+  --meeting-tint: #FFFAF0;
+}
+
+.v3-meeting-business {
+  --meeting-accent: #1F4A3A;
+  --meeting-tint: #F4FBF7;
+}
+
+.v3-meeting-creator-fit {
+  --meeting-accent: #8B5CF6;
+  --meeting-tint: #F7F2FF;
+}
+
+.v3-meeting-creator-briefing {
+  --meeting-accent: #155E63;
+  --meeting-tint: #EFFBFD;
+}
+
+.v3-stage-shell {
+  max-width: 1180px;
+}
+
+.v3-stepper {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.v3-stepper-item {
+  min-height: 40px;
+  border: 1px solid #E8E4DB;
+  border-radius: 8px;
+  background: #FFFFFF;
+  color: #5C5C5C;
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.v3-stepper-item:hover {
+  border-color: #1F4A3A;
+  color: #1F4A3A;
+  background: #F7FAF8;
+}
+
+.v3-next-action-card {
+  max-width: 360px;
+  border: 1px solid #D4CDBF;
+  border-radius: 8px;
+  background: #FAFAF7;
+  color: #5C5C5C;
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+@keyframes v3-card-float {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @media (max-width: 900px) {
   .v3-shell {
     display: block;

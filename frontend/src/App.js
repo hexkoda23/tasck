@@ -46,7 +46,6 @@ import V3AdminFeedback from './pages/v3/admin/V3AdminFeedback';
 import V3AdminScopeChange from './pages/v3/admin/V3AdminScopeChange';
 import V3AdminContractPreview from './pages/v3/admin/V3AdminContractPreview';
 import V3AdminBusinessCases from './pages/v3/admin/V3AdminBusinessCases';
-import V3AdminBusinessCaseDetail from './pages/v3/admin/V3AdminBusinessCaseDetail';
 import {
   V3AdminMeetingsOverview,
   V3AdminQualificationCalls,
@@ -55,7 +54,32 @@ import {
   V3AdminConnectorCallDetail,
   V3AdminCreatorFitCalls,
   V3AdminCreatorFitCallDetail,
+  V3AdminCreatorBriefingCalls,
+  V3AdminCreatorBriefingCallDetail,
 } from './pages/v3/admin/V3AdminMeetings';
+import {
+  V3BusinessCaseStageHome,
+  V3BusinessCaseConnect,
+  V3BusinessCaseConnectSchedule,
+  V3BusinessCaseConnectQuestions,
+  V3BusinessCaseConnectAnalysis,
+  V3BusinessCaseConnectReschedule,
+  V3BusinessCaseFrameSnapshot,
+  V3BusinessCaseFrameWaitingBrand,
+  V3BusinessCaseFrameAdminReview,
+  V3BusinessCaseFrameApproved,
+  V3BusinessCasePlanBrainstorm,
+  V3BusinessCasePlanCreatorScan,
+  V3BusinessCasePlanBrief,
+  V3BusinessCasePlanCreatorBriefingCall,
+  V3BusinessCasePlanStrategySnapshot,
+  V3BusinessCasePlanWaitingBrand,
+  V3BusinessCaseDeliverySummary,
+  V3BusinessCaseContractStudio,
+  V3BusinessCaseDeliveryWaitingSignatures,
+  V3BusinessCaseDeliverables,
+  V3BusinessCaseFinalReport,
+} from './pages/v3/admin/businessCaseFlow/V3BusinessCaseFlowPages';
 import V3BrandInreach from './pages/v3/V3BrandInreach';
 
 // V3 Brand Portal Pages
@@ -352,10 +376,38 @@ function AppRoutes() {
         <Route path="meetings/connector/:meetingId" element={<V3AdminConnectorCallDetail />} />
         <Route path="meetings/business" element={<V3AdminConnectorCalls />} />
         <Route path="meetings/business/:meetingId" element={<V3AdminConnectorCallDetail />} />
+        <Route path="meetings/business-calls" element={<V3AdminConnectorCalls />} />
+        <Route path="meetings/business-calls/:businessCaseId" element={<V3BusinessCaseConnect />} />
+        <Route path="meetings/business-calls/:businessCaseId/schedule" element={<V3BusinessCaseConnectSchedule />} />
+        <Route path="meetings/business-calls/:businessCaseId/questions" element={<V3BusinessCaseConnectQuestions />} />
+        <Route path="meetings/business-calls/:businessCaseId/analysis" element={<V3BusinessCaseConnectAnalysis />} />
+        <Route path="meetings/business-calls/:businessCaseId/reschedule" element={<V3BusinessCaseConnectReschedule />} />
         <Route path="meetings/creator-fit" element={<V3AdminCreatorFitCalls />} />
         <Route path="meetings/creator-fit/:meetingId" element={<V3AdminCreatorFitCallDetail />} />
+        <Route path="meetings/creator-briefing" element={<V3AdminCreatorBriefingCalls />} />
+        <Route path="meetings/creator-briefing/:meetingId" element={<V3AdminCreatorBriefingCallDetail />} />
         <Route path="business-cases" element={<V3AdminBusinessCases />} />
-        <Route path="business-cases/:id" element={<V3AdminBusinessCaseDetail />} />
+        <Route path="business-cases/:id" element={<V3BusinessCaseStageHome />} />
+        <Route path="business-cases/:id/connect" element={<V3BusinessCaseConnect />} />
+        <Route path="business-cases/:id/connect/schedule" element={<V3BusinessCaseConnectSchedule />} />
+        <Route path="business-cases/:id/connect/questions" element={<V3BusinessCaseConnectQuestions />} />
+        <Route path="business-cases/:id/connect/analysis" element={<V3BusinessCaseConnectAnalysis />} />
+        <Route path="business-cases/:id/connect/reschedule" element={<V3BusinessCaseConnectReschedule />} />
+        <Route path="business-cases/:id/frame/snapshot" element={<V3BusinessCaseFrameSnapshot />} />
+        <Route path="business-cases/:id/frame/waiting-brand" element={<V3BusinessCaseFrameWaitingBrand />} />
+        <Route path="business-cases/:id/frame/admin-review" element={<V3BusinessCaseFrameAdminReview />} />
+        <Route path="business-cases/:id/frame/approved" element={<V3BusinessCaseFrameApproved />} />
+        <Route path="business-cases/:id/plan/brainstorm" element={<V3BusinessCasePlanBrainstorm />} />
+        <Route path="business-cases/:id/plan/creator-scan" element={<V3BusinessCasePlanCreatorScan />} />
+        <Route path="business-cases/:id/plan/brief" element={<V3BusinessCasePlanBrief />} />
+        <Route path="business-cases/:id/plan/creator-briefing-call" element={<V3BusinessCasePlanCreatorBriefingCall />} />
+        <Route path="business-cases/:id/plan/strategy-snapshot" element={<V3BusinessCasePlanStrategySnapshot />} />
+        <Route path="business-cases/:id/plan/waiting-brand" element={<V3BusinessCasePlanWaitingBrand />} />
+        <Route path="business-cases/:id/delivery/summary" element={<V3BusinessCaseDeliverySummary />} />
+        <Route path="business-cases/:id/delivery/contracts" element={<V3BusinessCaseContractStudio />} />
+        <Route path="business-cases/:id/delivery/waiting-signatures" element={<V3BusinessCaseDeliveryWaitingSignatures />} />
+        <Route path="business-cases/:id/delivery/deliverables" element={<V3BusinessCaseDeliverables />} />
+        <Route path="business-cases/:id/reporting/final-report" element={<V3BusinessCaseFinalReport />} />
         <Route path="creators" element={<V3AdminCreators />} />
         <Route path="creators/:id" element={<V3AdminCreatorDetail />} />
         <Route path="contracts" element={<V3AdminContracts />} />

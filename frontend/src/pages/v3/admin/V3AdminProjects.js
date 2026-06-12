@@ -18,8 +18,23 @@ const sourceMeta = {
   business_case: { label: 'Business Case', bg: '#EEEAE0', fg: '#6E6657', icon: Tag },
 };
 
+const PROJECT_VIEW_FILTERS = [
+  { key: 'all', label: 'All Projects' },
+  { key: 'ongoing', label: 'Ongoing Projects' },
+  { key: 'finished', label: 'Finished Projects' },
+];
 const STAGE_FILTERS = ['all', 'connect', 'frame', 'plan', 'deliver', 'closed'];
-const SOURCE_FILTERS = ['all', 'brand_project', 'creator_project'];
+const SOURCE_FILTERS = ['all', 'brand_project', 'creator_project', 'business_case'];
+
+const isFinishedProject = (project) => {
+  const stage = String(project.stage || '').toLowerCase();
+  const status = String(project.status || project.lifecycle_status || '').toLowerCase();
+  return (
+    ['closed', 'finished', 'complete', 'completed'].includes(stage) ||
+    ['closed', 'finished', 'complete', 'completed'].includes(status) ||
+    Boolean(project.completed_at || project.finished_at || project.closed_at)
+  );
+};
 
 const V3AdminProjects = () => {
   const navigate = useNavigate();
@@ -27,6 +42,7 @@ const V3AdminProjects = () => {
   const [brandsById, setBrandsById] = useState({});
   const [creatorsById, setCreatorsById] = useState({});
   const [rmsById, setRMsById] = useState({});
+  const [viewFilter, setViewFilter] = useState('all');
   const [stageFilter, setStageFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
   const [loaded, setLoaded] = useState(false);
@@ -63,9 +79,18 @@ const V3AdminProjects = () => {
   }, [projects]);
 
   const sourceCounts = useMemo(() => {
-    const c = { all: projects.length, brand_project: 0, creator_project: 0 };
+    const c = { all: projects.length, brand_project: 0, creator_project: 0, business_case: 0 };
     projects.forEach((p) => { const s = p.source_type || 'brand_project'; if (c[s] != null) c[s]++; });
     return c;
+  }, [projects]);
+
+  const viewCounts = useMemo(() => {
+    const finished = projects.filter(isFinishedProject).length;
+    return {
+      all: projects.length,
+      ongoing: projects.length - finished,
+      finished,
+    };
   }, [projects]);
 
   const totalValue = useMemo(() => projects.reduce((sum, p) => sum + (p.estimated_value || p.value_amount || 0), 0), [projects]);
@@ -73,17 +98,20 @@ const V3AdminProjects = () => {
   const filtered = useMemo(() => projects.filter((p) => {
     const stage = p.stage || 'connect';
     const source = p.source_type || 'brand_project';
+    const finished = isFinishedProject(p);
+    if (viewFilter === 'ongoing' && finished) return false;
+    if (viewFilter === 'finished' && !finished) return false;
     if (stageFilter !== 'all' && stage !== stageFilter) return false;
     if (sourceFilter !== 'all' && source !== sourceFilter) return false;
     return true;
-  }), [projects, stageFilter, sourceFilter]);
+  }), [projects, stageFilter, sourceFilter, viewFilter]);
 
   return (
     <div data-testid="v3-admin-projects">
       <div className="mb-6">
         <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">ADMIN CONTROL CENTRE</p>
         <h1 className="v3-heading text-2xl mb-1" style={{ fontFamily: "'Fraunces', serif" }}>Projects</h1>
-        <p className="text-[#8A8A8A] text-sm">CRM Framing, Super Creatives Framing, and Business Case projects.</p>
+          <p className="text-[#8A8A8A] text-sm">All Projects, Ongoing Projects, and Finished Projects across CRM Framing, Super Creatives, and Business Cases.</p>
       </div>
 
       {/* Stat strip */}
@@ -104,6 +132,25 @@ const V3AdminProjects = () => {
           <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Super Creatives</p>
           <p className="text-[22px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{sourceCounts.creator_project}</p>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4" data-testid="projects-view-filter">
+        {PROJECT_VIEW_FILTERS.map((view) => {
+          const active = viewFilter === view.key;
+          return (
+            <button
+              key={view.key}
+              onClick={() => setViewFilter(view.key)}
+              className={`v3-card p-4 text-left transition-colors ${active ? 'border-[#1F4A3A] bg-[#F7FAF8]' : 'hover:border-[#D4CDBF]'}`}
+              data-testid={`projects-view-${view.key}`}
+            >
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">{view.label}</p>
+              <p className="text-[24px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                {viewCounts[view.key] ?? 0}
+              </p>
+            </button>
+          );
+        })}
       </div>
 
       {/* Filters */}

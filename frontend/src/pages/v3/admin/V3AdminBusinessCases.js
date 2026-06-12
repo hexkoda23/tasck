@@ -11,6 +11,7 @@ import {
 import { candidateToBusinessOpportunity } from '../../../lib/v3opportunityDemo';
 import V3Modal from '../../../components/v3/V3Modal';
 import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search } from 'lucide-react';
+import { businessCasePhasePath } from './businessCaseFlow/V3BusinessCaseFlowPages';
 
 const stageMeta = {
   connect: { label: 'Connect', color: '#9B9380' },
@@ -29,6 +30,14 @@ const healthBadge = (h) => {
   };
   return map[h] || map.new;
 };
+
+const phaseLinks = (id) => [
+  ['Connect', `/v3/admin/business-cases/${id}/connect`],
+  ['Frame', `/v3/admin/business-cases/${id}/frame/snapshot`],
+  ['Plan', `/v3/admin/business-cases/${id}/plan/brainstorm`],
+  ['Delivery', `/v3/admin/business-cases/${id}/delivery/summary`],
+  ['Reporting', `/v3/admin/business-cases/${id}/reporting/final-report`],
+];
 
 const brandCreatedAtTs = (value) => {
   const ts = Date.parse(value || '');
@@ -182,7 +191,11 @@ const V3AdminBusinessCases = () => {
   };
 
   const createBusinessCaseFromOpportunity = async (opportunity) => {
-    if (opportunity.source_type === 'scanner' && opportunity.status !== 'accepted') {
+    if (opportunity.business_case_id) {
+      navigate(`/v3/admin/business-cases/${opportunity.business_case_id}`);
+      return;
+    }
+    if (String(opportunity.source_type || '').startsWith('scanner')) {
       navigate('/v3/admin/crm/opportunities');
       return;
     }
@@ -332,10 +345,10 @@ const V3AdminBusinessCases = () => {
             <div>
               <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">AI business opportunity agent</p>
               <h2 className="text-lg font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
-                Scraped opportunities ready for Business Case creation
+                Scraped opportunities awaiting qualification
               </h2>
               <p className="text-[12px] text-[#6E6657] mt-1">
-                Accepted scanner results from public web signals: brand pain point, source, contact route, suggested angle, fit score, and one-click conversion into a Connector-stage Business Case.
+                Public web signals are candidates only. Move each brand through the qualification scanner and Business Call before it becomes a Business Case.
               </p>
             </div>
             <div className="flex gap-2">
@@ -350,11 +363,10 @@ const V3AdminBusinessCases = () => {
 
           <div className="grid grid-cols-2 gap-3">
             {businessOpportunities.map((opportunity) => {
-              const needsAcceptance = String(opportunity.source_type || '').startsWith('scanner') && !['accepted', 'converted'].includes(opportunity.status);
               const buttonLabel = opportunity.status === 'converted'
                 ? 'Business Case created'
-                : needsAcceptance
-                  ? 'Accept in scanner first'
+                : String(opportunity.source_type || '').startsWith('scanner')
+                  ? 'Open Qualification Scanner'
                   : 'Create Business Case';
               return (
               <div key={opportunity.id} className="rounded border border-[#E8E4DB] bg-[#FAFAF7] p-4" data-testid={`bc-ai-opportunity-${opportunity.id}`}>
@@ -549,52 +561,71 @@ const V3AdminBusinessCases = () => {
         {filtered.map((c) => {
           const sm = stageMeta[c.stage] || stageMeta.connect;
           const hb = healthBadge(c.health);
+          const nextPath = businessCasePhasePath(c.id, c);
           return (
-            <button
+            <div
               key={c.id}
-              onClick={() => navigate(`/v3/admin/business-cases/${c.id}`)}
-              className="w-full v3-card p-4 text-left flex items-center gap-4 hover:border-[#D4CDBF] transition-colors"
+              className="w-full v3-card p-4 text-left flex flex-col gap-4 hover:border-[#D4CDBF] transition-colors"
               data-testid={`bc-row-${c.id}`}
             >
-              <div
-                className="w-1 h-12 rounded-full flex-shrink-0"
-                style={{ background: sm.color }}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[14px] font-medium text-[#1A1A1A]">{c.title}</span>
-                  <span
-                    className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider"
-                    style={{ background: `${sm.color}1A`, color: sm.color }}
+              <div className="flex items-center gap-4">
+                <div
+                  className="w-1 h-12 rounded-full flex-shrink-0"
+                  style={{ background: sm.color }}
+                />
+                <button onClick={() => navigate(nextPath)} className="flex-1 min-w-0 text-left">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[14px] font-medium text-[#1A1A1A]">{c.title}</span>
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider"
+                      style={{ background: `${sm.color}1A`, color: sm.color }}
+                    >
+                      {sm.label}
+                    </span>
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded"
+                      style={{
+                        background: c.engagement_track === 'grant' ? '#F2EAD8' : '#DDE7E2',
+                        color: c.engagement_track === 'grant' ? '#7A5F23' : '#1F4A3A',
+                      }}
+                    >
+                      {c.engagement_track === 'grant' ? 'Grant' : 'Paid Strategy'}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: hb.bg, color: hb.fg }}>
+                      {hb.label}
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-[#8A8A8A] mt-1">{c.next_action}</p>
+                </button>
+                <div className="flex-shrink-0 text-right">
+                  <p
+                    className="text-[12px] font-semibold text-[#1F4A3A]"
+                    style={{ fontFamily: "'JetBrains Mono', monospace" }}
                   >
-                    {sm.label}
-                  </span>
-                  <span
-                    className="text-[10px] px-2 py-0.5 rounded"
-                    style={{
-                      background: c.engagement_track === 'grant' ? '#F2EAD8' : '#DDE7E2',
-                      color: c.engagement_track === 'grant' ? '#7A5F23' : '#1F4A3A',
-                    }}
-                  >
-                    {c.engagement_track === 'grant' ? 'Grant' : 'Paid Strategy'}
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: hb.bg, color: hb.fg }}>
-                    {hb.label}
-                  </span>
+                    {formatValueV3(c)}
+                  </p>
+                  <p className="text-[10px] text-[#8A8A8A] mt-0.5">{Number.isFinite(c.days_in_stage) ? c.days_in_stage : 0}d in stage</p>
                 </div>
-                <p className="text-[12px] text-[#8A8A8A] mt-1">{c.next_action}</p>
+                <button onClick={() => navigate(nextPath)} className="v3-btn-secondary text-[11px] flex-shrink-0">
+                  Open active page <ArrowRight className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <div className="flex-shrink-0 text-right">
-                <p
-                  className="text-[12px] font-semibold text-[#1F4A3A]"
-                  style={{ fontFamily: "'JetBrains Mono', monospace" }}
-                >
-                  {formatValueV3(c)}
-                </p>
-                <p className="text-[10px] text-[#8A8A8A] mt-0.5">{Number.isFinite(c.days_in_stage) ? c.days_in_stage : 0}d in stage</p>
+              <div className="flex flex-wrap gap-2 pl-5">
+                {phaseLinks(c.id).map(([label, href]) => (
+                  <button
+                    key={label}
+                    onClick={() => navigate(href)}
+                    className={`text-[11px] px-3 py-1.5 rounded-lg border transition-colors ${
+                      href === nextPath
+                        ? 'bg-[#1F4A3A] text-white border-[#1F4A3A]'
+                        : 'bg-[#FAFAF7] text-[#6E6657] border-[#E8E4DB] hover:border-[#D4CDBF]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-              <ArrowRight className="w-4 h-4 text-[#8A8A8A] flex-shrink-0" />
-            </button>
+            </div>
           );
         })}
         {filtered.length === 0 && (

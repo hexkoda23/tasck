@@ -31,6 +31,10 @@ import {
   v3AcceptCreatorFitCall,
   v3RescheduleCreatorFitCall,
   v3RejectCreatorFitCall,
+  v3AcceptCreatorBriefing,
+  v3RescheduleCreatorBriefing,
+  v3DeclineCreatorBriefing,
+  v3ListBusinessCases,
 } from '../../../lib/v3api';
 
 const statusTone = (value) => {
@@ -45,14 +49,18 @@ const statusTone = (value) => {
 
 const decisionLabel = (value) => ({
   accept_to_crm: 'Accept Brand into CRM',
-  approve_creator: 'Approve Creator',
-  proceed_to_business_case: 'Proceed to Business Case',
-  accept_creator_for_project: 'Accept Creator for Project',
+  approve_creator: 'Add to Creator Roster',
+  proceed_to_business_case: 'Promote to Frame',
+  promote: 'Promote to Frame',
+  accept: 'Accept',
+  delete: 'Delete',
+  decline: 'Decline',
+  accept_creator_for_project: 'Accept Creator for Strategy Snapshot',
   reschedule: 'Reschedule',
   delete_candidate: 'Delete Candidate',
-  delete_brand: 'Delete Brand',
+  delete_brand: 'Delete Brand From Pipeline',
   decline_creator: 'Decline Creator',
-  reject_creator_for_project: 'Reject Creator for Project',
+  reject_creator_for_project: 'Decline Creator for This Project',
 }[value] || String(value || '').replace(/_/g, ' '));
 
 const Badge = ({ children, tone }) => (
@@ -205,20 +213,30 @@ const RECOMMENDED_QUESTIONS = {
     'Any red flags: no budget, unclear need, wrong category, not responsive?',
   ],
   creatorQualification: [
-    'What content categories are strongest for you?',
-    'What platforms do you actively post on?',
-    'Audience demographics and geography?',
-    'Average reach/engagement?',
-    'Past brand collaborations?',
-    'Standard rates and what affects pricing?',
-    'Availability for campaigns?',
-    'Production capabilities?',
-    'Usage rights/exclusivity comfort?',
-    'Any categories you avoid?',
-    'Preferred communication method?',
-    'Why TASCK should work with you?',
+    'Are you open to receiving TASCK briefs?',
+    'What kind of brand projects do you accept?',
+    'What platforms and content formats are strongest?',
+    'What is your fee or rate range?',
+    'Who manages bookings and contracts?',
+    'What is your typical availability and turnaround?',
+    'Any usage rights or exclusivity restrictions?',
+    'What would make a brand collaboration unacceptable?',
   ],
   connector: [
+    'What is the key marketing focus?',
+    'Who is the primary target audience?',
+    'Which channels matter most?',
+    'Which KPIs will prove success?',
+    'What budget range is realistic?',
+    'What timeline are they working with?',
+    'Who are the decision makers?',
+    'What product or service details must creators understand?',
+    'What brand positioning should the strategy protect?',
+    'What creator style feels credible for the brand?',
+    'What risk or compliance constraints must be respected?',
+    'How does the content approval process work?',
+  ],
+  business_call: [
     'What is the key marketing focus?',
     'Who is the primary target audience?',
     'Which channels matter most?',
@@ -242,6 +260,17 @@ const RECOMMENDED_QUESTIONS = {
     'What payment terms are required?',
     'Any risk or brand-safety concerns?',
   ],
+  creator_briefing: [
+    'What is your fee for this project?',
+    'What is your availability for the campaign timeline?',
+    'What deliverables are realistic?',
+    'What content formats would work best?',
+    'What usage rights or exclusivity limits do you require?',
+    'Do you have any conflict with the brand or category?',
+    'What production support do you need?',
+    'What approval or revision process do you prefer?',
+    'Are you willing to proceed with TASCK on this brief?',
+  ],
   plan: [
     'Which strategic approach should lead: ambassador-led, creator-led, community-led, merchant-first, or hybrid?',
     'Which creators should be shortlisted and why?',
@@ -260,18 +289,20 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
     title:
       mode === 'qualification'
         ? 'Qualification Call: New candidate'
+        : mode === 'creator_briefing'
+          ? 'Creator Briefing Call: Selected creator'
         : mode === 'creator_fit'
           ? 'Creator Fit Call: Selected creator'
-          : 'Business Call: Brand intake',
-    stage: mode === 'creator_fit' ? 'plan' : mode === 'connector' ? 'connect' : 'before_crm',
+          : 'Business Call — Connect: Brand intake',
+    stage: mode === 'creator_fit' || mode === 'creator_briefing' ? 'plan' : mode === 'connector' ? 'connect' : 'before_crm',
     entity_name: '',
     business_case_title: '',
     scheduled_for: '',
     duration_minutes: 30,
     meeting_link: '',
     agenda: '',
-    meeting_type: mode === 'creator_fit' ? 'creator_fit' : mode === 'qualification' ? 'qualification' : 'connector',
-    entity_type: mode === 'creator_fit' ? 'creator' : 'brand',
+    meeting_type: mode === 'creator_briefing' ? 'creator_briefing' : mode === 'creator_fit' ? 'creator_fit' : mode === 'qualification' ? 'qualification' : 'business_call',
+    entity_type: mode === 'creator_fit' || mode === 'creator_briefing' ? 'creator' : 'brand',
     qualification_entity_type: mode === 'qualification' ? 'brand' : '',
   });
 
@@ -307,7 +338,7 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               className="v3-heading text-xl"
               style={{ fontFamily: "'Fraunces', serif" }}
             >
-              {mode === 'qualification' ? 'Qualification Call' : mode === 'creator_fit' ? 'Creator Fit Call' : 'Business Call'}
+              {mode === 'qualification' ? 'Qualification Call' : mode === 'creator_briefing' ? 'Creator Briefing Call' : mode === 'creator_fit' ? 'Creator Fit Call' : 'Business Call — Connect'}
             </h2>
           </div>
           <button
@@ -411,6 +442,8 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               placeholder={
                 mode === 'qualification'
                   ? 'Confirm interest, decision maker, contact details, fit, and whether they want TASCK follow-up.'
+                  : mode === 'creator_briefing'
+                    ? 'Confirm project fee, availability, deliverables, usage rights, conflicts, production support, approvals, and willingness to proceed.'
                   : mode === 'creator_fit'
                     ? 'Confirm creator fee, schedule, deliverables, rights, conflicts, production needs, payment terms, and risks.'
                   : 'Collect objective, audience, channels, KPIs, timeline, budget, approval owner, and constraints.'
@@ -452,10 +485,12 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : mode === 'qualification' ? (
               'Schedule Qualification Call'
+            ) : mode === 'creator_briefing' ? (
+              'Schedule Creator Briefing Call'
             ) : mode === 'creator_fit' ? (
               'Schedule Creator Fit Call'
             ) : (
-              'Schedule Business Call'
+              'Schedule Business Call — Connect'
             )}
           </button>
         </div>
@@ -500,19 +535,22 @@ const MeetingOverviewCard = ({ icon: Icon, eyebrow, title, description, count, b
 
 export const V3AdminMeetingsOverview = () => {
   const navigate = useNavigate();
-  const [counts, setCounts] = useState({ qualification: 0, connector: 0, creatorFit: 0 });
+  const [counts, setCounts] = useState({ brandQualification: 0, creatorFit: 0, connector: 0, creatorBriefing: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     Promise.all([
       v3ListMeetings({ meeting_type: 'qualification' }).catch(() => []),
       v3ListMeetings({ meeting_type: 'connector' }).catch(() => []),
-      v3ListMeetings({ meeting_type: 'creator_fit' }).catch(() => []),
-    ]).then(([qualData, connData, creatorFitData]) => {
+      v3ListMeetings({ meeting_type: 'business_call' }).catch(() => []),
+      v3ListMeetings({ meeting_type: 'creator_briefing' }).catch(() => []),
+    ]).then(([qualData, connData, businessCallData, creatorBriefingData]) => {
+      const qualRows = Array.isArray(qualData) ? qualData : [];
       setCounts({
-        qualification: Array.isArray(qualData) ? qualData.length : 0,
-        connector: Array.isArray(connData) ? connData.length : 0,
-        creatorFit: Array.isArray(creatorFitData) ? creatorFitData.length : 0,
+        brandQualification: qualRows.filter((call) => (call.qualification_entity_type || call.entity_type || 'brand') !== 'creator').length,
+        creatorFit: qualRows.filter((call) => (call.qualification_entity_type || call.entity_type) === 'creator').length,
+        connector: (Array.isArray(connData) ? connData.length : 0) + (Array.isArray(businessCallData) ? businessCallData.length : 0),
+        creatorBriefing: Array.isArray(creatorBriefingData) ? creatorBriefingData.length : 0,
       });
       setLoading(false);
     });
@@ -522,15 +560,15 @@ export const V3AdminMeetingsOverview = () => {
     <div data-testid="v3-admin-meetings-overview">
       <PageHeader
         title="Meetings"
-        subtitle="Track qualification, Business Calls, and Creator Fit Calls with clear decisions and follow-ups."
+        subtitle="Track qualification, Business Call — Connect, Creator Fit, and Creator Briefing calls with clear AI decisions and follow-ups."
       />
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-5">
         <MeetingOverviewCard
           icon={UserPlus}
           eyebrow="Before CRM"
           title="Qualification Calls"
-          description="First calls used to decide if a scanned brand, creative, or Super Creative should enter TASCK. These calls support the accept, reschedule, or delete decision only."
-          count={loading ? '…' : counts.qualification}
+          description="Brand qualification calls for scanned and manually added brands before they enter CRM."
+          count={loading ? '…' : counts.brandQualification}
           button="Open Qualification Calls"
           onClick={() => navigate('/v3/admin/meetings/qualification')}
           tone="qualification"
@@ -538,22 +576,32 @@ export const V3AdminMeetingsOverview = () => {
         <MeetingOverviewCard
           icon={Briefcase}
           eyebrow="Connect phase"
-          title="Business Calls"
+          title="Business Call — Connect"
           description="Business calls used to gather the brand details needed for the Alignment Snapshot: objective, audience, channels, KPIs, budget, timeline, approval owner, and constraints."
           count={loading ? '…' : counts.connector}
-          button="Open Business Calls"
-          onClick={() => navigate('/v3/admin/meetings/connector')}
+          button="Open Connect Calls"
+          onClick={() => navigate('/v3/admin/meetings/business-calls')}
           tone="business"
         />
         <MeetingOverviewCard
           icon={Sparkles}
-          eyebrow="Plan phase"
+          eyebrow="Before roster"
           title="Creator Fit Calls"
-          description="Project-specific creator calls for fee, availability, deliverables, usage rights, conflicts, payment terms, and brand-safety concerns."
+          description="Creator onboarding calls for scraped or manual candidates before they can join the approved creator roster."
           count={loading ? '…' : counts.creatorFit}
           button="Open Creator Fit Calls"
-          onClick={() => navigate('/v3/admin/meetings/creator-fit')}
+          onClick={() => navigate('/v3/admin/meetings/qualification')}
           tone="creator-fit"
+        />
+        <MeetingOverviewCard
+          icon={PhoneCall}
+          eyebrow="Plan phase"
+          title="Creator Briefing Calls"
+          description="Project calls after brief acceptance to confirm fee, availability, deliverables, usage rights, schedule, and willingness."
+          count={loading ? '…' : counts.creatorBriefing}
+          button="Open Briefing Calls"
+          onClick={() => navigate('/v3/admin/meetings/creator-briefing')}
+          tone="creator-briefing"
         />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-6">
@@ -592,7 +640,7 @@ const QualificationRow = ({ call }) => {
   return (
     <button
       onClick={() => navigate(`/v3/admin/meetings/qualification/${call.id || call._id}`)}
-      className="w-full v3-card p-4 text-left flex flex-col lg:flex-row lg:items-center gap-4 hover:border-[#D4CDBF] transition-colors"
+      className="w-full v3-floating-card v3-meeting-business p-4 text-left flex flex-col lg:flex-row lg:items-center gap-4"
       data-testid={`qualification-call-${call.id || call._id}`}
     >
       <div className="w-1 rounded-full bg-[#C49B5F] lg:self-stretch min-h-10" />
@@ -666,7 +714,7 @@ export const V3AdminQualificationCalls = () => {
       <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg w-fit mb-5" data-testid="qualification-call-tabs">
         {[
           { key: 'brand', label: 'Brand Qualification' },
-          { key: 'creator', label: 'Creator Qualification' },
+          { key: 'creator', label: 'Creator Fit Qualification' },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -725,7 +773,7 @@ const ConnectorRow = ({ call }) => {
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="text-[14px] font-medium text-[#1A1A1A]">{call.title}</span>
-          <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Business Call</Badge>
+          <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Business Call — Connect</Badge>
           {call.readiness_status && (
             <Badge>{call.readiness_status.replace(/_/g, ' ')}</Badge>
           )}
@@ -752,17 +800,52 @@ const ConnectorRow = ({ call }) => {
   );
 };
 
+const BusinessCallCaseRow = ({ item }) => {
+  const navigate = useNavigate();
+  const contact = item.brand_contact_snapshot || {};
+  const completeness = [contact.primary_contact, contact.email, contact.phone].filter(Boolean).length;
+  return (
+    <button
+      onClick={() => navigate(`/v3/admin/business-cases/${item.id}/connect`)}
+      className="w-full v3-floating-card v3-meeting-business p-4 text-left flex flex-col lg:flex-row lg:items-center gap-4"
+      data-testid={`business-call-case-${item.id}`}
+    >
+      <div className="w-1 rounded-full bg-[#1F4A3A] lg:self-stretch min-h-10" />
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-2 mb-1">
+          <span className="text-[14px] font-medium text-[#1A1A1A]">{item.title}</span>
+          <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Connect</Badge>
+          <Badge>{item.connect?.connect_status || item.stage || 'connect'}</Badge>
+        </div>
+        <p className="text-[12px] text-[#8A8A8A]">
+          {contact.primary_contact || 'Brand contact'} · {contact.email || 'email missing'} · {contact.phone || 'phone missing'}
+        </p>
+      </div>
+      <div className="grid grid-cols-2 sm:flex sm:items-center gap-3 text-[11px] text-[#6E6657]">
+        <span>{completeness}/3 contact fields</span>
+        <span className="v3-btn-primary text-[11px]">Open Connect Flow</span>
+      </div>
+    </button>
+  );
+};
+
 export const V3AdminConnectorCalls = () => {
   const navigate = useNavigate();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [calls, setCalls] = useState([]);
+  const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
     setLoading(true);
-    v3ListMeetings({ meeting_type: 'connector' })
-      .then((data) => {
-        setCalls(Array.isArray(data) ? data : []);
+    Promise.all([
+      v3ListMeetings({ meeting_type: 'connector' }).catch(() => []),
+      v3ListMeetings({ meeting_type: 'business_call' }).catch(() => []),
+      v3ListBusinessCases({ stage: 'connect' }).catch(() => []),
+    ])
+      .then(([connectorData, businessCallData, caseData]) => {
+        setCalls([...(Array.isArray(connectorData) ? connectorData : []), ...(Array.isArray(businessCallData) ? businessCallData : [])]);
+        setCases(Array.isArray(caseData) ? caseData.filter((item) => item.status !== 'deleted') : []);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -780,11 +863,11 @@ export const V3AdminConnectorCalls = () => {
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Meetings
       </button>
       <PageHeader
-        title="Business Calls"
-        subtitle="Business calls used to gather the brand details needed for the Alignment Snapshot."
+        title="Business Call — Connect"
+        subtitle="The same linked flow as Business Case Connect: brand info, scheduling, email, questions, transcript, AI result, promote, reschedule, or delete."
         action={
           <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
-            <Plus className="w-4 h-4" /> Schedule Business Call
+            <Plus className="w-4 h-4" /> Schedule Business Call — Connect
           </button>
         }
       />
@@ -793,16 +876,19 @@ export const V3AdminConnectorCalls = () => {
           <Loader2 className="w-4 h-4 animate-spin" />
           <span className="text-[12px]">Loading calls…</span>
         </div>
-      ) : calls.length === 0 ? (
+      ) : calls.length === 0 && cases.length === 0 ? (
         <div className="v3-card p-10 flex flex-col items-center gap-2">
           <Briefcase className="w-8 h-8 text-[#D4CDBF]" strokeWidth={1} />
-          <p className="text-[13px] text-[#8A8A8A]">No Business Calls yet.</p>
+          <p className="text-[13px] text-[#8A8A8A]">No Business Call — Connect records yet.</p>
           <p className="text-[11px] text-[#8A8A8A]">
             Move an accepted CRM brand into a Business Call to gather Alignment Snapshot context.
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          {cases.map((item) => (
+            <BusinessCallCaseRow key={item.id} item={item} />
+          ))}
           {calls.map((call) => (
             <ConnectorRow key={call.id || call._id} call={call} />
           ))}
@@ -819,7 +905,7 @@ export const V3AdminConnectorCalls = () => {
   );
 };
 
-export const V3AdminCreatorFitCalls = () => {
+export const V3AdminCreatorBriefingCalls = () => {
   const navigate = useNavigate();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [calls, setCalls] = useState([]);
@@ -827,7 +913,7 @@ export const V3AdminCreatorFitCalls = () => {
 
   const load = useCallback(() => {
     setLoading(true);
-    v3ListMeetings({ meeting_type: 'creator_fit' })
+    v3ListMeetings({ meeting_type: 'creator_briefing' })
       .then((data) => {
         setCalls(Array.isArray(data) ? data : []);
         setLoading(false);
@@ -838,20 +924,20 @@ export const V3AdminCreatorFitCalls = () => {
   useEffect(() => { load(); }, [load]);
 
   return (
-    <div data-testid="v3-admin-creator-fit-calls">
+    <div data-testid="v3-admin-creator-briefing-calls">
       <button
         onClick={() => navigate('/v3/admin/meetings')}
         className="v3-btn-secondary text-[11px] mb-4"
-        data-testid="creator-fit-calls-back-btn"
+        data-testid="creator-briefing-calls-back-btn"
       >
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Meetings
       </button>
       <PageHeader
-        title="Creator Fit Calls"
-        subtitle="Project-specific creator calls used after a creator accepts a brief."
+        title="Creator Briefing Calls"
+        subtitle="Plan-phase creator calls after a brief is sent or accepted. Confirm fee, availability, deliverables, usage rights, schedule, and project willingness."
         action={
           <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
-            <Plus className="w-4 h-4" /> Schedule Creator Fit Call
+            <Plus className="w-4 h-4" /> Schedule Creator Briefing Call
           </button>
         }
       />
@@ -863,9 +949,9 @@ export const V3AdminCreatorFitCalls = () => {
       ) : calls.length === 0 ? (
         <div className="v3-card p-10 flex flex-col items-center gap-2">
           <Sparkles className="w-8 h-8 text-[#D4CDBF]" strokeWidth={1} />
-          <p className="text-[13px] text-[#8A8A8A]">No Creator Fit Calls yet.</p>
+          <p className="text-[13px] text-[#8A8A8A]">No Creator Briefing Calls yet.</p>
           <p className="text-[11px] text-[#8A8A8A]">
-            Creator Fit Calls appear after brief acceptance and before Strategy Snapshot approval.
+            Creator Briefing Calls appear after brief acceptance and before Strategy Snapshot approval.
           </p>
         </div>
       ) : (
@@ -873,15 +959,15 @@ export const V3AdminCreatorFitCalls = () => {
           {calls.map((call) => (
             <button
               key={call.id || call._id}
-              onClick={() => navigate(`/v3/admin/meetings/creator-fit/${call.id || call._id}`)}
-              className="w-full v3-floating-card v3-meeting-creator-fit p-4 text-left flex flex-col lg:flex-row lg:items-center gap-4"
-              data-testid={`creator-fit-call-${call.id || call._id}`}
+              onClick={() => navigate(`/v3/admin/meetings/creator-briefing/${call.id || call._id}`)}
+              className="w-full v3-floating-card v3-meeting-creator-briefing p-4 text-left flex flex-col lg:flex-row lg:items-center gap-4"
+              data-testid={`creator-briefing-call-${call.id || call._id}`}
             >
               <div className="w-1 rounded-full bg-[#B54A37] lg:self-stretch min-h-10" />
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 mb-1">
                   <span className="text-[14px] font-medium text-[#1A1A1A]">{call.title}</span>
-                  <Badge tone="bg-[#F5D9D2] text-[#B54A37]">Creator Fit Call</Badge>
+                  <Badge tone="bg-[#DDF2F6] text-[#155E63]">Creator Briefing Call</Badge>
                   <Badge>{call.decision_status || call.status}</Badge>
                 </div>
                 <p className="text-[12px] text-[#8A8A8A]">
@@ -896,7 +982,7 @@ export const V3AdminCreatorFitCalls = () => {
       )}
       {scheduleOpen && (
         <ScheduleModal
-          mode="creator_fit"
+          mode="creator_briefing"
           onClose={() => setScheduleOpen(false)}
           onSaved={load}
         />
@@ -947,6 +1033,9 @@ export const V3AdminQualificationCallDetail = () => {
       const result = await v3AcceptQualificationMeeting(meetingId, {});
       setAccepted(true);
       setMeeting((m) => ({ ...m, decision_status: 'accepted', qualification_status: 'accepted', ...result }));
+      if (result.creator?.id) {
+        navigate(`/v3/admin/creators/${result.creator.id}`);
+      }
     } catch (err) {
       console.error('Accept failed:', err);
     }
@@ -1014,7 +1103,7 @@ export const V3AdminQualificationCallDetail = () => {
       </button>
       <PageHeader
         title={meeting.title}
-        subtitle="Decide if this company, creative, or Super Creative should work with TASCK."
+        subtitle={entityType === 'creator' ? 'Confirm the creator wants to work with TASCK before adding to the roster.' : 'Decide if this brand should enter CRM.'}
         action={
           <div className="flex flex-wrap gap-2">
             <Badge tone="bg-[#F2EAD8] text-[#7A5F23]">Qualification Call</Badge>
@@ -1029,25 +1118,33 @@ export const V3AdminQualificationCallDetail = () => {
         <div className="space-y-5">
           <Section title="Call purpose">
             <p className="text-[13px] text-[#1A1A1A] leading-relaxed mb-3">
-              Decide if this company should work with TASCK.
+              {entityType === 'creator'
+                ? 'Confirm fit, willingness, booking route, rate range, availability, usage boundaries, and preferred brand categories before creating an approved creator profile.'
+                : 'Decide if this company should work with TASCK.'}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Admin checks</p>
                 <p className="text-[12px] mt-1">
-                  Interest, decision maker, contact details, fit, follow-up appetite.
+                  {entityType === 'creator'
+                    ? 'Interest, platforms, fee range, booking owner, availability, rights, red flags.'
+                    : 'Interest, decision maker, contact details, fit, follow-up appetite.'}
                 </p>
               </div>
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Transcript use</p>
                 <p className="text-[12px] mt-1">
-                  CRM decision only. It must not create an Alignment Snapshot.
+                  {entityType === 'creator'
+                    ? 'Roster decision only. It must not put the creator into projects yet.'
+                    : 'CRM decision only. It must not create an Alignment Snapshot.'}
                 </p>
               </div>
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Next step</p>
                 <p className="text-[12px] mt-1">
-                  Accept into CRM, reschedule, or delete candidate.
+                  {entityType === 'creator'
+                    ? 'Add to Creator Roster, reschedule the fit call, or decline the creator.'
+                    : 'Accept into CRM, reschedule, or delete candidate.'}
                 </p>
               </div>
             </div>
@@ -1057,7 +1154,7 @@ export const V3AdminQualificationCallDetail = () => {
           </Section>
 
           {Object.keys(snapshot).length > 0 && (
-            <Section title="Scanned company intelligence">
+            <Section title={entityType === 'creator' ? 'Creator profile snapshot' : 'Scanned company intelligence'}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {Object.entries(snapshot).map(([key, value]) => (
                   <div key={key} className="rounded-lg border border-[#E8E4DB] p-3">
@@ -1166,7 +1263,7 @@ export const V3AdminQualificationCallDetail = () => {
 
         <div className="space-y-5">
           {(analysis.summary || analysis.readiness_score != null) && (
-            <Section title="CRM qualification analysis">
+            <Section title={entityType === 'creator' ? 'Creator Fit analysis' : 'CRM qualification analysis'}>
               <AnalysisCard
                 analysis={analysis}
                 score={analysis.readiness_score ?? meeting.readiness_score}
@@ -1182,15 +1279,15 @@ export const V3AdminQualificationCallDetail = () => {
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />{' '}
                 {accepted
-                  ? entityType === 'creator' ? 'Creator Approved' : 'Accepted into CRM'
-                  : entityType === 'creator' ? 'Approve Creator' : 'Accept Brand into CRM'}
+                  ? entityType === 'creator' ? 'Added to Creator Roster' : 'Accepted into CRM'
+                  : entityType === 'creator' ? 'Add to Creator Roster' : 'Accept to CRM'}
               </button>
               <button
                 onClick={handleReschedule}
                 disabled={saving || !canReschedule}
                 className="v3-btn-secondary"
               >
-                <RotateCcw className="w-3.5 h-3.5" /> {canReschedule ? 'Reschedule' : 'Max reschedules reached'}
+                <RotateCcw className="w-3.5 h-3.5" /> {canReschedule ? (entityType === 'creator' ? 'Reschedule Creator Fit Call' : 'Reschedule Qualification Call') : 'Max reschedules reached'}
               </button>
               <button
                 onClick={handleDelete}
@@ -1202,13 +1299,13 @@ export const V3AdminQualificationCallDetail = () => {
             {accepted && (
               <div className="mt-4 rounded-lg border border-[#DDE7E2] bg-[#F5FAF7] p-3">
                 <p className="text-[12px] text-[#1F4A3A] font-medium mb-2">
-                  Accepted into CRM.
+                  {entityType === 'creator' ? 'Creator added to the approved roster and welcome email queued.' : 'Accepted into CRM.'}
                 </p>
                 <button
-                  onClick={() => navigate('/v3/admin/meetings/connector')}
+                  onClick={() => navigate(entityType === 'creator' ? '/v3/admin/creators' : '/v3/admin/meetings/business-calls')}
                   className="v3-btn-secondary text-[11px]"
                 >
-                  Schedule Connector Business Call
+                  {entityType === 'creator' ? 'Open Creator Roster' : 'Open Business Call — Connect'}
                 </button>
               </div>
             )}
@@ -1253,7 +1350,8 @@ export const V3AdminConnectorCallDetail = () => {
     setAnalyzing(false);
   };
 
-  const isCreatorFit = meeting?.meeting_type === 'creator_fit';
+  const isCreatorFit = meeting?.meeting_type === 'creator_fit' || meeting?.meeting_type === 'creator_briefing';
+  const isCreatorBriefing = meeting?.meeting_type === 'creator_briefing';
   const maxReschedules = meeting?.max_reschedules || 3;
   const rescheduleCount = meeting?.reschedule_count || 0;
   const canReschedule = rescheduleCount < maxReschedules;
@@ -1261,7 +1359,13 @@ export const V3AdminConnectorCallDetail = () => {
   const handleProceed = async () => {
     setSaving(true);
     try {
-      if (isCreatorFit) {
+      if (isCreatorBriefing) {
+        await v3AcceptCreatorBriefing(meeting.business_case_id, {
+          meeting_id: meetingId,
+          creator_id: meeting.creator_id,
+        });
+        setMeeting((m) => ({ ...m, decision_status: 'accepted', status: 'accepted' }));
+      } else if (isCreatorFit) {
         await v3AcceptCreatorFitCall(meetingId);
         setMeeting((m) => ({ ...m, decision_status: 'accepted', status: 'accepted' }));
       } else {
@@ -1279,11 +1383,16 @@ export const V3AdminConnectorCallDetail = () => {
     if (!canReschedule) return;
     setSaving(true);
     try {
-      const result = isCreatorFit
-        ? await v3RescheduleCreatorFitCall(meetingId, {})
-        : await v3RescheduleBusinessCall(meetingId, {});
+      const result = isCreatorBriefing
+        ? await v3RescheduleCreatorBriefing(meeting.business_case_id, {
+            meeting_id: meetingId,
+            creator_id: meeting.creator_id,
+          })
+        : isCreatorFit
+          ? await v3RescheduleCreatorFitCall(meetingId, {})
+          : await v3RescheduleBusinessCall(meetingId, {});
       if (result.meeting_id) {
-        navigate(isCreatorFit ? `/v3/admin/meetings/creator-fit/${result.meeting_id}` : `/v3/admin/meetings/connector/${result.meeting_id}`);
+        navigate(isCreatorBriefing ? `/v3/admin/meetings/creator-briefing/${result.meeting_id}` : isCreatorFit ? `/v3/admin/meetings/creator-fit/${result.meeting_id}` : `/v3/admin/meetings/connector/${result.meeting_id}`);
       }
     } catch (err) {
       console.error('Reschedule failed:', err);
@@ -1297,7 +1406,13 @@ export const V3AdminConnectorCallDetail = () => {
     if (!window.confirm(message)) return;
     setSaving(true);
     try {
-      if (isCreatorFit) {
+      if (isCreatorBriefing) {
+        await v3DeclineCreatorBriefing(meeting.business_case_id, {
+          meeting_id: meetingId,
+          creator_id: meeting.creator_id,
+        });
+        navigate('/v3/admin/meetings/creator-briefing');
+      } else if (isCreatorFit) {
         await v3RejectCreatorFitCall(meetingId, {});
         navigate('/v3/admin/meetings/creator-fit');
       } else {
@@ -1335,7 +1450,7 @@ export const V3AdminConnectorCallDetail = () => {
   }
 
   const analysis = meeting.analysis || {};
-  const detailBackPath = isCreatorFit ? '/v3/admin/meetings/creator-fit' : '/v3/admin/meetings/connector';
+  const detailBackPath = isCreatorBriefing ? '/v3/admin/meetings/creator-briefing' : isCreatorFit ? '/v3/admin/meetings/creator-fit' : '/v3/admin/meetings/connector';
 
   return (
     <div className="space-y-5" data-testid="v3-admin-connector-call-detail">
@@ -1343,15 +1458,15 @@ export const V3AdminConnectorCallDetail = () => {
         onClick={() => navigate(detailBackPath)}
         className="v3-btn-secondary text-[11px]"
       >
-        <ArrowLeft className="w-3.5 h-3.5" /> Back to {isCreatorFit ? 'Creator Fit Calls' : 'Business Calls'}
+        <ArrowLeft className="w-3.5 h-3.5" /> Back to {isCreatorBriefing ? 'Creator Briefing Calls' : isCreatorFit ? 'Creator Fit Calls' : 'Business Calls'}
       </button>
       <PageHeader
         title={meeting.title}
-        subtitle={isCreatorFit ? 'Decide if this creator fits the project plan.' : 'Gather the details needed for the Alignment Snapshot.'}
+        subtitle={isCreatorBriefing ? 'Confirm creator fee, availability, deliverables, usage rights, schedule, and willingness for this project.' : isCreatorFit ? 'Decide if this creator fits the project plan.' : 'Gather the details needed for the Alignment Snapshot.'}
         action={
           <div className="flex flex-wrap gap-2">
             <Badge tone={isCreatorFit ? 'bg-[#F5D9D2] text-[#B54A37]' : 'bg-[#DDE7E2] text-[#1F4A3A]'}>
-              {isCreatorFit ? 'Creator Fit Call' : 'Business Call'}
+              {isCreatorBriefing ? 'Creator Briefing Call' : isCreatorFit ? 'Creator Fit Call' : 'Business Call — Connect'}
             </Badge>
             <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">{isCreatorFit ? 'Plan phase' : 'Connect phase'}</Badge>
           </div>
@@ -1361,25 +1476,25 @@ export const V3AdminConnectorCallDetail = () => {
         <div className="space-y-5">
           <Section title="Call purpose">
             <p className="text-[13px] text-[#1A1A1A] leading-relaxed mb-3">
-              {isCreatorFit ? 'Validate the creator against this project before Strategy Snapshot approval.' : 'Gather the details needed for the Alignment Snapshot.'}
+              {isCreatorBriefing ? 'Validate creator fee, availability, deliverables, rights, conflicts, production needs, and project willingness before Strategy Snapshot.' : isCreatorFit ? 'Validate the creator against this project before Strategy Snapshot approval.' : 'Gather the details needed for the Alignment Snapshot.'}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Admin checks</p>
                 <p className="text-[12px] mt-1">
-                  {isCreatorFit ? 'Fee, availability, deliverables, rights, conflicts, payment terms, production needs.' : 'Objective, audience, channels, KPIs, timeline, budget, approval owner, constraints.'}
+                  {isCreatorBriefing ? 'Project fee, availability, deliverables, content formats, rights, conflicts, production support, approvals.' : isCreatorFit ? 'Fee, availability, deliverables, rights, conflicts, payment terms, production needs.' : 'Objective, audience, channels, KPIs, timeline, budget, approval owner, constraints.'}
                 </p>
               </div>
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Transcript use</p>
                 <p className="text-[12px] mt-1">
-                  {isCreatorFit ? 'Accept, reschedule, or reject this creator for this project.' : 'Draft/update Alignment Snapshot if enough context exists.'}
+                  {isCreatorBriefing ? 'Accept creator for Strategy Snapshot, reschedule, or decline them for this project.' : isCreatorFit ? 'Accept, reschedule, or reject this creator for this project.' : 'Draft/update Alignment Snapshot if enough context exists.'}
                 </p>
               </div>
               <div className="v3-card-muted p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Next step</p>
                 <p className="text-[12px] mt-1">
-                  {isCreatorFit ? 'Accepted creators can be included in the Strategy Snapshot.' : 'Review snapshot, send to company, move Business Case forward.'}
+                  {isCreatorBriefing ? 'Accepted creator input can feed the Strategy Snapshot.' : isCreatorFit ? 'Accepted creators can be included in the Strategy Snapshot.' : 'Review snapshot, send to company, move Business Case forward.'}
                 </p>
               </div>
             </div>
@@ -1458,10 +1573,10 @@ export const V3AdminConnectorCallDetail = () => {
               )}
             </Section>
           )}
-          <Section title={isCreatorFit ? 'Creator Fit decision' : 'Business Case handoff'}>
+          <Section title={isCreatorBriefing ? 'Creator Briefing decision' : isCreatorFit ? 'Creator Fit decision' : 'Business Case handoff'}>
             <p className="text-[13px] text-[#1A1A1A] leading-relaxed mb-3">
               {isCreatorFit
-                ? 'Use the recommendation and reasons to accept, reschedule, or reject this creator for the project.'
+                ? 'Use the recommendation and reasons to accept, reschedule, or decline this creator for the project.'
                 : 'A strong Business Call transcript should produce Alignment Snapshot readiness and, when enough context exists, open the Connect record.'}
             </p>
             <div className="grid grid-cols-1 gap-2">
@@ -1470,7 +1585,7 @@ export const V3AdminConnectorCallDetail = () => {
                 disabled={saving}
                 className="v3-btn-primary"
               >
-                <Briefcase className="w-3.5 h-3.5" /> {isCreatorFit ? 'Accept Creator for Project' : meeting.business_case_id ? 'Open Business Case Connect' : 'Proceed to Business Case'}
+                <Briefcase className="w-3.5 h-3.5" /> {isCreatorBriefing ? 'Accept Creator for Strategy Snapshot' : isCreatorFit ? 'Accept Creator for Project' : meeting.business_case_id ? 'Open Business Case Connect' : 'Promote to Frame'}
               </button>
               <button
                 onClick={handleBusinessReschedule}
@@ -1484,7 +1599,7 @@ export const V3AdminConnectorCallDetail = () => {
                 disabled={saving}
                 className="v3-btn-secondary text-[#B54A37]"
               >
-                <Trash2 className="w-3.5 h-3.5" /> {isCreatorFit ? 'Reject Creator for Project' : 'Delete Brand'}
+                <Trash2 className="w-3.5 h-3.5" /> {isCreatorFit ? 'Decline Creator for This Project' : 'Delete Brand From Pipeline'}
               </button>
             </div>
             <p className="text-[11px] text-[#8A8A8A] mt-3">Reschedules: {rescheduleCount} / {maxReschedules}</p>
@@ -1495,6 +1610,8 @@ export const V3AdminConnectorCallDetail = () => {
   );
 };
 
-export const V3AdminCreatorFitCallDetail = V3AdminConnectorCallDetail;
+export const V3AdminCreatorFitCalls = V3AdminQualificationCalls;
+export const V3AdminCreatorFitCallDetail = V3AdminQualificationCallDetail;
+export const V3AdminCreatorBriefingCallDetail = V3AdminConnectorCallDetail;
 
 export default V3AdminMeetingsOverview;

@@ -21,6 +21,7 @@ export const v3GetBrands = (params) => v3.get('/brands', { params }).then(r => r
 export const v3GetBrand = (brandId) => v3.get(`/brands/${brandId}`).then(r => r.data);
 export const v3CreateBrand = (payload) => v3.post('/brands', payload).then(r => r.data);
 export const v3CreateBrandQualificationCandidate = (payload) => v3.post('/brands/qualification-candidates', payload).then(r => r.data);
+export const v3MoveBrandToBusinessCall = (brandId) => v3.post(`/brands/${brandId}/business-call`).then(r => r.data);
 export const v3DeleteBrand = (brandId) => v3.delete(`/brands/${brandId}`).then(r => r.data);
 export const v3ChangeBrandPassword = (payload) => v3.post('/brand-accounts/change-password', payload).then(r => r.data);
 export const v3ListEmailOutbox = (params) => v3.get('/email-outbox', { params }).then(r => r.data);
@@ -89,6 +90,14 @@ export const v3SubmitCreatorFeedback = (bcId, payload) => v3.post(`/business-cas
 
 // -------- Connect helpers --------
 export const v3SetConnectStatus = (bcId, status) => v3.post(`/business-cases/${bcId}/connect/status`, { connect_status: status }).then(r => r.data);
+export const v3PromoteBusinessCaseConnect = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/connect/promote`, payload).then(r => r.data);
+export const v3RescheduleBusinessCaseConnect = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/connect/reschedule`, payload).then(r => r.data);
+export const v3DeleteBusinessCaseConnect = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/connect/delete`, payload).then(r => r.data);
+export const v3SendConnectMeetingEmail = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/connect/send-meeting-email`, payload).then(r => r.data);
+export const v3SendConnectRescheduleEmail = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/connect/send-reschedule-email`, payload).then(r => r.data);
+export const v3AcceptCreatorBriefing = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/plan/creator-briefing/accept`, payload).then(r => r.data);
+export const v3RescheduleCreatorBriefing = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/plan/creator-briefing/reschedule`, payload).then(r => r.data);
+export const v3DeclineCreatorBriefing = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/plan/creator-briefing/decline`, payload).then(r => r.data);
 
 // -------- Interactions --------
 export const v3ListInteractions = (params) => v3.get('/interactions', { params }).then(r => r.data);
