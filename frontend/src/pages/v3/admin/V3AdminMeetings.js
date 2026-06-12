@@ -57,7 +57,7 @@ const decisionLabel = (value) => ({
   decline: 'Decline',
   accept_creator_for_project: 'Accept Creator for Strategy Snapshot',
   reschedule: 'Reschedule',
-  delete_candidate: 'Delete Candidate',
+  delete_candidate: 'Decline Candidate',
   delete_brand: 'Delete Brand From Pipeline',
   decline_creator: 'Decline Creator',
   reject_creator_for_project: 'Decline Creator for This Project',
@@ -135,24 +135,57 @@ const QuestionList = ({ questions = [] }) => (
   </div>
 );
 
+const asList = (value) => {
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (value == null || value === '') return [];
+  return [value];
+};
+
+const normalizeAnalysis = (analysis = {}, score) => {
+  const recommendation = analysis.recommendation || {};
+  const decision = recommendation.decision || analysis.ai_recommendation || analysis.recommendation_decision;
+  return {
+    score: score ?? analysis.readiness_score ?? analysis.readinessScore ?? analysis.score,
+    summary: analysis.summary || recommendation.summary || '',
+    missingContext: asList(
+      analysis.missingContext ||
+      analysis.missing_context ||
+      recommendation.missing_context ||
+      recommendation.missingContext
+    ),
+    riskFlags: asList(analysis.risk_flags || analysis.riskFlags || recommendation.risk_flags),
+    recommendationLabel: recommendation.label || decisionLabel(decision),
+    reasons: asList(analysis.ai_reasons || analysis.reasons || recommendation.reasons),
+    questions: asList(
+      analysis.followUpQuestions ||
+      analysis.follow_up_questions ||
+      analysis.nextQuestions ||
+      analysis.next_questions ||
+      recommendation.next_questions ||
+      recommendation.nextQuestions
+    ),
+  };
+};
+
 const AnalysisCard = ({ analysis, score }) => {
   if (!analysis) return null;
+  const normalized = normalizeAnalysis(analysis, score);
   return (
     <div className="space-y-4">
-      {score != null && <ScoreBar value={score} />}
-      {analysis.summary && (
+      {normalized.score != null && <ScoreBar value={normalized.score} />}
+      {normalized.summary && (
         <div>
           <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider mb-1">Summary</p>
-          <p className="text-[13px] text-[#1A1A1A] leading-relaxed">{analysis.summary}</p>
+          <p className="text-[13px] text-[#1A1A1A] leading-relaxed">{normalized.summary}</p>
         </div>
       )}
-      {analysis.missingContext?.length > 0 && (
+      {normalized.missingContext.length > 0 && (
         <div>
           <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider mb-2">
             Missing context
           </p>
           <div className="flex flex-wrap gap-2">
-            {analysis.missingContext.map((item) => (
+            {normalized.missingContext.map((item) => (
               <Badge key={item} tone="bg-[#F5D9D2] text-[#B54A37]">
                 {item}
               </Badge>
@@ -160,13 +193,13 @@ const AnalysisCard = ({ analysis, score }) => {
           </div>
         </div>
       )}
-      {analysis.risk_flags?.length > 0 && (
+      {normalized.riskFlags.length > 0 && (
         <div>
           <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider mb-2">
             Risk flags
           </p>
           <div className="flex flex-wrap gap-2">
-            {analysis.risk_flags.map((item) => (
+            {normalized.riskFlags.map((item) => (
               <Badge key={item} tone="bg-[#F5D9D2] text-[#B54A37]">
                 {item}
               </Badge>
@@ -174,27 +207,105 @@ const AnalysisCard = ({ analysis, score }) => {
           </div>
         </div>
       )}
-      {analysis.ai_recommendation && (
+      {normalized.recommendationLabel && (
         <div className="rounded-lg border border-[#DDE7E2] bg-[#F5FAF7] p-3">
           <p className="text-[10px] text-[#1F4A3A] uppercase tracking-wider mb-1">AI recommendation</p>
-          <p className="text-[13px] font-semibold text-[#1A1A1A]">{decisionLabel(analysis.ai_recommendation)}</p>
-          {analysis.ai_reasons?.length > 0 && (
+          <p className="text-[13px] font-semibold text-[#1A1A1A]">{normalized.recommendationLabel}</p>
+          {normalized.reasons.length > 0 && (
             <ul className="mt-2 space-y-1 text-[12px] text-[#6E6657]">
-              {analysis.ai_reasons.map((reason) => <li key={reason}>{reason}</li>)}
+              {normalized.reasons.map((reason) => <li key={reason}>{reason}</li>)}
             </ul>
           )}
         </div>
       )}
-      {(analysis.followUpQuestions?.length > 0 || analysis.nextQuestions?.length > 0) && (
+      {normalized.questions.length > 0 && (
         <div>
           <p className="text-[10px] text-[#8A8A8A] uppercase tracking-wider mb-2">
             Follow-up questions
           </p>
-          <QuestionList
-            questions={analysis.followUpQuestions || analysis.nextQuestions || []}
-          />
+          <QuestionList questions={normalized.questions} />
         </div>
       )}
+    </div>
+  );
+};
+
+const AnalysisDecisionModal = ({
+  open,
+  title,
+  analysis,
+  score,
+  onClose,
+  onAccept,
+  onReschedule,
+  onDecline,
+  acceptLabel,
+  rescheduleLabel,
+  declineLabel,
+  saving,
+  canReschedule = true,
+}) => {
+  if (!open) return null;
+  const normalized = normalizeAnalysis(analysis, score);
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 px-4 py-6" role="dialog" aria-modal="true">
+      <div className="w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-xl bg-white shadow-2xl border border-[#E8E4DB]">
+        <div className="sticky top-0 z-10 bg-white border-b border-[#E8E4DB] px-6 py-4 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">AI result</p>
+            <h2 className="text-xl font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{title}</h2>
+          </div>
+          <button onClick={onClose} className="rounded-full border border-[#E8E4DB] p-2 text-[#6E6657] hover:text-[#1A1A1A]">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="rounded-lg border border-[#E8E4DB] bg-[#FAFAF7] p-4">
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-2">Readiness</p>
+            <ScoreBar value={normalized.score ?? 0} />
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Summary</p>
+            <p className="text-[13px] text-[#1A1A1A] leading-relaxed whitespace-pre-wrap">{normalized.summary || 'No summary generated yet.'}</p>
+          </div>
+          {normalized.missingContext.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-2">Missing context</p>
+              <div className="flex flex-wrap gap-2">
+                {normalized.missingContext.map((item) => (
+                  <Badge key={item} tone="bg-[#F5D9D2] text-[#B54A37]">{item}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="rounded-lg border border-[#DDE7E2] bg-[#F5FAF7] p-4">
+            <p className="text-[10px] uppercase tracking-wider text-[#1F4A3A] mb-1">AI recommendation</p>
+            <p className="text-[15px] font-semibold text-[#1A1A1A]">{normalized.recommendationLabel || 'Pending'}</p>
+            {normalized.reasons.length > 0 && (
+              <ul className="mt-3 space-y-1 text-[12px] text-[#6E6657]">
+                {normalized.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+              </ul>
+            )}
+          </div>
+          {normalized.questions.length > 0 && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-2">Follow-up questions</p>
+              <QuestionList questions={normalized.questions} />
+            </div>
+          )}
+        </div>
+        <div className="sticky bottom-0 bg-white border-t border-[#E8E4DB] p-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <button onClick={onAccept} disabled={saving} className="v3-btn-primary">
+            <CheckCircle2 className="w-3.5 h-3.5" /> {acceptLabel}
+          </button>
+          <button onClick={onReschedule} disabled={saving || !canReschedule} className="v3-btn-secondary">
+            <RotateCcw className="w-3.5 h-3.5" /> {canReschedule ? rescheduleLabel : 'Max reschedules reached'}
+          </button>
+          <button onClick={onDecline} disabled={saving} className="v3-btn-secondary text-[#B54A37]">
+            <Trash2 className="w-3.5 h-3.5" /> {declineLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
@@ -359,33 +470,21 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               onChange={set('title')}
             />
           </label>
-          <label className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Stage</span>
-            <select
-              className="w-full px-3 py-2 rounded-lg border border-[#E8E4DB] text-[13px]"
-              value={form.stage}
-              onChange={set('stage')}
-            >
-              <option value="before_crm">Before CRM</option>
-              <option value="connect">Connect</option>
-              <option value="frame">Frame</option>
-              <option value="plan">Plan</option>
-            </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
-              Business Case
-            </span>
-            <input
-              className="w-full px-3 py-2 rounded-lg border border-[#E8E4DB] text-[13px]"
-              placeholder="Optional for qualification calls"
-              value={form.business_case_title}
-              onChange={set('business_case_title')}
-            />
-          </label>
+          {mode !== 'qualification' && (
+            <label className="space-y-1">
+              <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
+                Business Case
+              </span>
+              <input
+                className="w-full px-3 py-2 rounded-lg border border-[#E8E4DB] text-[13px]"
+                value={form.business_case_title}
+                onChange={set('business_case_title')}
+              />
+            </label>
+          )}
           <label className="space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
-              Company / Creative
+              {mode === 'qualification' ? 'Brand / Company' : 'Company / Creative'}
             </span>
             <input
               className="w-full px-3 py-2 rounded-lg border border-[#E8E4DB] text-[13px]"
@@ -565,7 +664,7 @@ export const V3AdminMeetingsOverview = () => {
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-5">
         <MeetingOverviewCard
           icon={UserPlus}
-          eyebrow="Before CRM"
+          eyebrow="CRM decision"
           title="Qualification Calls"
           description="Brand qualification calls for scanned and manually added brands before they enter CRM."
           count={loading ? '…' : counts.brandQualification}
@@ -635,11 +734,11 @@ export const V3AdminMeetingsOverview = () => {
 
 // ─── Qualification Calls List ─────────────────────────────────────────────────
 
-const QualificationRow = ({ call }) => {
+const QualificationRow = ({ call, detailBasePath = '/v3/admin/meetings/qualification' }) => {
   const navigate = useNavigate();
   return (
     <button
-      onClick={() => navigate(`/v3/admin/meetings/qualification/${call.id || call._id}`)}
+      onClick={() => navigate(`${detailBasePath}/${call.id || call._id}`)}
       className="w-full v3-floating-card v3-meeting-business p-4 text-left flex flex-col lg:flex-row lg:items-center gap-4"
       data-testid={`qualification-call-${call.id || call._id}`}
     >
@@ -647,7 +746,7 @@ const QualificationRow = ({ call }) => {
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="text-[14px] font-medium text-[#1A1A1A]">{call.title}</span>
-          <Badge tone="bg-[#F2EAD8] text-[#7A5F23]">Before CRM</Badge>
+          <Badge tone="bg-[#F2EAD8] text-[#7A5F23]">CRM decision</Badge>
           <Badge>{call.status}</Badge>
           {call.qualification_status && <Badge>{call.qualification_status}</Badge>}
         </div>
@@ -673,12 +772,12 @@ const QualificationRow = ({ call }) => {
   );
 };
 
-export const V3AdminQualificationCalls = () => {
+export const V3AdminQualificationCalls = ({ qualificationType = 'brand' }) => {
   const navigate = useNavigate();
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [calls, setCalls] = useState([]);
-  const [qualTab, setQualTab] = useState('brand');
   const [loading, setLoading] = useState(true);
+  const isCreatorView = qualificationType === 'creator';
 
   const load = useCallback(() => {
     setLoading(true);
@@ -691,7 +790,8 @@ export const V3AdminQualificationCalls = () => {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-  const visibleCalls = calls.filter((call) => (call.qualification_entity_type || call.entity_type || 'brand') === qualTab);
+  const visibleCalls = calls.filter((call) => (call.qualification_entity_type || call.entity_type || 'brand') === qualificationType);
+  const detailBasePath = isCreatorView ? '/v3/admin/meetings/creator-fit' : '/v3/admin/meetings/qualification';
 
   return (
     <div data-testid="v3-admin-qualification-calls">
@@ -703,29 +803,16 @@ export const V3AdminQualificationCalls = () => {
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Meetings
       </button>
       <PageHeader
-        title="Qualification Calls"
-        subtitle="First calls used to decide whether brands enter CRM and creators enter the approved creator database."
+        title={isCreatorView ? 'Creator Fit Calls' : 'Qualification Calls'}
+        subtitle={isCreatorView ? 'Creator fit calls decide whether creator candidates enter the approved creator roster.' : 'Brand qualification calls decide only whether a brand should be accepted into CRM.'}
         action={
-          <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
-            <Plus className="w-4 h-4" /> Schedule Qualification Call
-          </button>
+          !isCreatorView ? (
+            <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
+              <Plus className="w-4 h-4" /> Schedule Qualification Call
+            </button>
+          ) : null
         }
       />
-      <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg w-fit mb-5" data-testid="qualification-call-tabs">
-        {[
-          { key: 'brand', label: 'Brand Qualification' },
-          { key: 'creator', label: 'Creator Fit Qualification' },
-        ].map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setQualTab(tab.key)}
-            className={`text-[11px] px-3 py-1.5 rounded transition-colors ${qualTab === tab.key ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
-            data-testid={`qualification-tab-${tab.key}`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
       {loading ? (
         <div className="flex items-center justify-center py-16 gap-2 text-[#8A8A8A]">
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -734,17 +821,17 @@ export const V3AdminQualificationCalls = () => {
       ) : visibleCalls.length === 0 ? (
         <div className="v3-card p-10 flex flex-col items-center gap-2">
           <UserPlus className="w-8 h-8 text-[#D4CDBF]" strokeWidth={1} />
-          <p className="text-[13px] text-[#8A8A8A]">No {qualTab === 'brand' ? 'brand' : 'creator'} qualification calls yet.</p>
+          <p className="text-[13px] text-[#8A8A8A]">No {isCreatorView ? 'creator fit' : 'brand qualification'} calls yet.</p>
           <p className="text-[11px] text-[#8A8A8A]">
-            {qualTab === 'brand'
-              ? 'Manual brands and scanner candidates appear here before CRM.'
-              : 'Creator discovery candidates appear here before approval.'}
+            {isCreatorView
+              ? 'Creator discovery candidates appear here before roster approval.'
+              : 'Manual brands and scanner candidates appear here for CRM acceptance.'}
           </p>
         </div>
       ) : (
         <div className="space-y-2">
           {visibleCalls.map((call) => (
-            <QualificationRow key={call.id || call._id} call={call} />
+            <QualificationRow key={call.id || call._id} call={call} detailBasePath={detailBasePath} />
           ))}
         </div>
       )}
@@ -1002,6 +1089,7 @@ export const V3AdminQualificationCallDetail = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
 
   useEffect(() => {
     v3GetMeeting(meetingId)
@@ -1021,6 +1109,7 @@ export const V3AdminQualificationCallDetail = () => {
       await v3UploadMeetingTranscript(meetingId, { transcript });
       const result = await v3AnalyzeMeetingTranscript(meetingId, {});
       setMeeting((m) => ({ ...m, ...result, analysis: result, transcript }));
+      setAnalysisModalOpen(true);
     } catch (err) {
       console.error('Analysis failed:', err);
     }
@@ -1054,7 +1143,8 @@ export const V3AdminQualificationCallDetail = () => {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm('Delete this candidate?')) return;
+    const targetType = meeting?.qualification_entity_type || meeting?.entity_type || 'brand';
+    if (!window.confirm(targetType === 'creator' ? 'Decline this creator?' : 'Decline this candidate?')) return;
     try {
       await v3DeleteQualificationMeeting(meetingId, {});
       navigate('/v3/admin/meetings/qualification');
@@ -1110,7 +1200,6 @@ export const V3AdminQualificationCallDetail = () => {
             <Badge tone={entityType === 'creator' ? 'bg-[#F5D9D2] text-[#B54A37]' : 'bg-[#F2EAD8] text-[#7A5F23]'}>
               {entityType === 'creator' ? 'Creator' : 'Brand'}
             </Badge>
-            <Badge tone="bg-[#F2EAD8] text-[#7A5F23]">Before CRM</Badge>
           </div>
         }
       />
@@ -1246,10 +1335,10 @@ export const V3AdminQualificationCallDetail = () => {
               className="w-full rounded-lg border border-[#E8E4DB] p-3 text-[13px] mb-3"
               placeholder="Paste transcript here..."
             />
-            <button
-              onClick={handleAnalyze}
-              disabled={analyzing}
-              className="v3-btn-primary"
+              <button
+                onClick={handleAnalyze}
+                disabled={analyzing}
+                className="v3-btn-primary"
             >
               {analyzing ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1268,6 +1357,12 @@ export const V3AdminQualificationCallDetail = () => {
                 analysis={analysis}
                 score={analysis.readiness_score ?? meeting.readiness_score}
               />
+              <button
+                onClick={() => setAnalysisModalOpen(true)}
+                className="v3-btn-secondary mt-4 text-[11px]"
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Open analysis popup
+              </button>
             </Section>
           )}
           <Section title="Qualification decision">
@@ -1293,7 +1388,7 @@ export const V3AdminQualificationCallDetail = () => {
                 onClick={handleDelete}
                 className="v3-btn-secondary text-[#B54A37]"
               >
-                <Trash2 className="w-3.5 h-3.5" /> {entityType === 'creator' ? 'Decline Creator' : 'Delete Candidate'}
+                <Trash2 className="w-3.5 h-3.5" /> {entityType === 'creator' ? 'Decline Creator' : 'Decline Candidate'}
               </button>
             </div>
             {accepted && (
@@ -1312,6 +1407,21 @@ export const V3AdminQualificationCallDetail = () => {
           </Section>
         </div>
       </div>
+      <AnalysisDecisionModal
+        open={analysisModalOpen}
+        title={entityType === 'creator' ? 'Creator Fit Analysis' : 'CRM Qualification Analysis'}
+        analysis={analysis}
+        score={analysis.readiness_score ?? meeting.readiness_score}
+        onClose={() => setAnalysisModalOpen(false)}
+        onAccept={handleAccept}
+        onReschedule={handleReschedule}
+        onDecline={handleDelete}
+        acceptLabel={entityType === 'creator' ? 'Add to Creator Roster' : 'Accept to CRM'}
+        rescheduleLabel={entityType === 'creator' ? 'Reschedule Creator Fit Call' : 'Reschedule Qualification Call'}
+        declineLabel={entityType === 'creator' ? 'Decline Creator' : 'Decline Candidate'}
+        saving={saving}
+        canReschedule={canReschedule}
+      />
     </div>
   );
 };
@@ -1610,7 +1720,7 @@ export const V3AdminConnectorCallDetail = () => {
   );
 };
 
-export const V3AdminCreatorFitCalls = V3AdminQualificationCalls;
+export const V3AdminCreatorFitCalls = () => <V3AdminQualificationCalls qualificationType="creator" />;
 export const V3AdminCreatorFitCallDetail = V3AdminQualificationCallDetail;
 export const V3AdminCreatorBriefingCallDetail = V3AdminConnectorCallDetail;
 
