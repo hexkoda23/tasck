@@ -1447,7 +1447,9 @@ def make_v3_router(db):
         if existing:
             return existing
 
-        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
+        brand_company = brand.get("company") or case.get("brand_name") or case.get("title") or "Brand"
+        brand_industry = brand.get("industry") or brand.get("sector") or brand.get("category") or "their industry"
         mi = _marketing_intelligence_from_case(case)
         channels = mi.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"]
         kpis = mi.get("marketing_kpis") or [{"kpi": "Reach", "target": "Confirm with brand."}]
@@ -1473,14 +1475,14 @@ def make_v3_router(db):
             "approved_at": None,
             "approved_by": None,
             "approved_by_party": None,
-            "brand_header": f"{brand['company'].split(' ')[0].upper()} x TASCK",
+            "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
             "title": f"{case['title']} - Alignment Snapshot",
             "meta": "AI-generated from connector call. Pending admin review and brand approval.",
             "marketing_intelligence": mi,
             "brand_comments": [],
             "sections": [
                 {"heading": "Business promotion summary", "type": "prose", "content": (
-                    f"TASCK recommends progressing {brand['company']} into a creator-led strategy track for "
+                    f"TASCK recommends progressing {brand_company} into a creator-led strategy track for "
                     f"{case['title']}. The connector call indicates a clear commercial opportunity: "
                     f"{mi.get('key_marketing_focus')}"
                 )},
@@ -1488,7 +1490,7 @@ def make_v3_router(db):
                 {"heading": "Primary Target Audience", "type": "prose", "content": mi.get("primary_target_audience", "Admin review required.")},
                 {"heading": "Key Marketing Channels", "type": "bullets", "items": channels},
                 {"heading": "Marketing KPIs", "type": "kpis", "flagged": True, "items": kpis},
-                {"heading": "Brand background", "type": "prose", "content": f"{brand['company']} operates in {brand['industry']}. Stated intent at intake: {case.get('connect', {}).get('stated_intent', 'Pending admin review.')}"},
+                {"heading": "Brand background", "type": "prose", "content": f"{brand_company} operates in {brand_industry}. Stated intent at intake: {case.get('connect', {}).get('stated_intent', 'Pending admin review.')}"},
                 {"heading": "Proposed creator direction", "type": "prose", "content": (
                     "Move forward only if the creator shortlist can credibly serve the marketing focus, audience, "
                     "channels, and KPI expectations above. The next stage should test cultural fit, conversion "
