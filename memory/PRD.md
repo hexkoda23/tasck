@@ -263,6 +263,11 @@ Three-stage dedupe layer in `v3_tracker_dedupe.py` — additive, does **not** ch
 - **Cost telemetry** — every scan persists `cost_estimate: {serpapi_calls, serpapi_usd, llm_calls, llm_usd, total_usd}` to `v3_opportunity_scans`. Surfaced on the "Last scan" summary card. Default 16-call scan costs ≈ $0.21.
 - **Pytest coverage** — `/app/backend/tests/test_tracker_v33_addendum.py` (14 tests) validates fan-out shape, recency mix, site filters, source-aware Pass 1, and backwards compatibility.
 
+### UI/UX Fixes (12 June 2026)
+- **Duration dropdown**: Schedule Qualification + Business Call modals now use a `<select>` (5–180 min, steps of 5, default 30) in `V3AdminMeetings.js`.
+- **Alignment endpoint hardening**: `POST /api/v3/business-cases/{id}/ai/alignment` no longer crashes with `KeyError: 'industry'` — safe `.get()` fallbacks for missing brand fields.
+- **Alignment Snapshot Studio graceful 400 handling** (`V3BusinessCaseFlowPages.js` → `V3BusinessCaseFrameSnapshot`): clicking Generate on a non-Frame-stage case now shows a friendly inline notice ("Can't generate the Alignment Snapshot yet — there isn't enough information…(Current stage: X)") instead of an uncaught Axios 400 overlay. Send-to-Brand and Admin-approve buttons also catch and surface backend `detail` messages. Verified via Playwright screenshot.
+
 ### Remaining P2 / Future
 - Wire Brand + Creator portals to `/api/v3/*` (still on `v3data.js` fallback)
 - Mobile responsiveness pass

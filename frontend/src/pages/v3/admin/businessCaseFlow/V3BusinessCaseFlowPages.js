@@ -392,14 +392,32 @@ export const V3BusinessCaseConnectReschedule = () => {
 export const V3BusinessCaseFrameSnapshot = () => {
   const { id, bundle, reload } = useBusinessCaseBundle();
   const snapshot = bundle?.alignment_snapshot;
+  const [notice, setNotice] = useState(null);
+  const stage = bundle?.business_case?.stage;
+  const run = (fn, fallbackMsg) => () => {
+    setNotice(null);
+    fn().then(reload).catch((e) => {
+      const detail = e?.response?.data?.detail;
+      if (e?.response?.status === 400 && String(detail || '').includes('Frame stage')) {
+        setNotice("Can't generate the Alignment Snapshot yet — there isn't enough information to generate it. Complete the Connect stage and move this Business Case to Frame first.");
+      } else {
+        setNotice(detail || fallbackMsg);
+      }
+    });
+  };
   return (
     <FlowShell title="Alignment Snapshot Studio" subtitle="Generate, edit, save, and send the Alignment Snapshot to the Brand Portal and email." nextAction="Generate or send the snapshot for brand approval.">
-      <InfoCard title="Alignment Snapshot generated" action={<button onClick={() => v3GenerateAlignment(id).then(reload)} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate</button>}>
+      <InfoCard title="Alignment Snapshot generated" action={<button data-testid="alignment-generate-btn" onClick={run(() => v3GenerateAlignment(id), 'Could not generate the Alignment Snapshot. Please try again.')} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate</button>}>
+        {notice && (
+          <div data-testid="alignment-notice" className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]">
+            {notice}{stage && stage !== 'frame' ? ` (Current stage: ${bundle?.business_case?.stage_label || stage})` : ''}
+          </div>
+        )}
         <p className="text-[14px] font-semibold">{snapshot?.title || 'No snapshot generated yet.'}</p>
         <p className="text-[12px] text-[#6E6657] mt-2">{snapshot?.meta || 'The generated snapshot will appear here after Connect is ready.'}</p>
         <div className="flex flex-wrap gap-2 mt-4">
-          <button onClick={() => v3SendAlignmentToBrand(id).then(reload)} className="v3-btn-primary"><Send className="w-3.5 h-3.5" /> Send Alignment Snapshot to Brand Portal + Email</button>
-          <button onClick={() => v3ApproveAlignmentAs(id, 'admin', 'admin').then(reload)} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
+          <button data-testid="alignment-send-brand-btn" onClick={run(() => v3SendAlignmentToBrand(id), 'Could not send the Alignment Snapshot. Generate it first.')} className="v3-btn-primary"><Send className="w-3.5 h-3.5" /> Send Alignment Snapshot to Brand Portal + Email</button>
+          <button data-testid="alignment-admin-approve-btn" onClick={run(() => v3ApproveAlignmentAs(id, 'admin', 'admin'), 'Could not approve the Alignment Snapshot. Generate it first.')} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
         </div>
       </InfoCard>
     </FlowShell>
