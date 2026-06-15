@@ -205,6 +205,56 @@ const TextInput = ({ label, value, onChange, rows = 1 }) => (
   </label>
 );
 
+const DateTimeInput = ({ label, value, onChange }) => (
+  <label className="space-y-1">
+    <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
+    <input
+      type="datetime-local"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
+      data-testid="connect-scheduled-for"
+    />
+  </label>
+);
+
+const AgendaEditor = ({ items, onChange }) => {
+  const updateItem = (index, value) => onChange(items.map((item, idx) => (idx === index ? value : item)));
+  const removeItem = (index) => onChange(items.filter((_, idx) => idx !== index));
+  const addItem = () => onChange([...items, '']);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Agenda</span>
+        <button type="button" onClick={addItem} className="v3-btn-secondary text-[11px]" data-testid="connect-agenda-add">
+          <Plus className="w-3.5 h-3.5" /> Add topic
+        </button>
+      </div>
+      <div className="rounded-xl border border-[#D7CBB8] bg-[#FBFAF7] p-3">
+        <div className="grid gap-2">
+          {items.map((item, index) => (
+            <div key={`agenda-${index}`} className="grid grid-cols-[34px_1fr_auto] items-center gap-2 rounded-lg border border-[#E8E4DB] bg-white p-2 shadow-sm">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#E8F3ED] text-[11px] font-semibold text-[#1F4A3A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                {index + 1}
+              </span>
+              <input
+                value={item}
+                onChange={(e) => updateItem(index, e.target.value)}
+                className="min-w-0 rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-[#1A1A1A] outline-none focus:border-[#D7CBB8] focus:bg-[#FAF7F1]"
+                placeholder="Agenda topic"
+                data-testid={`connect-agenda-item-${index}`}
+              />
+              <button type="button" onClick={() => removeItem(index)} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove agenda item ${index + 1}`}>
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const downloadDraft = (filename, text) => {
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -268,28 +318,68 @@ export const V3BusinessCaseConnectSchedule = () => {
   const { id, bundle } = useBusinessCaseBundle();
   const brand = getBrand(bundle);
   const bc = getCase(bundle);
-  const contact = bc.brand_contact_snapshot || {};
   const [form, setForm] = useState({
-    contact_name: contact.primary_contact || brand.primary_contact || '',
-    contact_email: contact.email || brand.email || '',
+    contact_name: '',
+    contact_email: '',
     scheduled_for: '',
     meeting_link: '',
-    agenda: connectQuestions.join('\n'),
   });
+  const [agendaItems, setAgendaItems] = useState(connectQuestions);
   const [saved, setSaved] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveNotice, setSaveNotice] = useState('');
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (prefilled || !bundle?.business_case) return;
+    const loadedBrand = getBrand(bundle);
+    const loadedCase = getCase(bundle);
+    const contact = loadedCase.brand_contact_snapshot || {};
+    const nextContactName = (
+      contact.primary_contact ||
+      contact.contact_name ||
+      loadedBrand.primary_contact ||
+      loadedBrand.primaryContact ||
+      loadedBrand.company ||
+      loadedBrand.name ||
+      ''
+    );
+    const nextContactEmail = contact.email || contact.contact_email || loadedBrand.email || '';
+    setForm((current) => ({
+      ...current,
+      contact_name: current.contact_name || nextContactName,
+      contact_email: current.contact_email || nextContactEmail,
+    }));
+    setPrefilled(true);
+  }, [bundle, prefilled]);
   const save = async () => {
-    const meeting = await v3CreateMeeting({
-      title: `Business Call — Connect: ${bc.title}`,
-      meeting_type: 'business_call',
-      stage: 'connect',
-      entity_type: 'brand',
-      brand_id: bc.brand_id,
-      business_case_id: id,
-      business_case_title: bc.title,
-      entity_name: brand.company || brand.name || '',
-      ...form,
-    });
-    setSaved(meeting);
+    if (!bundle?.business_case) {
+      setSaveNotice('Business Case details are still loading. Please try again in a moment.');
+      return;
+    }
+    const agenda = agendaItems.map((item) => item.trim()).filter(Boolean).join('\n');
+    setSaving(true);
+    setSaveNotice('');
+    try {
+      const meeting = await v3CreateMeeting({
+        title: `Business Call — Connect: ${bc.title || brand.company || 'Brand'}`,
+        meeting_type: 'business_call',
+        stage: 'connect',
+        entity_type: 'brand',
+        brand_id: bc.brand_id || brand.id,
+        business_case_id: id,
+        business_case_title: bc.title,
+        entity_name: brand.company || brand.name || '',
+        ...form,
+        agenda,
+        meeting_notes: agenda,
+      });
+      setSaved(meeting);
+      setSaveNotice('Meeting saved and linked to this Business Case.');
+    } catch (e) {
+      setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not save the meeting. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <FlowShell title="Connect Schedule" subtitle="Set the Business Call time, link, agenda, and brand contact before sending the welcome email." nextAction="Save the meeting, then queue the brand welcome + meeting email.">
@@ -297,16 +387,25 @@ export const V3BusinessCaseConnectSchedule = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <TextInput label="Contact name" value={form.contact_name} onChange={(value) => setForm({ ...form, contact_name: value })} />
           <TextInput label="Contact email" value={form.contact_email} onChange={(value) => setForm({ ...form, contact_email: value })} />
-          <TextInput label="Date/time" value={form.scheduled_for} onChange={(value) => setForm({ ...form, scheduled_for: value })} />
+          <DateTimeInput label="Date/time" value={form.scheduled_for} onChange={(value) => setForm({ ...form, scheduled_for: value })} />
           <TextInput label="Meeting link" value={form.meeting_link} onChange={(value) => setForm({ ...form, meeting_link: value })} />
-          <div className="md:col-span-2"><TextInput label="Agenda" rows={8} value={form.agenda} onChange={(value) => setForm({ ...form, agenda: value })} /></div>
+          <div className="md:col-span-2">
+            <AgendaEditor items={agendaItems} onChange={setAgendaItems} />
+          </div>
         </div>
-        <button onClick={save} className="v3-btn-primary mt-4"><Save className="w-3.5 h-3.5" /> Save Meeting</button>
+        {saveNotice && (
+          <div className="mt-4 rounded-lg border border-[#D7CBB8] bg-[#FAF7F1] px-3 py-2 text-[12px] text-[#4F3E2F]" data-testid="connect-save-notice">
+            {saveNotice}
+          </div>
+        )}
+        <button onClick={save} disabled={saving || !bundle?.business_case} className="v3-btn-primary mt-4" data-testid="connect-save-meeting-btn">
+          <Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save Meeting'}
+        </button>
       </InfoCard>
       {saved && (
         <InfoCard title="Send Brand Welcome + Meeting Email">
           <p className="text-[13px] text-[#6E6657] mb-3">Queues portal/login placeholder, meeting link, welcome message, and what the call will cover.</p>
-          <button onClick={() => v3SendConnectMeetingEmail(id, { ...form, meeting_id: saved.id })} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Queue email</button>
+          <button onClick={() => v3SendConnectMeetingEmail(id, { ...form, agenda: agendaItems.map((item) => item.trim()).filter(Boolean).join('\n'), meeting_id: saved.id })} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Queue email</button>
         </InfoCard>
       )}
     </FlowShell>
@@ -411,10 +510,14 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const { id, bundle, reload } = useBusinessCaseBundle();
   const snapshot = bundle?.alignment_snapshot;
   const [notice, setNotice] = useState(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const stage = bundle?.business_case?.stage;
-  const run = (fn, fallbackMsg) => () => {
+  const hasSnapshot = Boolean(snapshot?.title || snapshot?.meta || snapshot?.sections?.length);
+  const run = (fn, fallbackMsg, successMsg) => () => {
     setNotice(null);
-    fn().then(reload).catch((e) => {
+    fn().then(reload).then(() => {
+      if (successMsg) setNotice(successMsg);
+    }).catch((e) => {
       const detail = e?.response?.data?.detail;
       if (e?.response?.status === 400 && String(detail || '').includes('Frame stage')) {
         setNotice("Can't generate the Alignment Snapshot yet — there isn't enough information to generate it. Complete the Connect stage and move this Business Case to Frame first.");
@@ -423,9 +526,35 @@ export const V3BusinessCaseFrameSnapshot = () => {
       }
     });
   };
+  const openShareOptions = () => {
+    if (!hasSnapshot) {
+      setNotice('Generate the Alignment Snapshot before sharing it.');
+      return;
+    }
+    setShareOpen((open) => !open);
+  };
+  const copyBrandReviewLink = () => {
+    const link = `${window.location.origin}/v3/brand/approvals`;
+    if (!navigator.clipboard) {
+      setNotice(`Brand review link: ${link}`);
+      return;
+    }
+    navigator.clipboard.writeText(link)
+      .then(() => setNotice('Brand review link copied.'))
+      .catch(() => setNotice(`Brand review link: ${link}`));
+  };
   return (
     <FlowShell title="Alignment Snapshot Studio" subtitle="Generate, edit, save, and send the Alignment Snapshot to the Brand Portal and email." nextAction="Generate or send the snapshot for brand approval.">
-      <InfoCard title="Alignment Snapshot generated" action={<button data-testid="alignment-generate-btn" onClick={run(() => v3GenerateAlignment(id), 'Could not generate the Alignment Snapshot. Please try again.')} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate</button>}>
+      <InfoCard
+        title="Alignment Snapshot generated"
+        action={(
+          <div className="flex flex-wrap justify-end gap-2">
+            <button data-testid="alignment-generate-btn" onClick={run(() => v3GenerateAlignment(id), 'Could not generate the Alignment Snapshot. Please try again.', 'Alignment Snapshot generated and ready to share.')} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> {hasSnapshot ? 'Regenerate' : 'Generate'}</button>
+            <button data-testid="alignment-share-btn" onClick={openShareOptions} className="v3-btn-secondary"><Send className="w-3.5 h-3.5" /> Share</button>
+            <button data-testid="alignment-admin-approve-btn" onClick={run(() => v3ApproveAlignmentAs(id, 'admin', 'admin'), 'Could not approve the Alignment Snapshot. Generate it first.', 'Alignment Snapshot approved by admin.')} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
+          </div>
+        )}
+      >
         {notice && (
           <div data-testid="alignment-notice" className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]">
             {notice}{stage && stage !== 'frame' ? ` (Current stage: ${bundle?.business_case?.stage_label || stage})` : ''}
@@ -433,10 +562,15 @@ export const V3BusinessCaseFrameSnapshot = () => {
         )}
         <p className="text-[14px] font-semibold">{snapshot?.title || 'No snapshot generated yet.'}</p>
         <p className="text-[12px] text-[#6E6657] mt-2">{snapshot?.meta || 'The generated snapshot will appear here after Connect is ready.'}</p>
-        <div className="flex flex-wrap gap-2 mt-4">
-          <button data-testid="alignment-send-brand-btn" onClick={run(() => v3SendAlignmentToBrand(id), 'Could not send the Alignment Snapshot. Generate it first.')} className="v3-btn-primary"><Send className="w-3.5 h-3.5" /> Send Alignment Snapshot to Brand Portal + Email</button>
-          <button data-testid="alignment-admin-approve-btn" onClick={run(() => v3ApproveAlignmentAs(id, 'admin', 'admin'), 'Could not approve the Alignment Snapshot. Generate it first.')} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
-        </div>
+        {shareOpen && (
+          <div data-testid="alignment-share-options" className="mt-4 rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-3">
+            <div className="flex flex-wrap gap-2">
+              <button data-testid="alignment-send-brand-btn" onClick={run(() => v3SendAlignmentToBrand(id), 'Could not send the Alignment Snapshot. Generate it first.', 'Alignment Snapshot shared to the Brand Portal and email.')} className="v3-btn-primary"><Send className="w-3.5 h-3.5" /> Brand Portal + Email</button>
+              <button data-testid="alignment-copy-link-btn" onClick={copyBrandReviewLink} className="v3-btn-secondary">Copy Brand Review Link</button>
+            </div>
+            <p className="mt-2 text-[12px] text-[#6E6657]">Choose how the brand should receive the generated Alignment Snapshot.</p>
+          </div>
+        )}
       </InfoCard>
     </FlowShell>
   );

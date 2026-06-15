@@ -8,6 +8,7 @@ import {
   Phone,
   Globe,
   Building2,
+  Copy,
   Sparkles,
   Plus,
   X,
@@ -53,6 +54,8 @@ const V3AdminBrandDetail = () => {
   const [submittingInteraction, setSubmittingInteraction] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [followUpDraft, setFollowUpDraft] = useState('');
+  const [followUpNotice, setFollowUpNotice] = useState('');
   const [interactionForm, setInteractionForm] = useState({
     type: 'call',
     date_iso: new Date().toISOString().slice(0, 10),
@@ -175,6 +178,51 @@ const V3AdminBrandDetail = () => {
   const interactions = bundle.interactions || [];
   const emails = bundle.emails || [];
   const scoreColor = brand.leadScore >= 70 ? '#1F4A3A' : brand.leadScore >= 40 ? '#C49B5F' : '#B54A37';
+  const activeProject = projects[0];
+  const latestInteraction = interactions[0];
+  const draftFollowUp = () => {
+    const contactName = brand.primaryContact || brand.contact_name || 'there';
+    const projectStatus = activeProject
+      ? `I also wanted to reconnect on ${activeProject.title || activeProject.name || 'the active business case'}, currently in ${activeProject.stage_label || activeProject.stage || 'progress'}.`
+      : 'I wanted to reconnect and confirm the next best step for a TASCK business case.';
+    const recentContext = latestInteraction?.title
+      ? `Last CRM note: ${latestInteraction.title}.`
+      : 'There is no recent CRM follow-up logged, so I wanted to check in directly.';
+    const draft = [
+      `Hi ${contactName},`,
+      `Hope you are well. ${projectStatus}`,
+      `${recentContext} Based on the current CRM details, the useful next step is to confirm your priority, timeline, and the decision maker for moving this forward.`,
+      'Would you be open to a quick call this week so we can align on the brief and next action?',
+      'Best,\nTASCK Team',
+    ].join('\n\n');
+    setFollowUpDraft(draft);
+    setFollowUpNotice('Follow-up draft generated and loaded into the interaction form.');
+    setInteractionForm({
+      type: 'follow_up',
+      date_iso: new Date().toISOString().slice(0, 10),
+      title: `Follow-up draft — ${brand.company}`,
+      summary: draft,
+      participants: brand.primaryContact || '',
+      transcript: '',
+      next_action: 'Review and send follow-up',
+      business_case_id: activeProject?.id || '',
+      create_meeting: false,
+    });
+    setInteractionOpen(true);
+  };
+  const copyFollowUpDraft = () => {
+    if (!followUpDraft.trim()) {
+      setFollowUpNotice('Generate a follow-up draft first.');
+      return;
+    }
+    if (!navigator.clipboard) {
+      setFollowUpNotice('Copy is unavailable in this browser. The draft is visible below.');
+      return;
+    }
+    navigator.clipboard.writeText(followUpDraft)
+      .then(() => setFollowUpNotice('Follow-up draft copied.'))
+      .catch(() => setFollowUpNotice('Copy failed. The draft is visible below.'));
+  };
 
   return (
     <>
@@ -418,21 +466,29 @@ const V3AdminBrandDetail = () => {
               </div>
             )}
 
-            {/* AI Assist panel for low-score brands */}
-            {brand.leadScore > 0 && brand.leadScore < 75 && (
-              <div className="mt-4 v3-ai-panel">
-                <div className="flex items-center gap-2 mb-2">
-                  <Sparkles className="w-3.5 h-3.5 text-[#1F4A3A]" />
-                  <span className="text-[11px] font-semibold uppercase tracking-wider">AI Assist</span>
-                </div>
-                <p className="text-[12px] text-[#5C5C5C] mb-3">
-                  This lead hasn&apos;t been contacted recently. Draft a follow-up?
-                </p>
-                <button className="v3-btn-primary text-[12px]">
+            <div className="mt-4 v3-ai-panel">
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles className="w-3.5 h-3.5 text-[#1F4A3A]" />
+                <span className="text-[11px] font-semibold uppercase tracking-wider">AI Assist</span>
+              </div>
+              <p className="text-[12px] text-[#5C5C5C] mb-3">
+                Draft a follow-up from this brand&apos;s CRM details, latest interaction, and Business Case status.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={draftFollowUp} className="v3-btn-primary text-[12px]" data-testid="ai-draft-follow-up-btn">
                   <Sparkles className="w-3.5 h-3.5" /> Draft Follow-Up
                 </button>
+                <button onClick={copyFollowUpDraft} className="v3-btn-secondary text-[12px]" data-testid="ai-copy-follow-up-btn">
+                  <Copy className="w-3.5 h-3.5" /> Copy Draft
+                </button>
               </div>
-            )}
+              {followUpNotice && <p className="mt-3 text-[12px] text-[#1F4A3A]" data-testid="ai-follow-up-notice">{followUpNotice}</p>}
+              {followUpDraft && (
+                <pre className="mt-3 max-h-56 overflow-y-auto rounded-lg border border-[#DDE7E2] bg-white/80 p-3 text-[12px] leading-relaxed text-[#3D3D3D] whitespace-pre-wrap font-sans" data-testid="ai-follow-up-draft">
+                  {followUpDraft}
+                </pre>
+              )}
+            </div>
           </div>
         </div>
       </div>

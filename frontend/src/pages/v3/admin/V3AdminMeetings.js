@@ -1106,6 +1106,7 @@ export const V3AdminQualificationCallDetail = () => {
   const [accepted, setAccepted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
+  const [acceptFeedback, setAcceptFeedback] = useState(null);
 
   useEffect(() => {
     v3GetMeeting(meetingId)
@@ -1133,16 +1134,39 @@ export const V3AdminQualificationCallDetail = () => {
   };
 
   const handleAccept = async () => {
+    const targetType = (meeting?.qualification_entity_type || meeting?.entity_type || 'brand').toLowerCase();
+    if (accepted) {
+      setAcceptFeedback({
+        title: targetType === 'creator' ? 'Creator already added' : 'Brand already accepted',
+        message: targetType === 'creator'
+          ? 'This creator is already in the approved roster. No duplicate qualification record was added.'
+          : 'This brand is already accepted into CRM. No duplicate transcript record was added.',
+      });
+      setAnalysisModalOpen(false);
+      return;
+    }
     setSaving(true);
     try {
       const result = await v3AcceptQualificationMeeting(meetingId, {});
       setAccepted(true);
       setMeeting((m) => ({ ...m, decision_status: 'accepted', qualification_status: 'accepted', ...result }));
-      if (result.creator?.id) {
-        navigate(`/v3/admin/creators/${result.creator.id}`);
-      }
+      setAcceptFeedback({
+        title: targetType === 'creator' ? 'Creator added' : 'Brand accepted',
+        message: result.already_accepted
+          ? targetType === 'creator'
+            ? 'This creator was already in the approved roster. No duplicate qualification record was added.'
+            : 'This brand was already accepted into CRM. No duplicate transcript record was added.'
+          : targetType === 'creator'
+            ? 'Creator added to the approved roster and welcome email queued.'
+            : 'Brand accepted into CRM. The qualification transcript is now attached to the CRM profile.',
+      });
+      setAnalysisModalOpen(false);
     } catch (err) {
       console.error('Accept failed:', err);
+      setAcceptFeedback({
+        title: 'Accept failed',
+        message: 'The qualification decision could not be saved. Please try again.',
+      });
     }
     setSaving(false);
   };
@@ -1385,7 +1409,7 @@ export const V3AdminQualificationCallDetail = () => {
             <div className="grid grid-cols-1 gap-2">
               <button
                 onClick={handleAccept}
-                disabled={saving || accepted}
+                disabled={saving}
                 className="v3-btn-primary"
               >
                 <CheckCircle2 className="w-3.5 h-3.5" />{' '}
@@ -1432,12 +1456,36 @@ export const V3AdminQualificationCallDetail = () => {
         onAccept={handleAccept}
         onReschedule={handleReschedule}
         onDecline={handleDelete}
-        acceptLabel={entityType === 'creator' ? 'Add to Creator Roster' : 'Accept to CRM'}
+        acceptLabel={accepted ? (entityType === 'creator' ? 'Added to Creator Roster' : 'Accepted into CRM') : (entityType === 'creator' ? 'Add to Creator Roster' : 'Accept to CRM')}
         rescheduleLabel={entityType === 'creator' ? 'Reschedule Creator Fit Call' : 'Reschedule Qualification Call'}
         declineLabel={entityType === 'creator' ? 'Decline Creator' : 'Decline Candidate'}
         saving={saving}
         canReschedule={canReschedule}
       />
+      {acceptFeedback && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/35 px-4" role="dialog" aria-modal="true" data-testid="qualification-accept-feedback">
+          <div className="w-full max-w-md rounded-xl border border-[#DDE7E2] bg-white p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-full bg-[#E8F3ED] p-2 text-[#1F4A3A]">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{acceptFeedback.title}</h3>
+                <p className="mt-2 text-[13px] leading-relaxed text-[#6E6657]">{acceptFeedback.message}</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button onClick={() => setAcceptFeedback(null)} className="v3-btn-primary text-[11px]">Close</button>
+                  <button
+                    onClick={() => navigate(entityType === 'creator' ? '/v3/admin/creators' : '/v3/admin/crm')}
+                    className="v3-btn-secondary text-[11px]"
+                  >
+                    {entityType === 'creator' ? 'Open Creator Roster' : 'Open CRM Brands'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

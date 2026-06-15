@@ -4727,6 +4727,33 @@ Produce the opportunity card JSON.
                     "$addToSet": {"business_call_meeting_ids": mid},
                 },
             )
+        if payload.meeting_type in {"connector", "business_call"} and payload.business_case_id:
+            connect_now = _now_iso()
+            case_updates = {
+                "connect.connect_status": "business_call_scheduled" if payload.scheduled_for else "needs_business_call",
+                "connect.latest_meeting_id": mid,
+                "updated_at": connect_now,
+            }
+            if payload.contact_name:
+                case_updates["brand_contact_snapshot.primary_contact"] = payload.contact_name
+            if payload.contact_email:
+                case_updates["brand_contact_snapshot.email"] = payload.contact_email
+            if payload.contact_phone:
+                case_updates["brand_contact_snapshot.phone"] = payload.contact_phone
+            if payload.meeting_link:
+                case_updates["connect.meeting_link"] = payload.meeting_link
+            if payload.scheduled_for:
+                case_updates["connect.scheduled_for"] = payload.scheduled_for
+            if payload.agenda:
+                case_updates["connect.agenda"] = payload.agenda
+            await db.v3_business_cases.update_one(
+                {"id": payload.business_case_id},
+                {
+                    "$set": case_updates,
+                    "$addToSet": {"business_call_meeting_ids": mid, "connect.meeting_ids": mid},
+                    "$push": {"timeline": {"at": connect_now, "event": "connect_business_call_scheduled", "meeting_id": mid}},
+                },
+            )
         if payload.meeting_type in {"creator_fit", "creator_briefing"}:
             if payload.creator_id:
                 await db.v3_creators.update_one(
@@ -5070,6 +5097,21 @@ Produce the opportunity card JSON.
             raise HTTPException(404, "Meeting not found")
         entity_type = (meeting.get("qualification_entity_type") or meeting.get("entity_type") or "brand").lower()
         accepted_at = _now_iso()
+        already_accepted = (
+            meeting.get("qualification_status") == "accepted"
+            or meeting.get("decision_status") == "accepted"
+            or meeting.get("status") == "accepted"
+        )
+        if already_accepted:
+            if entity_type == "creator":
+                creator_id = meeting.get("creator_id")
+                creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) if creator_id else None
+                return {"ok": True, "qualification_status": "accepted", "already_accepted": True, "creator": creator}
+            brand_id = meeting.get("brand_id")
+            if not brand_id:
+                raise HTTPException(400, "Brand qualification meeting is missing brand_id")
+            brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+            return {"ok": True, "qualification_status": "accepted", "already_accepted": True, "brand": brand}
         if entity_type == "creator":
             creator_id = meeting.get("creator_id")
             if not creator_id:
@@ -5140,20 +5182,34 @@ Produce the opportunity card JSON.
             brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
             if brand:
                 await ensure_brand_account(brand)
-            await db.v3_interactions.insert_one({
-                "id": f"int-{uuid.uuid4().hex[:8]}",
-                "brand_id": brand_id,
-                "business_case_id": None,
-                "type": "qualification_call",
-                "title": "Brand qualification accepted",
-                "author": "Meeting Intelligence",
-                "date_iso": accepted_at,
-                "content": (
-                    f"{(meeting.get('analysis') or {}).get('summary', 'Qualification accepted.')}\n\n"
-                    f"Transcript:\n{meeting.get('transcript', '')}"
-                ),
-                "next_action": "Move Brand to Business Call",
-            })
+            interaction_content = (
+                f"{(meeting.get('analysis') or {}).get('summary', 'Qualification accepted.')}\n\n"
+                f"Transcript:\n{meeting.get('transcript', '')}"
+            )
+            existing_interaction = await db.v3_interactions.find_one(
+                {
+                    "brand_id": brand_id,
+                    "type": "qualification_call",
+                    "$or": [
+                        {"meeting_id": meeting_id},
+                        {"title": "Brand qualification accepted", "content": interaction_content},
+                    ],
+                },
+                {"_id": 0},
+            )
+            if not existing_interaction:
+                await db.v3_interactions.insert_one({
+                    "id": f"int-{uuid.uuid4().hex[:8]}",
+                    "brand_id": brand_id,
+                    "meeting_id": meeting_id,
+                    "business_case_id": None,
+                    "type": "qualification_call",
+                    "title": "Brand qualification accepted",
+                    "author": "Meeting Intelligence",
+                    "date_iso": accepted_at,
+                    "content": interaction_content,
+                    "next_action": "Move Brand to Business Call",
+                })
             response = {"ok": True, "qualification_status": "accepted", "brand": brand}
         meeting_accept_updates = {
             "qualification_status": "accepted",
