@@ -10,7 +10,7 @@ import {
 } from '../../../lib/v3data';
 import { candidateToBusinessOpportunity } from '../../../lib/v3opportunityDemo';
 import V3Modal from '../../../components/v3/V3Modal';
-import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search } from 'lucide-react';
+import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search, Lock } from 'lucide-react';
 import { businessCasePhasePath } from './businessCaseFlow/V3BusinessCaseFlowPages';
 
 const stageMeta = {
@@ -470,21 +470,26 @@ const V3AdminBusinessCases = () => {
       <div className="flex items-center gap-3 mb-6">
         <Filter className="w-4 h-4 text-[#8A8A8A]" />
         <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg" data-testid="bc-stage-filter">
-          {['all', 'connect', 'frame', 'plan', 'deliver', 'closed'].map((s) => (
-            <button
-              key={s}
-              onClick={() => {
-                setStage(s);
-                const next = new URLSearchParams(searchParams);
-                if (s === 'all') next.delete('stage'); else next.set('stage', s);
-                setSearchParams(next, { replace: true });
-              }}
-              className={`text-[11px] px-3 py-1 rounded transition-colors capitalize ${stage === s ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
-              data-testid={`bc-stage-${s}`}
-            >
-              {s}
-            </button>
-          ))}
+          {['all', 'connect', 'frame', 'plan', 'deliver', 'closed'].map((s) => {
+            const stageCount = s === 'all'
+              ? (Array.isArray(cases) ? cases.length : 0)
+              : (byStage[s]?.count ?? (Array.isArray(cases) ? cases.filter((c) => c.stage === s).length : 0));
+            return (
+              <button
+                key={s}
+                onClick={() => {
+                  setStage(s);
+                  const next = new URLSearchParams(searchParams);
+                  if (s === 'all') next.delete('stage'); else next.set('stage', s);
+                  setSearchParams(next, { replace: true });
+                }}
+                className={`text-[11px] px-3 py-1 rounded transition-colors capitalize ${stage === s ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
+                data-testid={`bc-stage-${s}`}
+              >
+                {s} <span className="text-[10px] opacity-70">({stageCount})</span>
+              </button>
+            );
+          })}
         </div>
         <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg" data-testid="bc-track-filter">
           {[
@@ -647,6 +652,7 @@ const V3AdminBusinessCases = () => {
                       }`}
                       data-testid={`bc-${c.id}-phase-${label.toLowerCase()}${locked ? '-locked' : ''}`}
                     >
+                      {locked && <Lock className="w-3 h-3 mr-1 inline-block align-[-2px]" strokeWidth={2} />}
                       {label}
                     </button>
                   );

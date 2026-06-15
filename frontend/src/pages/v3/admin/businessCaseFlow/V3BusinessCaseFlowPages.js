@@ -6,6 +6,7 @@ import {
   Download,
   FileSignature,
   FileText,
+  Lock,
   Mail,
   MessageSquare,
   PackageCheck,
@@ -172,6 +173,7 @@ const FlowShell = ({ title, subtitle, children, nextAction }) => {
               className={`v3-stepper-item${locked ? ' v3-stepper-item-locked' : ''}`}
               data-testid={`stepper-${label.toLowerCase()}${locked ? '-locked' : ''}`}
             >
+              {locked && <Lock className="w-3.5 h-3.5 mr-1.5 inline-block align-[-2px]" strokeWidth={2} />}
               {label}
             </button>
           );
