@@ -1440,20 +1440,73 @@ def make_v3_router(db):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        if case["stage"] != "frame":
+        if case.get("stage") != "frame":
             raise HTTPException(400, "Alignment Snapshot is only generated in the Frame stage.")
 
         existing = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
-        if existing:
-            return existing
-
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
-        brand_company = brand.get("company") or case.get("brand_name") or case.get("title") or "Brand"
-        brand_industry = brand.get("industry") or brand.get("sector") or brand.get("category") or "their industry"
+        connect = case.get("connect", {}) or {}
+        brand_company = brand.get("company") or brand.get("name") or case.get("brand_name") or case.get("title") or "Brand"
+        brand_industry = brand.get("industry") or brand.get("sector") or brand.get("category") or "consumer culture"
+        project_title = case.get("title") or f"{brand_company} Relationship Opportunity"
         mi = _marketing_intelligence_from_case(case)
-        channels = mi.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"]
-        kpis = mi.get("marketing_kpis") or [{"kpi": "Reach", "target": "Confirm with brand."}]
+
+        def _usable_text(value: Any, fallback: str) -> str:
+            text = str(value or "").strip()
+            if not text or text.lower() in {"admin review required.", "admin review required", "confirm with brand.", "pending admin review."}:
+                return fallback
+            return text
+
+        def _money(value: Any) -> str:
+            try:
+                amount = int(float(value or 0))
+            except (TypeError, ValueError):
+                amount = 0
+            if amount <= 0:
+                return "NGN 75,000,000 - NGN 120,000,000 directional working range"
+            return f"NGN {amount:,} directional working range"
+
+        has_call_context = bool(
+            mi.get("source_excerpt")
+            or connect.get("analysis")
+            or connect.get("transcript")
+            or connect.get("latest_meeting_id")
+            or connect.get("latest_business_call_id")
+        )
+        focus = _usable_text(
+            mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"),
+            f"Turn {brand_company}'s {brand_industry} advantage into a sharper creator-led narrative that improves qualified consideration and conversion.",
+        )
+        audience = _usable_text(
+            mi.get("primary_target_audience") or connect.get("primary_target_audience"),
+            f"Urban Nigerian consumers and professional decision-makers who already engage with {brand_industry} content but need stronger proof, relevance, and trust cues before action.",
+        )
+        challenge = _usable_text(
+            connect.get("marketing_challenge") or connect.get("current_marketing_challenge") or connect.get("observed_challenge"),
+            f"{brand_company} has an opportunity to move from broad awareness into clearer behavior change by matching the right creator voices to the right purchase or adoption moments.",
+        )
+        timeline = _usable_text(
+            connect.get("timeline") or connect.get("campaign_timeline"),
+            "6-8 weeks from snapshot approval to launch readiness, with reporting after the first campaign cycle.",
+        )
+        decision_maker = _usable_text(
+            connect.get("decision_maker") or brand.get("primary_contact") or brand.get("contact_name"),
+            "Brand lead plus finance or senior marketing approver to confirm during Plan.",
+        )
+        channels = mi.get("key_marketing_channels") or connect.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"]
+        channels = [str(channel) for channel in channels if str(channel).strip()][:6] or ["Instagram", "TikTok", "YouTube", "PR"]
+        kpis = mi.get("marketing_kpis") or connect.get("marketing_kpis") or [
+            {"kpi": "Qualified reach", "target": "1.5M-3M relevant impressions across selected creator channels."},
+            {"kpi": "Engagement quality", "target": "Above benchmark saves, comments, profile visits, and story interactions."},
+            {"kpi": "Conversion signal", "target": "Track leads, inquiries, sales lift, sign-ups, or booked demos based on brand objective."},
+        ]
+        if not isinstance(kpis, list) or not kpis:
+            kpis = [{"kpi": "Qualified reach", "target": "Confirm target with brand."}]
+        budget_range = _money(case.get("estimated_value") or connect.get("budget") or connect.get("budget_range"))
+        source_label = "Business Call transcript and CRM qualification details" if has_call_context else "Demo-quality CRM context pending a completed Business Call transcript"
         scope_flags = []
+        if not has_call_context:
+            scope_flags.append({"text": "Business Call transcript", "reason": "Snapshot uses realistic demo context until a call transcript is available."})
         if not mi.get("key_marketing_focus") or "review required" in str(mi.get("key_marketing_focus", "")).lower():
             scope_flags.append({"text": "Key Marketing Focus", "reason": "Needs brand confirmation before Plan."})
         if not mi.get("primary_target_audience") or "review required" in str(mi.get("primary_target_audience", "")).lower():
@@ -1463,12 +1516,13 @@ def make_v3_router(db):
                 {"text": "Budget envelope", "reason": "Confirm before creative brief is issued."},
                 {"text": "Timeline", "reason": "Confirm production and approval windows."},
             ]
-        as_id = f"as-{uuid.uuid4().hex[:8]}"
+        as_id = (existing or {}).get("id") or f"as-{uuid.uuid4().hex[:8]}"
+        generated_at = _now_iso()
         doc = {
             "id": as_id,
             "business_case_id": bc_id,
             "status": "under_review",
-            "generated_at": _now_iso(),
+            "generated_at": generated_at,
             "last_edited_at": None,
             "last_edited_by": None,
             "sent_to_brand_at": None,
@@ -1476,97 +1530,97 @@ def make_v3_router(db):
             "approved_by": None,
             "approved_by_party": None,
             "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
-            "title": f"{case['title']} - Alignment Snapshot",
-            "meta": "AI-generated from connector call. Pending admin review and brand approval.",
+            "title": f"{project_title} - Project Alignment Snapshot",
+            "meta": f"Pre-strategy insight and alignment outline generated from {source_label}. Pending admin review and brand approval.",
             "marketing_intelligence": mi,
-            "brand_comments": [],
+            "brand_comments": (existing or {}).get("brand_comments", []),
             "sections": [
-                {"heading": "Business promotion summary", "type": "prose", "content": (
-                    f"TASCK recommends progressing {brand_company} into a creator-led strategy track for "
-                    f"{case['title']}. The connector call indicates a clear commercial opportunity: "
-                    f"{mi.get('key_marketing_focus')}"
+                {"heading": "1. PURPOSE OF THIS NOTE", "type": "prose", "content": (
+                    f"This note aligns TASCK and {brand_company} on the market, audience behavior, and opportunity before a full strategy is created. "
+                    f"The intent is to confirm whether {project_title} should proceed into focused planning, what insight should guide that planning, "
+                    "and which information still needs brand confirmation before creative execution."
                 )},
-                {"heading": "Key Marketing Focus", "type": "prose", "content": mi.get("key_marketing_focus", "Admin review required.")},
-                {"heading": "Primary Target Audience", "type": "prose", "content": mi.get("primary_target_audience", "Admin review required.")},
-                {"heading": "Key Marketing Channels", "type": "bullets", "items": channels},
-                {"heading": "Marketing KPIs", "type": "kpis", "flagged": True, "items": kpis},
-                {"heading": "Brand background", "type": "prose", "content": f"{brand_company} operates in {brand_industry}. Stated intent at intake: {case.get('connect', {}).get('stated_intent', 'Pending admin review.')}"},
-                {"heading": "Proposed creator direction", "type": "prose", "content": (
-                    "Move forward only if the creator shortlist can credibly serve the marketing focus, audience, "
-                    "channels, and KPI expectations above. The next stage should test cultural fit, conversion "
-                    "behavior, reliability, manager responsiveness, fee conditions, and brand-safety posture."
-                )},
-                {"heading": "Approval language for brand", "type": "prose", "content": (
-                    "If approved, TASCK will use this Alignment Snapshot as the working business promotion, then "
-                    "shortlist creators and send a Creative Brief. The Strategy Development Fee is not due in Frame; "
-                    "it becomes payable after creator fit is established and before the Strategy Snapshot is drafted."
-                )},
-                {"heading": "Open questions & ambiguities", "type": "flags", "items": scope_flags},
-                {"heading": "Risk register (preliminary)", "type": "bullets", "items": [
-                    "Misalignment between stated audience and actual channel behavior.",
-                    "KPI targets may require brand-owned data access before final planning.",
-                    "Creator fees and non-negotiables may change the eventual strategy recommendation.",
+                {"heading": "2. BUSINESS CONTEXT", "type": "bullets", "content": (
+                    f"{brand_company} operates in {brand_industry}. The working target audience is {audience} "
+                    f"and the observed challenge or opportunity is: {challenge}"
+                ), "items": [
+                    f"Target Audience: {audience}",
+                    f"Observed Challenge / Opportunity: {challenge}",
+                    f"Marketing Focus: {focus}",
+                    f"Decision Maker: {decision_maker}",
                 ]},
-                {"heading": "Next steps", "type": "bullets", "items": [
-                    "Admin reviews and edits this AI draft.",
-                    "Send Alignment Snapshot to brand portal and email.",
-                    "Brand or admin approval moves the case into Plan.",
-                    "AI suggests creators; admin sends briefs and collects fees/conditions.",
-                    "Issue Strategy Development Fee before drafting the Strategy Snapshot.",
+                {"heading": "3. USER & MARKET LANDSCAPE", "type": "table", "content": (
+                    "Key observations point to a need for clearer proof, stronger moments of influence, and creator voices that can make the brand more culturally usable."
+                ), "columns": ["Segment", "Behavior / Usage", "Key Driver", "Notes / Evidence"], "rows": [
+                    ["Core adopters", "Already engage with the category and compare options before committing.", "Trust, proof, and relevance.", f"Inferred from {source_label.lower()}."],
+                    ["Culture-led switchers", "Respond to creators who translate product value into lifestyle moments.", "Identity, social proof, and convenience.", "Useful for social-first channels and creator storytelling."],
+                    ["High-intent buyers", "Need practical information, price/value clarity, and a prompt to act.", "Offer clarity and reduced friction.", "Best served by conversion content, retargeting, and clear calls to action."],
                 ]},
+                {"heading": "4. STRATEGIC ENTRY POINT", "type": "prose", "content": (
+                    f"Primary question: which segment or behavior should {brand_company} target first for maximum impact? "
+                    f"The recommended entry point is to focus on {audience}. The key moment of influence is when that audience is comparing options, seeking validation, or deciding whether the brand feels relevant enough to try."
+                )},
+                {"heading": "5. STRATEGIC DIRECTION", "type": "numbered", "content": "Recommended approach: guide thinking before execution, then convert the strongest insight into the Plan phase.", "items": [
+                    f"Lead with a focused narrative around {focus}",
+                    f"Prioritize channels where the audience already seeks creator proof: {', '.join(channels[:4])}",
+                    "Use creators to make the brand promise concrete through relatable use cases, objections, and decision moments.",
+                ]},
+                {"heading": "6. CREATOR APPROACH (NON-BINDING)", "type": "bullets", "content": (
+                    "Creator recommendations here are directional only. Final creator selection should happen in Plan after admin review, creator scanning, and fit checks."
+                ), "items": [
+                    "Suggested Creator Profile: credible category interpreters with audience trust and consistent content quality.",
+                    "Audience Type: culture-aware, urban, digitally active, and responsive to recommendations from trusted voices.",
+                    "Influence Style: educational, lifestyle-led, proof-based, and conversion-aware without feeling forced.",
+                    "Behavioral Strength: ability to move audiences from interest to trial, inquiry, sign-up, or purchase intent.",
+                    "Illustrative Examples: category educators, lifestyle reviewers, niche community voices, and premium everyday-use creators.",
+                ]},
+                {"heading": "7. EXPECTED OUTCOMES", "type": "kpis", "content": (
+                    "The primary outcome is stronger qualified demand. Secondary outcomes should show clearer audience understanding, reusable creator insight, and better planning confidence."
+                ), "items": kpis[:5]},
+                {"heading": "8. COMMERCIAL CONTEXT (DIRECTIONAL)", "type": "bullets", "content": (
+                    f"The current working budget context is {budget_range}. Commercial assumptions should be confirmed before creator briefing and contract drafting."
+                ), "items": [
+                    f"Typical Acquisition Channels / Costs: {', '.join(channels)} with creator fees, paid boosting, production, and reporting costs to be refined in Plan.",
+                    f"Estimated Budget Range: {budget_range}",
+                    f"Timeline: {timeline}",
+                    "Efficiencies / Constraints: creator availability, approvals, production windows, usage rights, and KPI data access.",
+                ]},
+                {"heading": "9. WHY FOCUS MATTERS", "type": "prose", "content": (
+                    "Trying to address too many audience segments at once will dilute the creator brief, weaken channel choices, and make performance harder to read. "
+                    "A focused segment and behavior gives TASCK a clearer creator shortlist, tighter content direction, and a more useful approval loop with the brand."
+                )},
+                {"heading": "10. ENGAGEMENT MODEL", "type": "bullets", "content": "Next steps for the paid strategy engagement should happen after this snapshot is approved.", "items": [
+                    "Creator selection based on approved segment, behavior, channels, and brand fit.",
+                    "Execution plan covering content formats, approval rhythm, production responsibilities, and launch sequence.",
+                    "Commercial model covering creator fees, production, usage rights, TASCK fees, and any paid amplification.",
+                    "KPI framework for reach, engagement quality, conversion signals, and brand-specific reporting.",
+                    "Performance tracking through delivery, reporting, and final brand/creator review.",
+                ]},
+                {"heading": "11. NEXT STEPS", "type": "numbered", "content": "This snapshot should be reviewed by admin before it is emailed or shared to the brand portal.", "items": [
+                    "Confirm alignment on the primary segment and strategic direction.",
+                    "Resolve open flags around budget, timeline, decision maker, and KPI ownership.",
+                    "Approve the Alignment Snapshot from the admin page or brand portal.",
+                    "Move to Plan, run creator scanning, and prepare the Creative Brief.",
+                    "Approve the strategy development fee/invoice when required before the Strategy Snapshot.",
+                ]},
+                {"heading": "Open questions & admin flags", "type": "flags", "content": "Items that should be confirmed before Plan is treated as final.", "items": scope_flags},
             ],
             "scope_flags": scope_flags,
         }
-        await db.v3_alignment_snapshots.insert_one({**doc})
+        if existing:
+            await db.v3_alignment_snapshots.update_one({"id": as_id}, {"$set": doc})
+        else:
+            await db.v3_alignment_snapshots.insert_one({**doc})
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {
                 "frame.alignment_snapshot_id": as_id,
                 "frame.alignment_snapshot_status": "under_review",
-                "frame.alignment_snapshot_generated_at": doc["generated_at"],
+                "frame.alignment_snapshot_generated_at": generated_at,
                 "frame.scope_flags_total": len(doc["scope_flags"]),
                 "frame.scope_flags_resolved": 0,
                 "updated_at": _now_iso(),
-            }, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_generated", "snapshot_id": as_id}}}
-        )
-        return doc
-        as_id = f"as-{uuid.uuid4().hex[:8]}"
-        doc = {
-            "id": as_id,
-            "business_case_id": bc_id,
-            "status": "under_review",
-            "generated_at": _now_iso(),
-            "approved_at": None,
-            "approved_by": None,
-            "brand_header": f"{brand['company'].split(' ')[0].upper()} × TASCK",
-            "title": f"{case['title']} — Alignment Snapshot",
-            "meta": "AI-generated draft. Pending RM review and brand confirmation.",
-            "sections": [
-                {"heading": "Brand background", "type": "prose", "content": f"{brand['company']} operates in {brand['industry']}. Stated intent at intake: {case.get('connect', {}).get('stated_intent', '—')}"},
-                {"heading": "Stated goals", "type": "bullets", "items": ["Define campaign goals collaboratively with brand stakeholders."]},
-                {"heading": "Implied KPIs", "type": "kpis", "flagged": True, "items": [{"kpi": "Reach", "target": "AI-inferred; pending brand confirmation.", "flagNote": "AI-inferred."}]},
-                {"heading": "Key challenges", "type": "numbered", "items": ["To be confirmed in RM review."]},
-                {"heading": "Proposed campaign direction", "type": "prose", "content": "RM to populate post-review."},
-                {"heading": "Open questions & ambiguities", "type": "flags", "items": [{"text": "Budget envelope confirmation"}, {"text": "Timeline lock"}, {"text": "Creator preference signals"}]},
-                {"heading": "Engagement track", "type": "prose", "content": "Grant — no Strategy Development Fee." if case.get("engagement_track") == "grant" else "Paid Strategy — Strategy Development Fee is issued after creator briefing and before the Strategy Snapshot."},
-                {"heading": "Risk register (preliminary)", "type": "bullets", "items": ["To be populated during RM review."]},
-                {"heading": "Decision-maker map", "type": "bullets", "items": [f"{brand['primary_contact']} — {brand['role']}"]},
-                {"heading": "TTA recommendation", "type": "prose", "content": "Pending RM completion."},
-                {"heading": "Next steps", "type": "bullets", "items": ["Brand to confirm Alignment Snapshot", "Resolve scope flags", "Open Plan stage"]},
-            ],
-            "scope_flags": [{"text": "Budget envelope", "reason": "Not yet locked."}, {"text": "Timeline", "reason": "Not yet locked."}, {"text": "Creator preferences", "reason": "Not yet captured."}],
-        }
-        await db.v3_alignment_snapshots.insert_one({**doc})
-        await db.v3_business_cases.update_one(
-            {"id": bc_id},
-            {"$set": {
-                "frame.alignment_snapshot_id": as_id,
-                "frame.alignment_snapshot_status": "under_review",
-                "frame.alignment_snapshot_generated_at": doc["generated_at"],
-                "frame.scope_flags_total": len(doc["scope_flags"]),
-                "frame.scope_flags_resolved": 0,
-                "updated_at": _now_iso(),
-            }, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_generated", "snapshot_id": as_id}}}
+            }, "$push": {"timeline": {"at": generated_at, "event": "alignment_regenerated" if existing else "alignment_generated", "snapshot_id": as_id}}}
         )
         return doc
 
@@ -1680,7 +1734,7 @@ def make_v3_router(db):
         sent_at = _now_iso()
         await db.v3_alignment_snapshots.update_one(
             {"id": snap["id"]},
-            {"$set": {"status": "sent_to_brand", "sent_to_brand_at": sent_at, "meta": "Shared with brand for review and approval."}},
+            {"$set": {"status": "sent_to_brand", "sent_to_brand_at": sent_at}},
         )
         await db.v3_business_cases.update_one(
             {"id": bc_id},

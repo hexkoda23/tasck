@@ -46,6 +46,7 @@ import {
   v3SendStrategySnapshotToBrand,
   v3SignContract,
   v3SuggestCreatorMatches,
+  v3UpdateAlignment,
   v3UploadMeetingTranscript,
 } from '../../../../lib/v3api';
 import { formatNairaV3 } from '../../../../lib/v3data';
@@ -265,6 +266,118 @@ const downloadDraft = (filename, text) => {
   URL.revokeObjectURL(url);
 };
 
+const cloneAlignmentSnapshot = (snapshot) => {
+  if (!snapshot) return null;
+  return {
+    ...snapshot,
+    sections: (snapshot.sections || []).map((section) => ({
+      ...section,
+      items: Array.isArray(section.items) ? section.items.map((item) => (typeof item === 'object' && item !== null ? { ...item } : item)) : section.items,
+      columns: Array.isArray(section.columns) ? [...section.columns] : section.columns,
+      rows: Array.isArray(section.rows)
+        ? section.rows.map((row) => (Array.isArray(row) ? [...row] : { ...row }))
+        : section.rows,
+    })),
+  };
+};
+
+const splitLines = (value) => String(value || '')
+  .split('\n')
+  .map((line) => line.trim())
+  .filter(Boolean);
+
+const listTextFromItems = (items = []) => items
+  .map((item) => (typeof item === 'string' ? item : item?.text || item?.label || item?.value || ''))
+  .filter(Boolean)
+  .join('\n');
+
+const itemsFromListText = (value) => splitLines(value);
+
+const kpiTextFromItems = (items = []) => items
+  .map((item) => {
+    if (typeof item === 'string') return item;
+    return `${item?.kpi || item?.label || 'KPI'}: ${item?.target || item?.value || 'Confirm with brand.'}`;
+  })
+  .join('\n');
+
+const kpisFromText = (value) => splitLines(value).map((line) => {
+  const [name, ...targetParts] = line.split(':');
+  return {
+    kpi: (name || 'KPI').trim(),
+    target: targetParts.join(':').trim() || 'Confirm with brand.',
+  };
+});
+
+const flagsTextFromItems = (items = []) => items
+  .map((item) => {
+    if (typeof item === 'string') return item;
+    return item?.reason ? `${item.text || item.label || 'Flag'}: ${item.reason}` : (item?.text || item?.label || '');
+  })
+  .filter(Boolean)
+  .join('\n');
+
+const flagsFromText = (value) => splitLines(value).map((line) => {
+  const [text, ...reasonParts] = line.split(':');
+  return {
+    text: (text || 'Flag').trim(),
+    reason: reasonParts.join(':').trim() || 'Review before Plan.',
+  };
+});
+
+const snapshotPlainText = (snapshot) => {
+  if (!snapshot) return '';
+  const lines = [snapshot.title, snapshot.meta];
+  (snapshot.sections || []).forEach((section) => {
+    lines.push(section.heading);
+    if (section.content) lines.push(section.content);
+    if (Array.isArray(section.items)) {
+      const text = section.type === 'kpis'
+        ? kpiTextFromItems(section.items)
+        : section.type === 'flags'
+          ? flagsTextFromItems(section.items)
+          : listTextFromItems(section.items);
+      if (text) lines.push(text);
+    }
+    if (Array.isArray(section.rows)) {
+      const columns = Array.isArray(section.columns) ? section.columns : [];
+      section.rows.forEach((row) => {
+        const cells = Array.isArray(row) ? row : Object.values(row || {});
+        lines.push(columns.length ? columns.map((column, index) => `${column}: ${cells[index] || ''}`).join(' | ') : cells.join(' | '));
+      });
+    }
+  });
+  return lines.filter(Boolean).join('\n\n');
+};
+
+const escapeHtml = (value) => String(value || '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+const snapshotPrintHtml = (snapshot) => {
+  const sections = (snapshot?.sections || []).map((section) => {
+    const list = Array.isArray(section.items)
+      ? `<ul>${section.items.map((item) => `<li>${escapeHtml(typeof item === 'string' ? item : `${item.kpi || item.text || item.label || 'Item'}${item.target || item.reason ? `: ${item.target || item.reason}` : ''}`)}</li>`).join('')}</ul>`
+      : '';
+    const rows = Array.isArray(section.rows) && section.rows.length
+      ? `<table><thead><tr>${(section.columns || []).map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead><tbody>${section.rows.map((row) => {
+        const cells = Array.isArray(row) ? row : Object.values(row || {});
+        return `<tr>${cells.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`;
+      }).join('')}</tbody></table>`
+      : '';
+    return `<section><h2>${escapeHtml(section.heading)}</h2>${section.content ? `<p>${escapeHtml(section.content)}</p>` : ''}${list}${rows}</section>`;
+  }).join('');
+  return `<!doctype html><html><head><title>${escapeHtml(snapshot?.title || 'Alignment Snapshot')}</title><style>
+    body{font-family:Arial,sans-serif;color:#1A1A1A;margin:40px;line-height:1.55}
+    h1{font-size:28px;margin:0 0 8px} h2{font-size:15px;margin:24px 0 8px;text-transform:uppercase;letter-spacing:.08em}
+    p,li,td,th{font-size:13px} section{break-inside:avoid;border-top:1px solid #ddd;padding-top:12px}
+    table{width:100%;border-collapse:collapse;margin-top:10px} th,td{border:1px solid #ddd;padding:8px;text-align:left;vertical-align:top}
+    .meta{color:#6E6657;font-size:12px;margin-bottom:24px}
+  </style></head><body><h1>${escapeHtml(snapshot?.title || 'Alignment Snapshot')}</h1><div class="meta">${escapeHtml(snapshot?.meta || '')}</div>${sections}</body></html>`;
+};
+
 export const V3BusinessCaseConnect = () => {
   const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
@@ -315,6 +428,7 @@ export const V3BusinessCaseConnect = () => {
 };
 
 export const V3BusinessCaseConnectSchedule = () => {
+  const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const brand = getBrand(bundle);
   const bc = getCase(bundle);
@@ -374,7 +488,12 @@ export const V3BusinessCaseConnectSchedule = () => {
         meeting_notes: agenda,
       });
       setSaved(meeting);
-      setSaveNotice('Meeting saved and linked to this Business Case.');
+      setSaveNotice('Meeting saved. Opening the Frame phase...');
+      await v3PromoteBusinessCaseConnect(id, {
+        meeting_id: meeting.id,
+        reason: 'Business Call saved from Connect Schedule.',
+      });
+      navigate(`/v3/admin/business-cases/${id}/frame/snapshot`);
     } catch (e) {
       setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not save the meeting. Please try again.');
     } finally {
@@ -506,26 +625,165 @@ export const V3BusinessCaseConnectReschedule = () => {
   );
 };
 
+const AlignmentSectionEditor = ({ section, index, onChange }) => {
+  const update = (patch) => onChange({ ...section, ...patch });
+  const columns = Array.isArray(section.columns) && section.columns.length
+    ? section.columns
+    : ['Segment', 'Behavior / Usage', 'Key Driver', 'Notes / Evidence'];
+  const rows = Array.isArray(section.rows) ? section.rows : [];
+  const updateRow = (rowIndex, columnIndex, value) => {
+    const nextRows = rows.map((row, idx) => {
+      const cells = Array.isArray(row) ? row : Object.values(row || {});
+      if (idx !== rowIndex) return cells;
+      return columns.map((_, cellIndex) => (cellIndex === columnIndex ? value : (cells[cellIndex] || '')));
+    });
+    update({ columns, rows: nextRows });
+  };
+  const addRow = () => update({ columns, rows: [...rows.map((row) => (Array.isArray(row) ? row : Object.values(row || {}))), columns.map(() => '')] });
+
+  return (
+    <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-4 shadow-sm" data-testid={`alignment-section-${index}`}>
+      <div className="grid grid-cols-[38px_1fr] gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E8F3ED] text-[12px] font-semibold text-[#1F4A3A]">
+          {index + 1}
+        </div>
+        <div className="space-y-3">
+          <TextInput label="Section heading" value={section.heading || ''} onChange={(value) => update({ heading: value })} />
+          <TextInput label="Section narrative" rows={4} value={section.content || ''} onChange={(value) => update({ content: value })} />
+
+          {(section.type === 'bullets' || section.type === 'numbered') && (
+            <TextInput
+              label="Section points"
+              rows={5}
+              value={listTextFromItems(section.items || [])}
+              onChange={(value) => update({ items: itemsFromListText(value) })}
+            />
+          )}
+
+          {section.type === 'kpis' && (
+            <TextInput
+              label="KPI targets"
+              rows={5}
+              value={kpiTextFromItems(section.items || [])}
+              onChange={(value) => update({ items: kpisFromText(value) })}
+            />
+          )}
+
+          {section.type === 'flags' && (
+            <TextInput
+              label="Review flags"
+              rows={5}
+              value={flagsTextFromItems(section.items || [])}
+              onChange={(value) => update({ items: flagsFromText(value) })}
+            />
+          )}
+
+          {section.type === 'table' && (
+            <div className="space-y-2">
+              <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Audience segmentation table</span>
+              <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
+                <table className="min-w-full text-left text-[12px]">
+                  <thead className="bg-[#F4F2EC] text-[#4F3E2F]">
+                    <tr>{columns.map((column) => <th key={column} className="px-3 py-2 font-semibold">{column}</th>)}</tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, rowIndex) => {
+                      const cells = Array.isArray(row) ? row : Object.values(row || {});
+                      return (
+                        <tr key={`snapshot-row-${rowIndex}`} className="border-t border-[#E8E4DB]">
+                          {columns.map((column, columnIndex) => (
+                            <td key={`${column}-${columnIndex}`} className="px-2 py-2 align-top">
+                              <textarea
+                                value={cells[columnIndex] || ''}
+                                onChange={(event) => updateRow(rowIndex, columnIndex, event.target.value)}
+                                rows={3}
+                                className="w-full min-w-[150px] rounded-md border border-transparent bg-[#FBFAF7] px-2 py-1 text-[12px] outline-none focus:border-[#D7CBB8] focus:bg-white"
+                                aria-label={`${column} row ${rowIndex + 1}`}
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" onClick={addRow} className="v3-btn-secondary text-[11px]"><Plus className="w-3.5 h-3.5" /> Add segment</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const V3BusinessCaseFrameSnapshot = () => {
   const { id, bundle, reload } = useBusinessCaseBundle();
   const snapshot = bundle?.alignment_snapshot;
   const [notice, setNotice] = useState(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [draft, setDraft] = useState(null);
   const stage = bundle?.business_case?.stage;
-  const hasSnapshot = Boolean(snapshot?.title || snapshot?.meta || snapshot?.sections?.length);
-  const run = (fn, fallbackMsg, successMsg) => () => {
+  const activeSnapshot = draft || snapshot;
+  const hasSnapshot = Boolean(activeSnapshot?.title || activeSnapshot?.meta || activeSnapshot?.sections?.length);
+
+  useEffect(() => {
+    setDraft(cloneAlignmentSnapshot(snapshot));
+  }, [snapshot]);
+
+  const persistDraft = async () => {
+    if (!draft?.id) return null;
+    const saved = await v3UpdateAlignment(draft.id, {
+      title: draft.title || '',
+      meta: draft.meta || '',
+      sections: draft.sections || [],
+      reviewer: 'admin',
+    });
+    setDraft(cloneAlignmentSnapshot(saved));
+    await reload();
+    return saved;
+  };
+
+  const generateSnapshot = async () => {
     setNotice(null);
-    fn().then(reload).then(() => {
-      if (successMsg) setNotice(successMsg);
-    }).catch((e) => {
+    try {
+      const generated = await v3GenerateAlignment(id);
+      setDraft(cloneAlignmentSnapshot(generated));
+      setShareOpen(true);
+      await reload();
+      setNotice('Alignment Snapshot generated. Review and edit the full draft before sending it to the brand.');
+    } catch (e) {
       const detail = e?.response?.data?.detail;
       if (e?.response?.status === 400 && String(detail || '').includes('Frame stage')) {
-        setNotice("Can't generate the Alignment Snapshot yet — there isn't enough information to generate it. Complete the Connect stage and move this Business Case to Frame first.");
+        setNotice("Can't generate the Alignment Snapshot yet. Complete the Connect stage and move this Business Case to Frame first.");
       } else {
-        setNotice(detail || fallbackMsg);
+        setNotice(detail || 'Could not generate the Alignment Snapshot. Please try again.');
       }
-    });
+    }
   };
+
+  const saveEdits = async () => {
+    setNotice(null);
+    try {
+      await persistDraft();
+      setNotice('Alignment Snapshot edits saved.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save Alignment Snapshot edits.');
+    }
+  };
+
+  const approveSnapshot = async () => {
+    setNotice(null);
+    try {
+      await persistDraft();
+      await v3ApproveAlignmentAs(id, 'admin', 'admin');
+      await reload();
+      setNotice('Alignment Snapshot approved by admin.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not approve the Alignment Snapshot. Generate it first.');
+    }
+  };
+
   const openShareOptions = () => {
     if (!hasSnapshot) {
       setNotice('Generate the Alignment Snapshot before sharing it.');
@@ -533,6 +791,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
     }
     setShareOpen((open) => !open);
   };
+
   const copyBrandReviewLink = () => {
     const link = `${window.location.origin}/v3/brand/approvals`;
     if (!navigator.clipboard) {
@@ -543,15 +802,62 @@ export const V3BusinessCaseFrameSnapshot = () => {
       .then(() => setNotice('Brand review link copied.'))
       .catch(() => setNotice(`Brand review link: ${link}`));
   };
+
+  const sendEmailToBrand = async () => {
+    setNotice(null);
+    try {
+      await persistDraft();
+      await v3SendAlignmentToBrand(id);
+      await reload();
+      setNotice('Alignment Snapshot emailed to the brand and shared to the Brand Portal.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not send the Alignment Snapshot. Generate it first.');
+    }
+  };
+
+  const downloadPdf = () => {
+    if (!activeSnapshot) {
+      setNotice('Generate the Alignment Snapshot before downloading it.');
+      return;
+    }
+    const printWindow = window.open('', '_blank', 'width=900,height=1100');
+    if (!printWindow) {
+      setNotice('Allow pop-ups to download the snapshot as a PDF.');
+      return;
+    }
+    printWindow.document.write(snapshotPrintHtml(activeSnapshot));
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 200);
+    setNotice('PDF export opened. Choose Save as PDF in the print dialog.');
+  };
+
+  const shareWhatsApp = () => {
+    if (!activeSnapshot) {
+      setNotice('Generate the Alignment Snapshot before sharing it.');
+      return;
+    }
+    const link = `${window.location.origin}/v3/brand/approvals`;
+    const text = `${activeSnapshot.title || 'Alignment Snapshot'}\n${link}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const updateSection = (index, nextSection) => {
+    setDraft((current) => ({
+      ...(current || {}),
+      sections: (current?.sections || []).map((section, sectionIndex) => (sectionIndex === index ? nextSection : section)),
+    }));
+  };
+
   return (
-    <FlowShell title="Alignment Snapshot Studio" subtitle="Generate, edit, save, and send the Alignment Snapshot to the Brand Portal and email." nextAction="Generate or send the snapshot for brand approval.">
+    <FlowShell title="Alignment Snapshot Studio" subtitle="Generate, edit, save, and send the Alignment Snapshot to the Brand Portal and email." nextAction="Generate the snapshot from the approved business call, then review it before sharing.">
       <InfoCard
-        title="Alignment Snapshot generated"
+        title="Alignment Snapshot"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
-            <button data-testid="alignment-generate-btn" onClick={run(() => v3GenerateAlignment(id), 'Could not generate the Alignment Snapshot. Please try again.', 'Alignment Snapshot generated and ready to share.')} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> {hasSnapshot ? 'Regenerate' : 'Generate'}</button>
+            <button data-testid="alignment-generate-btn" onClick={generateSnapshot} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate Alignment Snapshot</button>
             <button data-testid="alignment-share-btn" onClick={openShareOptions} className="v3-btn-secondary"><Send className="w-3.5 h-3.5" /> Share</button>
-            <button data-testid="alignment-admin-approve-btn" onClick={run(() => v3ApproveAlignmentAs(id, 'admin', 'admin'), 'Could not approve the Alignment Snapshot. Generate it first.', 'Alignment Snapshot approved by admin.')} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
+            <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
           </div>
         )}
       >
@@ -560,15 +866,44 @@ export const V3BusinessCaseFrameSnapshot = () => {
             {notice}{stage && stage !== 'frame' ? ` (Current stage: ${bundle?.business_case?.stage_label || stage})` : ''}
           </div>
         )}
-        <p className="text-[14px] font-semibold">{snapshot?.title || 'No snapshot generated yet.'}</p>
-        <p className="text-[12px] text-[#6E6657] mt-2">{snapshot?.meta || 'The generated snapshot will appear here after Connect is ready.'}</p>
-        {shareOpen && (
+
+        {!hasSnapshot ? (
+          <div className="rounded-[8px] border border-dashed border-[#D7CBB8] bg-[#FBFAF7] p-5 text-[13px] text-[#6E6657]">
+            Generate the Alignment Snapshot to create the full editable document from the uploaded template structure.
+          </div>
+        ) : (
+          <div className="space-y-4" data-testid="alignment-snapshot-editor">
+            <div className="rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-4">
+              <TextInput label="Snapshot title" value={activeSnapshot?.title || ''} onChange={(value) => setDraft({ ...(activeSnapshot || {}), title: value })} />
+              <div className="mt-3">
+                <TextInput label="Snapshot note" rows={3} value={activeSnapshot?.meta || ''} onChange={(value) => setDraft({ ...(activeSnapshot || {}), meta: value })} />
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button onClick={saveEdits} className="v3-btn-primary" data-testid="alignment-save-edits-btn"><Save className="w-3.5 h-3.5" /> Save edits</button>
+                <button onClick={() => downloadDraft(`alignment-snapshot-${id}.txt`, snapshotPlainText(activeSnapshot))} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download text</button>
+              </div>
+            </div>
+
+            {(activeSnapshot?.sections || []).map((section, index) => (
+              <AlignmentSectionEditor
+                key={`${section.heading || 'section'}-${index}`}
+                section={section}
+                index={index}
+                onChange={(nextSection) => updateSection(index, nextSection)}
+              />
+            ))}
+          </div>
+        )}
+
+        {shareOpen && hasSnapshot && (
           <div data-testid="alignment-share-options" className="mt-4 rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-3">
             <div className="flex flex-wrap gap-2">
-              <button data-testid="alignment-send-brand-btn" onClick={run(() => v3SendAlignmentToBrand(id), 'Could not send the Alignment Snapshot. Generate it first.', 'Alignment Snapshot shared to the Brand Portal and email.')} className="v3-btn-primary"><Send className="w-3.5 h-3.5" /> Brand Portal + Email</button>
-              <button data-testid="alignment-copy-link-btn" onClick={copyBrandReviewLink} className="v3-btn-secondary">Copy Brand Review Link</button>
+              <button data-testid="alignment-email-brand-btn" onClick={sendEmailToBrand} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Email to brand</button>
+              <button data-testid="alignment-copy-link-btn" onClick={copyBrandReviewLink} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
+              <button data-testid="alignment-download-pdf-btn" onClick={downloadPdf} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download PDF</button>
+              <button data-testid="alignment-whatsapp-share-btn" onClick={shareWhatsApp} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
             </div>
-            <p className="mt-2 text-[12px] text-[#6E6657]">Choose how the brand should receive the generated Alignment Snapshot.</p>
+            <p className="mt-2 text-[12px] text-[#6E6657]">Save edits first if you changed the draft, then choose how the brand should receive the snapshot.</p>
           </div>
         )}
       </InfoCard>
