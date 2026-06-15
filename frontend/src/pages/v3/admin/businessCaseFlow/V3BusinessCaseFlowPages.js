@@ -20,6 +20,7 @@ import {
 import {
   v3AcceptCreatorBriefing,
   v3AddDeliverable,
+  v3AdvanceBusinessCase,
   v3AnalyzeMeetingTranscript,
   v3ApproveAlignmentAs,
   v3ApproveSnapshot,
@@ -718,10 +719,11 @@ const AlignmentSectionEditor = ({ section, index, onChange }) => {
 };
 
 export const V3BusinessCaseFrameSnapshot = () => {
+  const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
   const snapshot = bundle?.alignment_snapshot;
   const [notice, setNotice] = useState(null);
-  const [shareOpen, setShareOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [draft, setDraft] = useState(null);
   const stage = bundle?.business_case?.stage;
   const activeSnapshot = draft || snapshot;
@@ -749,7 +751,6 @@ export const V3BusinessCaseFrameSnapshot = () => {
     try {
       const generated = await v3GenerateAlignment(id);
       setDraft(cloneAlignmentSnapshot(generated));
-      setShareOpen(true);
       await reload();
       setNotice('Alignment Snapshot generated. Review and edit the full draft before sending it to the brand.');
     } catch (e) {
@@ -777,19 +778,26 @@ export const V3BusinessCaseFrameSnapshot = () => {
     try {
       await persistDraft();
       await v3ApproveAlignmentAs(id, 'admin', 'admin');
+      if (stage === 'frame') {
+        await v3AdvanceBusinessCase(id, {
+          actor: 'admin',
+          override: true,
+          reason: 'Alignment Snapshot approved by admin.',
+        });
+      }
       await reload();
-      setNotice('Alignment Snapshot approved by admin.');
+      navigate(`/v3/admin/business-cases/${id}/plan/brainstorm`);
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve the Alignment Snapshot. Generate it first.');
     }
   };
 
-  const openShareOptions = () => {
+  const openPreview = () => {
     if (!hasSnapshot) {
-      setNotice('Generate the Alignment Snapshot before sharing it.');
+      setNotice('Generate the Alignment Snapshot before previewing it.');
       return;
     }
-    setShareOpen((open) => !open);
+    setPreviewOpen(true);
   };
 
   const copyBrandReviewLink = () => {
@@ -856,7 +864,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
         action={(
           <div className="flex flex-wrap justify-end gap-2">
             <button data-testid="alignment-generate-btn" onClick={generateSnapshot} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate Alignment Snapshot</button>
-            <button data-testid="alignment-share-btn" onClick={openShareOptions} className="v3-btn-secondary"><Send className="w-3.5 h-3.5" /> Share</button>
+            <button data-testid="alignment-preview-btn" onClick={openPreview} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Preview</button>
             <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
           </div>
         )}
@@ -895,7 +903,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
           </div>
         )}
 
-        {shareOpen && hasSnapshot && (
+        {hasSnapshot && (
           <div data-testid="alignment-share-options" className="mt-4 rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-3">
             <div className="flex flex-wrap gap-2">
               <button data-testid="alignment-email-brand-btn" onClick={sendEmailToBrand} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Email to brand</button>
@@ -904,6 +912,60 @@ export const V3BusinessCaseFrameSnapshot = () => {
               <button data-testid="alignment-whatsapp-share-btn" onClick={shareWhatsApp} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
             </div>
             <p className="mt-2 text-[12px] text-[#6E6657]">Save edits first if you changed the draft, then choose how the brand should receive the snapshot.</p>
+          </div>
+        )}
+        {previewOpen && hasSnapshot && (
+          <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-6" data-testid="alignment-preview-modal">
+            <div className="w-full max-w-4xl rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Alignment Snapshot Preview</p>
+                  <h3 className="text-lg font-semibold text-[#1A1A1A]">{activeSnapshot?.title || 'Alignment Snapshot'}</h3>
+                </div>
+                <button type="button" onClick={() => setPreviewOpen(false)} className="v3-btn-secondary text-[11px]" data-testid="alignment-preview-close-btn">
+                  Close
+                </button>
+              </div>
+              <div className="max-h-[76vh] overflow-y-auto rounded-[8px] border border-[#E8E4DB] bg-white p-5">
+                <p className="mb-5 text-[13px] text-[#6E6657]">{activeSnapshot?.meta}</p>
+                <div className="space-y-5">
+                  {(activeSnapshot?.sections || []).map((section, index) => (
+                    <section key={`preview-${section.heading || index}`} className="border-t border-[#E8E4DB] pt-4">
+                      <h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{section.heading}</h4>
+                      {section.content && <p className="text-[13px] leading-6 text-[#4F3E2F]">{section.content}</p>}
+                      {Array.isArray(section.items) && section.items.length > 0 && (
+                        <ul className="mt-3 list-disc space-y-1.5 pl-5 text-[13px] text-[#4F3E2F]">
+                          {section.items.map((item, itemIndex) => (
+                            <li key={`preview-item-${index}-${itemIndex}`}>
+                              {typeof item === 'string' ? item : `${item.kpi || item.text || item.label || 'Item'}${item.target || item.reason ? `: ${item.target || item.reason}` : ''}`}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {Array.isArray(section.rows) && section.rows.length > 0 && (
+                        <div className="mt-3 overflow-x-auto rounded-lg border border-[#E8E4DB]">
+                          <table className="min-w-full text-left text-[12px]">
+                            <thead className="bg-[#F4F2EC] text-[#4F3E2F]">
+                              <tr>{(section.columns || []).map((column) => <th key={column} className="px-3 py-2 font-semibold">{column}</th>)}</tr>
+                            </thead>
+                            <tbody>
+                              {section.rows.map((row, rowIndex) => {
+                                const cells = Array.isArray(row) ? row : Object.values(row || {});
+                                return (
+                                  <tr key={`preview-row-${rowIndex}`} className="border-t border-[#E8E4DB]">
+                                    {cells.map((cell, cellIndex) => <td key={`preview-cell-${rowIndex}-${cellIndex}`} className="px-3 py-2 align-top text-[#4F3E2F]">{cell}</td>)}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </InfoCard>
