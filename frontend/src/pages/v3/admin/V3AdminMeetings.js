@@ -948,7 +948,7 @@ export const V3AdminConnectorCalls = () => {
         subtitle="The same linked flow as Business Case Connect: brand info, scheduling, email, questions, transcript, AI result, promote, reschedule, or delete."
         action={
           <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
-            <Plus className="w-4 h-4" /> Schedule Business Call — Connect
+            <Plus className="w-4 h-4" /> Schedule Business Call
           </button>
         }
       />

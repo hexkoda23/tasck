@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import FeedbackPopup from './components/shared/FeedbackPopup';
+import FeedbackPopup from './components/shared/FeedbackPopup'; // eslint-disable-line no-unused-vars
 
 // Layout
 import DashboardLayout from './components/layout/DashboardLayout';
@@ -460,7 +460,6 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <AppRoutes />
-        <FeedbackPopup />
         <Toaster 
           position="top-right"
           toastOptions={{
