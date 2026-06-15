@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -266,6 +266,63 @@ const downloadDraft = (filename, text) => {
   link.click();
   URL.revokeObjectURL(url);
 };
+
+const creatorName = (creator) => creator?.name || creator?.creator_name || creator?.creative_name || creator?.company_name || creator?.id || 'Creator';
+
+const creatorSpecialty = (creator) => {
+  const platforms = Array.isArray(creator?.platforms) ? creator.platforms.join(', ') : creator?.platforms;
+  return [creator?.genre, creator?.tier, platforms].filter(Boolean).join(' · ') || creator?.audience || 'Approved creator profile';
+};
+
+const creatorContact = (creator) => creator?.email || creator?.manager_email || creator?.contact_email || '';
+
+const selectedCreatorQuery = (ids) => encodeURIComponent(ids.join(','));
+
+const creatorBriefLink = (businessCaseId, creatorId) => `${window.location.origin}/v3/creator/briefs/${businessCaseId}?creator=${encodeURIComponent(creatorId)}`;
+
+const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
+  const bc = getCase(bundle);
+  const brand = getBrand(bundle);
+  const alignment = bundle?.alignment_snapshot || {};
+  const marketing = bc.connect?.marketing_intelligence || alignment.marketing_intelligence || {};
+  const projectTitle = bc.title || 'Business Case Project';
+  const brandName = brand.company || brand.name || 'Brand';
+  const planningValue = (label, fallback) => String(planningFields[label] || fallback || '').trim();
+  return [
+    `Creative Brief: ${projectTitle}`,
+    `Creator: ${creatorName(creator)}`,
+    `Brand: ${brandName}`,
+    '',
+    'Objective',
+    planningValue('Campaign core idea', marketing.key_marketing_focus || bc.stated_intent || `Create creator-led content that makes ${brandName} more relevant, trusted, and actionable for the target audience.`),
+    '',
+    'Audience',
+    planningValue('Audience and behavior', marketing.primary_target_audience || 'Primary audience to be confirmed from the approved Alignment Snapshot and Business Call context.'),
+    '',
+    'Creator direction',
+    planningValue('Creator direction', `${creatorName(creator)} should translate the brand opportunity through ${creatorSpecialty(creator)} while keeping the content credible to their existing community.`),
+    '',
+    'Deliverables',
+    planningValue('Content/deliverables idea log', '3 short-form videos, 1 story set, 1 launch post, captions, usage-ready raw selects, and one revision round.'),
+    '',
+    'Channels',
+    planningValue('Channel plan', Array.isArray(marketing.key_marketing_channels) && marketing.key_marketing_channels.length ? marketing.key_marketing_channels.join(', ') : 'Instagram, TikTok, YouTube Shorts, and supporting community amplification.'),
+    '',
+    'Budget and fee discussion',
+    planningValue('Budget planning', `Confirm creator fee, production needs, usage rights, payment terms, and whether ${creatorName(creator)} requires category exclusivity.`),
+    '',
+    'Timeline',
+    planningValue('Timeline inference', 'Confirm availability, briefing date, concept turnaround, production window, review period, launch date, and reporting handoff.'),
+    '',
+    'Risks / admin notes',
+    planningValue('Risks and assumptions', 'Admin should validate brand fit, content restrictions, approval speed, usage rights, and creator availability before the Creator Briefing Call.'),
+    '',
+    'Creator response requested',
+    'Please reply with interest level, fee expectation, availability, preferred creative angle, any conflicts, usage limits, and production requirements.',
+  ].join('\n');
+};
+
+const briefPrintHtml = (title, body) => `<!doctype html><html><head><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;color:#1A1A1A;margin:48px;line-height:1.55}h1{font-size:24px}pre{white-space:pre-wrap;font-family:Arial,sans-serif;font-size:13px}</style></head><body><h1>${escapeHtml(title)}</h1><pre>${escapeHtml(body)}</pre></body></html>`;
 
 const cloneAlignmentSnapshot = (snapshot) => {
   if (!snapshot) return null;
@@ -997,16 +1054,31 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const { id } = useBusinessCaseBundle();
   const [fields, setFields] = useState(Object.fromEntries(brainstormingSections.map(([title]) => [title, ''])));
   const [summary, setSummary] = useState('');
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
   const save = async () => {
-    await v3CreateBrainstorm({ business_case_id: id, scored_creators: [], planning_fields: fields });
-    setSummary(Object.entries(fields).map(([key, value]) => `${key}: ${value || 'Pending'}`).join('\n'));
+    setNotice('');
+    setSaving(true);
+    try {
+      await v3CreateBrainstorm({ business_case_id: id, scored_creators: [], planning_fields: fields });
+      setSummary(Object.entries(fields).map(([key, value]) => `${key}: ${value || 'Pending'}`).join('\n'));
+      navigate(`/v3/admin/business-cases/${id}/plan/creator-scan`);
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save brainstorming yet.');
+    } finally {
+      setSaving(false);
+    }
   };
   return (
-    <FlowShell title="Brainstorming Lab" subtitle="Structured planning records for AI creator matching and later Strategy Snapshot generation." nextAction="Save the plan, generate a summary, then continue to Creator Scan.">
+    <FlowShell title="Brainstorming Lab" subtitle="Structured planning records for AI creator matching and later Strategy Snapshot generation." nextAction="Save brainstorming to open Creator Match Scanner automatically.">
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {brainstormingSections.map(([title, hints]) => <InfoCard key={title} title={title}><p className="text-[11px] text-[#8A8A8A] mb-2">{hints.join(' · ')}</p><textarea value={fields[title]} onChange={(e) => setFields({ ...fields, [title]: e.target.value })} rows={5} className="w-full rounded-lg border border-[#E8E4DB] p-3 text-[13px]" /></InfoCard>)}
       </div>
-      <div className="flex flex-wrap gap-2 mt-4"><button onClick={save} className="v3-btn-primary"><Save className="w-3.5 h-3.5" /> Save brainstorming</button><button onClick={() => setSummary(Object.entries(fields).map(([k, v]) => `${k}: ${v || 'Pending'}`).join('\n'))} className="v3-btn-secondary"><Sparkles className="w-3.5 h-3.5" /> Generate AI planning summary</button><button onClick={() => navigate(`/v3/admin/business-cases/${id}/plan/creator-scan`)} className="v3-btn-secondary">Continue to Creator Scan</button></div>
+      <div className="flex flex-wrap gap-2 mt-4">
+        <button onClick={save} disabled={saving} className="v3-btn-primary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save brainstorming'}</button>
+        <button onClick={() => setSummary(Object.entries(fields).map(([k, v]) => `${k}: ${v || 'Pending'}`).join('\n'))} className="v3-btn-secondary"><Sparkles className="w-3.5 h-3.5" /> Generate AI planning summary</button>
+      </div>
       {summary && <pre className="v3-card p-4 mt-4 text-[12px] whitespace-pre-wrap">{summary}</pre>}
     </FlowShell>
   );
@@ -1017,30 +1089,229 @@ export const V3BusinessCasePlanCreatorScan = () => {
   const { id } = useBusinessCaseBundle();
   const [creators, setCreators] = useState([]);
   const [matches, setMatches] = useState([]);
-  useEffect(() => { v3GetCreators({ approved_only: true }).then((rows) => setCreators(Array.isArray(rows) ? rows : [])).catch(() => setCreators([])); }, []);
+  const [manualCreatorId, setManualCreatorId] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [notice, setNotice] = useState('');
+  const [scanning, setScanning] = useState(false);
+  useEffect(() => {
+    v3GetCreators({ approved_only: true }).then((rows) => {
+      const list = Array.isArray(rows) ? rows : [];
+      setCreators(list);
+      setManualCreatorId(list[0]?.id || '');
+    }).catch(() => setCreators([]));
+  }, []);
+  const creatorById = (creatorId) => creators.find((creator) => creator.id === creatorId);
+  const addCreator = (creatorId) => {
+    if (!creatorId) return;
+    setSelectedIds((current) => (current.includes(creatorId) ? current : [...current, creatorId]));
+    setNotice('');
+  };
+  const removeCreator = (creatorId) => setSelectedIds((current) => current.filter((idValue) => idValue !== creatorId));
+  const runScan = async () => {
+    setNotice('');
+    setScanning(true);
+    try {
+      const data = await v3SuggestCreatorMatches(id);
+      setMatches(Array.isArray(data?.matches) ? data.matches : []);
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.');
+    } finally {
+      setScanning(false);
+    }
+  };
+  const continueToBrief = () => {
+    if (selectedIds.length === 0) {
+      setNotice('Select at least one creator before generating briefs.');
+      return;
+    }
+    navigate(`/v3/admin/business-cases/${id}/plan/brief?creators=${selectedCreatorQuery(selectedIds)}`);
+  };
+  const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
   return (
-    <FlowShell title="Creator Match Scanner" subtitle="Scan approved creators only, then manually select or remove creators before the brief." nextAction="Only approved roster creators appear here.">
-      <InfoCard title="Approved creator scan" action={<button onClick={() => v3SuggestCreatorMatches(id).then((data) => setMatches(data.matches || []))} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Run AI scan</button>}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">{(matches.length ? matches : creators).slice(0, 8).map((creator) => <div key={creator.creator_id || creator.id} className="rounded-lg border border-[#E8E4DB] p-3"><p className="font-semibold text-[13px]">{creator.name || creator.creator_name || creator.creator_id}</p><p className="text-[12px] text-[#6E6657]">{creator.reason || creator.genre || 'Approved creator profile'}</p><p className="text-[11px] text-[#1F4A3A] mt-1">Fit {creator.score || creator.fit_score || creator.fitScore || 70}</p></div>)}</div>
-        <button onClick={() => navigate(`/v3/admin/business-cases/${id}/plan/brief`)} className="v3-btn-secondary mt-4">Continue to Generate Brief</button>
+    <FlowShell title="Creator Match Scanner" subtitle="Scan approved creators, manually choose creatives from the database, and prepare more than one creator for briefing." nextAction="Pick one or more creators, then generate editable briefs for each selected creator.">
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+      <InfoCard title="Manual creator picker">
+        <div className="flex flex-col gap-2 md:flex-row md:items-end">
+          <label className="flex-1 space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Creator database</span>
+            <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="creator-manual-select">
+              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} — {creatorSpecialty(creator)}</option>)}
+            </select>
+          </label>
+          <button onClick={() => addCreator(manualCreatorId)} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
+        </div>
+      </InfoCard>
+      <InfoCard title="AI database scan" action={<button onClick={runScan} disabled={scanning} className="v3-btn-primary" data-testid="creator-ai-scan-btn"><Sparkles className="w-3.5 h-3.5" /> {scanning ? 'Scanning...' : 'Run AI scan'}</button>}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {(matches.length ? matches : creators.slice(0, 8).map((creator) => ({ creator, score: creator.fit_score || creator.reliability || 70, reasons: [creatorSpecialty(creator)] }))).map((match) => {
+            const creator = match.creator || match;
+            const score = match.score || creator.fit_score || creator.fitScore || 70;
+            const selected = selectedIds.includes(creator.id);
+            return (
+              <div key={creator.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3" data-testid="creator-match-card">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-[13px] text-[#1A1A1A]">{creatorName(creator)}</p>
+                    <p className="text-[12px] text-[#6E6657]">{creatorSpecialty(creator)}</p>
+                  </div>
+                  <span className="rounded-full bg-[#E8F3ED] px-2 py-1 text-[11px] font-semibold text-[#1F4A3A]">Fit {score}</span>
+                </div>
+                <ul className="mt-2 list-disc space-y-1 pl-4 text-[12px] text-[#6E6657]">
+                  {(match.reasons || [match.reason || 'Strong profile fit for admin review.']).slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}
+                </ul>
+                <button onClick={() => addCreator(creator.id)} className="v3-btn-secondary mt-3 text-[11px]" disabled={selected} data-testid={`creator-select-${creator.id}`}>
+                  <CheckCircle2 className="w-3.5 h-3.5" /> {selected ? 'Selected' : 'Select creator'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </InfoCard>
+      <InfoCard title="Selected creators" action={<button onClick={continueToBrief} className="v3-btn-primary" data-testid="creator-continue-brief-btn"><FileText className="w-3.5 h-3.5" /> Generate briefs</button>}>
+        {selectedCreators.length === 0 ? (
+          <p className="text-[13px] text-[#8A8A8A]">No creators selected yet.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {selectedCreators.map((creator) => (
+              <div key={creator.id} className="flex items-center justify-between gap-3 rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-3" data-testid="selected-creator">
+                <div>
+                  <p className="text-[13px] font-semibold text-[#1A1A1A]">{creatorName(creator)}</p>
+                  <p className="text-[11px] text-[#6E6657]">{creatorContact(creator) || creatorSpecialty(creator)}</p>
+                </div>
+                <button onClick={() => removeCreator(creator.id)} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove ${creatorName(creator)}`}><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        )}
       </InfoCard>
     </FlowShell>
   );
 };
 
 export const V3BusinessCasePlanBrief = () => {
+  const location = useLocation();
   const { id, bundle } = useBusinessCaseBundle();
   const [creators, setCreators] = useState([]);
-  const [creatorId, setCreatorId] = useState('');
-  const [brief, setBrief] = useState(`Creative brief for ${getCase(bundle).title || 'project'}\n\nObjective:\nDeliverables:\nTimeline:\nUsage rights:\nBudget:\n`);
-  useEffect(() => { v3GetCreators({ approved_only: true }).then((rows) => { const list = Array.isArray(rows) ? rows : []; setCreators(list); setCreatorId(list[0]?.id || ''); }); }, []);
-  const send = () => v3CreateBrief({ business_case_id: id, creator_id: creatorId, brief_text: brief, subject: `Creative Brief - ${getCase(bundle).title}` });
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [manualCreatorId, setManualCreatorId] = useState('');
+  const [briefs, setBriefs] = useState({});
+  const [sentBriefs, setSentBriefs] = useState({});
+  const [notice, setNotice] = useState('');
+  useEffect(() => {
+    const ids = (new URLSearchParams(location.search).get('creators') || '').split(',').map((value) => value.trim()).filter(Boolean);
+    if (ids.length) setSelectedIds(ids);
+  }, [location.search]);
+  useEffect(() => {
+    v3GetCreators({ approved_only: true }).then((rows) => {
+      const list = Array.isArray(rows) ? rows : [];
+      setCreators(list);
+      setManualCreatorId(list[0]?.id || '');
+      setSelectedIds((current) => (current.length ? current : (list[0]?.id ? [list[0].id] : [])));
+    }).catch(() => setCreators([]));
+  }, []);
+  const creatorById = (creatorId) => creators.find((creator) => creator.id === creatorId);
+  const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
+  const planningFields = bundle?.brainstorm_round?.planning_fields || null;
+  useEffect(() => {
+    const activeCreators = selectedIds.map((creatorId) => creators.find((creator) => creator.id === creatorId)).filter(Boolean);
+    if (!activeCreators.length) return;
+    setBriefs((current) => {
+      const next = { ...current };
+      let changed = false;
+      activeCreators.forEach((creator) => {
+        if (!next[creator.id]) {
+          next[creator.id] = generateCreatorBriefDraft(bundle, creator, planningFields || {});
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [bundle, creators, planningFields, selectedIds]);
+  const addCreator = () => {
+    if (!manualCreatorId) return;
+    setSelectedIds((current) => (current.includes(manualCreatorId) ? current : [...current, manualCreatorId]));
+  };
+  const generateAll = () => {
+    const next = {};
+    selectedCreators.forEach((creator) => {
+      next[creator.id] = generateCreatorBriefDraft(bundle, creator, planningFields || {});
+    });
+    setBriefs(next);
+    setNotice('AI generated a draft brief for every selected creator.');
+  };
+  const send = async (creator) => {
+    setNotice('');
+    const brief = briefs[creator.id] || generateCreatorBriefDraft(bundle, creator, planningFields || {});
+    try {
+      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, brief_text: brief, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
+      setSentBriefs((current) => ({ ...current, [creator.id]: doc }));
+      setNotice(`Creative brief emailed to ${creatorName(creator)}.`);
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || `Could not email ${creatorName(creator)} yet.`);
+    }
+  };
+  const copyLink = (creator) => {
+    const link = creatorBriefLink(id, creator.id);
+    if (!navigator.clipboard) {
+      setNotice(`Creator brief link: ${link}`);
+      return;
+    }
+    navigator.clipboard.writeText(link).then(() => setNotice(`Creator brief link copied for ${creatorName(creator)}.`)).catch(() => setNotice(`Creator brief link: ${link}`));
+  };
+  const downloadPdf = (creator) => {
+    const title = `Creative Brief - ${creatorName(creator)}`;
+    const printWindow = window.open('', '_blank', 'width=900,height=1100');
+    if (!printWindow) {
+      setNotice('Allow pop-ups to download the creative brief as a PDF.');
+      return;
+    }
+    printWindow.document.write(briefPrintHtml(title, briefs[creator.id] || ''));
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 200);
+  };
+  const shareWhatsApp = (creator) => {
+    const text = `${getCase(bundle).title || 'Creative Brief'}\n${creatorBriefLink(id, creator.id)}`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+  };
   return (
-    <FlowShell title="Creative Brief Studio" subtitle="Generate, edit, send, download, and make the brief visible to selected creators." nextAction="Send the brief, then schedule the Creator Briefing Call.">
-      <InfoCard title="Brief editor">
-        <select value={creatorId} onChange={(e) => setCreatorId(e.target.value)} className="rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] mb-3">{creators.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-        <textarea value={brief} onChange={(e) => setBrief(e.target.value)} rows={14} className="w-full rounded-lg border border-[#E8E4DB] p-3 text-[13px]" />
-        <div className="flex flex-wrap gap-2 mt-3"><button onClick={send} className="v3-btn-primary"><Send className="w-3.5 h-3.5" /> Send to selected creator</button><button onClick={() => downloadDraft(`creative-brief-${id}.txt`, brief)} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download brief</button></div>
+    <FlowShell title="Creative Brief Studio" subtitle="Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+      <InfoCard title="Selected creator briefs" action={<button onClick={generateAll} className="v3-btn-primary" data-testid="brief-generate-all-btn"><Sparkles className="w-3.5 h-3.5" /> Generate AI briefs</button>}>
+        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end">
+          <label className="flex-1 space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Add another creator</span>
+            <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]">
+              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} — {creatorSpecialty(creator)}</option>)}
+            </select>
+          </label>
+          <button onClick={addCreator} className="v3-btn-secondary"><Plus className="w-3.5 h-3.5" /> Add creator</button>
+        </div>
+        {selectedCreators.length === 0 ? (
+          <p className="text-[13px] text-[#8A8A8A]">No creators selected. Go back to Creator Match Scanner and pick one or more creators.</p>
+        ) : (
+          <div className="space-y-4">
+            {selectedCreators.map((creator) => (
+              <div key={creator.id} className="rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-4" data-testid="creator-brief-card">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[13px] font-semibold text-[#1A1A1A]">{creatorName(creator)}</p>
+                    <p className="text-[12px] text-[#6E6657]">{creatorContact(creator) || creatorSpecialty(creator)}</p>
+                    {sentBriefs[creator.id] && <p className="mt-1 text-[11px] font-semibold text-[#1F4A3A]">Brief emailed and saved.</p>}
+                  </div>
+                  <button onClick={() => setSelectedIds((current) => current.filter((value) => value !== creator.id))} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove ${creatorName(creator)}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+                <textarea value={briefs[creator.id] || ''} onChange={(e) => setBriefs({ ...briefs, [creator.id]: e.target.value })} rows={14} className="w-full rounded-lg border border-[#E8E4DB] bg-white p-3 text-[13px]" data-testid={`brief-editor-${creator.id}`} />
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button onClick={() => send(creator)} className="v3-btn-primary" data-testid={`brief-email-${creator.id}`}><Mail className="w-3.5 h-3.5" /> Email to creator</button>
+                  <button onClick={() => copyLink(creator)} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
+                  <button onClick={() => downloadPdf(creator)} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download PDF</button>
+                  <button onClick={() => shareWhatsApp(creator)} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </InfoCard>
     </FlowShell>
   );
