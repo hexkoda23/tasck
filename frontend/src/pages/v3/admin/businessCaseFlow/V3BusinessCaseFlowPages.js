@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
+  ArrowRight,
   CheckCircle2,
   Download,
   FileSignature,
@@ -1190,6 +1191,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
 
 export const V3BusinessCasePlanBrief = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const [creators, setCreators] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
@@ -1208,9 +1210,17 @@ export const V3BusinessCasePlanBrief = () => {
       setManualCreatorId(list[0]?.id || '');
       setSelectedIds((current) => (current.length ? current : (list[0]?.id ? [list[0].id] : [])));
     }).catch(() => setCreators([]));
-  }, []);
+    v3ListBriefs({ business_case_id: id }).then((rows) => {
+      const next = {};
+      (Array.isArray(rows) ? rows : []).forEach((brief) => {
+        if (brief.creator_id) next[brief.creator_id] = brief;
+      });
+      setSentBriefs(next);
+    }).catch(() => {});
+  }, [id]);
   const creatorById = (creatorId) => creators.find((creator) => creator.id === creatorId);
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
+  const allBriefsSent = selectedCreators.length > 0 && selectedCreators.every((creator) => sentBriefs[creator.id]);
   const planningFields = bundle?.brainstorm_round?.planning_fields || null;
   useEffect(() => {
     const activeCreators = selectedIds.map((creatorId) => creators.find((creator) => creator.id === creatorId)).filter(Boolean);
@@ -1313,6 +1323,21 @@ export const V3BusinessCasePlanBrief = () => {
           </div>
         )}
       </InfoCard>
+      <InfoCard title="Next Plan page">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">
+            {allBriefsSent ? 'All selected creator briefs have been sent. Open the Strategy Snapshot that will be prepared for the brand.' : 'Send every selected creator brief before opening the Strategy Snapshot page.'}
+          </p>
+          <button
+            onClick={() => navigate(`/v3/admin/business-cases/${id}/plan/strategy-snapshot`)}
+            disabled={!allBriefsSent}
+            className="v3-btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="brief-open-strategy-snapshot-btn"
+          >
+            <ArrowRight className="w-3.5 h-3.5" /> Open Strategy Snapshot
+          </button>
+        </div>
+      </InfoCard>
     </FlowShell>
   );
 };
@@ -1346,12 +1371,130 @@ const RECOMMENDED_CREATOR_BRIEFING = [
 ];
 
 export const V3BusinessCasePlanStrategySnapshot = () => {
-  const { id, reload } = useBusinessCaseBundle();
+  const navigate = useNavigate();
+  const { id, bundle, reload } = useBusinessCaseBundle();
   const [concept, setConcept] = useState('');
-  return <FlowShell title="Strategy Snapshot Studio" subtitle="Generate, edit, send to brand portal/email, handle comments, and approve before Delivery."><InfoCard title="Strategy Snapshot"><TextInput label="Concept override" rows={4} value={concept} onChange={setConcept} /><div className="flex flex-wrap gap-2 mt-3"><button onClick={() => v3CreateSnapshot({ business_case_id: id, concept }).then(reload)} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate Strategy Snapshot</button><button onClick={() => v3SendStrategySnapshotToBrand(id)} className="v3-btn-secondary"><Send className="w-3.5 h-3.5" /> Send to brand</button><button onClick={() => v3ApproveSnapshot(id, 'admin')} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Approve Snapshot</button></div></InfoCard></FlowShell>;
+  const [notice, setNotice] = useState('');
+  const snapshot = bundle?.creative_snapshot || null;
+  const generate = async () => {
+    setNotice('');
+    try {
+      await v3CreateSnapshot({ business_case_id: id, concept });
+      await reload();
+      setNotice('Strategy Snapshot generated. Review it before sending to the brand.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not generate Strategy Snapshot yet.');
+    }
+  };
+  const sendToBrand = async () => {
+    setNotice('');
+    try {
+      await v3SendStrategySnapshotToBrand(id);
+      await reload();
+      setNotice('Strategy Snapshot sent to the brand for review.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not send Strategy Snapshot yet.');
+    }
+  };
+  const approve = async () => {
+    setNotice('');
+    try {
+      await v3ApproveSnapshot(id, 'admin');
+      await reload();
+      setNotice('Strategy Snapshot approved.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not approve Strategy Snapshot yet.');
+    }
+  };
+  return (
+    <FlowShell title="Strategy Snapshot Studio" subtitle="Generate, view, send to the brand portal/email, and approve before Delivery." nextAction="Review the Strategy Snapshot that will be sent to the brand.">
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+      <InfoCard title="Strategy Snapshot controls">
+        <TextInput label="Concept override" rows={4} value={concept} onChange={setConcept} />
+        <div className="flex flex-wrap gap-2 mt-3">
+          <button onClick={generate} className="v3-btn-primary" data-testid="strategy-generate-btn"><Sparkles className="w-3.5 h-3.5" /> Generate Strategy Snapshot</button>
+          <button onClick={sendToBrand} className="v3-btn-secondary"><Send className="w-3.5 h-3.5" /> Send to brand</button>
+          <button onClick={approve} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Approve Snapshot</button>
+        </div>
+      </InfoCard>
+      <InfoCard title="Brand-facing preview">
+        {!snapshot ? (
+          <p className="text-[13px] text-[#8A8A8A]">No Strategy Snapshot generated yet.</p>
+        ) : (
+          <div className="space-y-4 rounded-[8px] border border-[#E8E4DB] bg-[#FBFAF7] p-4" data-testid="strategy-snapshot-preview">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Status: {snapshot.status || 'draft'}</p>
+              <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{snapshot.title || 'Strategy Snapshot'}</h3>
+            </div>
+            {snapshot.concept && <p className="whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">{snapshot.concept}</p>}
+            {Array.isArray(snapshot.deliverables) && snapshot.deliverables.length > 0 && (
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Deliverables</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {snapshot.deliverables.map((item, index) => <div key={`${item.title || 'deliverable'}-${index}`} className="rounded-lg border border-[#E8E4DB] bg-white p-3 text-[12px] text-[#4F3E2F]">{item.title || item.name || item.deliverable || JSON.stringify(item)}</div>)}
+                </div>
+              </div>
+            )}
+            {Array.isArray(snapshot.budget) && snapshot.budget.length > 0 && (
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Budget</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {snapshot.budget.map((item, index) => <div key={`${item.line || 'budget'}-${index}`} className="rounded-lg border border-[#E8E4DB] bg-white p-3 text-[12px] text-[#4F3E2F]">{item.line || item.label || 'Budget item'}: {item.amount || item.value || 'TBC'}</div>)}
+                </div>
+              </div>
+            )}
+            {Array.isArray(snapshot.success_metrics) && snapshot.success_metrics.length > 0 && (
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Success metrics</p>
+                <ul className="list-disc space-y-1 pl-5 text-[12px] text-[#4F3E2F]">
+                  {snapshot.success_metrics.map((item, index) => <li key={`${item.metric || 'metric'}-${index}`}>{item.metric || item.kpi || item.label || JSON.stringify(item)}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </InfoCard>
+      <InfoCard title="Next Plan page">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">Open the Strategy Review page after the snapshot has been generated, sent, or approved.</p>
+          <button onClick={() => navigate(`/v3/admin/business-cases/${id}/plan/waiting-brand`)} className="v3-btn-primary" data-testid="strategy-open-review-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Strategy Review</button>
+        </div>
+      </InfoCard>
+    </FlowShell>
+  );
 };
 
-export const V3BusinessCasePlanWaitingBrand = () => <FlowShell title="Strategy Review / Approval" subtitle="Brand comments, admin edit/resend loop, and approval status for Strategy Snapshot."><InfoCard title="Waiting for brand approval"><p className="text-[13px] text-[#6E6657]">Use the Strategy Snapshot Studio to resend after comments and move to Delivery once approved.</p></InfoCard></FlowShell>;
+export const V3BusinessCasePlanWaitingBrand = () => {
+  const navigate = useNavigate();
+  const { id, bundle, reload } = useBusinessCaseBundle();
+  const [notice, setNotice] = useState('');
+  const openDelivery = async () => {
+    setNotice('');
+    try {
+      if (getCase(bundle).stage === 'plan') {
+        await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Strategy Snapshot review completed by admin.' });
+        await reload();
+      }
+      navigate(`/v3/admin/business-cases/${id}/delivery/summary`);
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not open Delivery phase yet.');
+    }
+  };
+  return (
+    <FlowShell title="Strategy Review / Approval" subtitle="Brand comments, admin edit/resend loop, and approval status for Strategy Snapshot.">
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+      <InfoCard title="Waiting for brand approval">
+        <p className="text-[13px] text-[#6E6657]">Use the Strategy Snapshot Studio to resend after comments and move to Delivery once approved.</p>
+      </InfoCard>
+      <InfoCard title="Next phase">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">Open Delivery when the Strategy Snapshot review is complete.</p>
+          <button onClick={openDelivery} className="v3-btn-primary" data-testid="plan-open-delivery-btn"><PackageCheck className="w-3.5 h-3.5" /> Open Delivery Phase</button>
+        </div>
+      </InfoCard>
+    </FlowShell>
+  );
+};
 
 export const V3BusinessCaseDeliverySummary = () => {
   const navigate = useNavigate();
@@ -1360,23 +1503,65 @@ export const V3BusinessCaseDeliverySummary = () => {
 };
 
 export const V3BusinessCaseContractStudio = () => {
+  const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const [contracts, setContracts] = useState([]);
   const value = getCase(bundle).estimated_value || 0;
   useEffect(() => { v3ListContracts(id).then((rows) => setContracts(Array.isArray(rows) ? rows : [])); }, [id]);
   const create = (template) => v3CreateContract({ business_case_id: id, template, value, parties: template === 'brand_msa' ? ['TASCK', getBrand(bundle).company || 'Brand'] : ['TASCK', bundle?.creator?.name || 'Creator'] }).then((doc) => setContracts([doc, ...contracts]));
-  return <FlowShell title="AI Contract Studio" subtitle="Generate separate brand and creator contracts, edit drafts, send, download, and track signature status."><InfoCard title="Contracts"><div className="flex flex-wrap gap-2 mb-4"><button onClick={() => create('brand_msa')} className="v3-btn-primary">Generate Brand Contract</button><button onClick={() => create('creator_principal')} className="v3-btn-secondary">Generate Creator Contract</button></div>{contracts.map((c) => <div key={c.id} className="rounded-lg border border-[#E8E4DB] p-3 mb-2"><p className="font-semibold text-[13px]">{c.template}</p><p className="text-[12px] text-[#6E6657]">Status: {c.status}</p><div className="flex gap-2 mt-2"><button onClick={() => downloadDraft(`${c.template}-${id}.txt`, JSON.stringify(c, null, 2))} className="v3-btn-secondary text-[11px]"><Download className="w-3.5 h-3.5" /> Download draft</button><button onClick={() => v3SignContract(c.id)} className="v3-btn-secondary text-[11px]">Mark signed</button></div></div>)}</InfoCard></FlowShell>;
+  return (
+    <FlowShell title="AI Contract Studio" subtitle="Generate separate brand and creator contracts, edit drafts, send, download, and track signature status.">
+      <InfoCard title="Contracts">
+        <div className="flex flex-wrap gap-2 mb-4"><button onClick={() => create('brand_msa')} className="v3-btn-primary">Generate Brand Contract</button><button onClick={() => create('creator_principal')} className="v3-btn-secondary">Generate Creator Contract</button></div>
+        {contracts.map((c) => <div key={c.id} className="rounded-lg border border-[#E8E4DB] p-3 mb-2"><p className="font-semibold text-[13px]">{c.template}</p><p className="text-[12px] text-[#6E6657]">Status: {c.status}</p><div className="flex gap-2 mt-2"><button onClick={() => downloadDraft(`${c.template}-${id}.txt`, JSON.stringify(c, null, 2))} className="v3-btn-secondary text-[11px]"><Download className="w-3.5 h-3.5" /> Download draft</button><button onClick={() => v3SignContract(c.id)} className="v3-btn-secondary text-[11px]">Mark signed</button></div></div>)}
+      </InfoCard>
+      <InfoCard title="Next delivery page">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">Open Deliverables once contract work is ready to proceed.</p>
+          <button onClick={() => navigate(`/v3/admin/business-cases/${id}/delivery/deliverables`)} className="v3-btn-primary" data-testid="contracts-open-deliverables-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Deliverables</button>
+        </div>
+      </InfoCard>
+    </FlowShell>
+  );
 };
 
 export const V3BusinessCaseDeliveryWaitingSignatures = () => <FlowShell title="Waiting for Contract Approval / Signatures" subtitle="Track brand and creator contract statuses, comments, reminders, and resend loops."><InfoCard title="Signature tracker"><p className="text-[13px] text-[#6E6657]">Use Contract Studio to generate, download, send, and mark signed drafts. Reminder emails can be queued from the contract list.</p></InfoCard></FlowShell>;
 
 export const V3BusinessCaseDeliverables = () => {
-  const { id } = useBusinessCaseBundle();
+  const navigate = useNavigate();
+  const { id, bundle, reload } = useBusinessCaseBundle();
   const [title, setTitle] = useState('');
   const [rows, setRows] = useState([]);
+  const [notice, setNotice] = useState('');
   useEffect(() => { v3ListDeliverables(id).then((data) => setRows(Array.isArray(data) ? data : [])); }, [id]);
   const add = () => v3AddDeliverable({ business_case_id: id, title }).then((row) => { setRows([row, ...rows]); setTitle(''); });
-  return <FlowShell title="Deliverables" subtitle="Add, edit, assign, status, link, and send multiple deliverables to portals/emails."><InfoCard title="Multiple deliverables"><div className="flex gap-2 mb-4"><input value={title} onChange={(e) => setTitle(e.target.value)} className="flex-1 rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Deliverable title" /><button onClick={add} className="v3-btn-primary"><PackageCheck className="w-3.5 h-3.5" /> Add</button></div>{rows.map((row) => <div key={row.id} className="rounded-lg border border-[#E8E4DB] p-3 mb-2 text-[13px]">{row.title} · {row.status}</div>)}</InfoCard></FlowShell>;
+  const openReporting = async () => {
+    setNotice('');
+    try {
+      if (getCase(bundle).stage === 'deliver') {
+        await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Delivery phase marked done by admin.' });
+        await reload();
+      }
+      navigate(`/v3/admin/business-cases/${id}/reporting/final-report`);
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not move to Reporting yet.');
+    }
+  };
+  return (
+    <FlowShell title="Deliverables" subtitle="Add, edit, assign, status, link, and send multiple deliverables to portals/emails.">
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+      <InfoCard title="Multiple deliverables">
+        <div className="flex gap-2 mb-4"><input value={title} onChange={(e) => setTitle(e.target.value)} className="flex-1 rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Deliverable title" /><button onClick={add} className="v3-btn-primary"><PackageCheck className="w-3.5 h-3.5" /> Add</button></div>
+        {rows.map((row) => <div key={row.id} className="rounded-lg border border-[#E8E4DB] p-3 mb-2 text-[13px]">{row.title} · {row.status}</div>)}
+      </InfoCard>
+      <InfoCard title="Move to Reporting">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">When delivery is complete, open Reporting to generate the final report for brand and creator review.</p>
+          <button onClick={openReporting} className="v3-btn-primary" data-testid="delivery-open-reporting-btn"><FileText className="w-3.5 h-3.5" /> Move to Reporting Phase</button>
+        </div>
+      </InfoCard>
+    </FlowShell>
+  );
 };
 
 export const V3BusinessCaseFinalReport = () => {
