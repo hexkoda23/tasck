@@ -1,6 +1,6 @@
 // Admin Business Cases — the v3.2 spec primitive (live from /api/v3)
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   v3ListBusinessCases, v3AdminOverview, v3GetBrands, v3GetCreators,
   v3CreateBusinessCase, v3ListOpportunityCandidates,
@@ -56,9 +56,12 @@ const sortBrandsNewestFirst = (brandList = []) => {
 
 const V3AdminBusinessCases = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialStage = (searchParams.get('stage') || 'all').toLowerCase();
+  const validStages = ['all', ...v3Stages.map((s) => s.key)];
   const [cases, setCases] = useState([]);
   const [overview, setOverview] = useState(null);
-  const [stage, setStage] = useState('all');
+  const [stage, setStage] = useState(validStages.includes(initialStage) ? initialStage : 'all');
   const [track, setTrack] = useState('all');
   const [error, setError] = useState(null);
 
@@ -467,7 +470,12 @@ const V3AdminBusinessCases = () => {
           {['all', 'connect', 'frame', 'plan', 'deliver', 'closed'].map((s) => (
             <button
               key={s}
-              onClick={() => setStage(s)}
+              onClick={() => {
+                setStage(s);
+                const next = new URLSearchParams(searchParams);
+                if (s === 'all') next.delete('stage'); else next.set('stage', s);
+                setSearchParams(next, { replace: true });
+              }}
               className={`text-[11px] px-3 py-1 rounded transition-colors capitalize ${stage === s ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
               data-testid={`bc-stage-${s}`}
             >

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
 import { v3AdminOverview } from '../../../lib/v3api';
 import { FolderOpen, GitBranch, TrendingUp, Users, Clock } from 'lucide-react';
 
 const V3AdminOverview = () => {
+  const navigate = useNavigate();
   const [overview, setOverview] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -160,10 +162,14 @@ const V3AdminOverview = () => {
         </div>
         <div className="flex gap-3">
           {stageDistribution.map(s => (
-            <div
+            <button
               key={s.key}
-              className="flex-1 p-3 rounded-lg"
+              type="button"
+              onClick={() => navigate(`/v3/admin/business-cases?stage=${s.key}`)}
+              className="flex-1 p-3 rounded-lg text-left transition-transform hover:-translate-y-0.5 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1F4A3A]/30"
               style={{ background: `${s.color}08`, border: `1px solid ${s.color}20` }}
+              data-testid={`overview-pipeline-${s.key}`}
+              aria-label={`View ${s.label} business cases`}
             >
               <div className="flex items-center gap-2 mb-1">
                 <div className="w-2 h-2 rounded-full" style={{ background: s.color }} />
@@ -181,7 +187,7 @@ const V3AdminOverview = () => {
               >
                 {formatNairaV3(s.value)}
               </p>
-            </div>
+            </button>
           ))}
         </div>
       </div>
