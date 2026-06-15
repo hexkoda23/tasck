@@ -746,9 +746,7 @@ const QualificationRow = ({ call, detailBasePath = '/v3/admin/meetings/qualifica
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="text-[14px] font-medium text-[#1A1A1A]">{call.title}</span>
-          <Badge tone="bg-[#F2EAD8] text-[#7A5F23]">CRM decision</Badge>
-          <Badge>{call.status}</Badge>
-          {call.qualification_status && <Badge>{call.qualification_status}</Badge>}
+          <Badge tone="bg-[#FCE8E6] text-[#B42318] border border-[#F4B7B0]">{call.status}</Badge>
         </div>
         <p className="text-[12px] text-[#8A8A8A]">
           {call.entity_name}
