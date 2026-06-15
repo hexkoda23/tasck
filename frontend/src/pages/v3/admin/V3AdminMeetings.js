@@ -734,6 +734,28 @@ export const V3AdminMeetingsOverview = () => {
 
 // ─── Qualification Calls List ─────────────────────────────────────────────────
 
+const callStatusTone = (status) => {
+  const s = String(status || '').toLowerCase().replace(/[\s_-]+/g, '');
+  // High urgency — needs immediate action (red)
+  if (['pending', 'needsaction', 'overdue', 'needsscheduling', 'needsbusinesscall', 'awaitingowner'].includes(s)) {
+    return 'bg-[#FCE8E6] text-[#B42318] border border-[#F4B7B0]';
+  }
+  // Medium urgency — in motion, attention (amber)
+  if (['connecting', 'rescheduled', 'inprogress', 'awaitingresponse', 'inreview'].includes(s)) {
+    return 'bg-[#FEF3D6] text-[#92580B] border border-[#F5D88A]';
+  }
+  // Calm/positive — good state (green)
+  if (['scheduled', 'confirmed', 'completed', 'done', 'accepted', 'approved'].includes(s)) {
+    return 'bg-[#DDF0E1] text-[#1F6B3A] border border-[#A4D4B0]';
+  }
+  // Neutral — finalised/no action (grey)
+  if (['cancelled', 'declined', 'closed', 'archived', 'deleted'].includes(s)) {
+    return 'bg-[#EDEAE2] text-[#6E6657] border border-[#D4CDBF]';
+  }
+  // Default — gentle neutral
+  return 'bg-[#EDEAE2] text-[#6E6657] border border-[#D4CDBF]';
+};
+
 const QualificationRow = ({ call, detailBasePath = '/v3/admin/meetings/qualification' }) => {
   const navigate = useNavigate();
   return (
@@ -746,7 +768,7 @@ const QualificationRow = ({ call, detailBasePath = '/v3/admin/meetings/qualifica
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
           <span className="text-[14px] font-medium text-[#1A1A1A]">{call.title}</span>
-          <Badge tone="bg-[#FCE8E6] text-[#B42318] border border-[#F4B7B0]">{call.status}</Badge>
+          <Badge tone={callStatusTone(call.status)}>{call.status}</Badge>
         </div>
         <p className="text-[12px] text-[#8A8A8A]">
           {call.entity_name}
