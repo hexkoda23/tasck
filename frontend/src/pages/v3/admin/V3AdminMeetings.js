@@ -848,6 +848,7 @@ export const V3AdminQualificationCalls = ({ qualificationType = 'brand' }) => {
 
 const ConnectorRow = ({ call }) => {
   const navigate = useNavigate();
+  const displayTitle = (call.title || '').replace(/\s*[—-]\s*(Business Call\s*[—-]\s*)?Connect\s*$/i, '');
   return (
     <button
       onClick={() => navigate(`/v3/admin/meetings/connector/${call.id || call._id}`)}
@@ -857,11 +858,7 @@ const ConnectorRow = ({ call }) => {
       <div className="w-1 rounded-full bg-[#1F4A3A] lg:self-stretch min-h-10" />
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
-          <span className="text-[14px] font-medium text-[#1A1A1A]">{call.title}</span>
-          <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Business Call — Connect</Badge>
-          {call.readiness_status && (
-            <Badge>{call.readiness_status.replace(/_/g, ' ')}</Badge>
-          )}
+          <span className="text-[14px] font-medium text-[#1A1A1A]">{displayTitle}</span>
         </div>
         <p className="text-[12px] text-[#8A8A8A]">
           {call.entity_name}
@@ -889,6 +886,7 @@ const BusinessCallCaseRow = ({ item }) => {
   const navigate = useNavigate();
   const contact = item.brand_contact_snapshot || {};
   const completeness = [contact.primary_contact, contact.email, contact.phone].filter(Boolean).length;
+  const displayTitle = (item.title || '').replace(/\s*[—-]\s*(Business Call\s*[—-]\s*)?Connect\s*$/i, '');
   return (
     <button
       onClick={() => navigate(`/v3/admin/business-cases/${item.id}/connect`)}
@@ -898,9 +896,7 @@ const BusinessCallCaseRow = ({ item }) => {
       <div className="w-1 rounded-full bg-[#1F4A3A] lg:self-stretch min-h-10" />
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2 mb-1">
-          <span className="text-[14px] font-medium text-[#1A1A1A]">{item.title}</span>
-          <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">Connect</Badge>
-          <Badge>{item.connect?.connect_status || item.stage || 'connect'}</Badge>
+          <span className="text-[14px] font-medium text-[#1A1A1A]">{displayTitle}</span>
         </div>
         <p className="text-[12px] text-[#8A8A8A]">
           {contact.primary_contact || 'Brand contact'} · {contact.email || 'email missing'} · {contact.phone || 'phone missing'}
