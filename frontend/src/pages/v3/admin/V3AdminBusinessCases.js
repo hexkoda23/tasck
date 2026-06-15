@@ -32,6 +32,8 @@ const healthBadge = (h) => {
   return map[key] || map.new;
 };
 
+const STAGE_INDEX = { connect: 0, frame: 1, plan: 2, deliver: 3, reporting: 4, closed: 4 };
+
 const phaseLinks = (id) => [
   ['Connect', `/v3/admin/business-cases/${id}/connect`],
   ['Frame', `/v3/admin/business-cases/${id}/frame/snapshot`],
@@ -600,7 +602,11 @@ const V3AdminBusinessCases = () => {
                     >
                       {c.engagement_track === 'grant' ? 'Grant' : 'Paid Strategy'}
                     </span>
-                    {!(hb.label === 'New' && c.stage !== 'connect') && (
+                    {c.stage === 'connect' ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: '#EEEAE0', color: '#6E6657' }}>
+                        New
+                      </span>
+                    ) : hb.label !== 'New' && (
                       <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: hb.bg, color: hb.fg }}>
                         {hb.label}
                       </span>
@@ -622,19 +628,29 @@ const V3AdminBusinessCases = () => {
                 </button>
               </div>
               <div className="flex flex-wrap gap-2 pl-5">
-                {phaseLinks(c.id).map(([label, href]) => (
-                  <button
-                    key={label}
-                    onClick={() => navigate(href)}
-                    className={`text-[11px] px-3 py-1.5 rounded-lg border transition-colors ${
-                      href === nextPath
-                        ? 'bg-[#1F4A3A] text-white border-[#1F4A3A]'
-                        : 'bg-[#FAFAF7] text-[#6E6657] border-[#E8E4DB] hover:border-[#D4CDBF]'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+                {phaseLinks(c.id).map(([label, href], idx) => {
+                  const locked = idx > (STAGE_INDEX[c.stage] ?? 0);
+                  const isActive = href === nextPath;
+                  return (
+                    <button
+                      key={label}
+                      onClick={() => { if (!locked) navigate(href); }}
+                      disabled={locked}
+                      aria-disabled={locked}
+                      title={locked ? `Locked until the ${phaseLinks(c.id)[idx - 1]?.[0]} stage is completed` : ''}
+                      className={`text-[11px] px-3 py-1.5 rounded-lg border transition-colors ${
+                        locked
+                          ? 'bg-[#F4F2EC] text-[#B8B2A4] border-[#E8E4DB] cursor-not-allowed opacity-60'
+                          : isActive
+                            ? 'bg-[#1F4A3A] text-white border-[#1F4A3A]'
+                            : 'bg-[#FAFAF7] text-[#6E6657] border-[#E8E4DB] hover:border-[#D4CDBF]'
+                      }`}
+                      data-testid={`bc-${c.id}-phase-${label.toLowerCase()}${locked ? '-locked' : ''}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           );

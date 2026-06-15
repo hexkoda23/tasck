@@ -61,7 +61,9 @@ const V3AdminPipeline = () => {
               <span className="text-[13px] font-semibold" style={{ color: col.color }}>
                 {col.label}
               </span>
-              <span className="text-[11px] text-[#8A8A8A] ml-auto">{col.projects.length}</span>
+              <span className="text-[11px] text-[#8A8A8A] ml-auto">
+                ({col.projects.length} brand{col.projects.length !== 1 ? 's' : ''})
+              </span>
               <span
                 className="text-[10px] text-[#8A8A8A]"
                 style={{ fontFamily: "'JetBrains Mono', monospace" }}

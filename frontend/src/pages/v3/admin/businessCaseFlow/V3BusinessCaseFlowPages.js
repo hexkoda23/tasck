@@ -95,6 +95,9 @@ const useBusinessCaseBundle = () => {
 const getCase = (bundle) => bundle?.business_case || {};
 const getBrand = (bundle) => bundle?.brand || {};
 
+const STAGE_INDEX = { connect: 0, frame: 1, plan: 2, deliver: 3, reporting: 4, closed: 4 };
+const currentStageIndex = (stage) => STAGE_INDEX[stage] ?? 0;
+
 const stageLinks = (id) => [
   ['Connect', `/v3/admin/business-cases/${id}/connect`],
   ['Frame', `/v3/admin/business-cases/${id}/frame/snapshot`],
@@ -157,9 +160,22 @@ const FlowShell = ({ title, subtitle, children, nextAction }) => {
         {nextAction && <div className="v3-next-action-card">{nextAction}</div>}
       </div>
       <div className="v3-stepper">
-        {stageLinks(id).map(([label, href]) => (
-          <button key={label} onClick={() => navigate(href)} className="v3-stepper-item">{label}</button>
-        ))}
+        {stageLinks(id).map(([label, href], idx) => {
+          const locked = idx > currentStageIndex(bc.stage);
+          return (
+            <button
+              key={label}
+              onClick={() => { if (!locked) navigate(href); }}
+              disabled={locked}
+              aria-disabled={locked}
+              title={locked ? `Locked until the ${stageLinks(id)[idx - 1]?.[0]} stage is completed` : ''}
+              className={`v3-stepper-item${locked ? ' v3-stepper-item-locked' : ''}`}
+              data-testid={`stepper-${label.toLowerCase()}${locked ? '-locked' : ''}`}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
       {children}
     </div>
