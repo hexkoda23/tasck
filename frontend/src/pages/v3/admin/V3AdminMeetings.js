@@ -603,32 +603,32 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
 const MeetingOverviewCard = ({ icon: Icon, eyebrow, title, description, count, button, onClick, tone = 'business' }) => (
   <button
     onClick={onClick}
-    className={`v3-floating-card v3-meeting-${tone} p-6 text-left group`}
+    className={`v3-floating-card v3-meeting-${tone} p-6 text-left group xl:flex xl:flex-col xl:h-full`}
     data-testid={`meeting-entry-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
   >
-    <div className="flex items-start gap-4">
-      <span className="w-12 h-12 rounded-xl bg-white/70 inline-flex items-center justify-center shrink-0 border border-white">
+    <div className="flex items-start gap-4 xl:flex-col xl:gap-0 xl:flex-1">
+      <span className="w-12 h-12 rounded-xl bg-white/70 inline-flex items-center justify-center shrink-0 border border-white xl:mb-3">
         <Icon className="w-5 h-5 text-[#1F4A3A]" strokeWidth={1.5} />
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="min-w-0 flex-1 xl:w-full">
         <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{eyebrow}</span>
         <span
           className="block text-lg font-semibold text-[#1A1A1A] mt-1"
           style={{ fontFamily: "'Fraunces', serif" }}
         >
-          {title}
+          {title} <span className="text-[#6E6657] font-normal">({count})</span>
         </span>
         <span className="block text-[13px] text-[#6E6657] leading-relaxed mt-2">
           {description}
         </span>
-        <span className="mt-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <span className="text-[12px] text-[#8A8A8A]">
-            <strong className="text-[#1A1A1A]">{count}</strong> calls
-          </span>
-          <span className="v3-btn-primary text-[12px] group-hover:bg-[#173D30]">{button}</span>
-        </span>
       </span>
     </div>
+    <span className="mt-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 xl:flex-row xl:justify-center xl:items-center">
+      <span className="text-[12px] text-[#8A8A8A] xl:hidden">
+        <strong className="text-[#1A1A1A]">{count}</strong> calls
+      </span>
+      <span className="v3-btn-primary text-[12px] xl:text-[11px] whitespace-nowrap group-hover:bg-[#173D30]">{button}</span>
+    </span>
   </button>
 );
 
