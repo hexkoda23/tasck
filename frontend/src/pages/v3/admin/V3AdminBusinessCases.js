@@ -28,7 +28,8 @@ const healthBadge = (h) => {
     new: { bg: '#EEEAE0', fg: '#6E6657', label: 'New' },
     'at-risk': { bg: '#F5D9D2', fg: '#B54A37', label: 'At risk' },
   };
-  return map[h] || map.new;
+  const key = (h || 'new').replace(/_/g, '-');
+  return map[key] || map.new;
 };
 
 const phaseLinks = (id) => [
@@ -599,9 +600,11 @@ const V3AdminBusinessCases = () => {
                     >
                       {c.engagement_track === 'grant' ? 'Grant' : 'Paid Strategy'}
                     </span>
-                    <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: hb.bg, color: hb.fg }}>
-                      {hb.label}
-                    </span>
+                    {!(hb.label === 'New' && c.stage !== 'connect') && (
+                      <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: hb.bg, color: hb.fg }}>
+                        {hb.label}
+                      </span>
+                    )}
                   </div>
                   <p className="text-[12px] text-[#8A8A8A] mt-1">{c.next_action}</p>
                 </button>
