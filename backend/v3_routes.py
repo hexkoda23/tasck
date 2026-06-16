@@ -11,9 +11,11 @@ Stage advancement rules:
   deliver → closed : Closure checklist complete (final report + feedback)
 """
 from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
@@ -2328,45 +2330,128 @@ def make_v3_router(db):
     # ------------------------------------------------------------------------
     class BrainstormScore(BaseModel):
         creator_id: str
-        cultural_fit: int
+        audience_match: Optional[int] = None
+        trust_signals: Optional[int] = None
         conversion_behavior: int
-        reliability: int
+        content_fit: Optional[int] = None
+        commercial_reliability: Optional[int] = None
+        # Legacy fields kept for backward compatibility
+        cultural_fit: Optional[int] = None
+        reliability: Optional[int] = None
+        evidence: Optional[str] = ""
 
     class BrainstormCreate(BaseModel):
         business_case_id: str
         scored_creators: List[BrainstormScore] = Field(default_factory=list)
         planning_fields: Dict[str, Any] = Field(default_factory=dict)
+        # Template-aligned phase outputs (all optional — the page progressively fills them in)
+        pre_work: Optional[Dict[str, Any]] = None
+        phase_0_focus_group: Optional[Dict[str, Any]] = None
+        phase_1_problem: Optional[Dict[str, Any]] = None
+        phase_2_archetype: Optional[Dict[str, Any]] = None
+        phase_4_interpretation: Optional[Dict[str, Any]] = None
+        phase_5_execution: Optional[Dict[str, Any]] = None
+        phase_6_commercial: Optional[Dict[str, Any]] = None
+        phase_7_recommendation: Optional[Dict[str, Any]] = None
 
     @router.post("/brainstorm-rounds")
     async def create_brainstorm(payload: BrainstormCreate):
         bs_id = f"bs-{uuid.uuid4().hex[:8]}"
         scored = []
         for s in payload.scored_creators:
+            # Auto-eliminate if Conversion Behaviour < 3 (template rule)
             eliminated = s.conversion_behavior < 3
             scored.append({
                 "creator_id": s.creator_id,
-                "cultural_fit": s.cultural_fit,
+                "audience_match": s.audience_match,
+                "trust_signals": s.trust_signals,
                 "conversion_behavior": s.conversion_behavior,
+                "content_fit": s.content_fit,
+                "commercial_reliability": s.commercial_reliability,
+                # legacy
+                "cultural_fit": s.cultural_fit,
                 "reliability": s.reliability,
+                "evidence": s.evidence or "",
                 "eliminated": eliminated,
-                "reason": "Auto-eliminated: conversion behavior score < 3." if eliminated else "",
+                "reason": "Auto-eliminated: Conversion Behaviour score < 3." if eliminated else "",
             })
         doc = {
             "id": bs_id,
             "business_case_id": payload.business_case_id,
             "status": "in_progress",
             "planning_fields": payload.planning_fields,
-            "current_phase": 4,
+            # Template-aligned phase scaffolding (60–90 min TTA Snapshot Brainstorm)
+            "template_version": "tta_snapshot_v1",
+            "duration_minutes": "60-90",
+            "purpose": "Produce a defensible creator recommendation rooted in behavior, culture, and commercial logic.",
             "phases": [
-                {"phase": 1, "label": "Brief calibration", "status": "complete"},
-                {"phase": 2, "label": "Long-list", "status": "complete"},
-                {"phase": 3, "label": "Cultural-fit scoring", "status": "complete"},
-                {"phase": 4, "label": "Conversion-behavior scoring", "status": "complete"},
-                {"phase": 5, "label": "Reliability scoring", "status": "pending"},
-                {"phase": 6, "label": "RM review", "status": "pending"},
-                {"phase": 7, "label": "Brief send", "status": "pending"},
+                {"phase": "pre_work", "label": "Pre-work (mandatory before session)", "status": "pending"},
+                {"phase": 0, "label": "Phase 0 — Focus Group Integration (when applicable)", "status": "pending"},
+                {"phase": 1, "label": "Phase 1 — Define the Problem (10–15 mins)", "status": "pending"},
+                {"phase": 2, "label": "Phase 2 — Define Creator Archetype (10 mins)", "status": "pending"},
+                {"phase": 3, "label": "Phase 3 — Creator Identification & Scoring (20–25 mins)", "status": "pending"},
+                {"phase": 4, "label": "Phase 4 — Interpretation Logic (15 mins)", "status": "pending"},
+                {"phase": 5, "label": "Phase 5 — Execution Reality Check (10–15 mins)", "status": "pending"},
+                {"phase": 6, "label": "Phase 6 — Commercial Snapshot (10 mins)", "status": "pending"},
+                {"phase": 7, "label": "Phase 7 — Final Recommendation (5 mins)", "status": "pending"},
             ],
+            "pre_work": payload.pre_work or {
+                "client_brief_summary": {"objective": "", "target_audience": "", "constraints": ""},
+                "initial_hypothesis": "",
+                "research_inputs": {"past_campaigns": "", "market_context": "", "focus_group_insights": ""},
+            },
+            "phase_0_focus_group": payload.phase_0_focus_group or {
+                "use_when": "Use ONLY when: problem is unclear, audience behavior is ambiguous, product is new or misunderstood.",
+                "objective": "Why don't you already behave this way?",
+                "core_questions": [
+                    "When was the last time you did [target action]?",
+                    "What stopped you from doing it more often?",
+                    "What would make you trust a solution?",
+                    "Who do you currently listen to for this?",
+                ],
+                "answers": [],
+            },
+            "phase_1_problem": payload.phase_1_problem or {
+                "core_business_objective": "",
+                "specific_action": "",
+                "primary_barrier": "",
+                "type_of_influence": "",
+                "observable_behavior_change": "",
+                "project_truth": "",  # [Target audience] currently [problem/barrier]. To achieve [business goal], they must [specific action]. This requires [type of influence].
+            },
+            "phase_2_archetype": payload.phase_2_archetype or {
+                "voice_type": "",  # Authority / Peer / Entertainer / Niche Specialist
+                "audience_relationship": "",  # Trust / Reach / Conversion / Community
+                "format_strength": "",  # Short-form / Long-form / Live / Series
+                "creator_archetype_statement": "",  # We need a [voice type] creator with [audience relationship]…
+            },
             "scored_creators": scored,
+            "phase_4_interpretation": payload.phase_4_interpretation or {"per_creator": []},
+            "phase_5_execution": payload.phase_5_execution or {
+                "test_questions_answered": {"brand_involvement": "", "execution_speed": "", "repeatable_or_one_off": "", "top_risks": ""},
+                "snapshot_per_option": [],
+            },
+            "phase_6_commercial": payload.phase_6_commercial or {
+                "budget_level": "",  # Low / Mid / Premium
+                "expected_efficiency": "",  # High conversion / High reach / Balanced
+                "time_to_impact": "",  # Immediate / Gradual
+                "commercial_positioning_statement": "",
+            },
+            "phase_7_recommendation": payload.phase_7_recommendation or {
+                "selected_option": "",
+                "rationale": "",  # Conversion potential / Execution feasibility / Commercial efficiency
+                "key_reason": "",
+                "insight_summary": {"top_3_barriers": [], "key_behavioral_triggers": [], "language_people_use": []},
+            },
+            "strategy_mapping": [
+                {"brainstorm_phase": "Phase 1: Problem", "strategy_section": "Strategic Thesis"},
+                {"brainstorm_phase": "Phase 2: Archetype", "strategy_section": "Creator Strategy (Logic)"},
+                {"brainstorm_phase": "Phase 3: Creators", "strategy_section": "Creator Strategy (Selection)"},
+                {"brainstorm_phase": "Phase 4: Interpretation", "strategy_section": "Content/Approach Layer"},
+                {"brainstorm_phase": "Phase 5: Execution", "strategy_section": "Execution Plan"},
+                {"brainstorm_phase": "Phase 6: Commercial", "strategy_section": "Commercial Model"},
+                {"brainstorm_phase": "Phase 7: Recommendation", "strategy_section": "Executive Summary"},
+            ],
         }
         await db.v3_brainstorm_rounds.insert_one({**doc})
         await db.v3_business_cases.update_one(
@@ -2374,6 +2459,43 @@ def make_v3_router(db):
             {"$set": {"plan.brainstorm_round_id": bs_id, "updated_at": _now_iso()}},
         )
         return doc
+
+    class BrainstormUpdate(BaseModel):
+        scored_creators: Optional[List[BrainstormScore]] = None
+        planning_fields: Optional[Dict[str, Any]] = None
+        pre_work: Optional[Dict[str, Any]] = None
+        phase_0_focus_group: Optional[Dict[str, Any]] = None
+        phase_1_problem: Optional[Dict[str, Any]] = None
+        phase_2_archetype: Optional[Dict[str, Any]] = None
+        phase_4_interpretation: Optional[Dict[str, Any]] = None
+        phase_5_execution: Optional[Dict[str, Any]] = None
+        phase_6_commercial: Optional[Dict[str, Any]] = None
+        phase_7_recommendation: Optional[Dict[str, Any]] = None
+        status: Optional[str] = None
+
+    @router.patch("/brainstorm-rounds/{round_id}")
+    async def update_brainstorm(round_id: str, payload: BrainstormUpdate):
+        existing = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0})
+        if not existing:
+            raise HTTPException(404, "Brainstorm round not found")
+        updates: Dict[str, Any] = {}
+        for field, value in payload.model_dump(exclude_unset=True).items():
+            if value is None:
+                continue
+            if field == "scored_creators":
+                scored = []
+                for s in value:
+                    eliminated = (s.get("conversion_behavior") or 0) < 3
+                    s["eliminated"] = eliminated
+                    s["reason"] = "Auto-eliminated: Conversion Behaviour score < 3." if eliminated else ""
+                    scored.append(s)
+                updates["scored_creators"] = scored
+            else:
+                updates[field] = value
+        if updates:
+            updates["updated_at"] = _now_iso()
+            await db.v3_brainstorm_rounds.update_one({"id": round_id}, {"$set": updates})
+        return await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0})
 
     @router.get("/brainstorm-rounds")
     async def list_brainstorms(business_case_id: Optional[str] = None):
@@ -2437,6 +2559,87 @@ def make_v3_router(db):
              "$push": {"timeline": {"at": _now_iso(), "event": "business_case_closed", "actor": "admin"}}},
         )
         return {"ok": True, "stage": "closed"}
+
+    # ------------------------------------------------------------------------
+    # PDF EXPORTS — contracts, final reports, feedback
+    # ------------------------------------------------------------------------
+    def _render_pdf(title: str, blocks: List[Dict[str, Any]]) -> bytes:
+        """Render an ordered list of blocks into a PDF and return its bytes.
+        Each block: {"heading": str, "content": str} or {"text": str, "bold": bool}.
+        """
+        from reportlab.lib.pagesizes import LETTER
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        from reportlab.lib.enums import TA_LEFT
+
+        buf = BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=LETTER, leftMargin=0.75 * inch, rightMargin=0.75 * inch, topMargin=0.75 * inch, bottomMargin=0.75 * inch, title=title)
+        styles = getSampleStyleSheet()
+        h_style = ParagraphStyle("h", parent=styles["Heading2"], fontSize=11, leading=14, spaceBefore=10, spaceAfter=4, textColor="#1A1A1A", fontName="Helvetica-Bold")
+        body_style = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10, leading=14, alignment=TA_LEFT, textColor="#333333", spaceAfter=4)
+        title_style = ParagraphStyle("t", parent=styles["Title"], fontSize=18, leading=22, textColor="#1F4A3A", spaceAfter=12)
+
+        story: List[Any] = []
+        story.append(Paragraph(title.replace("&", "&amp;"), title_style))
+        for block in blocks:
+            if "heading" in block and block.get("heading"):
+                story.append(Paragraph(str(block["heading"]).replace("&", "&amp;"), h_style))
+            content = block.get("content") or block.get("text") or ""
+            if content:
+                # Preserve newlines as <br/>
+                safe = str(content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
+                story.append(Paragraph(safe, body_style))
+            story.append(Spacer(1, 0.05 * inch))
+        doc.build(story)
+        buf.seek(0)
+        return buf.getvalue()
+
+    @router.get("/contracts/{contract_id}/pdf")
+    async def contract_pdf(contract_id: str):
+        ctr = await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
+        if not ctr:
+            raise HTTPException(404, "Contract not found")
+        title = ctr.get("title") or "Contract"
+        blocks = ctr.get("sections") or []
+        pdf_bytes = _render_pdf(title, blocks)
+        return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{contract_id}.pdf"'})
+
+    @router.get("/final-reports/{report_id}/pdf")
+    async def final_report_pdf(report_id: str):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        title = rep.get("title") or "Final Report"
+        blocks = rep.get("sections") or []
+        pdf_bytes = _render_pdf(title, blocks)
+        return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{report_id}.pdf"'})
+
+    @router.get("/final-reports/{report_id}/feedback/pdf")
+    async def feedback_pdf(report_id: str):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        fb = rep.get("feedback") or {}
+        blocks: List[Dict[str, Any]] = []
+        if fb.get("email_template"):
+            blocks.append({"heading": "Tab 1 — Email Template", "content": fb["email_template"]})
+        for group_key, group_label in [("brand_partner", "Brand Partner Feedback"), ("creative_partner", "Creative Partner Feedback")]:
+            block = fb.get(group_key) or {}
+            blocks.append({"heading": block.get("form_title", group_label), "content": (block.get("form_description") or "")})
+            header_lines = [f"Project name: {block.get('project_name', '—')}", f"Date: {block.get('date', '—')}"]
+            if "google_form_link" in block:
+                header_lines.append(f"Google form link: {block.get('google_form_link') or '—'}")
+            blocks.append({"content": "\n".join(header_lines)})
+            for idx, q in enumerate(block.get("questions") or []):
+                blocks.append({"heading": f"{idx + 1}. {q.get('label', '')}", "content": f"{q.get('question', '')}\nRating: {q.get('rating') if q.get('rating') is not None else '—'} / 10"})
+            blocks.append({"content": f"Optional comment: {block.get('optional_comment') or '—'}"})
+        if fb.get("internal_use"):
+            blocks.append({"heading": "Internal Use (Not Shown to Client)", "content": "\n".join([f"• {line}" for line in fb["internal_use"]])})
+        title = f"Feedback — {(rep.get('title') or 'Final Report')}"
+        pdf_bytes = _render_pdf(title, blocks)
+        return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="feedback-{report_id}.pdf"'})
+
 
     class FeedbackPayload(BaseModel):
         rater: str
