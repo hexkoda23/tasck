@@ -2667,7 +2667,7 @@ def make_v3_router(db):
         brief = await db.v3_creative_briefs.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
         alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
         concept = payload.concept or (
-            (brief or {}).get("creator_response", {}).get("proposed_concept")
+            ((brief or {}).get("creator_response") or {}).get("proposed_concept")
             or f"Strategy synthesis for {case['title']} — concept under refinement."
         )
         total = case.get("estimated_value") or 100_000_000
@@ -2718,7 +2718,8 @@ def make_v3_router(db):
             marketing.get("channels"),
             fallback="Instagram, TikTok, YouTube Shorts, community distribution, and selective paid amplification.",
         )
-        timeline = _first(marketing.get("timeline"), case.get("timeline"), fallback="6-8 weeks from approval to launch readiness.")
+        # case["timeline"] is an array of timeline events; only marketing.timeline is a free-form schedule string.
+        timeline = _first(marketing.get("timeline"), marketing.get("schedule"), fallback="6-8 weeks from approval to launch readiness.")
         creator_label = (creator or {}).get("name") or "Primary Creator / Ambassador"
         kpi_primary = _first(marketing.get("primary_kpi"), marketing.get("kpis"), fallback="Qualified actions from creator-led content")
         creator_role = f"{creator_label} translates the strategy into trusted content, audience education, and conversion prompts."
