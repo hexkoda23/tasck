@@ -30,6 +30,9 @@ import {
   v3CreateBrainstorm,
   v3CreateBrief,
   v3CreateContract,
+  v3UpdateContract,
+  v3UpdateFinalReport,
+  v3CloseBusinessCase,
   v3CreateMeeting,
   v3CreateSnapshot,
   v3DeclineCreatorBriefing,
@@ -124,7 +127,7 @@ export const businessCasePhasePath = (id, bc = {}) => {
     if (!plan.creative_brief_id) return `/v3/admin/business-cases/${id}/plan/brief`;
     if (!plan.creator_briefing_status) return `/v3/admin/business-cases/${id}/plan/creator-briefing-call`;
     if (!plan.creative_snapshot_id && !plan.strategy_snapshot_status) return `/v3/admin/business-cases/${id}/plan/strategy-snapshot`;
-    return `/v3/admin/business-cases/${id}/plan/waiting-brand`;
+    return `/v3/admin/business-cases/${id}/plan/strategy-snapshot`;
   }
   if (stage === 'frame') {
     const frame = bc.frame || {};
@@ -1615,8 +1618,14 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
     setNotice('');
     try {
       await v3ApproveSnapshot(id, 'admin');
+      // Auto-advance to Delivery so admin doesn't need a separate "Waiting for brand approval" page.
+      try {
+        if (getCase(bundle).stage === 'plan') {
+          await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Strategy Snapshot approved by admin.' });
+        }
+      } catch (_err) { /* ignore — already advanced */ }
       await reload();
-      setNotice('Strategy Snapshot approved.');
+      navigate(`/v3/admin/business-cases/${id}/delivery/summary`);
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve Strategy Snapshot yet.');
     }
@@ -1735,58 +1744,280 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
 
 export const V3BusinessCasePlanWaitingBrand = () => {
   const navigate = useNavigate();
-  const { id, bundle, reload } = useBusinessCaseBundle();
-  const [notice, setNotice] = useState('');
-  const openDelivery = async () => {
-    setNotice('');
-    try {
-      if (getCase(bundle).stage === 'plan') {
-        await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Strategy Snapshot review completed by admin.' });
-        await reload();
-      }
-      navigate(`/v3/admin/business-cases/${id}/delivery/summary`);
-    } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not open Delivery phase yet.');
+  const { id, bundle, loading } = useBusinessCaseBundle();
+  useEffect(() => {
+    if (!loading && bundle) {
+      navigate(`/v3/admin/business-cases/${id}/plan/strategy-snapshot`, { replace: true });
     }
-  };
+  }, [bundle, id, loading, navigate]);
+  return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studio…</div>;
+};
+
+export const V3BusinessCaseDeliverySummary = () => {
+  const navigate = useNavigate();
+  const { id, bundle } = useBusinessCaseBundle();
+  const bc = getCase(bundle);
+  const brand = getBrand(bundle);
+  const contact = bc.brand_contact_snapshot || {};
+  const creator = bundle?.creator || {};
+  const snapshot = bundle?.creative_snapshot || {};
+  const alignment = bundle?.alignment_snapshot || {};
+  const conceptBlock = snapshot.concept || alignment.concept || '—';
+  const executiveRows = (() => {
+    const exec = (snapshot.sections || []).find((s) => /executive/i.test(s.heading || ''));
+    return Array.isArray(exec?.rows) ? exec.rows : [];
+  })();
   return (
-    <FlowShell title="Strategy Review / Approval" subtitle="Brand comments, admin edit/resend loop, and approval status for Strategy Snapshot.">
-      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
-      <InfoCard title="Waiting for brand approval">
-        <p className="text-[13px] text-[#6E6657]">Use the Strategy Snapshot Studio to resend after comments and move to Delivery once approved.</p>
+    <FlowShell title="Delivery Summary" subtitle="Full project context before contract generation." nextAction="Open contract page to generate brand and creator agreements.">
+      <InfoCard title="Project at a glance">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{bc.title}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Total value</span>{formatNairaV3(bc.estimated_value || 0)}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{bc.engagement_track || '—'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Stage</span>{bc.stage}</div>
+        </div>
       </InfoCard>
-      <InfoCard title="Next phase">
+      <InfoCard title="Brand details">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Company</span>{brand.company || brand.name || '—'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Primary contact</span>{contact.primary_contact || brand.primary_contact || '—'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{contact.email || brand.email || '—'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{contact.phone || brand.phone || '—'}</div>
+          <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Website</span>{contact.website || brand.website || '—'}</div>
+        </div>
+      </InfoCard>
+      <InfoCard title="Creator details">
+        {creator?.id ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Name</span>{creator.name}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{creator.email || '—'}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{creator.phone || '—'}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Platforms</span>{(creator.platforms || []).join(', ') || '—'}</div>
+            <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Niche / Content type</span>{creator.niche || creator.content_type || '—'}</div>
+          </div>
+        ) : (
+          <p className="text-[13px] text-[#8A8A8A]">No primary creator linked to this Business Case yet.</p>
+        )}
+      </InfoCard>
+      <InfoCard title="Brainstorming ideas & strategy concept">
+        <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap mb-3"><strong>Concept:</strong> {conceptBlock}</p>
+        {executiveRows.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
+            <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
+              <thead className="bg-[#F4F2EC] text-[#6E6657]"><tr><th className="px-3 py-2 font-semibold">Field</th><th className="px-3 py-2 font-semibold">Detail</th></tr></thead>
+              <tbody className="divide-y divide-[#E8E4DB] bg-white text-[#4F3E2F]">
+                {executiveRows.map((row, idx) => (
+                  <tr key={`exec-${idx}`}><td className="px-3 py-2 align-top">{row.Field}</td><td className="px-3 py-2 align-top">{strategyCellText(row.Detail)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </InfoCard>
+      <InfoCard title="Next">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[13px] text-[#6E6657]">Open Delivery when the Strategy Snapshot review is complete.</p>
-          <button onClick={openDelivery} className="v3-btn-primary" data-testid="plan-open-delivery-btn"><PackageCheck className="w-3.5 h-3.5" /> Open Delivery Phase</button>
+          <p className="text-[13px] text-[#6E6657]">Open the contract page to generate brand and creator agreements from approved templates.</p>
+          <button onClick={() => navigate(`/v3/admin/business-cases/${id}/delivery/contracts`)} className="v3-btn-primary" data-testid="delivery-open-contract-btn"><FileSignature className="w-3.5 h-3.5" /> Open contract page</button>
         </div>
       </InfoCard>
     </FlowShell>
   );
 };
 
-export const V3BusinessCaseDeliverySummary = () => {
-  const navigate = useNavigate();
-  const { id, bundle } = useBusinessCaseBundle();
-  return <FlowShell title="Delivery Summary" subtitle="Complete project summary before contract generation." nextAction="Open AI Contract Studio."><InfoCard title="Project summary"><p className="text-[13px]">{getCase(bundle).title}</p><p className="text-[13px] text-[#6E6657] mt-1">Value: {formatNairaV3(getCase(bundle).estimated_value || 0)}</p><button onClick={() => navigate(`/v3/admin/business-cases/${id}/delivery/contracts`)} className="v3-btn-primary mt-4"><FileSignature className="w-3.5 h-3.5" /> Open AI Contract Studio</button></InfoCard></FlowShell>;
+const SHARE_OPTIONS = (label, brandEmail, creatorEmail, includeCreator = false) => [
+  { key: 'email_brand', icon: Mail, label: brandEmail ? `Email to brand (${brandEmail})` : 'Email to brand' },
+  ...(includeCreator ? [{ key: 'email_creator', icon: Mail, label: creatorEmail ? `Email to creator (${creatorEmail})` : 'Email to creator' }] : []),
+  { key: 'copy_link', icon: FileText, label: `Copy ${label} link` },
+  { key: 'download_pdf', icon: Download, label: `Download ${label} as PDF` },
+  { key: 'whatsapp', icon: MessageSquare, label: 'Share via WhatsApp' },
+];
+
+const ShareMenu = ({ open, onClose, options, onSelect }) => {
+  if (!open) return null;
+  return (
+    <div className="absolute right-0 mt-2 w-80 rounded-lg border border-[#E8E4DB] bg-white shadow-xl z-30" onClick={(e) => e.stopPropagation()}>
+      <div className="p-2">
+        {options.map((opt) => {
+          const Icon = opt.icon;
+          return (
+            <button key={opt.key} onClick={() => { onSelect(opt); onClose(); }} className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[#1A1A1A] hover:bg-[#F7FAF8] rounded-md text-left">
+              <Icon className="w-3.5 h-3.5 text-[#1F4A3A]" />
+              <span>{opt.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, onShare }) => {
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(contract.title || '');
+  const [draftSections, setDraftSections] = useState(contract.sections || []);
+  const [saving, setSaving] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const startEdit = () => {
+    setDraftTitle(contract.title || '');
+    setDraftSections((contract.sections || []).map((s) => ({ ...s })));
+    setEditing(true);
+  };
+  const cancel = () => { setEditing(false); };
+  const save = async () => {
+    setSaving(true);
+    await onUpdate(contract.id, { title: draftTitle, sections: draftSections });
+    setSaving(false);
+    setEditing(false);
+  };
+  const isCreator = contract.template === 'creator_principal';
+  return (
+    <div className="rounded-lg border border-[#E8E4DB] bg-white p-4 mb-3" data-testid={`contract-card-${contract.id}`}>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="flex-1 min-w-0">
+          {editing ? (
+            <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} className="w-full text-[14px] font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1" />
+          ) : (
+            <p className="text-[14px] font-semibold text-[#1A1A1A]">{contract.title || contract.template}</p>
+          )}
+          <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {contract.status} · Template: {contract.template}{contract.signed_at ? ` · Signed at ${contract.signed_at}` : ''}</p>
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          {editing ? (
+            <>
+              <button onClick={save} disabled={saving} className="v3-btn-primary text-[11px]"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}</button>
+              <button onClick={cancel} disabled={saving} className="v3-btn-secondary text-[11px]"><X className="w-3.5 h-3.5" /> Cancel</button>
+            </>
+          ) : (
+            <>
+              <button onClick={startEdit} className="v3-btn-secondary text-[11px]" data-testid={`contract-${contract.id}-edit-btn`}><Edit3 className="w-3.5 h-3.5" /> Edit</button>
+              <div className="relative">
+                <button onClick={() => setShareOpen((v) => !v)} className="v3-btn-secondary text-[11px]" data-testid={`contract-${contract.id}-share-btn`}><Send className="w-3.5 h-3.5" /> Share</button>
+                <ShareMenu
+                  open={shareOpen}
+                  onClose={() => setShareOpen(false)}
+                  options={SHARE_OPTIONS('contract', brandEmail, creatorEmail, isCreator)}
+                  onSelect={(opt) => onShare(contract, opt)}
+                />
+              </div>
+              <button onClick={() => onSign(contract)} className="v3-btn-primary text-[11px]"><CheckCircle2 className="w-3.5 h-3.5" /> Mark signed</button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="space-y-3">
+        {(editing ? draftSections : (contract.sections || [])).map((section, idx) => (
+          editing ? (
+            <div key={`edit-${idx}`} className="rounded border border-[#E8E4DB] p-3 bg-[#FBFAF7]">
+              <input value={section.heading || ''} onChange={(e) => { const next = draftSections.slice(); next[idx] = { ...next[idx], heading: e.target.value }; setDraftSections(next); }} className="w-full text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1 mb-2" />
+              <textarea value={section.content || ''} onChange={(e) => { const next = draftSections.slice(); next[idx] = { ...next[idx], content: e.target.value }; setDraftSections(next); }} rows={Math.min(10, Math.max(3, String(section.content || '').split('\n').length))} className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-2 py-1.5 focus:border-[#1F4A3A] outline-none whitespace-pre-wrap" />
+            </div>
+          ) : (
+            <div key={`view-${idx}`}>
+              <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-1">{section.heading}</p>
+              <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{section.content}</p>
+            </div>
+          )
+        ))}
+      </div>
+    </div>
+  );
 };
 
 export const V3BusinessCaseContractStudio = () => {
   const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const [contracts, setContracts] = useState([]);
+  const [notice, setNotice] = useState('');
   const value = getCase(bundle).estimated_value || 0;
+  const brand = getBrand(bundle);
+  const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';
+  const creatorEmail = bundle?.creator?.email || '';
   useEffect(() => { v3ListContracts(id).then((rows) => setContracts(Array.isArray(rows) ? rows : [])); }, [id]);
-  const create = (template) => v3CreateContract({ business_case_id: id, template, value, parties: template === 'brand_msa' ? ['TASCK', getBrand(bundle).company || 'Brand'] : ['TASCK', bundle?.creator?.name || 'Creator'] }).then((doc) => setContracts([doc, ...contracts]));
+
+  const hasTemplate = (tpl) => contracts.some((c) => c.template === tpl);
+  const create = async (template) => {
+    setNotice('');
+    try {
+      const parties = template === 'brand_msa'
+        ? ['TASCK', brand.company || brand.name || 'Brand']
+        : ['TASCK', bundle?.creator?.name || 'Creator'];
+      const doc = await v3CreateContract({ business_case_id: id, template, value, parties });
+      setContracts([doc, ...contracts.filter((c) => c.template !== template)]);
+      setNotice(`${template === 'brand_msa' ? 'Brand Service Agreement' : 'Creator Agreement'} generated from template. Edit if needed before sending.`);
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not generate contract yet.');
+    }
+  };
+  const updateContract = async (cid, payload) => {
+    try {
+      const doc = await v3UpdateContract(cid, payload);
+      setContracts((prev) => prev.map((c) => (c.id === cid ? doc : c)));
+      setNotice('Contract draft saved.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save contract.');
+    }
+  };
+  const handleShare = (contract, option) => {
+    if (option.key === 'copy_link') {
+      const link = `${window.location.origin}/v3/admin/business-cases/${id}/delivery/contracts#${contract.id}`;
+      navigator.clipboard?.writeText(link);
+      setNotice('Contract link copied to clipboard.');
+      return;
+    }
+    if (option.key === 'download_pdf') {
+      const text = [contract.title, '', ...(contract.sections || []).map((s) => `${s.heading}\n${s.content}`)].join('\n\n');
+      downloadDraft(`${contract.template}-${id}.txt`, text);
+      setNotice('Contract downloaded as a text file. Convert to PDF using your editor.');
+      return;
+    }
+    if (option.key === 'whatsapp') {
+      const text = encodeURIComponent(`Contract ready for review: ${contract.title}\n${window.location.origin}/v3/admin/business-cases/${id}/delivery/contracts`);
+      window.open(`https://wa.me/?text=${text}`, '_blank');
+      return;
+    }
+    setNotice(`${option.label} — queued. (Email send wiring pending — placeholder UX.)`);
+  };
+  const handleSign = async (contract) => {
+    try {
+      await v3SignContract(contract.id);
+      const rows = await v3ListContracts(id);
+      setContracts(Array.isArray(rows) ? rows : []);
+      setNotice('Contract marked signed.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not mark contract signed.');
+    }
+  };
+
   return (
-    <FlowShell title="AI Contract Studio" subtitle="Generate separate brand and creator contracts, edit drafts, send, download, and track signature status.">
-      <InfoCard title="Contracts">
-        <div className="flex flex-wrap gap-2 mb-4"><button onClick={() => create('brand_msa')} className="v3-btn-primary">Generate Brand Contract</button><button onClick={() => create('creator_principal')} className="v3-btn-secondary">Generate Creator Contract</button></div>
-        {contracts.map((c) => <div key={c.id} className="rounded-lg border border-[#E8E4DB] p-3 mb-2"><p className="font-semibold text-[13px]">{c.template}</p><p className="text-[12px] text-[#6E6657]">Status: {c.status}</p><div className="flex gap-2 mt-2"><button onClick={() => downloadDraft(`${c.template}-${id}.txt`, JSON.stringify(c, null, 2))} className="v3-btn-secondary text-[11px]"><Download className="w-3.5 h-3.5" /> Download draft</button><button onClick={() => v3SignContract(c.id)} className="v3-btn-secondary text-[11px]">Mark signed</button></div></div>)}
+    <FlowShell title="Contract Page" subtitle="Generate, edit, and share brand & creator contracts before deliverables begin.">
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="contract-notice">{notice}</div>}
+      <InfoCard title="Generate contracts from templates">
+        <p className="text-[12px] text-[#6E6657] mb-3">Each contract is pre-filled from the approved template. You can edit any clause before sending or downloading.</p>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => create('brand_msa')} className="v3-btn-primary" data-testid="generate-brand-contract-btn"><FileSignature className="w-3.5 h-3.5" /> {hasTemplate('brand_msa') ? 'Regenerate Brand (Service) Contract' : 'Generate Brand (Service) Contract'}</button>
+          <button onClick={() => create('creator_principal')} className="v3-btn-secondary" data-testid="generate-creator-contract-btn"><FileSignature className="w-3.5 h-3.5" /> {hasTemplate('creator_principal') ? 'Regenerate Creator Contract' : 'Generate Creator Contract'}</button>
+        </div>
       </InfoCard>
+      {contracts.length === 0 ? (
+        <InfoCard title="Contracts"><p className="text-[13px] text-[#8A8A8A]">No contracts drafted yet. Use the buttons above to generate brand and creator contracts.</p></InfoCard>
+      ) : (
+        <InfoCard title={`Drafted contracts (${contracts.length})`}>
+          {contracts.map((c) => (
+            <ContractCard
+              key={c.id}
+              contract={c}
+              brandEmail={brandEmail}
+              creatorEmail={creatorEmail}
+              onUpdate={updateContract}
+              onSign={handleSign}
+              onShare={handleShare}
+            />
+          ))}
+        </InfoCard>
+      )}
       <InfoCard title="Next delivery page">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[13px] text-[#6E6657]">Open Deliverables once contract work is ready to proceed.</p>
+          <p className="text-[13px] text-[#6E6657]">Open Deliverables once contracts have been sent.</p>
           <button onClick={() => navigate(`/v3/admin/business-cases/${id}/delivery/deliverables`)} className="v3-btn-primary" data-testid="contracts-open-deliverables-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Deliverables</button>
         </div>
       </InfoCard>
@@ -1800,10 +2031,18 @@ export const V3BusinessCaseDeliverables = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
   const [title, setTitle] = useState('');
+  const [notes, setNotes] = useState('');
   const [rows, setRows] = useState([]);
   const [notice, setNotice] = useState('');
   useEffect(() => { v3ListDeliverables(id).then((data) => setRows(Array.isArray(data) ? data : [])); }, [id]);
-  const add = () => v3AddDeliverable({ business_case_id: id, title }).then((row) => { setRows([row, ...rows]); setTitle(''); });
+  const add = async () => {
+    if (!title.trim()) { setNotice('Add a deliverable title first.'); return; }
+    setNotice('');
+    const row = await v3AddDeliverable({ business_case_id: id, title, notes });
+    setRows([row, ...rows]);
+    setTitle('');
+    setNotes('');
+  };
   const openReporting = async () => {
     setNotice('');
     try {
@@ -1819,13 +2058,43 @@ export const V3BusinessCaseDeliverables = () => {
   return (
     <FlowShell title="Deliverables" subtitle="Add, edit, assign, status, link, and send multiple deliverables to portals/emails.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
-      <InfoCard title="Multiple deliverables">
-        <div className="flex gap-2 mb-4"><input value={title} onChange={(e) => setTitle(e.target.value)} className="flex-1 rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Deliverable title" /><button onClick={add} className="v3-btn-primary"><PackageCheck className="w-3.5 h-3.5" /> Add</button></div>
-        {rows.map((row) => <div key={row.id} className="rounded-lg border border-[#E8E4DB] p-3 mb-2 text-[13px]">{row.title} · {row.status}</div>)}
+      <InfoCard title="Add deliverable">
+        <div className="space-y-3">
+          <label className="block">
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Deliverable title</span>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1 w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="e.g., Hero anchor video" data-testid="deliverable-title-input" />
+          </label>
+          <label className="block">
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Deliverable notes</span>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={5} className="mt-1 w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Describe scope, format, duration, owner, due date, channels, references, success markers…" data-testid="deliverable-notes-input" />
+          </label>
+          <div className="flex justify-end">
+            <button onClick={add} className="v3-btn-primary" data-testid="deliverable-add-btn"><PackageCheck className="w-3.5 h-3.5" /> Add deliverable</button>
+          </div>
+        </div>
+      </InfoCard>
+      <InfoCard title={`Deliverables (${rows.length})`}>
+        {rows.length === 0 ? (
+          <p className="text-[13px] text-[#8A8A8A]">No deliverables added yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {rows.map((row) => (
+              <div key={row.id} className="rounded-lg border border-[#E8E4DB] p-3" data-testid={`deliverable-row-${row.id}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] font-semibold text-[#1A1A1A]">{row.title}</p>
+                    {row.notes && <p className="mt-1 text-[12px] text-[#6E6657] whitespace-pre-wrap">{row.notes}</p>}
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657] uppercase tracking-wider">{row.status}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </InfoCard>
       <InfoCard title="Move to Reporting">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[13px] text-[#6E6657]">When delivery is complete, open Reporting to generate the final report for brand and creator review.</p>
+          <p className="text-[13px] text-[#6E6657]">When delivery is complete, open Reporting to generate the final report and feedback for brand and creator review.</p>
           <button onClick={openReporting} className="v3-btn-primary" data-testid="delivery-open-reporting-btn"><FileText className="w-3.5 h-3.5" /> Move to Reporting Phase</button>
         </div>
       </InfoCard>
@@ -1834,7 +2103,217 @@ export const V3BusinessCaseDeliverables = () => {
 };
 
 export const V3BusinessCaseFinalReport = () => {
+  const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
   const report = bundle?.final_report;
-  return <FlowShell title="Final Report Studio" subtitle="Generate, edit, send to brand and creator portals, and track checklist acknowledgement."><InfoCard title="Final report checklist" action={<button onClick={() => v3GenerateFinalReport(id, {}).then(reload)} className="v3-btn-primary"><FileText className="w-3.5 h-3.5" /> Generate final report</button>}><p className="text-[13px] font-semibold">{report?.title || 'No report generated yet.'}</p><div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">{(report?.closure_checklist || ['Objectives reviewed', 'Deliverables reviewed', 'KPIs/performance reviewed', 'Budget reviewed', 'Creator performance reviewed', 'Learnings reviewed', 'Next steps reviewed', 'I approve / acknowledge this final report']).map((item) => <label key={item} className="rounded-lg border border-[#E8E4DB] p-3 text-[13px]"><input type="checkbox" className="mr-2" /> {typeof item === 'string' ? item : item.label}</label>)}</div></InfoCard></FlowShell>;
+  const bc = getCase(bundle);
+  const brand = getBrand(bundle);
+  const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';
+  const [notice, setNotice] = useState('');
+  const [editingReport, setEditingReport] = useState(false);
+  const [draftReportTitle, setDraftReportTitle] = useState('');
+  const [draftReportSections, setDraftReportSections] = useState([]);
+  const [editingFeedback, setEditingFeedback] = useState(false);
+  const [draftFeedback, setDraftFeedback] = useState(null);
+  const [shareReportOpen, setShareReportOpen] = useState(false);
+  const [shareFeedbackOpen, setShareFeedbackOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+
+  const generate = async () => {
+    setNotice('');
+    try {
+      await v3GenerateFinalReport(id, {});
+      await reload();
+      setNotice('Final report and feedback templates generated. Edit before sending to the brand.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not generate final report.');
+    }
+  };
+  const startEditReport = () => {
+    setDraftReportTitle(report?.title || '');
+    setDraftReportSections((report?.sections || []).map((s) => ({ ...s })));
+    setEditingReport(true);
+  };
+  const saveReport = async () => {
+    if (!report?.id) return;
+    try {
+      await v3UpdateFinalReport(report.id, { title: draftReportTitle, sections: draftReportSections });
+      await reload();
+      setEditingReport(false);
+      setNotice('Final report saved.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save report.');
+    }
+  };
+  const startEditFeedback = () => {
+    setDraftFeedback(JSON.parse(JSON.stringify(report?.feedback || { questions: [], notes: '' })));
+    setEditingFeedback(true);
+  };
+  const saveFeedback = async () => {
+    if (!report?.id || !draftFeedback) return;
+    const ratings = (draftFeedback.questions || []).map((q) => Number(q.rating)).filter((n) => Number.isFinite(n));
+    const avg = ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null;
+    try {
+      await v3UpdateFinalReport(report.id, { feedback: { ...draftFeedback, average_score: avg } });
+      await reload();
+      setEditingFeedback(false);
+      setNotice('Feedback saved.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save feedback.');
+    }
+  };
+  const handleShare = (which, option) => {
+    if (option.key === 'copy_link') {
+      navigator.clipboard?.writeText(`${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report#${which}`);
+      setNotice(`${which === 'report' ? 'Report' : 'Feedback'} link copied to clipboard.`);
+      return;
+    }
+    if (option.key === 'download_pdf') {
+      const blob = which === 'report'
+        ? [report?.title, '', ...(report?.sections || []).map((s) => `${s.heading}\n${s.content}`)].join('\n\n')
+        : `Feedback for ${bc.title}\n\n` + (report?.feedback?.questions || []).map((q) => `${q.label}: ${q.rating ?? '—'}/10\nComments: ${q.comment || '—'}`).join('\n\n');
+      downloadDraft(`${which}-${id}.txt`, blob);
+      setNotice(`${which === 'report' ? 'Report' : 'Feedback'} downloaded as a text file. Convert to PDF using your editor.`);
+      return;
+    }
+    if (option.key === 'whatsapp') {
+      const text = encodeURIComponent(`${which === 'report' ? 'Final Report' : 'Feedback'} ready: ${report?.title || ''}\n${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report`);
+      window.open(`https://wa.me/?text=${text}`, '_blank');
+      return;
+    }
+    setNotice(`${option.label} — queued. (Email send wiring pending — placeholder UX.)`);
+  };
+  const closeProject = async () => {
+    if (!window.confirm('Close this Business Case? This cannot be undone.')) return;
+    setClosing(true);
+    try {
+      await v3CloseBusinessCase(id);
+      await reload();
+      setNotice('Project closed. The Business Case is now in the Closed stage.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not close the project.');
+    }
+    setClosing(false);
+  };
+
+  return (
+    <FlowShell title="Final Report Studio" subtitle="Generate, edit and share the final report and feedback for the brand. Close the project once both have been sent.">
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="final-report-notice">{notice}</div>}
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={generate} className="v3-btn-primary" data-testid="generate-final-report-btn"><Sparkles className="w-3.5 h-3.5" /> {report ? 'Regenerate' : 'Generate'} Final Report & Feedback</button>
+        {bc.stage === 'closed' && <span className="inline-flex items-center gap-1 text-[12px] text-[#1F6B3A] bg-[#DDF0E1] border border-[#A4D4B0] rounded-full px-3 py-1"><CheckCircle2 className="w-3.5 h-3.5" /> Project closed</span>}
+      </div>
+      {!report ? (
+        <InfoCard title="Final Report"><p className="text-[13px] text-[#8A8A8A]">No report generated yet. Click the Generate button above.</p></InfoCard>
+      ) : (
+        <>
+          <InfoCard title="Final Report">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <div className="min-w-0">
+                {editingReport ? (
+                  <input value={draftReportTitle} onChange={(e) => setDraftReportTitle(e.target.value)} className="w-full text-[15px] font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1" />
+                ) : (
+                  <p className="text-[15px] font-semibold text-[#1A1A1A]">{report.title}</p>
+                )}
+                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {report.status} · Generated {report.generated_at}</p>
+              </div>
+              <div className="flex flex-wrap gap-2 items-center">
+                {editingReport ? (
+                  <>
+                    <button onClick={saveReport} className="v3-btn-primary text-[11px]"><Save className="w-3.5 h-3.5" /> Save</button>
+                    <button onClick={() => setEditingReport(false)} className="v3-btn-secondary text-[11px]"><X className="w-3.5 h-3.5" /> Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={startEditReport} className="v3-btn-secondary text-[11px]" data-testid="report-edit-btn"><Edit3 className="w-3.5 h-3.5" /> Edit</button>
+                    <div className="relative">
+                      <button onClick={() => setShareReportOpen((v) => !v)} className="v3-btn-secondary text-[11px]" data-testid="report-share-btn"><Send className="w-3.5 h-3.5" /> Share</button>
+                      <ShareMenu open={shareReportOpen} onClose={() => setShareReportOpen(false)} options={SHARE_OPTIONS('report', brandEmail, '', false)} onSelect={(opt) => handleShare('report', opt)} />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="space-y-3 rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-4">
+              {(editingReport ? draftReportSections : (report.sections || [])).map((section, idx) => (
+                editingReport ? (
+                  <div key={`rep-edit-${idx}`}>
+                    <input value={section.heading || ''} onChange={(e) => { const next = draftReportSections.slice(); next[idx] = { ...next[idx], heading: e.target.value }; setDraftReportSections(next); }} className="w-full text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1 mb-2" />
+                    <textarea value={section.content || ''} onChange={(e) => { const next = draftReportSections.slice(); next[idx] = { ...next[idx], content: e.target.value }; setDraftReportSections(next); }} rows={Math.max(3, String(section.content || '').split('\n').length)} className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-2 py-1.5 focus:border-[#1F4A3A] outline-none whitespace-pre-wrap" />
+                  </div>
+                ) : (
+                  <div key={`rep-view-${idx}`}>
+                    <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-1">{section.heading}</p>
+                    <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{section.content}</p>
+                  </div>
+                )
+              ))}
+            </div>
+          </InfoCard>
+          <InfoCard title="Feedback (Brand)">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+              <p className="text-[12px] text-[#6E6657]">Score each item on a 1–10 scale. Average is computed on save.</p>
+              <div className="flex flex-wrap gap-2 items-center">
+                {editingFeedback ? (
+                  <>
+                    <button onClick={saveFeedback} className="v3-btn-primary text-[11px]"><Save className="w-3.5 h-3.5" /> Save</button>
+                    <button onClick={() => setEditingFeedback(false)} className="v3-btn-secondary text-[11px]"><X className="w-3.5 h-3.5" /> Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={startEditFeedback} className="v3-btn-secondary text-[11px]" data-testid="feedback-edit-btn"><Edit3 className="w-3.5 h-3.5" /> Edit</button>
+                    <div className="relative">
+                      <button onClick={() => setShareFeedbackOpen((v) => !v)} className="v3-btn-secondary text-[11px]" data-testid="feedback-share-btn"><Send className="w-3.5 h-3.5" /> Share</button>
+                      <ShareMenu open={shareFeedbackOpen} onClose={() => setShareFeedbackOpen(false)} options={SHARE_OPTIONS('feedback', brandEmail, '', false)} onSelect={(opt) => handleShare('feedback', opt)} />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[12px]">
+                <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Project</span>{report.feedback?.project_information?.title}</div>
+                <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Brand</span>{report.feedback?.project_information?.brand}</div>
+                <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Creator</span>{report.feedback?.project_information?.creator}</div>
+                <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Date</span>{report.feedback?.project_information?.date}</div>
+              </div>
+              <div className="space-y-2">
+                {((editingFeedback ? draftFeedback?.questions : report.feedback?.questions) || []).map((q, idx) => (
+                  <div key={q.key || idx} className="rounded border border-[#E8E4DB] bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <p className="text-[12px] font-semibold text-[#1A1A1A]">{q.label}</p>
+                      {editingFeedback ? (
+                        <input type="number" min={1} max={10} value={q.rating ?? ''} onChange={(e) => { const next = { ...draftFeedback, questions: draftFeedback.questions.slice() }; next.questions[idx] = { ...q, rating: e.target.value ? Number(e.target.value) : null }; setDraftFeedback(next); }} className="w-20 text-right rounded border border-[#E8E4DB] px-2 py-1 text-[12px]" />
+                      ) : (
+                        <span className="text-[12px] text-[#1F4A3A] font-semibold">{q.rating ?? '—'}/10</span>
+                      )}
+                    </div>
+                    {editingFeedback ? (
+                      <textarea value={q.comment || ''} onChange={(e) => { const next = { ...draftFeedback, questions: draftFeedback.questions.slice() }; next.questions[idx] = { ...q, comment: e.target.value }; setDraftFeedback(next); }} rows={2} placeholder="Comments…" className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-2 py-1.5 focus:border-[#1F4A3A] outline-none" />
+                    ) : (
+                      <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{q.comment || <span className="text-[#8A8A8A]">No comments yet.</span>}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {report.feedback?.average_score != null && <p className="text-[12px] text-[#1F4A3A] font-semibold">Average score: {report.feedback.average_score}/10</p>}
+              {editingFeedback && (
+                <label className="block">
+                  <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Internal notes</span>
+                  <textarea value={draftFeedback?.notes || ''} onChange={(e) => setDraftFeedback({ ...draftFeedback, notes: e.target.value })} rows={2} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
+                </label>
+              )}
+            </div>
+          </InfoCard>
+        </>
+      )}
+      <InfoCard title="Closure">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">Once the brand has acknowledged the final report and feedback, close the project. This moves the Business Case to the Closed stage.</p>
+          <button onClick={closeProject} disabled={closing || bc.stage === 'closed'} className="v3-btn-primary" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closing…' : 'Close Project')}</button>
+        </div>
+      </InfoCard>
+      <button onClick={() => navigate(`/v3/admin/business-cases/${id}/delivery/summary`)} className="text-[12px] text-[#1F4A3A] hover:underline mt-4 inline-flex items-center gap-1"><ArrowLeft className="w-3.5 h-3.5" /> Back to Delivery Summary</button>
+    </FlowShell>
+  );
 };

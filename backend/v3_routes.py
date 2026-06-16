@@ -2088,6 +2088,93 @@ def make_v3_router(db):
         value: float
         parties: List[str]
 
+    def _build_contract_sections(template: str, brand_name: str, creator_name: str, value: float, project_title: str) -> List[Dict[str, Any]]:
+        """Return ordered editable sections for the requested contract template."""
+        money = f"₦{int(value):,}" if value else "₦TBC"
+        if template == "creator_principal":
+            return [
+                {"heading": "Executive Summary", "content": (
+                    f"This Agreement sets out the terms under which {creator_name} is engaged by {brand_name} to create, lead, coordinate, and deliver the project: {project_title}. "
+                    "You are engaged as an independent creator and retain creative and operational control, subject to agreed deliverables, timelines and budgets. "
+                    "The Brand acts through its non-exclusive agent, The TASCK Agency (TTA), which provides administrative infrastructure, operational resources and reporting systems. "
+                    "Your fees are clearly defined and administered through TTA on behalf of the Brand. A 10% agency fee applies and is deducted at source. "
+                    "All fees are exclusive of VAT. Confidentiality, IP ownership (Brand owns Project IP; Parties retain pre-existing IP), Nigerian law, and arbitration apply."
+                )},
+                {"heading": "Parties", "content": (
+                    f"This Independent Creator Agreement is made between {brand_name} ('Brand'), and {creator_name} ('You/Yours'), acting in coordination with TASCK Creative Company Limited (TTA)."
+                )},
+                {"heading": "1. Scope of Agreement", "content": (
+                    "1.1 Project Responsibilities — You shall be primarily responsible for the creation, leadership, coordination and delivery of the Project, including (where applicable) creative direction, stakeholder engagement, sponsor/vendor coordination, guest management, logistics, event setup, invoicing through TTA systems and reporting.\n"
+                    "1.2 Post-Project Responsibilities — Deliver a narrative and financial report summarising outcomes, learnings and expenditure in the format reasonably prescribed by TTA on behalf of the Brand.\n"
+                    "1.3 TTA's Role — TTA will formally engage and authorise you, grant access to internal resources (accounting, legal, music etc.), facilitate meetings, and act solely as a support function. TTA does not assume creative control."
+                )},
+                {"heading": "2. Term", "content": "This Agreement is effective until the contract is terminated or upon the Project's conclusion, whichever occurs first."},
+                {"heading": "3. Consideration", "content": (
+                    f"3.1 TTA shall pay you the sum of {money} (Naira only), payable within 7 days after invoicing directly to TTA.\n"
+                    "3.2 Direct project costs (materials, travel, external consultants, third-party services) are billed separately to project budget.\n"
+                    "3.3 TTA shall be entitled to a 10% agency fee on total fees, deducted at source.\n"
+                    "3.4 All fees are exclusive of VAT and other statutory taxes.\n"
+                    "3.5 Referral bonuses or incentives are separately agreed in writing.\n"
+                    "3.6 TTA administers all payments on behalf of the Brand."
+                )},
+                {"heading": "4. Confidentiality & Non-Disclosure", "content": (
+                    "You shall keep all information related to TTA, the Brand, sponsors, vendors and partners strictly confidential, during and after termination of this Agreement."
+                )},
+                {"heading": "5. Intellectual Property", "content": (
+                    "5.1 Each Party retains exclusive interest in IP developed before this Agreement or outside its scope.\n"
+                    "5.2 All materials, content, reports and deliverables produced within the Project scope are the sole property of the Brand."
+                )},
+                {"heading": "6. Representations & Warranties", "content": (
+                    "You are engaged as an independent creator (not employee, partner or agent of the Brand). You warrant capacity to execute this Agreement and agree to use best reasonable efforts. Assignment requires TTA's prior written consent."
+                )},
+                {"heading": "7. Indemnification", "content": "Each Party shall indemnify and hold the other harmless from claims arising from information provided for the purpose of fulfilling this Agreement."},
+                {"heading": "8. Governing Law", "content": "This Agreement is governed by the laws of the Federal Republic of Nigeria; disputes resolved by arbitration."},
+                {"heading": "9. Dispute Resolution", "content": (
+                    "Disputes shall be settled amicably where possible, failing which they shall be referred to arbitration under the Arbitration and Mediation Act 2023 by a single Arbitrator. The decision is binding; costs borne equally."
+                )},
+                {"heading": "10. Force Majeure", "content": (
+                    "Neither Party is liable for failure or delay caused by events reasonably beyond their control. If a Force Majeure event persists beyond 30 days, Parties shall take steps to mitigate loss; either Party may terminate where continuation becomes impossible."
+                )},
+                {"heading": "11. Notices & Communication", "content": "Notices shall be in writing, delivered via email to designated leads or to the addresses provided. Changes take effect immediately upon written notification."},
+                {"heading": "12. Termination", "content": (
+                    "Either Party may terminate this Agreement at any time within the Term by giving at least 14 days' written notice. Payment, reporting and other obligations subsisting at the date of termination survive until discharged."
+                )},
+                {"heading": "13. Entire Agreement", "content": "This Agreement constitutes the entire Agreement between the Parties. Modifications must be in writing and signed by both Parties."},
+                {"heading": "Signatures", "content": f"The Common Seal of {brand_name} is hereto affixed in the presence of:\n\n_____________________ Secretary / Chief of Staff\n\nSigned and sealed by the within-named creative: {creator_name}\n\n______________________"},
+            ]
+        # Default: brand_msa (Service Agreement)
+        return [
+            {"heading": "Service Agreement", "content": f"This Service Agreement is dated {_now_iso()[:10]} between TASCK Creative Company Limited ('TASCK') and {brand_name} ('Brand'), for the project: {project_title}."},
+            {"heading": "Parties", "content": (
+                "Party 1 — TASCK Creative Company Limited, a registered company situated in Lagos, Nigeria.\n"
+                f"Party 2 — {brand_name}.\n"
+                "The parties may be individually or collectively referred to as 'You', 'Your', 'Us', 'Our' as the context requires."
+            )},
+            {"heading": "Whereas", "content": (
+                f"TASCK has the expertise and capacity within the scope of work incorporated in Clause 1 (the 'Services'). {brand_name} agrees to engage TASCK and TASCK agrees to provide the Services following the terms of this Agreement."
+            )},
+            {"heading": "1. Services", "content": (
+                f"Description of Services — TASCK shall deliver the {project_title} project, including strategy development, creator coordination, content production support, performance tracking, and reporting. Any other supporting services consequential to the Service provided are included."
+            )},
+            {"heading": "2. Project Details", "content": "Project timeline and key milestones shall be confirmed in the approved Strategy Snapshot and execution schedule. Venue/channels: to be confirmed with the Brand."},
+            {"heading": "3. Payment", "content": (
+                f"The total fixed fee payable to TASCK shall be {money}. Payment is to be made per the schedule agreed in the approved budget — minimum first tranche within seventy-two (72) hours of contract execution to commence work; final tranche on delivery acceptance."
+            )},
+            {"heading": "4. Performance / Delivery", "content": (
+                "TASCK shall coordinate creators, production and reporting resources. The Brand shall provide timely funding, approvals and feedback so that delivery timelines are not stalled. All works produced under this Agreement are created as 'Work for Hire' and the deliverables become Brand property on full settlement. This Agreement constitutes the entire agreement and supersedes prior negotiations."
+            )},
+            {"heading": "5. Cancellations", "content": (
+                "In case of cancellation by the Brand, notice will be provided at least 72 hours before any scheduled milestone. TASCK must be notified of any inability to fulfil the Agreement at least 72 hours before any scheduled delivery. Where cancellation occurs after work has begun, the Brand shall reimburse TASCK for costs incurred and time committed up to the point of cancellation."
+            )},
+            {"heading": "6. Liability and Conduct", "content": "Neither Party shall be liable for incidents or claims not arising from their own gross negligence or wilful misconduct. Professional conduct is expected at all times."},
+            {"heading": "7. Force Majeure", "content": "Neither Party shall be liable for failure to perform due to unforeseen circumstances such as natural disasters, government restrictions, or other events beyond reasonable control."},
+            {"heading": "8. Acknowledgement", "content": "By signing below, both parties agree to the terms outlined in this Agreement."},
+            {"heading": "Signatures", "content": (
+                "TASCK Authorised Representative:\nName: ____________________________\nSignature: ____________________________\nDate: ____________________________\n\n"
+                f"{brand_name} Authorised Representative:\nName: ____________________________\nSignature: ____________________________\nDate: ____________________________"
+            )},
+        ]
+
     @router.post("/contracts")
     async def create_contract(payload: ContractCreate):
         ctr_id = f"ctr-{uuid.uuid4().hex[:8]}"
@@ -2097,15 +2184,34 @@ def make_v3_router(db):
             ai_flags.append({"clause": "Final edit approval", "severity": "informational", "note": "Standard for creator-principal contracts. Brand revision limited to two rounds before lock."})
         if payload.template == "four_party_grant":
             ai_flags.append({"clause": "Editorial independence", "severity": "high", "note": "Grant contracts must ring-fence editorial independence — verify clause 4.1 reflects funder-distance posture."})
+
+        # Lookup brand & creator names for the template body so the contract starts brand-aware
+        case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0}) or {}
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+        brand_name = brand.get("company") or brand.get("name") or (payload.parties[1] if len(payload.parties) > 1 else "Brand")
+        creator_name = (creator or {}).get("name") or (payload.parties[1] if payload.template == "creator_principal" and len(payload.parties) > 1 else "Creator")
+        project_title = case.get("title") or "Project"
+
+        sections = _build_contract_sections(payload.template, brand_name, creator_name, payload.value, project_title)
+        title_map = {
+            "brand_msa": f"{brand_name} × TASCK — Service Agreement",
+            "creator_principal": f"{creator_name} × {brand_name} — Independent Creator Agreement",
+            "four_party_grant": f"{brand_name} × TASCK — Four-Party Grant Agreement",
+        }
         doc = {
             "id": ctr_id,
             "business_case_id": payload.business_case_id,
             "template": payload.template,
+            "title": title_map.get(payload.template, "Contract"),
             "status": "draft",
             "signed_at": None,
             "parties": payload.parties,
             "value": payload.value,
             "ai_risk_flags": ai_flags,
+            "sections": sections,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
         }
         await db.v3_contracts.insert_one({**doc})
         await db.v3_business_cases.update_one(
@@ -2114,6 +2220,22 @@ def make_v3_router(db):
              "$push": {"timeline": {"at": _now_iso(), "event": "contract_drafted", "contract_id": ctr_id, "template": payload.template}}},
         )
         return doc
+
+    class ContractUpdate(BaseModel):
+        title: Optional[str] = None
+        sections: Optional[List[Dict[str, Any]]] = None
+        status: Optional[str] = None
+
+    @router.patch("/contracts/{contract_id}")
+    async def update_contract(contract_id: str, payload: ContractUpdate):
+        ctr = await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
+        if not ctr:
+            raise HTTPException(404, "Contract not found")
+        updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+        if updates:
+            updates["updated_at"] = _now_iso()
+            await db.v3_contracts.update_one({"id": contract_id}, {"$set": updates})
+        return await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
 
     @router.post("/contracts/{contract_id}/sign")
     async def sign_contract(contract_id: str):
@@ -2265,6 +2387,38 @@ def make_v3_router(db):
     async def list_final_reports(business_case_id: Optional[str] = None):
         query = {"business_case_id": business_case_id} if business_case_id else {}
         return await db.v3_final_reports.find(query, {"_id": 0}).to_list(100)
+
+    class FinalReportUpdate(BaseModel):
+        title: Optional[str] = None
+        summary: Optional[str] = None
+        sections: Optional[List[Dict[str, Any]]] = None
+        feedback: Optional[Dict[str, Any]] = None
+        kpis: Optional[List[Dict[str, Any]]] = None
+        status: Optional[str] = None
+
+    @router.patch("/final-reports/{report_id}")
+    async def update_final_report(report_id: str, payload: FinalReportUpdate):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+        if updates:
+            await db.v3_final_reports.update_one({"id": report_id}, {"$set": updates})
+        return await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+
+    @router.post("/business-cases/{bc_id}/close")
+    async def close_business_case(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        if case.get("stage") == "closed":
+            return {"ok": True, "already_closed": True, "stage": "closed"}
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"stage": "closed", "closure.closed_at": _now_iso(), "closure.closure_pct": 100, "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": _now_iso(), "event": "business_case_closed", "actor": "admin"}}},
+        )
+        return {"ok": True, "stage": "closed"}
 
     class FeedbackPayload(BaseModel):
         rater: str
@@ -2887,6 +3041,7 @@ def make_v3_router(db):
     class DeliverableCreate(BaseModel):
         business_case_id: str
         title: str
+        notes: Optional[str] = None
 
     @router.post("/deliverables")
     async def add_deliverable(payload: DeliverableCreate):
@@ -2895,6 +3050,7 @@ def make_v3_router(db):
             "id": d_id,
             "business_case_id": payload.business_case_id,
             "title": payload.title,
+            "notes": payload.notes or "",
             "status": "pending_upload",
             "rm_approved_at": None,
             "brand_approved_at": None,
@@ -2908,6 +3064,21 @@ def make_v3_router(db):
              "$push": {"timeline": {"at": _now_iso(), "event": "deliverable_added", "deliverable_id": d_id}}},
         )
         return doc
+
+    class DeliverableUpdate(BaseModel):
+        title: Optional[str] = None
+        notes: Optional[str] = None
+        status: Optional[str] = None
+
+    @router.patch("/deliverables/{deliverable_id}")
+    async def update_deliverable(deliverable_id: str, payload: DeliverableUpdate):
+        d = await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+        if not d:
+            raise HTTPException(404, "Deliverable not found")
+        updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+        if updates:
+            await db.v3_deliverables.update_one({"id": deliverable_id}, {"$set": updates})
+        return await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
 
     # ------------------------------------------------------------------------
     # GENERATE Final Report (templated from BC's actual artefacts)
@@ -2936,6 +3107,53 @@ def make_v3_router(db):
             ]
             kpis = [{"kpi": k["kpi"], "target": k["target"], "actual": k["target"], "variance": "+18%"} for k in base]
 
+        brand_name = (brand or {}).get("company") or (brand or {}).get("name") or "Brand"
+        creator_name = (creator or {}).get("name") or "Creator"
+        deliverable_titles = [d.get("title", "") for d in deliverables]
+        # Project Report template sections — strictly mirrors the uploaded .docx outline
+        report_sections = [
+            {"heading": "1. Title Page", "content": (
+                f"{case['title']} — Final Campaign Report\nBrand: {brand_name}\nCreator: {creator_name}\nPrepared by TASCK Creative Company Limited\nDate: {_now_iso()[:10]}"
+            )},
+            {"heading": "2. Executive Summary", "content": (
+                f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones with overall KPI performance summarised below. "
+                "Strategic objectives, creative execution and measurable outcomes are detailed in the following sections."
+            )},
+            {"heading": "3. Project Overview & Objectives", "content": (
+                f"Brand: {brand_name}\nProject Title: {case['title']}\nEngagement Track: {case.get('engagement_track', 'paid')}\nBudget Approved: ₦{int(case.get('estimated_value') or 0):,}\nObjective: {(snapshot or {}).get('concept') or 'Aligned with the approved Strategy Snapshot.'}"
+            )},
+            {"heading": "4. Strategy Summary", "content": (
+                "This project followed the strategy approved in the Strategy Snapshot Studio. "
+                "Refer to the Strategy Snapshot for the full breakdown of insight, growth plan, and creator selection rationale."
+            )},
+            {"heading": "5. Deliverables", "content": (
+                ("Approved deliverables:\n- " + "\n- ".join(deliverable_titles)) if deliverable_titles else "No deliverables recorded against this Business Case."
+            )},
+            {"heading": "6. Performance / KPIs", "content": (
+                "\n".join([f"• {k.get('kpi')} — Target: {k.get('target')} | Actual: {k.get('actual')} | Variance: {k.get('variance')}" for k in kpis])
+            )},
+            {"heading": "7. Budget & Spend", "content": (
+                f"Approved Budget: ₦{int(case.get('estimated_value') or 0):,}\nActual Spend: To be reconciled against final invoices.\nAgency Fee (10%): Applied at source per the contract."
+            )},
+            {"heading": "8. Learnings", "content": (
+                "What worked well: pacing, creator activation, brand integration.\nWhat to refine: feedback loop with sponsors, scheduling buffers around production milestones."
+            )},
+            {"heading": "9. Recommendations & Next Steps", "content": (
+                "Recommended next move: maintain the working relationship via a small follow-on activation within 60 days. Document brand-side learnings in the CRM brand profile."
+            )},
+            {"heading": "10. Closure Sign-off", "content": (
+                "By acknowledging this report below, the Brand confirms receipt and acceptance of all delivered work and the closure of the Project under the executed Service Agreement."
+            )},
+        ]
+        # Feedback Template — scoring scaffold
+        feedback_questions = [
+            {"key": "project_outcome", "label": "Project Outcome", "rating": None, "comment": ""},
+            {"key": "communication", "label": "Communication", "rating": None, "comment": ""},
+            {"key": "brand_collaboration", "label": "Brand Collaboration", "rating": None, "comment": ""},
+            {"key": "timelines", "label": "Timelines", "rating": None, "comment": ""},
+            {"key": "recommendation", "label": "Likelihood to Recommend", "rating": None, "comment": ""},
+        ]
+
         existing = await db.v3_final_reports.find_one({"business_case_id": bc_id}, {"_id": 0})
         if existing:
             # Replace with newest generation
@@ -2947,13 +3165,26 @@ def make_v3_router(db):
             "business_case_id": bc_id,
             "status": "ready_for_brand",
             "generated_at": _now_iso(),
-            "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' × ' + creator['name'].upper() if creator else ''} × TASCK",
+            "brand_header": f"{brand_name.split(' ')[0].upper()}{' × ' + creator_name.upper() if creator else ''} × TASCK",
             "title": f"{case['title']} — Final Campaign Report",
             "summary": (
                 f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones."
                 f" KPI performance compared against the Strategy Snapshot targets is summarised below, alongside the closure checklist."
             ),
             "kpis": kpis,
+            "sections": report_sections,
+            "feedback": {
+                "project_information": {
+                    "title": case["title"],
+                    "brand": brand_name,
+                    "creator": creator_name,
+                    "date": _now_iso()[:10],
+                    "type": case.get("engagement_track", "paid"),
+                },
+                "questions": feedback_questions,
+                "average_score": None,
+                "notes": "",
+            },
             "closure_checklist": [
                 {"item": item, "status": "pending"}
                 for item in DEFAULT_FINAL_REPORT_CHECKLIST
