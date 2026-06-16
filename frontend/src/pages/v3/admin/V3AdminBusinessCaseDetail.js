@@ -556,7 +556,7 @@ const ContractSummaryCard = ({ bundle }) => {
             <p className="text-[12px] text-[#1A1A1A] leading-relaxed">
               {isGrant
                 ? 'Grant track — Strategy Development Fee is waived. Funder pays creator directly via TASCK-approved invoice schedule.'
-                : `Strategy Development Fee invoiced before Strategy Snapshot share. Project fee billed per milestone (typically 40% on signature / 40% on production / 20% on delivery). Net 15 days.`}
+                : `Strategy Development Fee tracked before Delivery. Project fee billed per milestone (typically 40% on signature / 40% on production / 20% on delivery). Net 15 days.`}
             </p>
             {c.value_raw && (
               <p className="text-[10px] text-[#8A8A8A] mt-2">
@@ -852,7 +852,7 @@ const V3AdminBusinessCaseDetail = () => {
     { line: 'Creator fee', amount: Math.round(planEstimatedValue * 0.28), owner: 'TASCK negotiates with creative' },
     { line: 'Production budget', amount: Math.round(planEstimatedValue * 0.22), owner: 'TASCK production planning' },
     { line: 'Paid media and amplification', amount: Math.round(planEstimatedValue * 0.18), owner: 'Brand and TASCK' },
-    { line: 'Strategy Development Fee', amount: Math.max(4000000, Math.round(planEstimatedValue * 0.035)), owner: 'Brand pays before Strategy Snapshot' },
+    { line: 'Strategy Development Fee', amount: Math.max(4000000, Math.round(planEstimatedValue * 0.035)), owner: 'Brand pays before Delivery' },
   ];
   const defaultBrainstormRevenuePlan = {
     brand_budget: planEstimatedValue,
@@ -1591,7 +1591,7 @@ const V3AdminBusinessCaseDetail = () => {
             { line: 'Creator fee', amount: creatorFee, owner: 'TASCK negotiates with creative' },
             { line: 'Production budget', amount: productionBudget, owner: 'TASCK production planning' },
             { line: 'Paid media and amplification', amount: paidMediaBudget, owner: 'Brand and TASCK' },
-            { line: 'Strategy Development Fee', amount: strategyFee, owner: 'Brand pays before Strategy Snapshot' },
+            { line: 'Strategy Development Fee', amount: strategyFee, owner: 'Brand pays before Delivery' },
           ],
           revenue_plan: {
             brand_budget: estimatedValue,
@@ -2207,7 +2207,7 @@ const V3AdminBusinessCaseDetail = () => {
           {!isGrant && (
             <Section title="Frame commercial note">
               <p className="text-[12px] text-[#6E6657]">
-                No Strategy Development Fee is collected in Frame. The fee is issued after a creator brief is sent and tracked before the Strategy Snapshot is shared externally.
+                No Strategy Development Fee is collected in Frame. The fee is issued after a creator brief is sent and tracked before Delivery.
               </p>
             </Section>
           )}
@@ -2268,7 +2268,7 @@ const V3AdminBusinessCaseDetail = () => {
                 <li>TTA coordinates approval and contract execution if the strategy is aligned.</li>
               </ul>
               <p className="text-[#6E6657]">
-                Full agency / project fees are <strong>separate</strong> from this fee. The Strategy Development Fee is invoiced before the Strategy Snapshot is shared with the brand.
+                Full agency / project fees are <strong>separate</strong> from this fee. The Strategy Development Fee is tracked before Delivery.
               </p>
               <div className="grid grid-cols-2 gap-3 pt-2 border-t border-[#E8E4DB]">
                 <div>
@@ -2341,7 +2341,7 @@ const V3AdminBusinessCaseDetail = () => {
                   <div key={inv.id} className="flex items-center justify-between" data-testid={`bc-plan-invoice-${inv.id}`}>
                     <div>
                       <p className="text-[13px] font-medium">{formatNairaV3(inv.amount)}</p>
-                      <p className="text-[11px] text-[#8A8A8A]">Tracked before Strategy Snapshot is sent. Status: {inv.status}</p>
+                      <p className="text-[11px] text-[#8A8A8A]">Tracked before Delivery. Status: {inv.status}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <button onClick={() => editStrategyFee(inv)} disabled={busy || inv.status === 'paid'} className="v3-btn-secondary" data-testid={`bc-edit-sdf-${inv.id}`}>

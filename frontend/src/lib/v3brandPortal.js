@@ -123,7 +123,7 @@ const makePresentationBundle = ({
       scope_flags_total: 2,
       scope_flags_resolved: alignmentStatus === 'approved' ? 2 : 0,
       strategy_development_fee_paid: ['deliver', 'closed'].includes(stage),
-      strategy_development_fee_due_stage: 'after_creator_brief_before_strategy_snapshot',
+      strategy_development_fee_due_stage: 'before_delivery',
     },
     plan: {
       creator_shortlist_status: creatorId ? 'matched' : 'pending',
@@ -165,7 +165,7 @@ const makePresentationBundle = ({
       { heading: 'Primary Target Audience', type: 'prose', content: marketing.primary_target_audience },
       { heading: 'Key Marketing Channels', type: 'bullets', items: marketing.key_marketing_channels },
       { heading: 'Marketing KPIs', type: 'kpis', items: marketing.marketing_kpis },
-      { heading: 'Next steps', type: 'bullets', items: ['TASCK matches creators.', 'Creator brief is shared.', 'Strategy Snapshot follows after fee confirmation.'] },
+      { heading: 'Next steps', type: 'bullets', items: ['TASCK matches creators.', 'Creator brief is shared.', 'Strategy Snapshot follows after creator brief review.'] },
     ],
     scope_flags: [],
     brand_comments: alignmentStatus === 'under_review'
@@ -191,6 +191,90 @@ const makePresentationBundle = ({
       { line: 'TASCK management', amount: Math.round(value * 0.1) },
     ],
     success_metrics: marketing.marketing_kpis,
+    template_name: 'Copy of Updated Creative Strategy Template_.docx',
+    sections: [
+      {
+        heading: '1. EXECUTIVE SNAPSHOT',
+        type: 'template',
+        content: 'A one-page decision view of the objective, approach, audience, budget, KPIs, and why the strategy will work.',
+        rows: [
+          { Field: 'Business Objective', Detail: marketing.key_marketing_focus },
+          { Field: 'Strategic Approach', Detail: 'Creator-led, community-driven, and conversion-focused.' },
+          { Field: 'Target Audience', Detail: marketing.primary_target_audience },
+          { Field: 'Budget Range', Detail: formatNairaV3(value) },
+          { Field: 'Core KPIs', Detail: marketing.marketing_kpis.map((m) => `${m.kpi}: ${m.target}`).join('; ') },
+        ],
+        items: [
+          'The strategy connects the brand offer to a clear audience behavior.',
+          'Creators provide trust, context, and repeated proof points across priority channels.',
+          'The roadmap links creative output to measurable funnel actions.',
+        ],
+      },
+      {
+        heading: '2. STRATEGIC FOUNDATION',
+        type: 'template',
+        rows: [
+          { Field: 'Problem', Detail: marketing.current_marketing_challenge || marketing.key_marketing_focus },
+          { Field: 'Opportunity', Detail: 'Use creator credibility and community distribution to make the offer easier to understand, trust, and act on.' },
+          { Field: 'Strategic Insight', Detail: 'The audience responds faster when the brand promise is explained through familiar voices and real use cases.' },
+          { Field: 'Strategic Solution', Detail: `${creator?.name || 'The selected creator'} anchors the campaign with a social-first creative system.` },
+        ],
+      },
+      {
+        heading: '3. GROWTH PLAN',
+        type: 'template',
+        content: 'Core Growth Engine: creator content -> audience trust -> qualified action -> repeat proof -> referral or community lift.',
+        rows: [
+          { Stage: 'Awareness -> Action', Objective: 'Convert attention into intent through trusted creator explanations.', 'Expected Conversion': 'Profile visits, link clicks, sign-ups, inquiries, or trial actions.' },
+          { Stage: 'Action -> Repeat', Objective: 'Turn first actions into repeat usage, referral, or purchase behavior.', 'Expected Conversion': 'Repeat actions, referrals, UGC, and retained community engagement.' },
+        ],
+      },
+      {
+        heading: '4. CREATOR STRATEGY',
+        type: 'template',
+        content: 'Creators are selected for audience alignment, cultural relevance, ability to drive action, and conversion potential.',
+        rows: [
+          { Role: 'Primary Creator / Ambassador', Recommendation: `${creator?.name || 'Primary creator'} leads trust-building content and conversion prompts.`, Platforms: marketing.key_marketing_channels.join(', ') },
+          { Role: 'Supporting Creators', Recommendation: 'Add niche creators to answer objections and extend reach into secondary communities.', Platforms: marketing.key_marketing_channels.join(', ') },
+        ],
+        items: ['Audience alignment', 'Cultural relevance', 'Ability to drive action', 'Conversion potential'],
+      },
+      {
+        heading: '5. EXECUTION ROADMAP',
+        type: 'template',
+        rows: [
+          { Phase: 'Phase 1 - Strategy and creator setup', 'Key Activities': 'Confirm audience, channel mix, creator roles, brief, guardrails, and approvals.', Deliverables: 'Approved creator brief, checklist, and content calendar.', Owner: 'TASCK admin + brand lead' },
+          { Phase: 'Phase 2 - Content production and launch', 'Key Activities': 'Produce hero content, short-form assets, supporting posts, and conversion prompts.', Deliverables: 'Creator assets, captions, links, and launch plan.', Owner: 'Creators + TASCK production lead' },
+          { Phase: 'Phase 3 - Optimization and reporting', 'Key Activities': 'Track KPIs, identify winning content, optimize CTA paths, and collect evidence.', Deliverables: 'Performance snapshot, learnings, final report inputs.', Owner: 'TASCK strategy + brand team' },
+        ],
+      },
+      {
+        heading: '6. COMMERCIAL OVERVIEW',
+        type: 'template',
+        content: `Budget Summary: estimated total investment is ${formatNairaV3(value)}.`,
+        rows: [
+          { Category: 'Ambassador', 'Estimated Cost': formatNairaV3(Math.round(value * 0.45)) },
+          { Category: 'Supporting Creators', 'Estimated Cost': formatNairaV3(Math.round(value * 0.15)) },
+          { Category: 'Production', 'Estimated Cost': formatNairaV3(Math.round(value * 0.25)) },
+          { Category: 'Operations', 'Estimated Cost': formatNairaV3(Math.round(value * 0.1)) },
+          { Category: 'Contingency', 'Estimated Cost': formatNairaV3(Math.round(value * 0.05)) },
+        ],
+        items: ['Estimated CAC: to be confirmed from tracked campaign actions.', 'Cost per Creator Output: calculated after final deliverable count.', 'Expected Return: qualified demand, conversion evidence, and reusable brand assets.'],
+      },
+      {
+        heading: '8. TRACKING PLAN',
+        type: 'bullets',
+        content: 'How results will be measured across creator, channel, platform, and transaction signals.',
+        items: ['Creator tracking links', 'Referral systems', 'Platform analytics', 'Transaction tracking where available'],
+      },
+      {
+        heading: '9. RISKS & MITIGATION',
+        type: 'bullets',
+        content: 'Clear risks and mitigation actions to keep execution from derailing.',
+        items: ['Approval delays: set feedback window early.', 'Creator availability: keep backup creators.', 'Budget pressure: prioritize primary KPI outputs.', 'Tracking gaps: agree on links and dashboards before launch.'],
+      },
+      { heading: 'NEXT STEPS', type: 'numbered', items: ['Confirm strategy approval.', 'Align on budget.', 'Execute contracts.', 'Begin Phase 1.'] },
+    ],
     brand_comments: strategyStatus === 'under_review'
       ? [{ id: `strategy-comment-${id}`, section_index: 2, quoted_text: 'Budget assumptions', comment: 'Please separate production and amplification assumptions.', author: brand?.primaryContact, status: 'open', created_at: '2026-03-18T11:00:00Z' }]
       : [],
@@ -315,7 +399,7 @@ const presentationBundles = [
     stage: 'plan',
     value: 125000000,
     days: 11,
-    nextAction: 'Strategy Development Fee is paid; Strategy Snapshot is being finalized.',
+    nextAction: 'Strategy Snapshot is being finalized for brand review.',
     strategyStatus: 'draft',
   }),
 ];
@@ -390,12 +474,16 @@ export const normalizeStrategyBudget = (budget) =>
 export const normalizeStrategyMetrics = (metrics = []) =>
   metrics.map((item) => (typeof item === 'string' ? { kpi: item.split(':')[0], target: item.split(':').slice(1).join(':').trim() } : item));
 
-export const strategySections = (snapshot) => [
-  { heading: 'Recommended creative direction', type: 'prose', content: snapshot.concept || '' },
-  { heading: 'Deliverables', type: 'bullets', items: normalizeStrategyDeliverables(snapshot.deliverables || []).map((d) => `${d.title}: ${d.format}${d.duration ? ` (${d.duration})` : ''}`) },
-  { heading: 'Budget assumptions', type: 'bullets', items: normalizeStrategyBudget(snapshot.budget).map((b) => `${b.line}: ${formatNairaV3(b.amount)}`) },
-  { heading: 'Success metrics', type: 'kpis', items: normalizeStrategyMetrics(snapshot.success_metrics || []) },
-];
+export const strategySections = (snapshot) => (
+  Array.isArray(snapshot?.sections) && snapshot.sections.length
+    ? snapshot.sections
+    : [
+        { heading: '1. EXECUTIVE SNAPSHOT', type: 'prose', content: snapshot.concept || '' },
+        { heading: '4. CREATOR STRATEGY', type: 'bullets', items: normalizeStrategyDeliverables(snapshot.deliverables || []).map((d) => `${d.title}: ${d.format}${d.duration ? ` (${d.duration})` : ''}`) },
+        { heading: '6. COMMERCIAL OVERVIEW', type: 'bullets', items: normalizeStrategyBudget(snapshot.budget).map((b) => `${b.line}: ${formatNairaV3(b.amount)}`) },
+        { heading: '8. TRACKING PLAN', type: 'kpis', items: normalizeStrategyMetrics(snapshot.success_metrics || []) },
+      ]
+);
 
 export const snapshotDocsFromBundle = (bundle) => {
   const docs = [];

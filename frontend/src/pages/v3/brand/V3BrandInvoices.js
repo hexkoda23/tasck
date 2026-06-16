@@ -15,7 +15,7 @@ const V3BrandInvoices = () => {
       label: 'Strategy Development Fee',
       amount: invoice.amount,
       status: invoice.status,
-      dueDate: 'Due after creator brief, before Strategy Snapshot',
+      dueDate: 'Tracked after creator brief, before Delivery',
     }));
     items.push({
       id: `${bc.id}-project`,

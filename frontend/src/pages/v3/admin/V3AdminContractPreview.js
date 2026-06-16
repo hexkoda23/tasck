@@ -50,7 +50,7 @@ const V3AdminContractPreview = () => {
         <h2>3. Fee Structure</h2>
         {isRetainer && (
           <>
-            <p><strong>Strategy Development Fee:</strong> {formatNairaV3(managementFee)} (15% of estimated value), payable after creator briefing and before the Strategy Snapshot is drafted. Frame, including Alignment Snapshot review, remains fee-free.</p>
+            <p><strong>Strategy Development Fee:</strong> {formatNairaV3(managementFee)} (15% of estimated value), payable after creator briefing and tracked before Delivery. Frame, including Alignment Snapshot review, remains fee-free.</p>
             <p><strong>Management Fee:</strong> 15% of the total approved campaign budget, payable upon Strategy Snapshot approval and project commencement into the Deliver stage.</p>
           </>
         )}

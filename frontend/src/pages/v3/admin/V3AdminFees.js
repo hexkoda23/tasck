@@ -158,7 +158,7 @@ const V3AdminFees = () => {
               </div>
               <p className="text-[12px] text-[#5C5C5C] mb-4 leading-relaxed">
                 Strategic advisory + campaign management. Frame stays fee-free; the Strategy
-                Development Fee is issued after creator briefing and before Strategy Snapshot
+                Development Fee is issued after creator briefing and tracked before Delivery
                 drafting.
               </p>
               <div className="space-y-2 text-[12px] mb-4">

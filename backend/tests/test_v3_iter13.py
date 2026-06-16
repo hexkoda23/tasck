@@ -166,6 +166,19 @@ def test_create_snapshot_inherits_concept(session):
     snap = r.json()
     assert snap["concept"]  # auto-inherited from brief response
     assert "proposed_concept" not in snap["concept"]  # value, not key
+    assert snap["template_name"] == "Copy of Updated Creative Strategy Template_.docx"
+    section_headings = [section["heading"] for section in snap["sections"]]
+    assert section_headings[:6] == [
+        "1. EXECUTIVE SNAPSHOT",
+        "2. STRATEGIC FOUNDATION",
+        "3. GROWTH PLAN",
+        "4. CREATOR STRATEGY",
+        "5. EXECUTION ROADMAP",
+        "6. COMMERCIAL OVERVIEW",
+    ]
+    assert "8. TRACKING PLAN" in section_headings
+    assert "9. RISKS & MITIGATION" in section_headings
+    assert "NEXT STEPS" in section_headings
     # Budget allocated and sums close to estimated_value
     total = sum(b["amount"] for b in snap["budget"])
     assert total > 0

@@ -36,6 +36,7 @@ import {
   v3GenerateFinalReport,
   v3GetBusinessCase,
   v3GetCreators,
+  v3ListMeetings,
   v3ListBriefs,
   v3ListContracts,
   v3ListDeliverables,
@@ -43,7 +44,6 @@ import {
   v3RescheduleBusinessCaseConnect,
   v3RescheduleCreatorBriefing,
   v3SendAlignmentToBrand,
-  v3SendConnectMeetingEmail,
   v3SendConnectRescheduleEmail,
   v3SendStrategySnapshotToBrand,
   v3SignContract,
@@ -152,9 +152,14 @@ const FlowShell = ({ title, subtitle, children, nextAction }) => {
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
   return (
     <div className="v3-stage-shell space-y-5" data-testid="business-case-flow-page">
-      <button onClick={() => navigate('/v3/admin/business-cases')} className="v3-btn-secondary text-[11px]">
-        <ArrowLeft className="w-3.5 h-3.5" /> Business Cases
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => navigate(-1)} className="v3-btn-secondary text-[11px]" data-testid="business-case-back-btn">
+          <ArrowLeft className="w-3.5 h-3.5" /> Back
+        </button>
+        <button type="button" onClick={() => navigate('/v3/admin/business-cases')} className="v3-btn-secondary text-[11px]" data-testid="business-case-list-btn">
+          <ArrowLeft className="w-3.5 h-3.5" /> Business Cases
+        </button>
+      </div>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-1">{bc.title}</p>
@@ -288,38 +293,74 @@ const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
   const marketing = bc.connect?.marketing_intelligence || alignment.marketing_intelligence || {};
   const projectTitle = bc.title || 'Business Case Project';
   const brandName = brand.company || brand.name || 'Brand';
+  const leadName = bc.relationship_manager_name || brand.relationship_manager_name || 'TTA project lead';
+  const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
   const planningValue = (label, fallback) => String(planningFields[label] || fallback || '').trim();
   return [
-    `Creative Brief: ${projectTitle}`,
+    'TTA - Creative Alignment Brief (Creator Version)',
+    'Internal name: Creator Brief for Fee Confirmation',
+    '',
+    '1. Project Reference',
+    `Brand / Organisation: ${brandName}`,
+    `Project working title: ${projectTitle}`,
+    `TTA project lead: ${leadName}`,
+    `Date shared with creator: ${today}`,
     `Creator: ${creatorName(creator)}`,
-    `Brand: ${brandName}`,
+    `Creator contact: ${creatorContact(creator) || 'To be confirmed'}`,
     '',
-    'Objective',
-    planningValue('Campaign core idea', marketing.key_marketing_focus || bc.stated_intent || `Create creator-led content that makes ${brandName} more relevant, trusted, and actionable for the target audience.`),
+    '2. Context (High-Level)',
+    `Brand objective (summary): ${planningValue('Campaign core idea', marketing.key_marketing_focus || bc.stated_intent || `Position ${brandName} with a credible creator-led cultural idea that supports the approved business case.`)}`,
+    `Why this project is happening now: ${planningValue('Audience and behavior', marketing.current_marketing_challenge || marketing.primary_target_audience || 'The brand is preparing a creator partnership and needs pricing/fit confirmation before final scope approval.')}`,
     '',
-    'Audience',
-    planningValue('Audience and behavior', marketing.primary_target_audience || 'Primary audience to be confirmed from the approved Alignment Snapshot and Business Call context.'),
+    '3. Role of the Creative',
+    'The creative would act as:',
+    '- Public-facing lead',
+    '- Conceptual lead',
+    '- Talent & cultural translator',
+    '- Executional partner',
+    `Primary responsibility: ${planningValue('Creator direction', `${creatorName(creator)} should help translate the brand opportunity through ${creatorSpecialty(creator)} while keeping the idea credible to their audience.`)}`,
+    'Describe responsibility, not outputs.',
     '',
-    'Creator direction',
-    planningValue('Creator direction', `${creatorName(creator)} should translate the brand opportunity through ${creatorSpecialty(creator)} while keeping the content credible to their existing community.`),
+    '4. Expected Scope (Signal Only)',
+    'This engagement may include:',
+    '- Content creation',
+    '- Appearances / representation',
+    '- Concept contribution',
+    '- Performance / activation involvement',
+    '- Other',
+    `Scope signal from planning: ${planningValue('Content/deliverables idea log', 'Creator involvement is being explored for planning and pricing alignment only.')}`,
+    'Important Inclusion:',
+    '- Specific deliverables are not yet defined',
+    '- Final scope is subject to brand approval',
     '',
-    'Deliverables',
-    planningValue('Content/deliverables idea log', '3 short-form videos, 1 story set, 1 launch post, captions, usage-ready raw selects, and one revision round.'),
+    '5. Indicative Timeline',
+    `Proposed engagement period: ${planningValue('Timeline inference', marketing.timeline || 'To be confirmed after brand approval and creator availability check.')}`,
+    'Known timing constraints: Confirm availability, blackout dates, production constraints, and any campaign launch windows.',
+    'No schedules. No milestones.',
     '',
-    'Channels',
-    planningValue('Channel plan', Array.isArray(marketing.key_marketing_channels) && marketing.key_marketing_channels.length ? marketing.key_marketing_channels.join(', ') : 'Instagram, TikTok, YouTube Shorts, and supporting community amplification.'),
+    '6. Working Assumptions',
+    '- TTA will coordinate engagement and act as administrative lead',
+    '- Contracts issued through TTA',
+    '- Payment processed through TTA',
+    '- Reporting and brand liaison handled by TTA',
     '',
-    'Budget and fee discussion',
-    planningValue('Budget planning', `Confirm creator fee, production needs, usage rights, payment terms, and whether ${creatorName(creator)} requires category exclusivity.`),
+    '7. Fee Indication Request',
+    `Fee for engagement (range or fixed): ${planningValue('Budget planning', 'Creator to propose a fee range or fixed fee for the engagement signal above.')}`,
+    'Fee basis: Project-based / Time-based / Retainer-style',
+    'What fee covers: Please state what your indication includes, including content, appearances, concept contribution, usage, exclusivity, production support, or management fees where relevant.',
+    'No breakdown required at this stage.',
     '',
-    'Timeline',
-    planningValue('Timeline inference', 'Confirm availability, briefing date, concept turnaround, production window, review period, launch date, and reporting handoff.'),
+    '8. Availability & Conditions',
+    'Are you available within proposed period? Yes / Conditional / No',
+    `Conditions/exclusions: ${planningValue('Risks and assumptions', 'Please share category conflicts, usage limits, exclusivity restrictions, production requirements, travel constraints, or anything that would affect the final scope.')}`,
     '',
-    'Risks / admin notes',
-    planningValue('Risks and assumptions', 'Admin should validate brand fit, content restrictions, approval speed, usage rights, and creator availability before the Creator Briefing Call.'),
+    '9. Confirmation',
+    '[ ] I understand this is for planning and pricing alignment only',
+    '[ ] I understand this is not a confirmed booking',
+    '[ ] I am open to proceeding subject to final scope and budget approval',
     '',
-    'Creator response requested',
-    'Please reply with interest level, fee expectation, availability, preferred creative angle, any conflicts, usage limits, and production requirements.',
+    'Name:',
+    'Date:',
   ].join('\n');
 };
 
@@ -467,8 +508,6 @@ export const V3BusinessCaseConnect = () => {
         <InfoCard title="Next steps">
           <div className="grid gap-2">
             <button onClick={() => navigate(`/v3/admin/business-cases/${id}/connect/schedule`)} className="v3-btn-primary"><Plus className="w-3.5 h-3.5" /> Schedule meeting</button>
-            <button onClick={() => navigate(`/v3/admin/business-cases/${id}/connect/questions`)} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> Questions + transcript</button>
-            <button onClick={() => navigate(`/v3/admin/business-cases/${id}/connect/analysis`)} className="v3-btn-secondary"><Sparkles className="w-3.5 h-3.5" /> AI result</button>
           </div>
         </InfoCard>
       </div>
@@ -498,7 +537,6 @@ export const V3BusinessCaseConnectSchedule = () => {
     meeting_link: '',
   });
   const [agendaItems, setAgendaItems] = useState(connectQuestions);
-  const [saved, setSaved] = useState(null);
   const [saving, setSaving] = useState(false);
   const [saveNotice, setSaveNotice] = useState('');
   const [prefilled, setPrefilled] = useState(false);
@@ -546,13 +584,8 @@ export const V3BusinessCaseConnectSchedule = () => {
         agenda,
         meeting_notes: agenda,
       });
-      setSaved(meeting);
-      setSaveNotice('Meeting saved. Opening the Frame phase...');
-      await v3PromoteBusinessCaseConnect(id, {
-        meeting_id: meeting.id,
-        reason: 'Business Call saved from Connect Schedule.',
-      });
-      navigate(`/v3/admin/business-cases/${id}/frame/snapshot`);
+      setSaveNotice('Meeting saved. Opening Connect Questions + Transcript...');
+      navigate(`/v3/admin/business-cases/${id}/connect/questions`, { state: { meetingId: meeting.id } });
     } catch (e) {
       setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not save the meeting. Please try again.');
     } finally {
@@ -560,7 +593,7 @@ export const V3BusinessCaseConnectSchedule = () => {
     }
   };
   return (
-    <FlowShell title="Connect Schedule" subtitle="Set the Business Call time, link, agenda, and brand contact before sending the welcome email." nextAction="Save the meeting, then queue the brand welcome + meeting email.">
+    <FlowShell title="Connect Schedule" subtitle="Set the Business Call time, link, agenda, and brand contact before the transcript review." nextAction="Save the meeting to open Connect Questions + Transcript.">
       <InfoCard title="Schedule meeting">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <TextInput label="Contact name" value={form.contact_name} onChange={(value) => setForm({ ...form, contact_name: value })} />
@@ -580,38 +613,56 @@ export const V3BusinessCaseConnectSchedule = () => {
           <Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save Meeting'}
         </button>
       </InfoCard>
-      {saved && (
-        <InfoCard title="Send Brand Welcome + Meeting Email">
-          <p className="text-[13px] text-[#6E6657] mb-3">Queues portal/login placeholder, meeting link, welcome message, and what the call will cover.</p>
-          <button onClick={() => v3SendConnectMeetingEmail(id, { ...form, agenda: agendaItems.map((item) => item.trim()).filter(Boolean).join('\n'), meeting_id: saved.id })} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Queue email</button>
-        </InfoCard>
-      )}
     </FlowShell>
   );
 };
 
 export const V3BusinessCaseConnectQuestions = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id, bundle } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const [transcript, setTranscript] = useState('');
   const [analysis, setAnalysis] = useState(null);
+  const [meetingId, setMeetingId] = useState(location.state?.meetingId || '');
+  useEffect(() => {
+    if (!bundle?.business_case || meetingId) return;
+    const connect = getCase(bundle).connect || {};
+    const savedMeetingId = connect.latest_meeting_id || (Array.isArray(connect.meeting_ids) ? connect.meeting_ids[connect.meeting_ids.length - 1] : '');
+    if (savedMeetingId) {
+      setMeetingId(savedMeetingId);
+      return;
+    }
+    v3ListMeetings({ business_case_id: id, meeting_type: 'business_call', stage: 'connect' })
+      .then((rows) => {
+        const latest = Array.isArray(rows) ? rows[0] : null;
+        if (latest?.id) setMeetingId(latest.id);
+      })
+      .catch(() => {});
+  }, [bundle, id, meetingId]);
   const analyze = async () => {
-    const meeting = await v3CreateMeeting({
-      title: `Business Call — Connect: ${bc.title}`,
-      meeting_type: 'business_call',
-      stage: 'connect',
-      entity_type: 'brand',
-      brand_id: bc.brand_id,
-      business_case_id: id,
-      entity_name: brand.company || brand.name || '',
-      business_case_title: bc.title,
-      agenda: connectQuestions.join('\n'),
-    });
-    await v3UploadMeetingTranscript(meeting.id, { transcript });
-    const result = await v3AnalyzeMeetingTranscript(meeting.id, {});
-    setAnalysis({ ...result, meeting_id: meeting.id });
+    let activeMeetingId = meetingId;
+    if (!activeMeetingId) {
+      const meeting = await v3CreateMeeting({
+        title: `Business Call — Connect: ${bc.title}`,
+        meeting_type: 'business_call',
+        stage: 'connect',
+        entity_type: 'brand',
+        brand_id: bc.brand_id,
+        business_case_id: id,
+        entity_name: brand.company || brand.name || '',
+        business_case_title: bc.title,
+        agenda: connectQuestions.join('\n'),
+      });
+      activeMeetingId = meeting.id;
+      setMeetingId(activeMeetingId);
+    }
+    await v3UploadMeetingTranscript(activeMeetingId, { transcript });
+    const result = await v3AnalyzeMeetingTranscript(activeMeetingId, {});
+    const nextAnalysis = { ...result, meeting_id: activeMeetingId };
+    setAnalysis(nextAnalysis);
+    navigate(`/v3/admin/business-cases/${id}/connect/analysis`, { state: { connectAnalysis: nextAnalysis } });
   };
   return (
     <FlowShell title="Connect Questions + Transcript" subtitle="Use these prompts to capture everything needed for Alignment Snapshot readiness." nextAction="Analyze the transcript, then open the AI result page.">
@@ -623,7 +674,6 @@ export const V3BusinessCaseConnectQuestions = () => {
           <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} rows={12} className="w-full rounded-lg border border-[#E8E4DB] p-3 text-[13px]" />
           <div className="flex gap-2 mt-3">
             <button onClick={analyze} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Analyze Transcript</button>
-            {analysis && <button onClick={() => navigate(`/v3/admin/business-cases/${id}/connect/analysis`)} className="v3-btn-secondary">Open AI result</button>}
           </div>
           {analysis && <p className="text-[12px] text-[#1F4A3A] mt-3">{analysis.recommendation?.label || analysis.ai_recommendation}</p>}
         </InfoCard>
@@ -634,9 +684,10 @@ export const V3BusinessCaseConnectQuestions = () => {
 
 export const V3BusinessCaseConnectAnalysis = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id, bundle } = useBusinessCaseBundle();
   const bc = getCase(bundle);
-  const analysis = bc.connect?.analysis || {};
+  const analysis = location.state?.connectAnalysis || bc.connect?.analysis || {};
   const recommendation = analysis.recommendation || {};
   return (
     <FlowShell title="Connect AI Result" subtitle="Review extracted marketing intelligence, reasons, missing context, risk flags, and the promote/reschedule/delete recommendation." nextAction={recommendation.label || 'Analyze a transcript to unlock the decision.'}>
@@ -1370,6 +1421,72 @@ const RECOMMENDED_CREATOR_BRIEFING = [
   'Are you willing to proceed with TASCK on this brief?',
 ];
 
+const strategyCellText = (value) => {
+  if (typeof value === 'number') return formatNairaV3(value);
+  if (Array.isArray(value)) return value.map(strategyCellText).join(', ');
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, item]) => `${key}: ${strategyCellText(item)}`)
+      .join(' | ');
+  }
+  return String(value || '');
+};
+
+const fallbackStrategySections = (snapshot) => [
+  { heading: '1. EXECUTIVE SNAPSHOT', type: 'template', content: snapshot?.concept || 'Strategy concept will appear here after generation.' },
+  { heading: '4. CREATOR STRATEGY', type: 'bullets', items: (snapshot?.deliverables || []).map((item) => `${item.title || item.name || 'Deliverable'}: ${item.format || item.deliverable || 'Content'}${item.duration ? ` (${item.duration})` : ''}`) },
+  { heading: '6. COMMERCIAL OVERVIEW', type: 'table', rows: (snapshot?.budget || []).map((item) => ({ Category: item.line || item.label || 'Budget item', 'Estimated Cost': strategyCellText(item.amount || item.value || 'TBC') })) },
+  { heading: '8. TRACKING PLAN', type: 'kpis', items: snapshot?.success_metrics || [] },
+];
+
+const strategySectionsForPreview = (snapshot) => (
+  Array.isArray(snapshot?.sections) && snapshot.sections.length ? snapshot.sections : fallbackStrategySections(snapshot)
+);
+
+const StrategySectionPreview = ({ section }) => {
+  const rows = Array.isArray(section.rows) ? section.rows : [];
+  const columns = rows.length
+    ? (Array.isArray(section.columns) && section.columns.length ? section.columns : Object.keys(rows[0] || {}))
+    : [];
+  const ListTag = section.type === 'numbered' ? 'ol' : 'ul';
+  return (
+    <section className="rounded-lg border border-[#E8E4DB] bg-white p-4">
+      <h4 className="text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{section.heading}</h4>
+      {section.content && <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">{section.content}</p>}
+      {Array.isArray(section.items) && section.items.length > 0 && (
+        <ListTag className={`${section.type === 'numbered' ? 'list-decimal' : 'list-disc'} mt-3 space-y-1 pl-5 text-[12px] leading-5 text-[#4F3E2F]`}>
+          {section.items.map((item, index) => (
+            <li key={`${section.heading}-item-${index}`}>
+              {typeof item === 'string' ? item : `${item.kpi || item.label || item.text || item.title || 'Item'}${item.target || item.value || item.reason ? `: ${item.target || item.value || item.reason}` : ''}`}
+            </li>
+          ))}
+        </ListTag>
+      )}
+      {rows.length > 0 && (
+        <div className="mt-3 overflow-x-auto rounded-lg border border-[#E8E4DB]">
+          <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
+            <thead className="bg-[#F4F2EC] text-[#6E6657]">
+              <tr>
+                {columns.map((column) => <th key={column} className="px-3 py-2 font-semibold">{column}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#E8E4DB] bg-white text-[#4F3E2F]">
+              {rows.map((row, rowIndex) => (
+                <tr key={`${section.heading}-row-${rowIndex}`}>
+                  {columns.map((column, columnIndex) => {
+                    const cell = Array.isArray(row) ? row[columnIndex] : row[column];
+                    return <td key={`${column}-${rowIndex}`} className="px-3 py-2 align-top">{strategyCellText(cell)}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+};
+
 export const V3BusinessCasePlanStrategySnapshot = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
@@ -1425,32 +1542,11 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
             <div>
               <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Status: {snapshot.status || 'draft'}</p>
               <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{snapshot.title || 'Strategy Snapshot'}</h3>
+              <p className="mt-1 text-[11px] text-[#8A8A8A]">Template: {snapshot.template_name || 'Copy of Updated Creative Strategy Template_.docx'}</p>
             </div>
-            {snapshot.concept && <p className="whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">{snapshot.concept}</p>}
-            {Array.isArray(snapshot.deliverables) && snapshot.deliverables.length > 0 && (
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Deliverables</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {snapshot.deliverables.map((item, index) => <div key={`${item.title || 'deliverable'}-${index}`} className="rounded-lg border border-[#E8E4DB] bg-white p-3 text-[12px] text-[#4F3E2F]">{item.title || item.name || item.deliverable || JSON.stringify(item)}</div>)}
-                </div>
-              </div>
-            )}
-            {Array.isArray(snapshot.budget) && snapshot.budget.length > 0 && (
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Budget</p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {snapshot.budget.map((item, index) => <div key={`${item.line || 'budget'}-${index}`} className="rounded-lg border border-[#E8E4DB] bg-white p-3 text-[12px] text-[#4F3E2F]">{item.line || item.label || 'Budget item'}: {item.amount || item.value || 'TBC'}</div>)}
-                </div>
-              </div>
-            )}
-            {Array.isArray(snapshot.success_metrics) && snapshot.success_metrics.length > 0 && (
-              <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Success metrics</p>
-                <ul className="list-disc space-y-1 pl-5 text-[12px] text-[#4F3E2F]">
-                  {snapshot.success_metrics.map((item, index) => <li key={`${item.metric || 'metric'}-${index}`}>{item.metric || item.kpi || item.label || JSON.stringify(item)}</li>)}
-                </ul>
-              </div>
-            )}
+            {strategySectionsForPreview(snapshot).map((section, index) => (
+              <StrategySectionPreview key={`${section.heading || 'strategy-section'}-${index}`} section={section} />
+            ))}
           </div>
         )}
       </InfoCard>

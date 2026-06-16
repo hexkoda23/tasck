@@ -15,6 +15,12 @@ import {
 import V3DocumentSurface from '../../../components/v3/V3DocumentSurface';
 import { CheckCircle, Clock, FileText, MessageSquare, Send } from 'lucide-react';
 
+const sectionValueText = (value) => {
+  if (Array.isArray(value)) return value.map(sectionValueText).join(', ');
+  if (value && typeof value === 'object') return Object.entries(value).map(([key, item]) => `${key}: ${sectionValueText(item)}`).join(' | ');
+  return String(value || '');
+};
+
 const V3BrandApprovals = ({
   eyebrow = 'APPROVALS',
   title = 'Pending Approvals',
@@ -165,15 +171,24 @@ const V3BrandApprovals = ({
   const renderSection = (section, index) => (
     <div key={`${section.heading}-${index}`} className="mb-6">
       <h2>{section.heading}</h2>
-      {section.type === 'prose' && <p>{section.content}</p>}
-      {section.type === 'bullets' && <ul>{(section.items || []).map((item, j) => <li key={j}>{item}</li>)}</ul>}
-      {section.type === 'numbered' && <ol>{(section.items || []).map((item, j) => <li key={j}>{item}</li>)}</ol>}
-      {section.type === 'kpis' && (
-        <div className="space-y-2">
-          {(section.items || []).map((item, j) => <p key={j}><strong>{item.kpi}:</strong> {item.target}</p>)}
-        </div>
+      {section.content && <p>{section.content}</p>}
+      {Array.isArray(section.items) && section.items.length > 0 && (
+        section.type === 'numbered'
+          ? <ol>{section.items.map((item, j) => <li key={j}>{sectionValueText(item)}</li>)}</ol>
+          : <ul>{section.items.map((item, j) => <li key={j}>{sectionValueText(item)}</li>)}</ul>
       )}
-      {section.type === 'flags' && <ul>{(section.items || []).map((item, j) => <li key={j}>{item.text}</li>)}</ul>}
+      {Array.isArray(section.rows) && section.rows.length > 0 && (
+        <table>
+          <thead>
+            <tr>{Object.keys(section.rows[0] || {}).map((column) => <th key={column}>{column}</th>)}</tr>
+          </thead>
+          <tbody>
+            {section.rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>{Object.keys(section.rows[0] || {}).map((column) => <td key={column}>{sectionValueText(row[column])}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>
+      )}
       {selected.snapshot.status !== 'approved' && (
         <div className="mt-3 p-3 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
           <textarea

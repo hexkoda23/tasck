@@ -6,6 +6,8 @@ import { v3AdminOverview } from '../../lib/v3api';
 const typeMeta = {
   alignment_snapshot_missing: { icon: AlertTriangle, color: '#C49B5F' },
   agreement_missing: { icon: FileText, color: '#B54A37' },
+  relationship_manager_missing: { icon: AlertTriangle, color: '#C49B5F' },
+  contract_missing: { icon: FileText, color: '#B54A37' },
   contract_pending: { icon: FileText, color: '#1F4A3A' },
   report_missing: { icon: AlertTriangle, color: '#C49B5F' },
   stage_stalled: { icon: Clock, color: '#9B9380' },
@@ -15,34 +17,70 @@ const typeMeta = {
   default: { icon: Bell, color: '#5C5C5C' },
 };
 
+const READ_STORAGE_KEY = 'tasck-v3-notifications-read';
+
+const loadReadKeys = () => {
+  if (typeof window === 'undefined') return [];
+  try {
+    return JSON.parse(window.localStorage.getItem(READ_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+};
+
+const notificationKey = (source, item, index) => `${source}:${item.type || 'default'}:${item.id || item.title || index}`;
+
+const notificationLink = (item) => {
+  if (!item?.id) return '/v3/admin';
+  if (item.type === 'relationship_manager_missing' || item.type === 'brand') return `/v3/admin/crm/${item.id}`;
+  if (item.type === 'alignment_snapshot_missing') return `/v3/admin/business-cases/${item.id}/frame/snapshot`;
+  if (item.type === 'contract_missing' || item.type === 'contract_pending' || item.type === 'agreement_missing') {
+    return `/v3/admin/business-cases/${item.id}/delivery/contracts`;
+  }
+  if (item.type === 'report_missing') return `/v3/admin/business-cases/${item.id}/reporting/final-report`;
+  if (item.type === 'stage_stalled' || item.type === 'business_case') return `/v3/admin/business-cases/${item.id}`;
+  if (item.type === 'creator') return `/v3/admin/creators/${item.id}`;
+  return '/v3/admin';
+};
+
 const V3NotificationCenter = () => {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
+  const [readKeys, setReadKeys] = useState(loadReadKeys);
   const navigate = useNavigate();
 
   useEffect(() => {
     let cancelled = false;
+    const storedReadKeys = loadReadKeys();
     v3AdminOverview()
       .then((data) => {
         if (cancelled) return;
-        const attention = (data?.needs_attention || []).map((n, i) => ({
-          id: `att-${i}`,
-          type: n.type,
-          title: n.title,
-          desc: n.message,
-          time: 'Action required',
-          link: n.id ? `/v3/admin/business-cases/${n.id}` : '/v3/admin/business-cases',
-          read: false,
-        }));
-        const activity = (data?.latest_activity || []).slice(0, 5).map((a, i) => ({
-          id: `act-${i}`,
-          type: a.type,
-          title: a.title,
-          desc: a.message || 'Imported from CRM workbook',
-          time: a.created_at ? new Date(a.created_at).toLocaleDateString() : '',
-          link: a.type === 'business_case' && a.id ? `/v3/admin/business-cases/${a.id}` : '/v3/admin',
-          read: true,
-        }));
+        const attention = (data?.needs_attention || []).map((n, i) => {
+          const key = notificationKey('attention', n, i);
+          return {
+            key,
+            id: `att-${i}`,
+            type: n.type,
+            title: n.title,
+            desc: n.message,
+            time: 'Action required',
+            link: notificationLink(n),
+            read: storedReadKeys.includes(key),
+          };
+        });
+        const activity = (data?.latest_activity || []).slice(0, 5).map((a, i) => {
+          const key = notificationKey('activity', a, i);
+          return {
+            key,
+            id: `act-${i}`,
+            type: a.type,
+            title: a.title,
+            desc: a.message || 'Imported from CRM workbook',
+            time: a.created_at ? new Date(a.created_at).toLocaleDateString() : '',
+            link: notificationLink(a),
+            read: true,
+          };
+        });
         setItems([...attention, ...activity]);
       })
       .catch(() => {});
@@ -50,6 +88,14 @@ const V3NotificationCenter = () => {
   }, []);
 
   const unreadCount = items.filter((n) => !n.read).length;
+  const markRead = (key) => {
+    const next = Array.from(new Set([...readKeys, key]));
+    setReadKeys(next);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(READ_STORAGE_KEY, JSON.stringify(next));
+    }
+    setItems((current) => current.map((item) => (item.key === key ? { ...item, read: true } : item)));
+  };
 
   return (
     <div className="relative" data-testid="v3-notification-center">
@@ -88,7 +134,7 @@ const V3NotificationCenter = () => {
                 return (
                   <button
                     key={n.id}
-                    onClick={() => { navigate(n.link); setOpen(false); }}
+                    onClick={() => { markRead(n.key); navigate(n.link); setOpen(false); }}
                     className={`w-full text-left p-3 flex gap-3 hover:bg-[#FAFAF7] transition-colors border-b border-[#F4F2EC] last:border-0 ${!n.read ? 'bg-[#1F4A3A05]' : ''}`}
                     data-testid={`notif-${n.id}`}
                   >
@@ -98,7 +144,9 @@ const V3NotificationCenter = () => {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className={`text-[12px] ${!n.read ? 'font-medium text-[#1A1A1A]' : 'text-[#5C5C5C]'} truncate`}>{n.title}</p>
-                        {!n.read && <div className="w-1.5 h-1.5 rounded-full bg-[#1F4A3A] flex-shrink-0" />}
+                        <span className={`rounded-full px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-wide ${n.read ? 'bg-[#F4F2EC] text-[#8A8A8A]' : 'bg-[#DDE7E2] text-[#1F4A3A]'}`}>
+                          {n.read ? 'Read' : 'New'}
+                        </span>
                       </div>
                       <p className="text-[10px] text-[#8A8A8A] mt-0.5 line-clamp-2">{n.desc}</p>
                       <p className="text-[9px] text-[#D4CDBF] mt-1" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{n.time}</p>

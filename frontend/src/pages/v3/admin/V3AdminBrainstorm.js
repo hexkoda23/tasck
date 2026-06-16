@@ -48,7 +48,7 @@ const V3AdminBrainstorm = () => {
     { line: 'Creator fee', amount: Math.round(project.estimatedValue * 0.28), owner: 'Negotiated by TASCK' },
     { line: 'Production budget', amount: Math.round(project.estimatedValue * 0.22), owner: 'TASCK production' },
     { line: 'Paid media and amplification', amount: Math.round(project.estimatedValue * 0.18), owner: 'Brand and TASCK' },
-    { line: 'Strategy Development Fee', amount: Math.max(4000000, Math.round(project.estimatedValue * 0.035)), owner: 'Brand payable before Strategy Snapshot' },
+    { line: 'Strategy Development Fee', amount: Math.max(4000000, Math.round(project.estimatedValue * 0.035)), owner: 'Brand payable before Delivery' },
   ];
 
   const revenuePlan = {

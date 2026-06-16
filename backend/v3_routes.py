@@ -6,8 +6,7 @@ spanning all four stages (Connect → Frame → Plan → Deliver) plus closure.
 
 Stage advancement rules:
   connect → frame  : Connect status must be `qualified_to_frame`
-  frame   → plan   : Alignment Snapshot approved; all scope flags resolved;
-                     Strategy Development Fee paid (unless engagement_track == 'grant')
+  frame   → plan   : Alignment Snapshot approved; all scope flags resolved
   plan    → deliver: Strategy Snapshot approved AND contract signed
   deliver → closed : Closure checklist complete (final report + feedback)
 """
@@ -1601,7 +1600,7 @@ def make_v3_router(db):
                     "Resolve open flags around budget, timeline, decision maker, and KPI ownership.",
                     "Approve the Alignment Snapshot from the admin page or brand portal.",
                     "Move to Plan, run creator scanning, and prepare the Creative Brief.",
-                    "Approve the strategy development fee/invoice when required before the Strategy Snapshot.",
+                    "Approve the strategy development fee/invoice when required before Delivery.",
                 ]},
                 {"heading": "Open questions & admin flags", "type": "flags", "content": "Items that should be confirmed before Plan is treated as final.", "items": scope_flags},
             ],
@@ -1661,7 +1660,7 @@ def make_v3_router(db):
         else:
             updates["frame.strategy_development_fee_invoice_id"] = case.get("frame", {}).get("strategy_development_fee_invoice_id")
             updates["frame.strategy_development_fee_paid"] = bool(case.get("frame", {}).get("strategy_development_fee_paid", False))
-            updates["frame.strategy_development_fee_due_stage"] = "after_creator_brief_before_strategy_snapshot"
+            updates["frame.strategy_development_fee_due_stage"] = "before_delivery"
 
         await db.v3_business_cases.update_one(
             {"id": bc_id},
@@ -1886,14 +1885,14 @@ def make_v3_router(db):
             invoice_update = {
                 "frame.strategy_development_fee_invoice_id": inv_id,
                 "frame.strategy_development_fee_paid": False,
-                "frame.strategy_development_fee_due_stage": "before_strategy_snapshot",
+                "frame.strategy_development_fee_due_stage": "before_delivery",
             }
             await queue_email(
                 to=(brand or {}).get("email", ""),
                 subject=f"Strategy Development Fee issued - {case['title']}",
                 body=(
                     f"The creator brief for {case['title']} has been sent. "
-                    "The Strategy Development Fee is now due before TASCK drafts the Strategy Snapshot."
+                    "The Strategy Development Fee has been issued for commercial approval and will be tracked before Delivery."
                 ),
                 kind="strategy_development_fee_invoice",
                 brand_id=case["brand_id"],
@@ -1962,6 +1961,7 @@ def make_v3_router(db):
     class StrategySnapshotUpdatePayload(BaseModel):
         title: Optional[str] = None
         concept: Optional[str] = None
+        sections: Optional[List[Dict[str, Any]]] = None
         deliverables: Optional[List[Dict[str, Any]]] = None
         budget: Optional[List[Dict[str, Any]]] = None
         success_metrics: Optional[List[Dict[str, Any]]] = None
@@ -1973,7 +1973,7 @@ def make_v3_router(db):
         if not snap:
             raise HTTPException(404, "Strategy Snapshot not found")
         updates = {"last_edited_at": _now_iso(), "last_edited_by": payload.reviewer}
-        for key in ["title", "concept", "deliverables", "budget", "success_metrics"]:
+        for key in ["title", "concept", "sections", "deliverables", "budget", "success_metrics"]:
             value = getattr(payload, key)
             if value is not None:
                 updates[key] = value
@@ -2662,16 +2662,196 @@ def make_v3_router(db):
         case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        if case.get("engagement_track") == "paid" and not case.get("frame", {}).get("strategy_development_fee_paid"):
-            raise HTTPException(400, "Strategy Development Fee must be paid before drafting the Strategy Snapshot.")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
         creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
         brief = await db.v3_creative_briefs.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
+        alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
         concept = payload.concept or (
             (brief or {}).get("creator_response", {}).get("proposed_concept")
             or f"Strategy synthesis for {case['title']} — concept under refinement."
         )
         total = case.get("estimated_value") or 100_000_000
+        brand_name = (brand or {}).get("company") or (brand or {}).get("name") or "Brand"
+        marketing = case.get("connect", {}).get("marketing_intelligence") or (alignment or {}).get("marketing_intelligence") or {}
+
+        def _value(value: Any, fallback: str = "") -> str:
+            if value is None:
+                return fallback
+            if isinstance(value, list):
+                return ", ".join(str(item) for item in value if item) or fallback
+            if isinstance(value, dict):
+                return ", ".join(f"{k}: {v}" for k, v in value.items() if v) or fallback
+            text = str(value).strip()
+            return text or fallback
+
+        def _first(*values: Any, fallback: str = "") -> str:
+            for value in values:
+                text = _value(value)
+                if text:
+                    return text
+            return fallback
+
+        def _money(value: Any) -> str:
+            try:
+                return f"₦{int(value):,}"
+            except Exception:
+                return _value(value, "TBC")
+
+        objective = _first(
+            marketing.get("brand_offer"),
+            marketing.get("key_marketing_focus"),
+            case.get("stated_intent"),
+            fallback=f"Grow {brand_name}'s priority audience through a measurable creator-led campaign.",
+        )
+        target_audience = _first(
+            marketing.get("primary_target_audience"),
+            marketing.get("target_audience"),
+            fallback="Primary audience defined from the approved business call and Alignment Snapshot.",
+        )
+        challenge = _first(
+            marketing.get("marketing_challenge"),
+            marketing.get("current_marketing_challenge"),
+            fallback=f"{brand_name} needs a focused strategy that turns audience attention into measurable action.",
+        )
+        channels = _first(
+            marketing.get("key_marketing_channels"),
+            marketing.get("channels"),
+            fallback="Instagram, TikTok, YouTube Shorts, community distribution, and selective paid amplification.",
+        )
+        timeline = _first(marketing.get("timeline"), case.get("timeline"), fallback="6-8 weeks from approval to launch readiness.")
+        creator_label = (creator or {}).get("name") or "Primary Creator / Ambassador"
+        kpi_primary = _first(marketing.get("primary_kpi"), marketing.get("kpis"), fallback="Qualified actions from creator-led content")
+        creator_role = f"{creator_label} translates the strategy into trusted content, audience education, and conversion prompts."
+        budget_rows = [
+            {"line": "Ambassador", "amount": int(total * 0.50)},
+            {"line": "Supporting Creators", "amount": int(total * 0.15)},
+            {"line": "Production", "amount": int(total * 0.20)},
+            {"line": "Operations", "amount": int(total * 0.10)},
+            {"line": "Contingency", "amount": int(total * 0.05)},
+        ]
+        deliverables = [
+            {"num": 1, "title": "Hero creative asset", "format": "Short-form anchor video", "duration": "60-90s"},
+            {"num": 2, "title": "Creator content series", "format": "Vertical video and story set", "duration": "6-10 posts"},
+            {"num": 3, "title": "Community conversion assets", "format": "Referral, CTA, and social proof assets", "duration": "Campaign period"},
+            {"num": 4, "title": "Performance recap assets", "format": "Screenshots, insights, and reporting inputs", "duration": "Final report"},
+        ]
+        success_metrics = [
+            {"kpi": "Primary KPI", "target": kpi_primary},
+            {"kpi": "Secondary KPI", "target": "Reach, saves, shares, comments, and qualified traffic growth"},
+            {"kpi": "Efficiency KPI", "target": "Track CAC or cost per qualified action where transaction data is available"},
+        ]
+        sections = [
+            {
+                "heading": "1. EXECUTIVE SNAPSHOT",
+                "type": "template",
+                "content": "A one-page decision view of the objective, approach, audience, budget, KPIs, and why the strategy will work.",
+                "rows": [
+                    {"Field": "Business Objective", "Detail": objective},
+                    {"Field": "Strategic Approach", "Detail": "Creator-led, community-driven, and conversion-focused."},
+                    {"Field": "Target Audience", "Detail": target_audience},
+                    {"Field": "Budget Range", "Detail": _money(total)},
+                    {"Field": "Core KPIs", "Detail": "; ".join(f"{m['kpi']}: {m['target']}" for m in success_metrics)},
+                ],
+                "items": [
+                    f"The strategy connects {brand_name}'s offer to a clear audience behavior.",
+                    "Creators provide trust, context, and repeated proof points across priority channels.",
+                    "The execution roadmap links creative output to measurable funnel actions.",
+                ],
+            },
+            {
+                "heading": "2. STRATEGIC FOUNDATION",
+                "type": "template",
+                "rows": [
+                    {"Field": "Problem", "Detail": challenge},
+                    {"Field": "Opportunity", "Detail": "Use creator credibility and community distribution to make the offer easier to understand, trust, and act on."},
+                    {"Field": "Strategic Insight", "Detail": "The audience is more likely to respond when the brand promise is explained through familiar voices and real use cases."},
+                    {"Field": "Strategic Solution", "Detail": concept},
+                ],
+            },
+            {
+                "heading": "3. GROWTH PLAN",
+                "type": "template",
+                "content": "Core Growth Engine: creator content -> audience trust -> qualified action -> repeat proof -> referral or community lift.",
+                "rows": [
+                    {"Stage": "Awareness -> Action", "Objective": "Convert attention into intent through trusted creator explanations.", "Expected Conversion": "Profile visits, link clicks, sign-ups, inquiries, or trial actions."},
+                    {"Stage": "Action -> Repeat", "Objective": "Turn first actions into repeat usage, referral, or purchase behavior.", "Expected Conversion": "Repeat actions, referrals, UGC, and retained community engagement."},
+                ],
+                "items": [
+                    f"Phase 1 builds clarity around {brand_name}'s offer.",
+                    "Phase 2 drives creator-led proof and audience participation.",
+                    "Phase 3 retargets high-intent audiences with stronger conversion prompts.",
+                ],
+            },
+            {
+                "heading": "4. CREATOR STRATEGY",
+                "type": "template",
+                "content": "Creators are selected for audience alignment, cultural relevance, ability to drive action, and conversion potential.",
+                "rows": [
+                    {"Role": "Primary Creator / Ambassador", "Recommendation": creator_role, "Platforms": channels},
+                    {"Role": "Supporting Creators", "Recommendation": "Add niche creators who reinforce use cases, answer objections, and extend reach into secondary communities.", "Platforms": channels},
+                ],
+                "items": [
+                    "Audience alignment",
+                    "Cultural relevance",
+                    "Ability to drive action",
+                    "Conversion potential",
+                ],
+            },
+            {
+                "heading": "5. EXECUTION ROADMAP",
+                "type": "template",
+                "rows": [
+                    {"Phase": "Phase 1 - Strategy and creator setup", "Key Activities": "Confirm audience, channel mix, creator roles, brief, content guardrails, and approval rhythm.", "Deliverables": "Approved creator brief, production checklist, and content calendar.", "Owner": "TASCK admin + brand lead"},
+                    {"Phase": "Phase 2 - Content production and launch", "Key Activities": "Produce hero content, short-form assets, supporting posts, and conversion prompts.", "Deliverables": "Creator assets, captions, links, and launch-ready posting plan.", "Owner": "Creators + TASCK production lead"},
+                    {"Phase": "Phase 3 - Optimization and reporting", "Key Activities": "Track KPIs, identify winning content, optimize CTA paths, and collect reporting evidence.", "Deliverables": "Performance snapshot, learnings, final report inputs.", "Owner": "TASCK strategy + brand team"},
+                ],
+                "items": [f"Recommended timeline: {timeline}"],
+            },
+            {
+                "heading": "6. COMMERCIAL OVERVIEW",
+                "type": "template",
+                "content": f"Budget Summary: estimated total investment is {_money(total)}.",
+                "rows": [{"Category": row["line"], "Estimated Cost": _money(row["amount"])} for row in budget_rows],
+                "items": [
+                    "Estimated CAC: to be confirmed from channel benchmarks and tracked campaign actions.",
+                    "Cost per Creator Output: calculated after final creator selection and deliverable count.",
+                    "Expected Return: audience growth, qualified demand, conversion evidence, and reusable brand assets.",
+                ],
+            },
+            {
+                "heading": "8. TRACKING PLAN",
+                "type": "bullets",
+                "content": "How results will be measured across creator, channel, platform, and transaction signals.",
+                "items": [
+                    "Creator tracking links",
+                    "Referral systems",
+                    "Platform analytics",
+                    "Transaction tracking where available",
+                    "Manual evidence capture for qualitative brand lift",
+                ],
+            },
+            {
+                "heading": "9. RISKS & MITIGATION",
+                "type": "bullets",
+                "content": "Clear risks and mitigation actions to keep the transaction and campaign execution from derailing.",
+                "items": [
+                    "Approval delays: set decision owner, feedback window, and escalation path before production.",
+                    "Creator availability: keep backup creators and confirm production windows before launch.",
+                    "Budget pressure: prioritize creator outputs that connect directly to the primary KPI.",
+                    "Tracking gaps: agree on links, UTMs, dashboards, and manual evidence before launch.",
+                ],
+            },
+            {
+                "heading": "NEXT STEPS",
+                "type": "numbered",
+                "items": [
+                    "Confirm strategy approval.",
+                    "Align on budget.",
+                    "Execute contracts.",
+                    "Begin Phase 1.",
+                ],
+            },
+        ]
         cs_id = f"cs-{uuid.uuid4().hex[:8]}"
         doc = {
             "id": cs_id,
@@ -2685,27 +2865,12 @@ def make_v3_router(db):
             "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' × ' + creator['name'].upper() if creator else ''} × TASCK",
             "title": payload.title or f"{case['title']} — Strategy Snapshot v1",
             "concept": concept,
+            "template_name": "Copy of Updated Creative Strategy Template_.docx",
+            "sections": sections,
             "brand_comments": [],
-            "deliverables": [
-                {"num": 1, "title": "Hero piece", "format": "Short film", "duration": "8–12 min"},
-                {"num": 2, "title": "Social cut-downs", "format": "Vertical video", "duration": "6 × 30s"},
-                {"num": 3, "title": "Behind-the-scenes feature", "format": "Doc feature", "duration": "12 min"},
-                {"num": 4, "title": "Stills package", "format": "Photography", "duration": "30+ images"},
-            ],
-            "budget": [
-                {"line": "Creator fee", "amount": int(total * 0.50)},
-                {"line": "Production", "amount": int(total * 0.25)},
-                {"line": "Post-production", "amount": int(total * 0.10)},
-                {"line": "Logistics", "amount": int(total * 0.05)},
-                {"line": "TTA management fee (15%)", "amount": int(total * 0.075)},
-                {"line": "Contingency", "amount": int(total * 0.025)},
-            ],
-            "success_metrics": [
-                {"kpi": "Reach", "target": "10M+ unique impressions"},
-                {"kpi": "Engagement rate", "target": "7%+"},
-                {"kpi": "Earned media value", "target": f"₦{int(total/1_000_000 * 1.5)}M+"},
-                {"kpi": "UGC posts", "target": "5,000+"},
-            ],
+            "deliverables": deliverables,
+            "budget": budget_rows,
+            "success_metrics": success_metrics,
         }
         await db.v3_creative_snapshots.insert_one({**doc})
         await db.v3_business_cases.update_one(
@@ -5067,6 +5232,29 @@ Produce the opportunity card JSON.
                 "updated_at": _now_iso(),
             }}
         )
+        if m.get("business_case_id"):
+            now = _now_iso()
+            await db.v3_business_cases.update_one(
+                {"id": m["business_case_id"]},
+                {
+                    "$set": {
+                        "connect.analysis": analysis,
+                        "connect.marketing_intelligence": mi,
+                        "connect.stated_intent": mi.get("key_marketing_focus"),
+                        "connect.connect_status": "in_discovery",
+                        "connect.latest_meeting_id": meeting_id,
+                        "updated_at": now,
+                    },
+                    "$push": {
+                        "timeline": {
+                            "at": now,
+                            "event": "connect_transcript_analyzed",
+                            "meeting_id": meeting_id,
+                            "ai_recommendation": ai_recommendation,
+                        }
+                    },
+                },
+            )
         return {**analysis, "readiness_score": readiness}
 
     @router.post("/meetings/{meeting_id}/questions/regenerate")
@@ -5638,9 +5826,9 @@ Produce the opportunity card JSON.
                 })
 
         latest_activity = [
-            *[{"type": "brand", "title": b.get("company") or b.get("name"), "created_at": b.get("created_at") or b.get("imported_at") or ""} for b in brands],
-            *[{"type": "business_case", "title": c.get("title"), "created_at": c.get("created_at") or c.get("updated_at") or ""} for c in cases],
-            *[{"type": "creator", "title": c.get("name") or c.get("creator_name"), "created_at": c.get("created_at") or c.get("imported_at") or ""} for c in creators],
+            *[{"id": b.get("id"), "type": "brand", "title": b.get("company") or b.get("name"), "created_at": b.get("created_at") or b.get("imported_at") or ""} for b in brands],
+            *[{"id": c.get("id"), "type": "business_case", "title": c.get("title"), "created_at": c.get("created_at") or c.get("updated_at") or ""} for c in cases],
+            *[{"id": c.get("id"), "type": "creator", "title": c.get("name") or c.get("creator_name"), "created_at": c.get("created_at") or c.get("imported_at") or ""} for c in creators],
         ]
         latest_activity = sorted(latest_activity, key=lambda x: x.get("created_at") or "", reverse=True)[:10]
 

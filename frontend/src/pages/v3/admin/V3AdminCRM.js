@@ -396,7 +396,7 @@ const V3AdminCRM = () => {
             <p className="text-[11px] text-[#8A8A8A] mt-1">
               {form.engagement_track_default === 'grant'
                 ? 'No Strategy Development Fee will be invoiced. Funder pays creator directly.'
-                : 'Strategy Development Fee is issued after the creator brief, before the Strategy Snapshot.'}
+                : 'Strategy Development Fee is issued after the creator brief and tracked before Delivery.'}
             </p>
           </div>
         </div>

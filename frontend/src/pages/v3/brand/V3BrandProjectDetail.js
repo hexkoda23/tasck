@@ -61,29 +61,47 @@ const docsFromBundle = (bundle) => {
       kind: 'strategy',
       label: 'Strategy Snapshot',
       snapshot: strategy,
-      sections: [
-        { heading: 'Recommended creative direction', type: 'prose', content: strategy.concept || '' },
-        { heading: 'Deliverables', type: 'bullets', items: normalizeStrategyDeliverables(strategy.deliverables || []).map((d) => `${d.title}: ${d.format}${d.duration ? ` (${d.duration})` : ''}`) },
-        { heading: 'Budget assumptions', type: 'bullets', items: normalizeStrategyBudget(strategy.budget).map((b) => `${b.line}: ${formatNairaV3(b.amount)}`) },
-        { heading: 'Success metrics', type: 'kpis', items: normalizeStrategyMetrics(strategy.success_metrics || []) },
-      ],
+      sections: Array.isArray(strategy.sections) && strategy.sections.length
+        ? strategy.sections
+        : [
+            { heading: '1. EXECUTIVE SNAPSHOT', type: 'prose', content: strategy.concept || '' },
+            { heading: '4. CREATOR STRATEGY', type: 'bullets', items: normalizeStrategyDeliverables(strategy.deliverables || []).map((d) => `${d.title}: ${d.format}${d.duration ? ` (${d.duration})` : ''}`) },
+            { heading: '6. COMMERCIAL OVERVIEW', type: 'bullets', items: normalizeStrategyBudget(strategy.budget).map((b) => `${b.line}: ${formatNairaV3(b.amount)}`) },
+            { heading: '8. TRACKING PLAN', type: 'kpis', items: normalizeStrategyMetrics(strategy.success_metrics || []) },
+          ],
     });
   }
   return docs;
 };
 
+const sectionValueText = (value) => {
+  if (typeof value === 'number') return formatNairaV3(value);
+  if (Array.isArray(value)) return value.map(sectionValueText).join(', ');
+  if (value && typeof value === 'object') return Object.entries(value).map(([key, item]) => `${key}: ${sectionValueText(item)}`).join(' | ');
+  return String(value || '');
+};
+
 const renderSection = (section, index) => (
   <div key={`${section.heading}-${index}`} className="mb-6">
     <h2>{section.heading}</h2>
-    {section.type === 'prose' && <p>{section.content}</p>}
-    {section.type === 'bullets' && <ul>{(section.items || []).map((item, j) => <li key={j}>{item}</li>)}</ul>}
-    {section.type === 'numbered' && <ol>{(section.items || []).map((item, j) => <li key={j}>{item}</li>)}</ol>}
-    {section.type === 'kpis' && (
-      <div className="space-y-2">
-        {(section.items || []).map((item, j) => <p key={j}><strong>{item.kpi}:</strong> {item.target}</p>)}
-      </div>
+    {section.content && <p>{section.content}</p>}
+    {Array.isArray(section.items) && section.items.length > 0 && (
+      section.type === 'numbered'
+        ? <ol>{section.items.map((item, j) => <li key={j}>{sectionValueText(item)}</li>)}</ol>
+        : <ul>{section.items.map((item, j) => <li key={j}>{sectionValueText(item)}</li>)}</ul>
     )}
-    {section.type === 'flags' && <ul>{(section.items || []).map((item, j) => <li key={j}>{item.text}</li>)}</ul>}
+    {Array.isArray(section.rows) && section.rows.length > 0 && (
+      <table>
+        <thead>
+          <tr>{Object.keys(section.rows[0] || {}).map((column) => <th key={column}>{column}</th>)}</tr>
+        </thead>
+        <tbody>
+          {section.rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>{Object.keys(section.rows[0] || {}).map((column) => <td key={column}>{sectionValueText(row[column])}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+    )}
   </div>
 );
 
@@ -344,7 +362,7 @@ const V3BrandProjectDetail = () => {
               <FileText className="w-4 h-4 text-[#1F4A3A]" />
               <div className="flex-1">
                 <p className="text-[13px] text-[#1A1A1A]">Strategy Development Fee</p>
-                <p className="text-[10px] text-[#8A8A8A]">Due after creator brief, before Strategy Snapshot</p>
+                <p className="text-[10px] text-[#8A8A8A]">Tracked after creator brief, before Delivery</p>
               </div>
               <span className="text-[12px] font-medium" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{formatNairaV3(invoice.amount)}</span>
               <span className={`text-[10px] px-2 py-0.5 rounded ${invoice.status === 'paid' ? 'text-[#1F4A3A] bg-[#DDE7E2]' : 'text-[#C49B5F] bg-[#C49B5F12]'}`}>{invoice.status}</span>
