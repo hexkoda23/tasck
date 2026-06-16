@@ -74,6 +74,8 @@ export const v3ListContracts = (bcId) => v3.get('/contracts', { params: { busine
 export const v3CreateContract = (payload) => v3.post('/contracts', payload).then(r => r.data);
 export const v3UpdateContract = (contractId, payload) => v3.patch(`/contracts/${contractId}`, payload).then(r => r.data);
 export const v3UpdateFinalReport = (reportId, payload) => v3.patch(`/final-reports/${reportId}`, payload).then(r => r.data);
+export const v3MarkReportSent = (reportId) => v3.post(`/final-reports/${reportId}/mark-report-sent`).then(r => r.data);
+export const v3MarkFeedbackSent = (reportId) => v3.post(`/final-reports/${reportId}/mark-feedback-sent`).then(r => r.data);
 export const v3CloseBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}/close`).then(r => r.data);
 export const v3SignContract = (contractId) => v3.post(`/contracts/${contractId}/sign`).then(r => r.data);
 

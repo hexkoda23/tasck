@@ -2395,6 +2395,8 @@ def make_v3_router(db):
         feedback: Optional[Dict[str, Any]] = None
         kpis: Optional[List[Dict[str, Any]]] = None
         status: Optional[str] = None
+        report_sent_at: Optional[str] = None
+        feedback_sent_at: Optional[str] = None
 
     @router.patch("/final-reports/{report_id}")
     async def update_final_report(report_id: str, payload: FinalReportUpdate):
@@ -2404,6 +2406,22 @@ def make_v3_router(db):
         updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
         if updates:
             await db.v3_final_reports.update_one({"id": report_id}, {"$set": updates})
+        return await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+
+    @router.post("/final-reports/{report_id}/mark-report-sent")
+    async def mark_report_sent(report_id: str):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        await db.v3_final_reports.update_one({"id": report_id}, {"$set": {"report_sent_at": _now_iso()}})
+        return await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+
+    @router.post("/final-reports/{report_id}/mark-feedback-sent")
+    async def mark_feedback_sent(report_id: str):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        await db.v3_final_reports.update_one({"id": report_id}, {"$set": {"feedback_sent_at": _now_iso()}})
         return await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
 
     @router.post("/business-cases/{bc_id}/close")
@@ -3145,14 +3163,53 @@ def make_v3_router(db):
                 "By acknowledging this report below, the Brand confirms receipt and acceptance of all delivered work and the closure of the Project under the executed Service Agreement."
             )},
         ]
-        # Feedback Template — scoring scaffold
-        feedback_questions = [
-            {"key": "project_outcome", "label": "Project Outcome", "rating": None, "comment": ""},
-            {"key": "communication", "label": "Communication", "rating": None, "comment": ""},
-            {"key": "brand_collaboration", "label": "Brand Collaboration", "rating": None, "comment": ""},
-            {"key": "timelines", "label": "Timelines", "rating": None, "comment": ""},
-            {"key": "recommendation", "label": "Likelihood to Recommend", "rating": None, "comment": ""},
-        ]
+        # Feedback Template — strictly follows the uploaded Feedback Template (email + brand partner + creative partner + internal use)
+        feedback = {
+            "email_template": (
+                f"Warm greetings.\n\n"
+                f"TTA sincerely appreciates the opportunity to partner with you in bringing this {case['title']} to life. "
+                "We hope your team enjoyed the experience as much as we did. As part of our commitment to continuous improvement, "
+                "we would appreciate your prompt feedback (insert feedback link).\n\n"
+                "We look forward to working together again soon."
+            ),
+            "brand_partner": {
+                "form_title": "TTA Project Feedback – Brand Partner",
+                "form_description": "Shared within 48 hours of project completion.",
+                "project_name": case["title"],
+                "date": _now_iso()[:10],
+                "questions": [
+                    {"key": "understanding_objective", "label": "Understanding of Your Objective", "question": "How well did TTA understand what you were trying to achieve with this project?", "rating": None},
+                    {"key": "coordination_communication", "label": "Quality of Coordination & Communication", "question": "How effective was TTA in managing communication, timelines, and coordination?", "rating": None},
+                    {"key": "representation_creative", "label": "Representation of the Creative", "question": "How well did TTA do with selecting and presenting creative(s) in alignment with your brand?", "rating": None},
+                    {"key": "delivery_expectations", "label": "Delivery Against Expectations", "question": "Overall, how well did the project delivery align with what was agreed?", "rating": None},
+                    {"key": "overall_experience", "label": "Overall Experience with TTA", "question": "Taking everything into account, how would you rate your experience working with TTA?", "rating": None},
+                ],
+                "optional_comment": "",
+            },
+            "creative_partner": {
+                "form_title": "TTA Project Feedback – Creative Partner",
+                "form_description": "Shared after final delivery and payment confirmation.",
+                "google_form_link": "",
+                "project_name": case["title"],
+                "date": _now_iso()[:10],
+                "questions": [
+                    {"key": "clarity_engagement", "label": "Clarity of Engagement", "question": "How clear was TTA in explaining the project, expectations, and your role?", "rating": None},
+                    {"key": "quality_representation", "label": "Quality of Representation", "question": "How well did TTA represent your interests, fees, and working conditions?", "rating": None},
+                    {"key": "coordination_support", "label": "Coordination & Support", "question": "How effective was TTA in coordinating the project and supporting your delivery?", "rating": None},
+                    {"key": "professionalism_process", "label": "Professionalism of Process", "question": "How would you rate TTA's professionalism across contracts, communication, and payment?", "rating": None},
+                    {"key": "overall_experience_creator", "label": "Overall Experience with TTA", "question": "Overall, how satisfied are you with your experience working with TTA?", "rating": None},
+                ],
+                "optional_comment": "",
+            },
+            "internal_use": [
+                "Average score below 7 triggers review of entire transaction.",
+                "Repeated low scores on same question = process issue.",
+                "Scores must be logged to CRM against project & partner.",
+                "No follow-up meetings unless score < 6.",
+            ],
+            "brand_average_score": None,
+            "creative_average_score": None,
+        }
 
         existing = await db.v3_final_reports.find_one({"business_case_id": bc_id}, {"_id": 0})
         if existing:
@@ -3173,18 +3230,9 @@ def make_v3_router(db):
             ),
             "kpis": kpis,
             "sections": report_sections,
-            "feedback": {
-                "project_information": {
-                    "title": case["title"],
-                    "brand": brand_name,
-                    "creator": creator_name,
-                    "date": _now_iso()[:10],
-                    "type": case.get("engagement_track", "paid"),
-                },
-                "questions": feedback_questions,
-                "average_score": None,
-                "notes": "",
-            },
+            "feedback": feedback,
+            "report_sent_at": None,
+            "feedback_sent_at": None,
             "closure_checklist": [
                 {"item": item, "status": "pending"}
                 for item in DEFAULT_FINAL_REPORT_CHECKLIST

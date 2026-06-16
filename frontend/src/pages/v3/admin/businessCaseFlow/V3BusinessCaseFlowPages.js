@@ -32,6 +32,8 @@ import {
   v3CreateContract,
   v3UpdateContract,
   v3UpdateFinalReport,
+  v3MarkReportSent,
+  v3MarkFeedbackSent,
   v3CloseBusinessCase,
   v3CreateMeeting,
   v3CreateSnapshot,
@@ -2102,6 +2104,80 @@ export const V3BusinessCaseDeliverables = () => {
   );
 };
 
+const FeedbackQuestion = ({ q, idx, editing, onChange }) => (
+  <div className="rounded-lg border border-[#E8E4DB] bg-white p-4 space-y-2" data-testid={`feedback-q-${q.key}`}>
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0 flex-1">
+        <p className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}. {q.label}</p>
+        <p className="text-[11px] text-[#6E6657] mt-1">{q.question}</p>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {editing ? (
+          <>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={q.rating ?? ''}
+              onChange={(e) => onChange(idx, 'rating', e.target.value ? Number(e.target.value) : null)}
+              className="w-20 text-right rounded border border-[#E8E4DB] px-2 py-1 text-[12px]"
+            />
+            <span className="text-[11px] text-[#8A8A8A]">/ 10</span>
+          </>
+        ) : (
+          <span className="text-[14px] font-semibold text-[#1F4A3A] bg-[#DDF0E1] border border-[#A4D4B0] rounded-full px-3 py-0.5">{q.rating ?? '—'}/10</span>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+const FeedbackFormBlock = ({ title, description, project, date, link, comment, questions, editing, onUpdateField, onUpdateQuestion, average, accent }) => (
+  <div className={`rounded-xl border ${accent || 'border-[#E8E4DB]'} bg-white shadow-sm`}>
+    <div className="px-6 py-4 border-b border-[#E8E4DB] bg-[#FBFAF7] rounded-t-xl">
+      <p className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{title}</p>
+      <p className="text-[11px] text-[#6E6657] mt-1">{description}</p>
+    </div>
+    <div className="px-6 py-5 space-y-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[12px]">
+        <label className="block">
+          <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Project name</span>
+          {editing ? (
+            <input value={project || ''} onChange={(e) => onUpdateField('project_name', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
+          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{project || '—'}</p>}
+        </label>
+        <label className="block">
+          <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Date</span>
+          {editing ? (
+            <input type="date" value={date || ''} onChange={(e) => onUpdateField('date', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
+          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{date || '—'}</p>}
+        </label>
+        {link !== undefined && (
+          <label className="block">
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Google form link</span>
+            {editing ? (
+              <input value={link || ''} placeholder="https://forms.gle/…" onChange={(e) => onUpdateField('google_form_link', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
+            ) : <p className="mt-1 text-[12px] text-[#1A1A1A] truncate">{link || '—'}</p>}
+          </label>
+        )}
+      </div>
+      <p className="text-[11px] text-[#6E6657]">Please rate the following based on your experience working with TTA.</p>
+      <div className="space-y-2.5">
+        {(questions || []).map((q, idx) => (
+          <FeedbackQuestion key={q.key} q={q} idx={idx} editing={editing} onChange={(i, field, v) => onUpdateQuestion(i, field, v)} />
+        ))}
+      </div>
+      <label className="block">
+        <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Optional comment (one line)</span>
+        {editing ? (
+          <input value={comment || ''} onChange={(e) => onUpdateField('optional_comment', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-2 text-[12px]" placeholder="Anything else to share?" />
+        ) : <p className="mt-1 text-[12px] text-[#4F3E2F]">{comment || <span className="text-[#8A8A8A]">No comment.</span>}</p>}
+      </label>
+      {average != null && <p className="text-[12px] text-[#1F4A3A] font-semibold">Average score: {average}/10</p>}
+    </div>
+  </div>
+);
+
 export const V3BusinessCaseFinalReport = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
@@ -2109,6 +2185,7 @@ export const V3BusinessCaseFinalReport = () => {
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';
+  const creatorEmail = bundle?.creator?.email || '';
   const [notice, setNotice] = useState('');
   const [editingReport, setEditingReport] = useState(false);
   const [draftReportTitle, setDraftReportTitle] = useState('');
@@ -2118,6 +2195,16 @@ export const V3BusinessCaseFinalReport = () => {
   const [shareReportOpen, setShareReportOpen] = useState(false);
   const [shareFeedbackOpen, setShareFeedbackOpen] = useState(false);
   const [closing, setClosing] = useState(false);
+
+  const reportSent = Boolean(report?.report_sent_at);
+  const feedbackSent = Boolean(report?.feedback_sent_at);
+  const canClose = Boolean(report) && reportSent && feedbackSent && bc.stage !== 'closed';
+
+  const computeAverage = (questions) => {
+    const ratings = (questions || []).map((q) => Number(q.rating)).filter((n) => Number.isFinite(n));
+    if (!ratings.length) return null;
+    return Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10;
+  };
 
   const generate = async () => {
     setNotice('');
@@ -2129,6 +2216,7 @@ export const V3BusinessCaseFinalReport = () => {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not generate final report.');
     }
   };
+
   const startEditReport = () => {
     setDraftReportTitle(report?.title || '');
     setDraftReportSections((report?.sections || []).map((s) => ({ ...s })));
@@ -2145,16 +2233,17 @@ export const V3BusinessCaseFinalReport = () => {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not save report.');
     }
   };
+
   const startEditFeedback = () => {
-    setDraftFeedback(JSON.parse(JSON.stringify(report?.feedback || { questions: [], notes: '' })));
+    setDraftFeedback(JSON.parse(JSON.stringify(report?.feedback || {})));
     setEditingFeedback(true);
   };
   const saveFeedback = async () => {
     if (!report?.id || !draftFeedback) return;
-    const ratings = (draftFeedback.questions || []).map((q) => Number(q.rating)).filter((n) => Number.isFinite(n));
-    const avg = ratings.length ? Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10 : null;
+    const brandAvg = computeAverage(draftFeedback?.brand_partner?.questions);
+    const creativeAvg = computeAverage(draftFeedback?.creative_partner?.questions);
     try {
-      await v3UpdateFinalReport(report.id, { feedback: { ...draftFeedback, average_score: avg } });
+      await v3UpdateFinalReport(report.id, { feedback: { ...draftFeedback, brand_average_score: brandAvg, creative_average_score: creativeAvg } });
       await reload();
       setEditingFeedback(false);
       setNotice('Feedback saved.');
@@ -2162,28 +2251,57 @@ export const V3BusinessCaseFinalReport = () => {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not save feedback.');
     }
   };
-  const handleShare = (which, option) => {
+
+  const updateFeedbackField = (group, field, value) => {
+    setDraftFeedback((prev) => ({ ...prev, [group]: { ...prev[group], [field]: value } }));
+  };
+  const updateFeedbackQuestion = (group, idx, field, value) => {
+    setDraftFeedback((prev) => {
+      const questions = prev[group].questions.slice();
+      questions[idx] = { ...questions[idx], [field]: value };
+      return { ...prev, [group]: { ...prev[group], questions } };
+    });
+  };
+
+  const handleShare = async (which, option) => {
+    const isReport = which === 'report';
     if (option.key === 'copy_link') {
       navigator.clipboard?.writeText(`${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report#${which}`);
-      setNotice(`${which === 'report' ? 'Report' : 'Feedback'} link copied to clipboard.`);
-      return;
-    }
-    if (option.key === 'download_pdf') {
-      const blob = which === 'report'
-        ? [report?.title, '', ...(report?.sections || []).map((s) => `${s.heading}\n${s.content}`)].join('\n\n')
-        : `Feedback for ${bc.title}\n\n` + (report?.feedback?.questions || []).map((q) => `${q.label}: ${q.rating ?? '—'}/10\nComments: ${q.comment || '—'}`).join('\n\n');
+      setNotice(`${isReport ? 'Report' : 'Feedback'} link copied to clipboard.`);
+    } else if (option.key === 'download_pdf') {
+      let blob;
+      if (isReport) {
+        blob = [report?.title, '', ...(report?.sections || []).map((s) => `${s.heading}\n${s.content}`)].join('\n\n');
+      } else {
+        const fb = report?.feedback || {};
+        const renderBlock = (title, b) => {
+          const qs = (b?.questions || []).map((q) => `${q.label}\n${q.question}\nRating: ${q.rating ?? '—'}/10`).join('\n\n');
+          return `${title}\nProject: ${b?.project_name || '—'}\nDate: ${b?.date || '—'}\n\n${qs}\n\nOptional comment: ${b?.optional_comment || '—'}`;
+        };
+        blob = `${fb.email_template || ''}\n\n${renderBlock('Brand Partner Feedback', fb.brand_partner)}\n\n${renderBlock('Creative Partner Feedback', fb.creative_partner)}`;
+      }
       downloadDraft(`${which}-${id}.txt`, blob);
-      setNotice(`${which === 'report' ? 'Report' : 'Feedback'} downloaded as a text file. Convert to PDF using your editor.`);
-      return;
-    }
-    if (option.key === 'whatsapp') {
-      const text = encodeURIComponent(`${which === 'report' ? 'Final Report' : 'Feedback'} ready: ${report?.title || ''}\n${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report`);
+      setNotice(`${isReport ? 'Report' : 'Feedback'} downloaded as a text file.`);
+    } else if (option.key === 'whatsapp') {
+      const text = encodeURIComponent(`${isReport ? 'Final Report' : 'Feedback'} ready: ${report?.title || ''}\n${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report`);
       window.open(`https://wa.me/?text=${text}`, '_blank');
-      return;
+    } else {
+      setNotice(`${option.label} — queued. (Email send wiring pending — placeholder UX.)`);
     }
-    setNotice(`${option.label} — queued. (Email send wiring pending — placeholder UX.)`);
+    // Mark sent on any email_brand/email_creator/copy_link/download/whatsapp action
+    try {
+      if (isReport && !reportSent) {
+        await v3MarkReportSent(report.id);
+      }
+      if (!isReport && !feedbackSent) {
+        await v3MarkFeedbackSent(report.id);
+      }
+      await reload();
+    } catch (_err) { /* swallow */ }
   };
+
   const closeProject = async () => {
+    if (!canClose) return;
     if (!window.confirm('Close this Business Case? This cannot be undone.')) return;
     setClosing(true);
     try {
@@ -2196,26 +2314,35 @@ export const V3BusinessCaseFinalReport = () => {
     setClosing(false);
   };
 
+  const feedback = report?.feedback;
+
   return (
-    <FlowShell title="Final Report Studio" subtitle="Generate, edit and share the final report and feedback for the brand. Close the project once both have been sent.">
+    <FlowShell title="Final Report Studio" subtitle="Generate, edit and share the final report and feedback. Close the project once both have been sent.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="final-report-notice">{notice}</div>}
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={generate} className="v3-btn-primary" data-testid="generate-final-report-btn"><Sparkles className="w-3.5 h-3.5" /> {report ? 'Regenerate' : 'Generate'} Final Report & Feedback</button>
-        {bc.stage === 'closed' && <span className="inline-flex items-center gap-1 text-[12px] text-[#1F6B3A] bg-[#DDF0E1] border border-[#A4D4B0] rounded-full px-3 py-1"><CheckCircle2 className="w-3.5 h-3.5" /> Project closed</span>}
+        <div className="flex flex-wrap items-center gap-1 ml-auto text-[11px]">
+          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${reportSent ? 'bg-[#DDF0E1] border-[#A4D4B0] text-[#1F6B3A]' : 'bg-[#FBF4E4] border-[#E5C99A] text-[#7A5A1E]'}`}><CheckCircle2 className="w-3.5 h-3.5" /> Report {reportSent ? 'sent' : 'not sent'}</span>
+          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${feedbackSent ? 'bg-[#DDF0E1] border-[#A4D4B0] text-[#1F6B3A]' : 'bg-[#FBF4E4] border-[#E5C99A] text-[#7A5A1E]'}`}><CheckCircle2 className="w-3.5 h-3.5" /> Feedback {feedbackSent ? 'sent' : 'not sent'}</span>
+          {bc.stage === 'closed' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#1F4A3A] text-white"><CheckCircle2 className="w-3.5 h-3.5" /> Project closed</span>}
+        </div>
       </div>
+
       {!report ? (
         <InfoCard title="Final Report"><p className="text-[13px] text-[#8A8A8A]">No report generated yet. Click the Generate button above.</p></InfoCard>
       ) : (
         <>
-          <InfoCard title="Final Report">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          {/* ------ Final Report card with breathing room ------ */}
+          <div className="rounded-xl border border-[#E8E4DB] bg-white shadow-sm">
+            <div className="px-6 py-5 border-b border-[#E8E4DB] flex flex-wrap items-center justify-between gap-3 bg-[#FBFAF7] rounded-t-xl">
               <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Final Report</p>
                 {editingReport ? (
-                  <input value={draftReportTitle} onChange={(e) => setDraftReportTitle(e.target.value)} className="w-full text-[15px] font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1" />
+                  <input value={draftReportTitle} onChange={(e) => setDraftReportTitle(e.target.value)} className="w-full text-[18px] font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1 mt-1" />
                 ) : (
-                  <p className="text-[15px] font-semibold text-[#1A1A1A]">{report.title}</p>
+                  <h3 className="text-[18px] font-semibold text-[#1A1A1A] mt-0.5" style={{ fontFamily: "'Fraunces', serif" }}>{report.title}</h3>
                 )}
-                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {report.status} · Generated {report.generated_at}</p>
+                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {report.status} · Generated {report.generated_at?.slice(0, 19)?.replace('T', ' ')}{reportSent ? ` · Sent ${report.report_sent_at?.slice(0, 19)?.replace('T', ' ')}` : ''}</p>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 {editingReport ? (
@@ -2225,34 +2352,40 @@ export const V3BusinessCaseFinalReport = () => {
                   </>
                 ) : (
                   <>
-                    <button onClick={startEditReport} className="v3-btn-secondary text-[11px]" data-testid="report-edit-btn"><Edit3 className="w-3.5 h-3.5" /> Edit</button>
+                    <button onClick={startEditReport} className="v3-btn-secondary text-[11px]" data-testid="report-edit-btn"><Edit3 className="w-3.5 h-3.5" /> Edit Report</button>
                     <div className="relative">
-                      <button onClick={() => setShareReportOpen((v) => !v)} className="v3-btn-secondary text-[11px]" data-testid="report-share-btn"><Send className="w-3.5 h-3.5" /> Share</button>
+                      <button onClick={() => setShareReportOpen((v) => !v)} className="v3-btn-primary text-[11px]" data-testid="report-share-btn"><Send className="w-3.5 h-3.5" /> Send Report</button>
                       <ShareMenu open={shareReportOpen} onClose={() => setShareReportOpen(false)} options={SHARE_OPTIONS('report', brandEmail, '', false)} onSelect={(opt) => handleShare('report', opt)} />
                     </div>
                   </>
                 )}
               </div>
             </div>
-            <div className="space-y-3 rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-4">
+            <div className="px-6 py-6 space-y-6">
               {(editingReport ? draftReportSections : (report.sections || [])).map((section, idx) => (
                 editingReport ? (
-                  <div key={`rep-edit-${idx}`}>
-                    <input value={section.heading || ''} onChange={(e) => { const next = draftReportSections.slice(); next[idx] = { ...next[idx], heading: e.target.value }; setDraftReportSections(next); }} className="w-full text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1 mb-2" />
-                    <textarea value={section.content || ''} onChange={(e) => { const next = draftReportSections.slice(); next[idx] = { ...next[idx], content: e.target.value }; setDraftReportSections(next); }} rows={Math.max(3, String(section.content || '').split('\n').length)} className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-2 py-1.5 focus:border-[#1F4A3A] outline-none whitespace-pre-wrap" />
+                  <div key={`rep-edit-${idx}`} className="space-y-2">
+                    <input value={section.heading || ''} onChange={(e) => { const next = draftReportSections.slice(); next[idx] = { ...next[idx], heading: e.target.value }; setDraftReportSections(next); }} className="w-full text-[12px] uppercase tracking-wider font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1" />
+                    <textarea value={section.content || ''} onChange={(e) => { const next = draftReportSections.slice(); next[idx] = { ...next[idx], content: e.target.value }; setDraftReportSections(next); }} rows={Math.max(3, String(section.content || '').split('\n').length)} className="w-full text-[13px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-3 py-2 focus:border-[#1F4A3A] outline-none whitespace-pre-wrap leading-relaxed" />
                   </div>
                 ) : (
-                  <div key={`rep-view-${idx}`}>
-                    <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-1">{section.heading}</p>
-                    <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{section.content}</p>
+                  <div key={`rep-view-${idx}`} className="pb-5 border-b last:border-b-0 last:pb-0 border-[#F4F2EC]">
+                    <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">{section.heading}</p>
+                    <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{section.content}</p>
                   </div>
                 )
               ))}
             </div>
-          </InfoCard>
-          <InfoCard title="Feedback (Brand)">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <p className="text-[12px] text-[#6E6657]">Score each item on a 1–10 scale. Average is computed on save.</p>
+          </div>
+
+          {/* ------ Feedback (strictly follows Feedback Template) ------ */}
+          <div className="rounded-xl border border-[#E8E4DB] bg-white shadow-sm">
+            <div className="px-6 py-5 border-b border-[#E8E4DB] flex flex-wrap items-center justify-between gap-3 bg-[#FBFAF7] rounded-t-xl">
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Feedback Template</p>
+                <h3 className="text-[18px] font-semibold text-[#1A1A1A] mt-0.5" style={{ fontFamily: "'Fraunces', serif" }}>Brand & Creative Partner Feedback</h3>
+                <p className="text-[11px] text-[#8A8A8A] mt-1">{feedbackSent ? `Sent ${report.feedback_sent_at?.slice(0, 19)?.replace('T', ' ')}` : 'Not sent yet'}</p>
+              </div>
               <div className="flex flex-wrap gap-2 items-center">
                 {editingFeedback ? (
                   <>
@@ -2261,58 +2394,79 @@ export const V3BusinessCaseFinalReport = () => {
                   </>
                 ) : (
                   <>
-                    <button onClick={startEditFeedback} className="v3-btn-secondary text-[11px]" data-testid="feedback-edit-btn"><Edit3 className="w-3.5 h-3.5" /> Edit</button>
+                    <button onClick={startEditFeedback} className="v3-btn-secondary text-[11px]" data-testid="feedback-edit-btn"><Edit3 className="w-3.5 h-3.5" /> Edit Feedback</button>
                     <div className="relative">
-                      <button onClick={() => setShareFeedbackOpen((v) => !v)} className="v3-btn-secondary text-[11px]" data-testid="feedback-share-btn"><Send className="w-3.5 h-3.5" /> Share</button>
-                      <ShareMenu open={shareFeedbackOpen} onClose={() => setShareFeedbackOpen(false)} options={SHARE_OPTIONS('feedback', brandEmail, '', false)} onSelect={(opt) => handleShare('feedback', opt)} />
+                      <button onClick={() => setShareFeedbackOpen((v) => !v)} className="v3-btn-primary text-[11px]" data-testid="feedback-share-btn"><Send className="w-3.5 h-3.5" /> Send Feedback</button>
+                      <ShareMenu open={shareFeedbackOpen} onClose={() => setShareFeedbackOpen(false)} options={SHARE_OPTIONS('feedback', brandEmail, creatorEmail, true)} onSelect={(opt) => handleShare('feedback', opt)} />
                     </div>
                   </>
                 )}
               </div>
             </div>
-            <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-4 space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[12px]">
-                <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Project</span>{report.feedback?.project_information?.title}</div>
-                <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Brand</span>{report.feedback?.project_information?.brand}</div>
-                <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Creator</span>{report.feedback?.project_information?.creator}</div>
-                <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Date</span>{report.feedback?.project_information?.date}</div>
+            <div className="px-6 py-6 space-y-6">
+              {/* Email Template */}
+              <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-5">
+                <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Tab 1 — Email Template</p>
+                {editingFeedback ? (
+                  <textarea value={draftFeedback?.email_template || ''} onChange={(e) => setDraftFeedback((p) => ({ ...p, email_template: e.target.value }))} rows={5} className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-3 py-2 focus:border-[#1F4A3A] outline-none whitespace-pre-wrap leading-relaxed bg-white" />
+                ) : (
+                  <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{feedback?.email_template}</p>
+                )}
               </div>
-              <div className="space-y-2">
-                {((editingFeedback ? draftFeedback?.questions : report.feedback?.questions) || []).map((q, idx) => (
-                  <div key={q.key || idx} className="rounded border border-[#E8E4DB] bg-white p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                      <p className="text-[12px] font-semibold text-[#1A1A1A]">{q.label}</p>
-                      {editingFeedback ? (
-                        <input type="number" min={1} max={10} value={q.rating ?? ''} onChange={(e) => { const next = { ...draftFeedback, questions: draftFeedback.questions.slice() }; next.questions[idx] = { ...q, rating: e.target.value ? Number(e.target.value) : null }; setDraftFeedback(next); }} className="w-20 text-right rounded border border-[#E8E4DB] px-2 py-1 text-[12px]" />
-                      ) : (
-                        <span className="text-[12px] text-[#1F4A3A] font-semibold">{q.rating ?? '—'}/10</span>
-                      )}
-                    </div>
-                    {editingFeedback ? (
-                      <textarea value={q.comment || ''} onChange={(e) => { const next = { ...draftFeedback, questions: draftFeedback.questions.slice() }; next.questions[idx] = { ...q, comment: e.target.value }; setDraftFeedback(next); }} rows={2} placeholder="Comments…" className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-2 py-1.5 focus:border-[#1F4A3A] outline-none" />
-                    ) : (
-                      <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{q.comment || <span className="text-[#8A8A8A]">No comments yet.</span>}</p>
-                    )}
-                  </div>
-                ))}
+
+              {/* Brand Partner Feedback */}
+              <FeedbackFormBlock
+                title={feedback?.brand_partner?.form_title || 'TTA Project Feedback – Brand Partner'}
+                description={feedback?.brand_partner?.form_description}
+                project={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.project_name}
+                date={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.date}
+                comment={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.optional_comment}
+                questions={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.questions}
+                editing={editingFeedback}
+                onUpdateField={(f, v) => updateFeedbackField('brand_partner', f, v)}
+                onUpdateQuestion={(i, f, v) => updateFeedbackQuestion('brand_partner', i, f, v)}
+                average={feedback?.brand_average_score}
+                accent="border-[#A4D4B0]"
+              />
+
+              {/* Creative Partner Feedback */}
+              <FeedbackFormBlock
+                title={feedback?.creative_partner?.form_title || 'TTA Project Feedback – Creative Partner'}
+                description={feedback?.creative_partner?.form_description}
+                project={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.project_name}
+                date={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.date}
+                link={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.google_form_link}
+                comment={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.optional_comment}
+                questions={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.questions}
+                editing={editingFeedback}
+                onUpdateField={(f, v) => updateFeedbackField('creative_partner', f, v)}
+                onUpdateQuestion={(i, f, v) => updateFeedbackQuestion('creative_partner', i, f, v)}
+                average={feedback?.creative_average_score}
+                accent="border-[#F5D88A]"
+              />
+
+              {/* Internal Use */}
+              <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-5">
+                <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Internal Use (Not Shown to Client)</p>
+                <ul className="text-[12px] text-[#6E6657] space-y-1 list-disc pl-5">
+                  {(feedback?.internal_use || []).map((line, idx) => <li key={idx}>{line}</li>)}
+                </ul>
               </div>
-              {report.feedback?.average_score != null && <p className="text-[12px] text-[#1F4A3A] font-semibold">Average score: {report.feedback.average_score}/10</p>}
-              {editingFeedback && (
-                <label className="block">
-                  <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Internal notes</span>
-                  <textarea value={draftFeedback?.notes || ''} onChange={(e) => setDraftFeedback({ ...draftFeedback, notes: e.target.value })} rows={2} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
-                </label>
-              )}
             </div>
-          </InfoCard>
+          </div>
+
+          {/* ------ Closure ------ */}
+          <div className="rounded-xl border border-[#E8E4DB] bg-white shadow-sm p-6">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-[14px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>Close the project</p>
+                <p className="text-[12px] text-[#6E6657] mt-1">{canClose ? 'Both the Final Report and Feedback have been sent. You can now close the project.' : 'Send both the Final Report and Feedback before closing the project.'}</p>
+              </div>
+              <button onClick={closeProject} disabled={!canClose || closing || bc.stage === 'closed'} className="v3-btn-primary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closing…' : 'Close Project')}</button>
+            </div>
+          </div>
         </>
       )}
-      <InfoCard title="Closure">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[13px] text-[#6E6657]">Once the brand has acknowledged the final report and feedback, close the project. This moves the Business Case to the Closed stage.</p>
-          <button onClick={closeProject} disabled={closing || bc.stage === 'closed'} className="v3-btn-primary" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closing…' : 'Close Project')}</button>
-        </div>
-      </InfoCard>
       <button onClick={() => navigate(`/v3/admin/business-cases/${id}/delivery/summary`)} className="text-[12px] text-[#1F4A3A] hover:underline mt-4 inline-flex items-center gap-1"><ArrowLeft className="w-3.5 h-3.5" /> Back to Delivery Summary</button>
     </FlowShell>
   );
