@@ -5,6 +5,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Download,
+  Edit3,
   FileSignature,
   FileText,
   Lock,
@@ -17,6 +18,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import {
   v3AcceptCreatorBriefing,
@@ -49,6 +51,7 @@ import {
   v3SignContract,
   v3SuggestCreatorMatches,
   v3UpdateAlignment,
+  v3UpdateStrategySnapshot,
   v3UploadMeetingTranscript,
 } from '../../../../lib/v3api';
 import { formatNairaV3 } from '../../../../lib/v3data';
@@ -1486,21 +1489,117 @@ const StrategySectionPreview = ({ section }) => {
   );
 };
 
+const EditableStrategySection = ({ section, onChange }) => {
+  const rows = Array.isArray(section.rows) ? section.rows : [];
+  const columns = rows.length
+    ? (Array.isArray(section.columns) && section.columns.length ? section.columns : Object.keys(rows[0] || {}))
+    : [];
+  const items = Array.isArray(section.items) ? section.items : [];
+  const updateField = (field, value) => onChange({ ...section, [field]: value });
+  const updateItem = (idx, value) => {
+    const next = items.slice();
+    next[idx] = value;
+    onChange({ ...section, items: next });
+  };
+  const removeItem = (idx) => {
+    const next = items.slice();
+    next.splice(idx, 1);
+    onChange({ ...section, items: next });
+  };
+  const addItem = () => onChange({ ...section, items: [...items, ''] });
+  const updateRow = (rowIdx, column, value) => {
+    const next = rows.map((row, idx) => (idx === rowIdx ? { ...row, [column]: value } : row));
+    onChange({ ...section, rows: next });
+  };
+  return (
+    <section className="rounded-lg border border-[#E8E4DB] bg-white p-4 space-y-3">
+      <input
+        value={section.heading || ''}
+        onChange={(e) => updateField('heading', e.target.value)}
+        className="w-full text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1"
+      />
+      {section.content !== undefined && (
+        <textarea
+          value={section.content || ''}
+          onChange={(e) => updateField('content', e.target.value)}
+          rows={2}
+          className="w-full text-[13px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-2 py-1.5 focus:border-[#1F4A3A] outline-none"
+        />
+      )}
+      {items.length > 0 || section.type === 'bullets' || section.type === 'numbered' ? (
+        <div className="space-y-1.5">
+          {items.map((item, index) => (
+            <div key={`${section.heading}-edit-item-${index}`} className="flex items-start gap-2">
+              <span className="text-[11px] text-[#8A8A8A] mt-1.5">{section.type === 'numbered' ? `${index + 1}.` : '•'}</span>
+              <textarea
+                value={typeof item === 'string' ? item : (item.text || item.title || JSON.stringify(item))}
+                onChange={(e) => updateItem(index, e.target.value)}
+                rows={1}
+                className="flex-1 text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-2 py-1 focus:border-[#1F4A3A] outline-none"
+              />
+              <button onClick={() => removeItem(index)} className="text-[#B54A37] p-1 hover:bg-[#FCE8E6] rounded" aria-label="Remove item">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
+          <button onClick={addItem} className="text-[11px] text-[#1F4A3A] hover:underline inline-flex items-center gap-1">
+            <Plus className="w-3 h-3" /> Add bullet
+          </button>
+        </div>
+      ) : null}
+      {rows.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
+          <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
+            <thead className="bg-[#F4F2EC] text-[#6E6657]">
+              <tr>
+                {columns.map((column) => <th key={column} className="px-3 py-2 font-semibold">{column}</th>)}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#E8E4DB] bg-white text-[#4F3E2F]">
+              {rows.map((row, rowIndex) => (
+                <tr key={`${section.heading}-edit-row-${rowIndex}`}>
+                  {columns.map((column) => (
+                    <td key={`${column}-${rowIndex}`} className="px-2 py-1.5 align-top">
+                      <textarea
+                        value={strategyCellText(row[column])}
+                        onChange={(e) => updateRow(rowIndex, column, e.target.value)}
+                        rows={1}
+                        className="w-full text-[12px] text-[#4F3E2F] border border-transparent rounded-md px-1.5 py-1 focus:border-[#1F4A3A] outline-none hover:bg-[#FAFAF7]"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+};
+
 export const V3BusinessCasePlanStrategySnapshot = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
-  const [concept, setConcept] = useState('');
   const [notice, setNotice] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [editedSections, setEditedSections] = useState([]);
+  const [editedTitle, setEditedTitle] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const snapshot = bundle?.creative_snapshot || null;
+
   const generate = async () => {
     setNotice('');
+    setGenerating(true);
     try {
-      await v3CreateSnapshot({ business_case_id: id, concept });
+      await v3CreateSnapshot({ business_case_id: id });
       await reload();
       setNotice('Strategy Snapshot generated. Review it before sending to the brand.');
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not generate Strategy Snapshot yet.');
     }
+    setGenerating(false);
   };
   const sendToBrand = async () => {
     setNotice('');
@@ -1522,20 +1621,95 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve Strategy Snapshot yet.');
     }
   };
+
+  const startEditing = () => {
+    if (!snapshot) return;
+    setEditedTitle(snapshot.title || 'Strategy Snapshot');
+    setEditedSections((snapshot.sections || []).map((s) => ({ ...s, items: Array.isArray(s.items) ? s.items.slice() : [], rows: Array.isArray(s.rows) ? s.rows.map((r) => ({ ...r })) : [] })));
+    setEditing(true);
+    setNotice('');
+  };
+  const cancelEditing = () => {
+    setEditing(false);
+    setEditedSections([]);
+    setEditedTitle('');
+  };
+  const saveEdits = async () => {
+    if (!snapshot?.id) return;
+    setSavingEdit(true);
+    setNotice('');
+    try {
+      await v3UpdateStrategySnapshot(snapshot.id, {
+        title: editedTitle,
+        sections: editedSections,
+        reviewer: 'admin',
+      });
+      await reload();
+      setEditing(false);
+      setNotice('Strategy Snapshot saved.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save edits. Please try again.');
+    }
+    setSavingEdit(false);
+  };
+  const updateSectionAtIndex = (index, nextSection) => {
+    setEditedSections((prev) => prev.map((s, i) => (i === index ? nextSection : s)));
+  };
+
   return (
     <FlowShell title="Strategy Snapshot Studio" subtitle="Generate, view, send to the brand portal/email, and approve before Delivery." nextAction="Review the Strategy Snapshot that will be sent to the brand.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
-      <InfoCard title="Strategy Snapshot controls">
-        <TextInput label="Concept override" rows={4} value={concept} onChange={setConcept} />
-        <div className="flex flex-wrap gap-2 mt-3">
-          <button onClick={generate} className="v3-btn-primary" data-testid="strategy-generate-btn"><Sparkles className="w-3.5 h-3.5" /> Generate Strategy Snapshot</button>
-          <button onClick={sendToBrand} className="v3-btn-secondary"><Send className="w-3.5 h-3.5" /> Send to brand</button>
-          <button onClick={approve} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Approve Snapshot</button>
-        </div>
-      </InfoCard>
-      <InfoCard title="Brand-facing preview">
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={generate} disabled={generating} className="v3-btn-primary" data-testid="strategy-generate-btn">
+          <Sparkles className="w-3.5 h-3.5" /> {generating ? 'Generating…' : (snapshot ? 'Regenerate Strategy Snapshot' : 'Generate Strategy Snapshot')}
+        </button>
+        {snapshot && !editing && (
+          <button onClick={startEditing} className="v3-btn-secondary" data-testid="strategy-edit-btn">
+            <Edit3 className="w-3.5 h-3.5" /> Edit
+          </button>
+        )}
+        {snapshot && editing && (
+          <>
+            <button onClick={saveEdits} disabled={savingEdit} className="v3-btn-primary" data-testid="strategy-save-edit-btn">
+              <Save className="w-3.5 h-3.5" /> {savingEdit ? 'Saving…' : 'Save changes'}
+            </button>
+            <button onClick={cancelEditing} disabled={savingEdit} className="v3-btn-secondary" data-testid="strategy-cancel-edit-btn">
+              <X className="w-3.5 h-3.5" /> Cancel
+            </button>
+          </>
+        )}
+        {snapshot && !editing && (
+          <button onClick={sendToBrand} className="v3-btn-secondary" data-testid="strategy-send-btn">
+            <Send className="w-3.5 h-3.5" /> Send to brand
+          </button>
+        )}
+        {snapshot && !editing && (
+          <button onClick={approve} className="v3-btn-secondary" data-testid="strategy-approve-btn">
+            <CheckCircle2 className="w-3.5 h-3.5" /> Approve Snapshot
+          </button>
+        )}
+      </div>
+      <InfoCard title="Strategy Snapshot">
         {!snapshot ? (
           <p className="text-[13px] text-[#8A8A8A]">No Strategy Snapshot generated yet.</p>
+        ) : editing ? (
+          <div className="space-y-4 rounded-[8px] border border-[#1F4A3A]/30 bg-[#FBFAF7] p-4" data-testid="strategy-snapshot-editor">
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Editing — changes are not saved until you press Save</p>
+              <input
+                value={editedTitle}
+                onChange={(e) => setEditedTitle(e.target.value)}
+                className="w-full text-[16px] font-semibold text-[#1A1A1A] mt-1 border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1"
+              />
+            </div>
+            {editedSections.map((section, index) => (
+              <EditableStrategySection
+                key={`${section.heading || 'strategy-section'}-edit-${index}`}
+                section={section}
+                onChange={(next) => updateSectionAtIndex(index, next)}
+              />
+            ))}
+          </div>
         ) : (
           <div className="space-y-4 rounded-[8px] border border-[#E8E4DB] bg-[#FBFAF7] p-4" data-testid="strategy-snapshot-preview">
             <div>
