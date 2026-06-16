@@ -2600,6 +2600,27 @@ def make_v3_router(db):
         ctr = await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
         if not ctr:
             raise HTTPException(404, "Contract not found")
+        # Backfill: legacy contracts created before the template build were stored without sections/title.
+        if not (ctr.get("sections") or []):
+            case = await db.v3_business_cases.find_one({"id": ctr.get("business_case_id")}, {"_id": 0}) or {}
+            brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+            creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            creator_name = (creator or {}).get("name") or "Creator"
+            project_title = case.get("title") or "Project"
+            sections = _build_contract_sections(ctr.get("template", "brand_msa"), brand_name, creator_name, ctr.get("value") or 0, project_title)
+            title_map = {
+                "brand_msa": f"{brand_name} × TASCK — Service Agreement",
+                "creator_principal": f"{creator_name} × {brand_name} — Independent Creator Agreement",
+                "four_party_grant": f"{brand_name} × TASCK — Four-Party Grant Agreement",
+            }
+            new_title = title_map.get(ctr.get("template"), ctr.get("title") or "Contract")
+            await db.v3_contracts.update_one(
+                {"id": contract_id},
+                {"$set": {"sections": sections, "title": new_title, "updated_at": _now_iso()}},
+            )
+            ctr["sections"] = sections
+            ctr["title"] = new_title
         title = ctr.get("title") or "Contract"
         blocks = ctr.get("sections") or []
         pdf_bytes = _render_pdf(title, blocks)

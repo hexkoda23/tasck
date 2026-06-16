@@ -2064,15 +2064,15 @@ const PreviewModal = ({ open, onClose, title, pdfUrl, testId }) => {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose} data-testid={testId || 'preview-modal'}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-5xl max-h-[90vh] rounded-xl bg-white overflow-hidden shadow-2xl flex flex-col">
-        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-[#E8E4DB] bg-[#FBFAF7]">
-          <p className="text-[14px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{title}</p>
-          <div className="flex items-center gap-2">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-5xl h-[88vh] rounded-xl bg-white overflow-hidden shadow-2xl flex flex-col">
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-[#E8E4DB] bg-[#FBFAF7] shrink-0">
+          <p className="text-[14px] font-semibold text-[#1A1A1A] truncate" style={{ fontFamily: "'Fraunces', serif" }}>{title}</p>
+          <div className="flex items-center gap-2 shrink-0">
             <a href={pdfUrl} download className="v3-btn-secondary text-[11px]"><Download className="w-3.5 h-3.5" /> Download PDF</a>
             <button onClick={onClose} className="v3-btn-secondary text-[11px]"><X className="w-3.5 h-3.5" /> Close</button>
           </div>
         </div>
-        <iframe src={pdfUrl} title={title} className="flex-1 w-full" style={{ minHeight: '70vh' }} />
+        <iframe src={pdfUrl} title={title} className="flex-1 w-full block" />
       </div>
     </div>
   );
