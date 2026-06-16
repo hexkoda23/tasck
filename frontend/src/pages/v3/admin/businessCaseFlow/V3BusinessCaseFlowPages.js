@@ -997,7 +997,6 @@ export const V3BusinessCaseFrameSnapshot = () => {
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button onClick={saveEdits} className="v3-btn-primary" data-testid="alignment-save-edits-btn"><Save className="w-3.5 h-3.5" /> Save edits</button>
-                <button onClick={() => downloadDraft(`alignment-snapshot-${id}.txt`, snapshotPlainText(activeSnapshot))} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download text</button>
               </div>
             </div>
 
