@@ -2060,19 +2060,55 @@ export const V3BusinessCaseDeliverySummary = () => {
   );
 };
 
-const PreviewModal = ({ open, onClose, title, pdfUrl, testId }) => {
+const buildFeedbackPreviewSections = (fb) => {
+  if (!fb) return [];
+  const sections = [];
+  if (fb.email_template) sections.push({ heading: 'Tab 1 — Email Template', content: fb.email_template });
+  [['brand_partner', 'Brand Partner Feedback'], ['creative_partner', 'Creative Partner Feedback']].forEach(([key, fallback]) => {
+    const block = fb[key];
+    if (!block) return;
+    sections.push({ heading: block.form_title || fallback, content: block.form_description || '' });
+    const header = [`Project name: ${block.project_name || '—'}`, `Date: ${block.date || '—'}`];
+    if (block.google_form_link !== undefined) header.push(`Google form link: ${block.google_form_link || '—'}`);
+    sections.push({ content: header.join('\n') });
+    (block.questions || []).forEach((q, idx) => {
+      sections.push({ heading: `${idx + 1}. ${q.label}`, content: `${q.question}\nRating: ${q.rating ?? '—'} / 10` });
+    });
+    sections.push({ content: `Optional comment: ${block.optional_comment || '—'}` });
+  });
+  if ((fb.internal_use || []).length) sections.push({ heading: 'Internal Use (Not Shown to Client)', content: fb.internal_use.map((l) => `• ${l}`).join('\n') });
+  return sections;
+};
+
+const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose} data-testid={testId || 'preview-modal'}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-5xl h-[88vh] rounded-xl bg-white overflow-hidden shadow-2xl flex flex-col">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-4xl h-[88vh] rounded-xl bg-white overflow-hidden shadow-2xl flex flex-col">
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-[#E8E4DB] bg-[#FBFAF7] shrink-0">
           <p className="text-[14px] font-semibold text-[#1A1A1A] truncate" style={{ fontFamily: "'Fraunces', serif" }}>{title}</p>
           <div className="flex items-center gap-2 shrink-0">
-            <a href={pdfUrl} download className="v3-btn-secondary text-[11px]"><Download className="w-3.5 h-3.5" /> Download PDF</a>
-            <button onClick={onClose} className="v3-btn-secondary text-[11px]"><X className="w-3.5 h-3.5" /> Close</button>
+            {pdfUrl && (
+              <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="v3-btn-secondary text-[11px]" data-testid="preview-download-pdf"><Download className="w-3.5 h-3.5" /> Download PDF</a>
+            )}
+            <button onClick={onClose} className="v3-btn-secondary text-[11px]" data-testid="preview-close-btn"><X className="w-3.5 h-3.5" /> Close</button>
           </div>
         </div>
-        <iframe src={pdfUrl} title={title} className="flex-1 w-full block" />
+        <div className="flex-1 overflow-y-auto px-8 py-8 bg-[#FBFAF7]">
+          <div className="max-w-3xl mx-auto bg-white rounded-lg border border-[#E8E4DB] shadow-sm px-10 py-10 space-y-6">
+            <h2 className="text-[22px] font-semibold text-[#1F4A3A] mb-2" style={{ fontFamily: "'Fraunces', serif" }}>{title}</h2>
+            {(sections || []).length === 0 ? (
+              <p className="text-[13px] text-[#8A8A8A]">No content to preview yet.</p>
+            ) : (
+              (sections || []).map((section, idx) => (
+                <div key={idx} className="pb-5 border-b last:border-b-0 last:pb-0 border-[#F4F2EC]">
+                  {section.heading && <p className="text-[12px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">{section.heading}</p>}
+                  {section.content && <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{section.content}</p>}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2105,7 +2141,7 @@ const ShareMenu = ({ open, onClose, options, onSelect }) => {
   );
 };
 
-const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, onShare }) => {
+const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, onShare, onRefresh }) => {
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(contract.title || '');
   const [draftSections, setDraftSections] = useState(contract.sections || []);
@@ -2124,10 +2160,18 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
     setSaving(false);
     setEditing(false);
   };
+  const openPreview = async () => {
+    // Legacy contracts may have empty sections — hit the PDF endpoint which backfills the doc, then refresh the list.
+    if (!(contract.sections && contract.sections.length) && onRefresh) {
+      try { await fetch(v3ContractPdfUrl(contract.id), { method: 'GET' }); } catch (_e) {}
+      await onRefresh();
+    }
+    setPreviewOpen(true);
+  };
   const isCreator = contract.template === 'creator_principal';
   return (
     <div className="rounded-lg border border-[#E8E4DB] bg-white p-4 mb-3" data-testid={`contract-card-${contract.id}`}>
-      <PreviewModal open={previewOpen} onClose={() => setPreviewOpen(false)} title={contract.title || 'Contract preview'} pdfUrl={v3ContractPdfUrl(contract.id)} testId={`contract-preview-${contract.id}`} />
+      <PreviewModal open={previewOpen} onClose={() => setPreviewOpen(false)} title={contract.title || 'Contract preview'} pdfUrl={v3ContractPdfUrl(contract.id)} sections={contract.sections} testId={`contract-preview-${contract.id}`} />
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
           {editing ? (
@@ -2145,7 +2189,7 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
             </>
           ) : (
             <>
-              <button onClick={() => setPreviewOpen(true)} className="v3-btn-secondary text-[11px]" data-testid={`contract-${contract.id}-preview-btn`}><Eye className="w-3.5 h-3.5" /> Preview</button>
+              <button onClick={openPreview} className="v3-btn-secondary text-[11px]" data-testid={`contract-${contract.id}-preview-btn`}><Eye className="w-3.5 h-3.5" /> Preview</button>
               <button onClick={startEdit} className="v3-btn-secondary text-[11px]" data-testid={`contract-${contract.id}-edit-btn`}><Edit3 className="w-3.5 h-3.5" /> Edit</button>
               <div className="relative">
                 <button onClick={() => setShareOpen((v) => !v)} className="v3-btn-secondary text-[11px]" data-testid={`contract-${contract.id}-share-btn`}><Send className="w-3.5 h-3.5" /> Share</button>
@@ -2189,6 +2233,10 @@ export const V3BusinessCaseContractStudio = () => {
   const brand = getBrand(bundle);
   const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';
   const creatorEmail = bundle?.creator?.email || '';
+  const refreshContracts = async () => {
+    const rows = await v3ListContracts(id);
+    setContracts(Array.isArray(rows) ? rows : []);
+  };
   useEffect(() => { v3ListContracts(id).then((rows) => setContracts(Array.isArray(rows) ? rows : [])); }, [id]);
 
   const hasTemplate = (tpl) => contracts.some((c) => c.template === tpl);
@@ -2267,6 +2315,7 @@ export const V3BusinessCaseContractStudio = () => {
               onUpdate={updateContract}
               onSign={handleSign}
               onShare={handleShare}
+              onRefresh={refreshContracts}
             />
           ))}
         </InfoCard>
@@ -2564,8 +2613,8 @@ export const V3BusinessCaseFinalReport = () => {
 
   return (
     <FlowShell title="Final Report Studio" subtitle="Generate, edit and share the final report and feedback. Close the project once both have been sent.">
-      <PreviewModal open={previewType === 'report'} onClose={() => setPreviewType(null)} title={report?.title || 'Final Report preview'} pdfUrl={report ? v3FinalReportPdfUrl(report.id) : ''} testId="final-report-preview" />
-      <PreviewModal open={previewType === 'feedback'} onClose={() => setPreviewType(null)} title="Feedback preview" pdfUrl={report ? v3FeedbackPdfUrl(report.id) : ''} testId="feedback-preview" />
+      <PreviewModal open={previewType === 'report'} onClose={() => setPreviewType(null)} title={report?.title || 'Final Report preview'} pdfUrl={report ? v3FinalReportPdfUrl(report.id) : ''} sections={report?.sections} testId="final-report-preview" />
+      <PreviewModal open={previewType === 'feedback'} onClose={() => setPreviewType(null)} title="Feedback preview" pdfUrl={report ? v3FeedbackPdfUrl(report.id) : ''} sections={buildFeedbackPreviewSections(report?.feedback)} testId="feedback-preview" />
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="final-report-notice">{notice}</div>}
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={generate} className="v3-btn-primary" data-testid="generate-final-report-btn"><Sparkles className="w-3.5 h-3.5" /> {report ? 'Regenerate' : 'Generate'} Final Report & Feedback</button>
