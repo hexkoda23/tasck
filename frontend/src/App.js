@@ -93,6 +93,7 @@ import {
   V3BusinessCaseFrameWaitingBrand as V1BusinessCaseFrameWaitingBrand,
   V3BusinessCaseFrameAdminReview as V1BusinessCaseFrameAdminReview,
   V3BusinessCaseFrameApproved as V1BusinessCaseFrameApproved,
+  V1BusinessCaseFrameTranscripts,
   V3BusinessCasePlanBrainstorm as V1BusinessCasePlanBrainstorm,
   V3BusinessCasePlanCreatorScan as V1BusinessCasePlanCreatorScan,
   V3BusinessCasePlanBrief as V1BusinessCasePlanBrief,
@@ -389,6 +390,7 @@ function AppRoutes() {
         <Route path="business-cases/:id/connect/questions" element={<V1BusinessCaseConnectQuestions />} />
         <Route path="business-cases/:id/connect/analysis" element={<V1BusinessCaseConnectAnalysis />} />
         <Route path="business-cases/:id/connect/reschedule" element={<V1BusinessCaseConnectReschedule />} />
+        <Route path="business-cases/:id/frame/transcripts" element={<V1BusinessCaseFrameTranscripts />} />
         <Route path="business-cases/:id/frame/snapshot" element={<V1BusinessCaseFrameSnapshot />} />
         <Route path="business-cases/:id/frame/waiting-brand" element={<V1BusinessCaseFrameWaitingBrand />} />
         <Route path="business-cases/:id/frame/admin-review" element={<V1BusinessCaseFrameAdminReview />} />

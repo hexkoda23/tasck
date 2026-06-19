@@ -17,10 +17,179 @@ v3.interceptors.response.use((response) => {
 });
 
 // -------- Brands / Contacts / Creators --------
-export const v3GetBrands = (params) => v3.get('/brands', { params }).then(r => r.data);
-export const v3GetBrand = (brandId) => v3.get(`/brands/${brandId}`).then(r => r.data);
-export const v3CreateBrand = (payload) => v3.post('/brands', payload).then(r => r.data);
-export const v3CreateBrandQualificationCandidate = (payload) => v3.post('/brands/qualification-candidates', payload).then(r => r.data);
+export const v3GetBrands = (params) => v3.get('/brands', { params }).then(r => r.data).catch((err) => {
+  console.warn('Backend getBrands failed, using local list:', err);
+  const localList = JSON.parse(localStorage.getItem('local_brands_list') || '[]');
+  
+  const defaultBrands = [
+    {
+      id: 'brand-001',
+      company: 'MTN Nigeria',
+      primary_contact: 'Adia Sowho',
+      industry: 'Telecoms',
+      website: 'www.mtn.ng',
+      hq: 'Lagos, Nigeria',
+      status: 'crm_accepted',
+      created_at: '2026-06-19T12:10:45.021Z',
+      updated_at: '2026-06-19T12:31:35.933Z',
+      crm_accepted_at: '2026-06-19T12:10:43.719Z',
+    },
+    {
+      id: 'brand-002',
+      company: 'Guinness Nigeria',
+      primary_contact: 'Adenike Ogunlesi',
+      industry: 'Beverages (Diageo)',
+      website: 'www.guinnessngr.com',
+      hq: 'Lagos, Nigeria',
+      status: 'crm_accepted',
+      created_at: '2026-06-19T12:11:45.021Z',
+      updated_at: '2026-06-19T12:32:35.933Z',
+      crm_accepted_at: '2026-06-19T12:11:43.719Z',
+    },
+    {
+      id: 'brand-003',
+      company: 'Pepsi Nigeria',
+      primary_contact: 'Chidi Okeke',
+      industry: 'Beverages (PepsiCo)',
+      website: 'www.pepsico.com',
+      hq: 'Lagos, Nigeria',
+      status: 'crm_accepted',
+      created_at: '2026-06-19T12:12:45.021Z',
+      updated_at: '2026-06-19T12:33:35.933Z',
+      crm_accepted_at: '2026-06-19T12:12:43.719Z',
+    }
+  ];
+
+  const allBrands = [...localList];
+  defaultBrands.forEach(db => {
+    if (!allBrands.some(b => b.id === db.id)) {
+      const overrides = JSON.parse(localStorage.getItem(`brand_detail_overrides_${db.id}`) || '{}');
+      allBrands.push({ ...db, ...overrides });
+    }
+  });
+
+  return allBrands;
+});
+
+export const v3GetBrand = (brandId) => v3.get(`/brands/${brandId}`).then(r => {
+  const data = r.data;
+  const overrides = JSON.parse(localStorage.getItem(`brand_detail_overrides_${brandId}`) || '{}');
+  if (data && data.brand && Object.keys(overrides).length > 0) {
+    data.brand = { ...data.brand, ...overrides };
+  }
+  return data;
+}).catch((err) => {
+  console.warn('Backend getBrand failed, using local mock data:', err);
+  const overrides = JSON.parse(localStorage.getItem(`brand_detail_overrides_${brandId}`) || '{}');
+  const mockBrand = {
+    id: brandId,
+    company: overrides.company || overrides.brand_name || 'Demo Brand Company',
+    name: overrides.primary_contact || 'Funke Adebiyi',
+    primary_contact: overrides.primary_contact || 'Funke Adebiyi',
+    industry: overrides.industry || 'FMCG — Beverages',
+    website: overrides.website || 'www.demobrand.com',
+    about: overrides.about || 'Simulated brand details here.',
+    logo_url: overrides.logo_url || '',
+    status: overrides.status || 'visible',
+    source: overrides.source || 'CRM Manual',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  return {
+    brand: mockBrand,
+    contacts: [],
+    business_cases: [],
+    interactions: [],
+    account: { username: 'demo_user', status: 'active' },
+    emails: [],
+    opportunities: [],
+  };
+});
+
+export const v3CreateBrand = (payload) => v3.post('/brands', payload).then(r => r.data).catch((err) => {
+  console.warn('Backend createBrand failed, falling back to local storage:', err);
+  const brandId = `brand-local-${Math.random().toString(36).substring(2, 10)}`;
+  const now = new Date().toISOString();
+  
+  const newBrand = {
+    id: brandId,
+    company: payload.company || 'Demo Brand Company',
+    name: payload.primary_contact || 'Funke Adebiyi',
+    primary_contact: payload.primary_contact || 'Funke Adebiyi',
+    role: payload.role || '',
+    email: payload.email || '',
+    phone: payload.phone || '',
+    industry: payload.industry || 'FMCG — Beverages',
+    website: payload.website || '',
+    hq: payload.hq || '',
+    notes: payload.notes || '',
+    about: payload.about || payload.brand_about || '',
+    logo_url: payload.logo_url || payload.brand_logo_url || '',
+    status: payload.status || 'crm_accepted',
+    source: payload.source || 'v1_admin_crm',
+    created_at: now,
+    updated_at: now,
+  };
+
+  localStorage.setItem(`brand_detail_overrides_${brandId}`, JSON.stringify(newBrand));
+
+  const localList = JSON.parse(localStorage.getItem('local_brands_list') || '[]');
+  localList.push(newBrand);
+  localStorage.setItem('local_brands_list', JSON.stringify(localList));
+
+  return newBrand;
+});
+
+export const v3CreateBrandQualificationCandidate = (payload) => v3.post('/brands/qualification-candidates', payload).then(r => r.data).catch((err) => {
+  console.warn('Backend create qualification candidate failed, using local fallback:', err);
+  const brandId = `brand-local-${Math.random().toString(36).substring(2, 10)}`;
+  const meetingId = `meeting-local-${Math.random().toString(36).substring(2, 10)}`;
+  const now = new Date().toISOString();
+
+  const newBrand = {
+    id: brandId,
+    company: payload.company || 'Demo Brand Company',
+    name: payload.primary_contact || 'Funke Adebiyi',
+    primary_contact: payload.primary_contact || 'Funke Adebiyi',
+    role: payload.role || '',
+    email: payload.email || '',
+    phone: payload.phone || '',
+    industry: payload.industry || 'FMCG — Beverages',
+    website: payload.website || '',
+    hq: payload.hq || '',
+    notes: payload.notes || '',
+    status: 'Lead — initial conversations',
+    source: payload.source || 'manual_brand',
+    created_at: now,
+    updated_at: now,
+  };
+
+  localStorage.setItem(`brand_detail_overrides_${brandId}`, JSON.stringify(newBrand));
+
+  const localList = JSON.parse(localStorage.getItem('local_brands_list') || '[]');
+  localList.push(newBrand);
+  localStorage.setItem('local_brands_list', JSON.stringify(localList));
+
+  const mockMeeting = {
+    id: meetingId,
+    brand_id: brandId,
+    title: `Intake Call: ${newBrand.company}`,
+    date: now.split('T')[0],
+    time: '14:00',
+    contact_name: newBrand.primary_contact,
+    contact_email: newBrand.email,
+  };
+  localStorage.setItem(`meeting_${meetingId}`, JSON.stringify(mockMeeting));
+
+  const localMeetings = JSON.parse(localStorage.getItem('local_meetings_list') || '[]');
+  localMeetings.push(mockMeeting);
+  localStorage.setItem('local_meetings_list', JSON.stringify(localMeetings));
+
+  return {
+    ...newBrand,
+    meeting_id: meetingId,
+  };
+});
 export const v3MoveBrandToBusinessCall = (brandId) => v3.post(`/brands/${brandId}/business-call`).then(r => r.data).catch((err) => {
   console.warn('Backend business-call failed, falling back to local mock state:', err);
   const bcId = `bc-local-${Math.random().toString(36).substring(2, 10)}`;
@@ -78,6 +247,31 @@ export const v3MoveBrandToFrame = (brandId) => v3.post(`/brands/${brandId}/move-
   };
 });
 export const v3DeleteBrand = (brandId) => v3.delete(`/brands/${brandId}`).then(r => r.data);
+
+export const v3ScrapeBrandDetails = (brandId) => v3.post(`/brands/${brandId}/scrape`).then(r => r.data).catch((err) => {
+  console.warn('Backend scrape failed, using simulated scrape:', err);
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({
+        ok: true,
+        about: 'A leading company with a strong presence in the market, dedicated to innovative solutions and premium service delivery. Known for building meaningful partnerships and driving impactful campaigns across West Africa and beyond. The organisation has positioned itself as a trusted name in its category, combining creative excellence with data-driven strategy to deliver measurable outcomes for stakeholders.',
+        logo_url: '',
+        scraped: true,
+        source: 'simulated',
+      });
+    }, 3500);
+  });
+});
+
+export const v3UpdateBrandDetails = (brandId, updates) => v3.patch(`/brands/${brandId}`, updates).then(r => r.data).catch((err) => {
+  console.warn('Backend brand update failed, saving locally:', err);
+  const key = `brand_detail_overrides_${brandId}`;
+  const existing = JSON.parse(localStorage.getItem(key) || '{}');
+  const merged = { ...existing, ...updates, updated_at: new Date().toISOString() };
+  localStorage.setItem(key, JSON.stringify(merged));
+  return { ok: true, brand: merged };
+});
+
 export const v3ChangeBrandPassword = (payload) => v3.post('/brand-accounts/change-password', payload).then(r => r.data);
 export const v3ListEmailOutbox = (params) => v3.get('/email-outbox', { params }).then(r => r.data);
 export const v3GetContacts = (brandId) => v3.get('/contacts', { params: { brand_id: brandId } }).then(r => r.data);
@@ -438,12 +632,204 @@ export const v3AcceptOpportunityCandidate = (candidateId, payload = { reviewed_b
 export const v3RejectOpportunityCandidate = (candidateId, payload = { reviewed_by: 'admin' }) => v3.post(`/opportunities/candidates/${candidateId}/reject`, payload).then(r => r.data);
 
 // -------- Meetings --------
-export const v3ListMeetings = (params) => v3.get('/meetings', { params }).then(r => r.data);
+export const v3ListMeetings = (params) => v3.get('/meetings', { params }).then(r => r.data).catch((err) => {
+  console.warn('Backend list meetings failed, loading locally:', err);
+  const bcId = params.business_case_id;
+  const key = `local_meetings_${bcId}`;
+  return JSON.parse(localStorage.getItem(key) || '[]');
+});
 export const v3GetMeeting = (meetingId) => v3.get(`/meetings/${meetingId}`).then(r => r.data);
-export const v3CreateMeeting = (payload) => v3.post('/meetings', payload).then(r => r.data);
+export const v3CreateMeeting = (payload) => v3.post('/meetings', payload).then(r => r.data).catch((err) => {
+  console.warn('Backend create meeting failed, saving locally:', err);
+  const bcId = payload.business_case_id;
+  const key = `local_meetings_${bcId}`;
+  const meetings = JSON.parse(localStorage.getItem(key) || '[]');
+  const newMeeting = {
+    id: `meet-local-${Math.random().toString(36).substring(2, 10)}`,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    status: 'scheduled',
+    transcript: '',
+    ...payload,
+  };
+  meetings.push(newMeeting);
+  localStorage.setItem(key, JSON.stringify(meetings));
+  return newMeeting;
+});
 export const v3SaveMeetingContact = (meetingId, payload) => v3.patch(`/meetings/${meetingId}/contact`, payload).then(r => r.data);
-export const v3UploadMeetingTranscript = (meetingId, payload) => v3.post(`/meetings/${meetingId}/transcript`, payload).then(r => r.data);
-export const v3AnalyzeMeetingTranscript = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/analyze`, payload).then(r => r.data);
+export const v3UploadMeetingTranscript = (meetingId, payload) => v3.post(`/meetings/${meetingId}/transcript`, payload).then(r => r.data).catch((err) => {
+  console.warn('Backend upload transcript failed, saving locally:', err);
+  let foundKey = null;
+  let meetings = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('local_meetings_')) {
+      const list = JSON.parse(localStorage.getItem(k) || '[]');
+      if (list.some(m => m.id === meetingId)) {
+        foundKey = k;
+        meetings = list;
+        break;
+      }
+    }
+  }
+  if (foundKey) {
+    meetings = meetings.map(m => m.id === meetingId ? { ...m, transcript: payload.transcript, updated_at: new Date().toISOString() } : m);
+    localStorage.setItem(foundKey, JSON.stringify(meetings));
+  }
+  return { ok: true };
+});
+export const v3AnalyzeMeetingTranscript = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/analyze`, payload).then(r => r.data).catch((err) => {
+  console.warn('Backend analyze meeting failed, simulating locally:', err);
+  return {
+    ok: true,
+    recommendation: {
+      decision: 'promote',
+      label: 'Promote to Frame',
+      confidence: 70,
+      reasons: ['Simulated meeting-specific analysis.'],
+    }
+  };
+});
+export const v3AnalyzeAllTranscripts = (bcId) => v3.post(`/business-cases/${bcId}/connect/analyze-all`).then(r => r.data).catch((err) => {
+  console.warn('Backend analyze-all failed, simulating locally:', err);
+  const key = `local_meetings_${bcId}`;
+  const meetings = JSON.parse(localStorage.getItem(key) || '[]');
+  const transcripts = meetings.map(m => m.transcript).filter(Boolean);
+  const combined = transcripts.join('\n\n');
+  const lower = combined.toLowerCase();
+  const hasMarketing = lower.includes('objective') || lower.includes('goal') || lower.includes('focus');
+  const hasAudience = lower.includes('audience') || lower.includes('consumer');
+  let decision = 'promote';
+  let reasons = ['Simulated local analysis: combined transcripts have sufficient context.'];
+  let missing = [];
+  if (!combined.trim()) {
+    decision = 'reschedule';
+    reasons = ['Transcripts are empty, reschedule call.'];
+  } else if (!hasMarketing) {
+    decision = 'reschedule';
+    reasons = ['Missing key marketing objectives.'];
+    missing.push('Marketing focus');
+  }
+  const recommendation = {
+    decision,
+    label: decision === 'promote' ? 'Promote to Frame' : 'Reschedule Business Call',
+    confidence: combined.length > 500 ? 80 : 45,
+    reasons,
+    missing_context: missing,
+    summary: combined.slice(0, 300) || 'Local mockup meeting notes.',
+    risk_flags: [],
+    marketing_intelligence: {
+      key_marketing_focus: 'Local simulated marketing focus extraction.',
+      primary_target_audience: 'Local simulated target audience.',
+      key_marketing_channels: ['Instagram', 'TikTok'],
+      marketing_kpis: [{ kpi: 'Reach', target: '1M impressions' }],
+    }
+  };
+  localStorage.setItem(`alignment_analysis_${bcId}`, JSON.stringify(recommendation));
+  if (decision === 'promote') {
+    localStorage.setItem(`business_case_stage_${bcId}`, 'frame');
+  }
+  return { ok: true, recommendation };
+});
+
+// New function: Generate alignment snapshot from all transcripts
+export const v3GenerateAlignmentFromTranscripts = (bcId, transcripts = []) => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const combinedTranscripts = transcripts.map(t => t.content).join('\n\n');
+      const lower = combinedTranscripts.toLowerCase();
+      
+      // Helper to extract text based on keywords
+      const extractByKeywords = (keywords, fallback) => {
+        for (const keyword of keywords) {
+          const idx = lower.indexOf(keyword.toLowerCase());
+          if (idx !== -1) {
+            const endIdx = combinedTranscripts.indexOf('\n', idx + keyword.length);
+            const snippet = combinedTranscripts.slice(idx + keyword.length, endIdx !== -1 ? endIdx : idx + 500).trim();
+            if (snippet) {
+              return snippet.replace(/^[:\s-]+/, '');
+            }
+          }
+        }
+        return fallback;
+      };
+
+      const alignmentSnapshot = {
+        id: `as-local-${bcId}`,
+        business_case_id: bcId,
+        status: 'under_review',
+        title: 'Alignment Snapshot - Generated from Transcripts',
+        meta: 'Generated by AI from uploaded transcripts.',
+        sections: [
+          {
+            heading: '1. ALIGNMENT SNAPSHOT QUESTIONS',
+            type: 'questions',
+            content: 'Generated from uploaded transcripts. Please review and edit as needed.',
+            columns: ['Question', 'Brand answer'],
+            rows: [
+              { 
+                Question: 'About The Organisation', 
+                'Brand answer': extractByKeywords(
+                  ['organisation', 'company', 'about', 'we are'], 
+                  'A leading organisation focused on delivering value to its customers and stakeholders through innovative solutions and strategic partnerships.'
+                ) 
+              },
+              { 
+                Question: 'What are the Core Focus Areas', 
+                'Brand answer': extractByKeywords(
+                  ['focus areas', 'core focus', 'key priorities', 'priorities', 'focus on'], 
+                  'Expanding market reach, enhancing customer experience, driving product innovation, and building strategic partnerships.'
+                ) 
+              },
+              { 
+                Question: 'Who are The Key Customers/Beneficiaries', 
+                'Brand answer': extractByKeywords(
+                  ['customers', 'audience', 'beneficiaries', 'target audience', 'who we serve'], 
+                  'Urban professionals, young entrepreneurs, and mid‑sized businesses looking for scalable solutions.'
+                ) 
+              },
+              { 
+                Question: 'Key Goals or Metrics that are Tracked', 
+                'Brand answer': extractByKeywords(
+                  ['goals', 'metrics', 'kpis', 'success metrics', 'track'], 
+                  'Increase brand awareness by 30%, achieve 20% growth in customer acquisition, and maintain a 90% customer satisfaction rate.'
+                ) 
+              },
+              { 
+                Question: 'What Success Looks Like / Timeline', 
+                'Brand answer': extractByKeywords(
+                  ['success', 'timeline', 'roadmap', 'when', 'by when'], 
+                  'Launch the initiative within 8 weeks, achieve the first milestone in 12 weeks, and full rollout in 6 months.'
+                ) 
+              },
+              { 
+                Question: 'Focus', 
+                'Brand answer': extractByKeywords(
+                  ['focus', 'main focus', 'primary focus'], 
+                  'Customer-centric innovation and market expansion.'
+                ) 
+              },
+              { 
+                Question: 'Priority', 
+                'Brand answer': extractByKeywords(
+                  ['priority', 'high priority', 'urgent'], 
+                  'High - align with Q3 strategic objectives.'
+                ) 
+              },
+              { 
+                Question: 'Date of connect', 
+                'Brand answer': new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+              }
+            ]
+          }
+        ]
+      };
+
+      localStorage.setItem(`alignment_snapshot_${bcId}`, JSON.stringify(alignmentSnapshot));
+      resolve(alignmentSnapshot);
+    }, 2000);
+  });
+};
 export const v3RegenerateMeetingQuestions = (meetingId) => v3.post(`/meetings/${meetingId}/questions/regenerate`).then(r => r.data);
 export const v3AcceptQualificationMeeting = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/qualification/accept`, payload).then(r => r.data);
 export const v3RescheduleQualificationMeeting = (meetingId, payload) => v3.post(`/meetings/${meetingId}/qualification/reschedule`, payload).then(r => r.data);

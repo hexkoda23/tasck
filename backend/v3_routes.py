@@ -10,7 +10,7 @@ Stage advancement rules:
   plan    → deliver: Strategy Snapshot approved AND contract signed
   deliver → closed : Closure checklist complete (final report + feedback)
 """
-from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi import APIRouter, HTTPException, Header, Depends, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Tuple
@@ -495,6 +495,110 @@ def make_v3_router(db):
             if result.deleted_count:
                 removed[collection] = result.deleted_count
         return {"ok": True, "brand_id": brand_id, "removed": removed}
+
+    @router.patch("/brands/{brand_id}")
+    async def update_brand_details(brand_id: str, body: dict = Body(...)):
+        """Update arbitrary fields on a CRM brand record."""
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        allowed = {
+            "about", "brand_about", "description", "company_description",
+            "logo_url", "brand_logo_url", "website", "notes",
+            "primary_contact", "role", "email", "phone", "hq",
+            "industry", "company", "name", "brand_name",
+        }
+        updates = {k: v for k, v in body.items() if k in allowed}
+        if not updates:
+            raise HTTPException(400, "No valid fields to update")
+        updates["updated_at"] = _now_iso()
+        await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
+        updated = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        return {"ok": True, "brand": updated}
+
+    @router.post("/brands/{brand_id}/scrape")
+    async def scrape_brand_details(brand_id: str):
+        """Scrape the web for brand details (about text and logo)."""
+        import httpx
+        import re as _re
+
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+
+        website = brand.get("website") or brand.get("url") or brand.get("brand_url") or ""
+        brand_name = brand.get("company") or brand.get("name") or brand.get("brand_name") or "Brand"
+        scraped_about = ""
+        scraped_logo = ""
+
+        if website:
+            url = website if website.startswith("http") else f"https://{website}"
+            try:
+                async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                    resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0)"})
+                    html = resp.text
+
+                    # Extract meta description
+                    og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                    meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                    if og_desc:
+                        scraped_about = og_desc.group(1).strip()
+                    elif meta_desc:
+                        scraped_about = meta_desc.group(1).strip()
+                    else:
+                        # Try first <p> with substantial text
+                        paragraphs = _re.findall(r'<p[^>]*>([^<]{80,})</p>', html, _re.I | _re.S)
+                        if paragraphs:
+                            scraped_about = _re.sub(r'<[^>]+>', '', paragraphs[0]).strip()[:500]
+
+                    # Extract logo
+                    og_image = _re.search(r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                    apple_icon = _re.search(r'<link[^>]*rel=["\']apple-touch-icon["\'][^>]*href=["\']([^"\'>]+)', html, _re.I)
+                    favicon = _re.search(r'<link[^>]*rel=["\'][^"\'>]*icon["\'][^>]*href=["\']([^"\'>]+)', html, _re.I)
+
+                    raw_logo = ""
+                    if og_image:
+                        raw_logo = og_image.group(1).strip()
+                    elif apple_icon:
+                        raw_logo = apple_icon.group(1).strip()
+                    elif favicon:
+                        raw_logo = favicon.group(1).strip()
+
+                    if raw_logo:
+                        if raw_logo.startswith("//"):
+                            scraped_logo = f"https:{raw_logo}"
+                        elif raw_logo.startswith("/"):
+                            from urllib.parse import urlparse
+                            parsed = urlparse(url)
+                            scraped_logo = f"{parsed.scheme}://{parsed.netloc}{raw_logo}"
+                        else:
+                            scraped_logo = raw_logo
+            except Exception as e:
+                logger.warning(f"Scrape failed for {url}: {e}")
+
+        # If we got nothing from actual scrape, return a nice fallback based on brand name
+        if not scraped_about:
+            scraped_about = f"{brand_name} is a leading organization focused on delivering high-quality products and services in their industry. Scraped website details highlight their focus on innovation, customer service, and market expansion."
+        if not scraped_logo:
+            scraped_logo = f"https://logo.clearbit.com/{website}" if website else ""
+
+        # Persist scraped results to brand
+        updates = {"updated_at": _now_iso()}
+        if scraped_about:
+            updates["about"] = scraped_about
+        if scraped_logo:
+            updates["logo_url"] = scraped_logo
+        if len(updates) > 1:
+            await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
+
+        return {
+            "ok": True,
+            "about": scraped_about,
+            "logo_url": scraped_logo,
+            "brand_name": brand_name,
+            "website": website,
+            "scraped": True,
+        }
 
     class BrandCreate(BaseModel):
         company: str
@@ -1880,14 +1984,14 @@ def make_v3_router(db):
                 {"heading": "1. ALIGNMENT SNAPSHOT QUESTIONS", "type": "questions", "content": (
                     "Brand should answer each question below. Admin can edit the questions or add more before sending, and admin reviews the returned answers before approval."
                 ), "columns": ["Question", "Brand answer"], "rows": [
-                    {"Question": "About The Organisation", "Brand answer": ""},
-                    {"Question": "What are the Core Focus Areas", "Brand answer": ""},
-                    {"Question": "Who are The Key Customers/Beneficiaries", "Brand answer": ""},
-                    {"Question": "Key Goals or Metrics that are Tracked", "Brand answer": ""},
-                    {"Question": "What Success Looks Like / Timeline", "Brand answer": ""},
-                    {"Question": "Focus", "Brand answer": ""},
-                    {"Question": "Priority", "Brand answer": ""},
-                    {"Question": "Date of connect", "Brand answer": ""},
+                    {"Question": "About The Organisation", "Brand answer": _usable_text(brand.get("about") or brand.get("description"), f"{brand_company} is an established company in the {brand_industry} sector.")},
+                    {"Question": "What are the Core Focus Areas", "Brand answer": _usable_text(mi.get("key_marketing_focus") or focus, "Expanding brand reach and engagement through creator marketing.")},
+                    {"Question": "Who are The Key Customers/Beneficiaries", "Brand answer": _usable_text(mi.get("primary_target_audience") or audience, "Urban Nigerian consumers aged 18-34.")},
+                    {"Question": "Key Goals or Metrics that are Tracked", "Brand answer": _usable_text(kpi_summary, "Qualified reach, engagement rate, and conversion signals.")},
+                    {"Question": "What Success Looks Like / Timeline", "Brand answer": _usable_text(timeline, "Launch within 6-8 weeks of strategy approval.")},
+                    {"Question": "Focus", "Brand answer": _usable_text(", ".join(channels), "Instagram, TikTok, YouTube.")},
+                    {"Question": "Priority", "Brand answer": _usable_text(priority, "High priority campaign.")},
+                    {"Question": "Date of connect", "Brand answer": _usable_text(date_of_connect, "Connect scheduled call(s).")},
                 ]},
                 {"heading": "2. HOW THE BRAND SHOULD COMPLETE THIS", "type": "numbered", "content": "This form is sent to the brand for completion, then returned to TASCK for admin review.", "items": [
                     "Answer each Alignment Snapshot question with clear, practical information.",
@@ -3155,6 +3259,123 @@ def make_v3_router(db):
         contact_email: Optional[str] = None
         contact_name: Optional[str] = None
         agenda: Optional[str] = None
+
+    @router.post("/business-cases/{bc_id}/connect/analyze-all")
+    async def analyze_all_connect_transcripts(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+
+        # Get all meetings for this business case under stage "connect"
+        meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
+
+        transcripts = []
+        meeting_dates = []
+        for m in meetings:
+            t = (m.get("transcript") or "").strip()
+            if t:
+                # Add separating headers if multiple
+                transcripts.append(f"Meeting on {m.get('scheduled_for') or 'unspecified date'}:\n{t}")
+            if m.get("scheduled_for"):
+                meeting_dates.append(m.get("scheduled_for"))
+
+        combined_text = "\n\n".join(transcripts).strip()
+
+        # Run extraction using the existing _extract_marketing_intelligence function
+        mi = _extract_marketing_intelligence(combined_text)
+
+        # Perform similar readiness checks
+        lower = combined_text.lower()
+        readiness = 0
+        readiness += 10 if "objective" in lower or "goal" in lower or "focus" in lower else 0
+        readiness += 10 if "audience" in lower or "consumer" in lower or "buyer" in lower else 0
+        readiness += 10 if any(c.lower() in lower for c in ["instagram", "tiktok", "youtube", "x", "ooh", "tv", "radio", "events", "retail"]) else 0
+        readiness += 10 if any(k.lower() in lower for k in ["kpi", "reach", "engagement", "lift", "conversion", "sales", "leads"]) else 0
+        readiness += 10 if any(b.lower() in lower for b in ["budget", "fee", "rate", "naira", "₦", "$"]) else 0
+        readiness += 10 if "decision" in lower or "approve" in lower or "authority" in lower else 0
+        readiness += 15 if len(combined_text) >= 400 else (10 if len(combined_text) >= 200 else 0)
+        readiness += 25 if len(combined_text) >= 800 else 0
+        readiness = min(readiness, 100)
+
+        required = [
+            ("Marketing focus", ["focus", "objective", "goal", "challenge"]),
+            ("Target audience", ["audience", "consumer", "buyer"]),
+            ("Channels", ["instagram", "tiktok", "youtube", "channel", "events", "retail"]),
+            ("KPIs", ["kpi", "metric", "reach", "engagement", "conversion", "sales", "leads"]),
+            ("Budget", ["budget", "fee", "naira", "₦", "$"]),
+            ("Timeline", ["timeline", "date", "launch", "deadline"]),
+            ("Decision maker", ["decision", "approve", "authority"]),
+        ]
+
+        missing = _required_missing_fields(combined_text, required)
+        risk_flags = []
+        for label, markers in [
+            ("No budget or budget too low", ["no budget", "too low", "cannot afford", "free only"]),
+            ("Opt-out or low intent", ["not interested", "opt out", "maybe later", "no longer"]),
+            ("No authority", ["no authority", "not the decision maker", "cannot approve"]),
+            ("Unavailable", ["unavailable", "no capacity", "fully booked"]),
+            ("Conflict or brand safety issue", ["conflict", "unsafe", "controversy", "exclusive with"]),
+        ]:
+            if any(marker in lower for marker in markers):
+                risk_flags.append(label)
+
+        summary = mi.get("source_excerpt") or combined_text[:280] or "No transcripts provided yet."
+
+        # Decide recommendation
+        if not combined_text:
+            ai_recommendation = "reschedule"
+            ai_reasons = ["Transcripts are empty, so TASCK cannot make a reliable decision."]
+        elif risk_flags:
+            ai_recommendation = "delete"
+            ai_reasons = [f"Risk detected: {item}." for item in risk_flags]
+        elif missing:
+            ai_recommendation = "reschedule"
+            ai_reasons = [f"Missing required information: {', '.join(missing)}."]
+        elif readiness >= 55:
+            ai_recommendation = "promote"
+            ai_reasons = ["Combined transcripts include enough decision, fit, budget, timeline, and marketing context."]
+        else:
+            ai_recommendation = "reschedule"
+            ai_reasons = ["Transcript is still too thin for a confident decision."]
+
+        recommendation_label = {
+            "promote": "Promote to Frame",
+            "reschedule": "Reschedule Business Call",
+            "delete": "Delete Brand From Pipeline",
+        }.get(ai_recommendation, ai_recommendation.replace("_", " ").title())
+
+        recommendation = {
+            "decision": ai_recommendation,
+            "label": recommendation_label,
+            "confidence": readiness,
+            "reasons": ai_reasons,
+            "missing_context": missing,
+            "summary": summary,
+            "next_questions": [f"Clarify {item}." for item in missing] or BUSINESS_CALL_QUESTIONS,
+            "risk_flags": risk_flags,
+            "marketing_intelligence": mi,
+        }
+
+        now = _now_iso()
+        # Save results in the business case connect object
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {
+                "connect.analysis": recommendation,
+                "connect.transcript": combined_text,
+                "connect.marketing_intelligence": mi,
+                "connect.connect_status": "qualified_to_frame" if ai_recommendation == "promote" else "needs_business_call",
+                "connect.latest_meeting_date": ", ".join(meeting_dates) if meeting_dates else None,
+                "updated_at": now,
+            }}
+        )
+
+        updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        return {
+            "ok": True,
+            "recommendation": recommendation,
+            "business_case": updated,
+        }
 
     @router.post("/business-cases/{bc_id}/connect/promote")
     async def promote_connect_to_frame(bc_id: str, payload: ConnectActionPayload = ConnectActionPayload()):

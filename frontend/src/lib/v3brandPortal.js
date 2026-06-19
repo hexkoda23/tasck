@@ -55,19 +55,40 @@ export const getBrandPortalSession = () => {
   if (!canUseStorage()) return fallback;
   try {
     const stored = JSON.parse(window.localStorage.getItem(BRAND_SESSION_KEY) || '{}');
-    const account = brandDemoAccounts.find((item) => item.brandId === stored.brandId || item.email === stored.email);
+    if (!stored.email) return fallback;
+    const account = getBrandPortalAccountByEmail(stored.email);
     return account ? { ...account, ...stored } : fallback;
   } catch (e) {
     return fallback;
   }
 };
 
-export const getBrandPortalAccountByEmail = (email) =>
-  brandDemoAccounts.find((account) => account.email.toLowerCase() === String(email || '').toLowerCase());
+export const getBrandPortalAccountByEmail = (email) => {
+  const normalisedEmail = String(email || '').toLowerCase();
+  const demoAccount = brandDemoAccounts.find((account) => account.email.toLowerCase() === normalisedEmail);
+  if (demoAccount) return demoAccount;
+
+  // Dynamically resolve custom created brands from local storage
+  if (canUseStorage()) {
+    const localList = JSON.parse(window.localStorage.getItem('local_brands_list') || '[]');
+    const localBrand = localList.find((b) => String(b.email || '').toLowerCase() === normalisedEmail);
+    if (localBrand) {
+      return {
+        brandId: localBrand.id,
+        company: localBrand.company || 'Custom Brand',
+        contact: localBrand.primary_contact || 'Brand Representative',
+        email: localBrand.email,
+        password: 'TASCK@2026!',
+        initials: localBrand.company ? localBrand.company.slice(0, 2).toUpperCase() : 'BR',
+      };
+    }
+  }
+  return null;
+};
 
 export const getBrandPortalBrand = () => getBrand(getBrandPortalSession().brandId);
 
-export const isPendingApprovalStatus = (status) => ['sent_to_brand', 'under_review', 'pending_brand_review'].includes(status);
+export const isPendingApprovalStatus = (status) => ['sent', 'sent_to_brand', 'under_review', 'pending_brand_review'].includes(status);
 
 const makePresentationBundle = ({
   id,

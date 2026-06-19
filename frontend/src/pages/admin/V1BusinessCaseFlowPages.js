@@ -21,12 +21,16 @@ import {
   Sparkles,
   Trash2,
   X,
+  Loader2,
+  Calendar,
+  Link,
 } from 'lucide-react';
 import {
   v3AcceptCreatorBriefing,
   v3AddDeliverable,
   v3AdvanceBusinessCase,
   v3AnalyzeMeetingTranscript,
+  v3AnalyzeAllTranscripts,
   v3ApproveAlignmentAs,
   v3ApproveSnapshot,
   v3CreateBrainstorm,
@@ -43,10 +47,12 @@ import {
   v3MarkFeedbackSent,
   v3CloseBusinessCase,
   v3CreateMeeting,
+  v3UploadMeetingTranscript,
   v3CreateSnapshot,
   v3DeclineCreatorBriefing,
   v3DeleteBusinessCaseConnect,
   v3GenerateAlignmentQuestions,
+  v3GenerateAlignmentFromTranscripts,
   v3GenerateFinalReport,
   v3GetBusinessCase,
   v3GetCreators,
@@ -64,7 +70,6 @@ import {
   v3SuggestCreatorMatches,
   v3UpdateAlignment,
   v3UpdateStrategySnapshot,
-  v3UploadMeetingTranscript,
 } from '../../lib/v3api';
 import { formatNairaV3 } from '../../lib/v3data';
 
@@ -561,9 +566,13 @@ export const V3BusinessCaseConnect = () => {
 
 export const V3BusinessCaseConnectSchedule = () => {
   const navigate = useNavigate();
-  const { id, bundle } = useBusinessCaseBundle();
+  const { id, bundle, reload } = useBusinessCaseBundle();
   const brand = getBrand(bundle);
   const bc = getCase(bundle);
+
+  const [meetings, setMeetings] = useState([]);
+  const [loadingMeetings, setLoadingMeetings] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
   const [form, setForm] = useState({
     contact_name: '',
     contact_email: '',
@@ -574,6 +583,36 @@ export const V3BusinessCaseConnectSchedule = () => {
   const [saving, setSaving] = useState(false);
   const [saveNotice, setSaveNotice] = useState('');
   const [prefilled, setPrefilled] = useState(false);
+
+  // Transcripts states per meeting
+  const [transcriptsDraft, setTranscriptsDraft] = useState({});
+  const [savingTranscripts, setSavingTranscripts] = useState({});
+
+  // Combined AI Analysis states
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState(null);
+
+  const loadMeetings = useCallback(async () => {
+    try {
+      const list = await v3ListMeetings({ business_case_id: id, stage: 'connect' });
+      setMeetings(list || []);
+      // Initialize drafts
+      const drafts = {};
+      (list || []).forEach(m => {
+        drafts[m.id] = m.transcript || '';
+      });
+      setTranscriptsDraft(drafts);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingMeetings(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    loadMeetings();
+  }, [loadMeetings]);
+
   useEffect(() => {
     if (prefilled || !bundle?.business_case) return;
     const loadedBrand = getBrand(bundle);
@@ -596,7 +635,15 @@ export const V3BusinessCaseConnectSchedule = () => {
     }));
     setPrefilled(true);
   }, [bundle, prefilled]);
-  const save = async () => {
+
+  // Load existing analysis if present
+  useEffect(() => {
+    if (bc?.connect?.analysis) {
+      setAnalysisResult(bc.connect.analysis);
+    }
+  }, [bc]);
+
+  const scheduleMeeting = async () => {
     if (!bundle?.business_case) {
       setSaveNotice('Business Case details are still loading. Please try again in a moment.');
       return;
@@ -618,35 +665,219 @@ export const V3BusinessCaseConnectSchedule = () => {
         agenda,
         meeting_notes: agenda,
       });
-      setSaveNotice('Meeting saved. Opening Connect Questions + Transcript...');
-      navigate(adminRoute(`/business-cases/${id}/connect/questions`), { state: { meetingId: meeting.id } });
+      setSaveNotice('Meeting scheduled successfully!');
+      setShowAddForm(false);
+      // Reset form fields but keep contacts
+      setForm(prev => ({ ...prev, scheduled_for: '', meeting_link: '' }));
+      await loadMeetings();
+      await reload();
     } catch (e) {
       setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not save the meeting. Please try again.');
     } finally {
       setSaving(false);
     }
   };
+
+  const saveTranscript = async (meetingId) => {
+    setSavingTranscripts(prev => ({ ...prev, [meetingId]: true }));
+    try {
+      const text = transcriptsDraft[meetingId] || '';
+      await v3UploadMeetingTranscript(meetingId, { transcript: text });
+      // Call meeting-specific analyze to extract metadata locally/remotely
+      await v3AnalyzeMeetingTranscript(meetingId, {});
+      setSaveNotice('Transcript saved and indexed.');
+      await loadMeetings();
+      await reload();
+    } catch (e) {
+      setSaveNotice('Could not save transcript.');
+    } finally {
+      setSavingTranscripts(prev => ({ ...prev, [meetingId]: false }));
+    }
+  };
+
+  const runCombinedAnalysis = async () => {
+    setAnalyzing(true);
+    try {
+      const res = await v3AnalyzeAllTranscripts(id);
+      if (res.ok) {
+        setAnalysisResult(res.recommendation);
+        setSaveNotice('AI Analysis complete.');
+        await reload();
+      } else {
+        setSaveNotice('AI Analysis failed.');
+      }
+    } catch (e) {
+      setSaveNotice('AI Analysis failed.');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handlePromote = async () => {
+    try {
+      await v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted aggregated Connect transcripts.' });
+      await reload();
+      navigate(adminRoute(`/business-cases/${id}/frame/snapshot`));
+    } catch (e) {
+      setSaveNotice('Failed to promote business case to Frame.');
+    }
+  };
+
   return (
-    <FlowShell title="Connect Schedule" subtitle="Set the Business Call time, link, agenda, and brand contact before the transcript review." nextAction="Save the meeting to open Connect Questions + Transcript.">
-      <InfoCard title="Schedule meeting">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <TextInput label="Contact name" value={form.contact_name} onChange={(value) => setForm({ ...form, contact_name: value })} />
-          <TextInput label="Contact email" value={form.contact_email} onChange={(value) => setForm({ ...form, contact_email: value })} />
-          <DateTimeInput label="Date/time" value={form.scheduled_for} onChange={(value) => setForm({ ...form, scheduled_for: value })} />
-          <TextInput label="Meeting link" value={form.meeting_link} onChange={(value) => setForm({ ...form, meeting_link: value })} />
-          <div className="md:col-span-2">
-            <AgendaEditor items={agendaItems} onChange={setAgendaItems} />
-          </div>
+    <FlowShell title="Connect Schedule & Transcripts" subtitle="Schedule multiple meetings with the brand, upload/edit their transcripts, and run aggregate AI analysis." nextAction="Save transcripts for scheduled calls and run analysis to unlock Frame.">
+      {saveNotice && (
+        <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]" data-testid="connect-save-notice-banner">
+          {saveNotice}
         </div>
-        {saveNotice && (
-          <div className="mt-4 rounded-lg border border-[#D7CBB8] bg-[#FAF7F1] px-3 py-2 text-[12px] text-[#4F3E2F]" data-testid="connect-save-notice">
-            {saveNotice}
-          </div>
+      )}
+      <div className="space-y-4">
+        {/* Scheduled Meetings List */}
+        <InfoCard 
+          title="Scheduled Meetings" 
+          action={
+            <button onClick={() => setShowAddForm(!showAddForm)} className="v3-btn-secondary py-1 px-3 text-[12px] flex items-center gap-1" data-testid="crm-schedule-call-btn">
+              {showAddForm ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+              {showAddForm ? 'Cancel' : 'Schedule Call'}
+            </button>
+          }
+        >
+          {loadingMeetings ? (
+            <div className="text-[13px] text-[#8A8A8A] py-3 flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Loading meetings...</div>
+          ) : meetings.length === 0 ? (
+            <div className="rounded-[8px] border border-dashed border-[#D7CBB8] bg-[#FBFAF7] p-5 text-center text-[13px] text-[#6E6657]">
+              No meetings scheduled yet. Click "Schedule Call" to set up your first meeting with {brand.company || 'the brand'}.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {meetings.map((m, idx) => (
+                <div key={m.id || idx} className="rounded-xl border border-[#E8E4DB] bg-white p-4 shadow-sm space-y-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#F1ECDF] pb-3">
+                    <div>
+                      <h3 className="font-semibold text-[#1A1A1A] text-[14px]">{m.title || `Connect Meeting #${idx + 1}`}</h3>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[#6E6657] mt-1.5">
+                        <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5 text-[#1F4A3A]" /> {m.scheduled_for ? new Date(m.scheduled_for).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : 'TBD'}</span>
+                        {m.meeting_link && <span className="flex items-center gap-1"><Link className="w-3.5 h-3.5 text-[#1F4A3A]" /> <a href={m.meeting_link} target="_blank" rel="noreferrer" className="underline text-[#1F4A3A] hover:text-[#17382c]">{m.meeting_link}</a></span>}
+                      </div>
+                    </div>
+                    <div className="text-[11px] bg-[#FAF7F1] border border-[#D7CBB8] rounded px-2 py-1 text-[#4F3E2F]">
+                      Contact: <strong>{m.contact_name || 'Unspecified'}</strong> ({m.contact_email || 'No email'})
+                    </div>
+                  </div>
+                  
+                  {/* Transcript editor */}
+                  <div className="space-y-2">
+                    <label className="block text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold">Meeting Transcript</label>
+                    <textarea 
+                      value={transcriptsDraft[m.id] || ''} 
+                      onChange={(e) => setTranscriptsDraft({ ...transcriptsDraft, [m.id]: e.target.value })} 
+                      rows={5} 
+                      placeholder="Paste meeting transcript here..." 
+                      className="w-full rounded-lg border border-[#E8E4DB] p-3 text-[13px] focus:outline-none focus:border-[#1F4A3A] focus:bg-white bg-[#FBFAF7]" 
+                      data-testid={`transcript-textarea-${m.id}`}
+                    />
+                    <div className="flex justify-end">
+                      <button 
+                        onClick={() => saveTranscript(m.id)} 
+                        disabled={savingTranscripts[m.id] || transcriptsDraft[m.id] === m.transcript} 
+                        className="v3-btn-primary text-[11px] py-1 px-3 flex items-center gap-1"
+                        data-testid={`save-transcript-btn-${m.id}`}
+                      >
+                        {savingTranscripts[m.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                        {savingTranscripts[m.id] ? 'Saving...' : 'Save Transcript'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </InfoCard>
+
+        {/* Schedule Call Form */}
+        {showAddForm && (
+          <InfoCard title="Schedule new meeting">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <TextInput label="Contact name" value={form.contact_name} onChange={(value) => setForm({ ...form, contact_name: value })} />
+              <TextInput label="Contact email" value={form.contact_email} onChange={(value) => setForm({ ...form, contact_email: value })} />
+              <DateTimeInput label="Date/time" value={form.scheduled_for} onChange={(value) => setForm({ ...form, scheduled_for: value })} />
+              <TextInput label="Meeting link" value={form.meeting_link} onChange={(value) => setForm({ ...form, meeting_link: value })} />
+              <div className="md:col-span-2">
+                <AgendaEditor items={agendaItems} onChange={setAgendaItems} />
+              </div>
+            </div>
+            {saveNotice && (
+              <div className="mt-4 rounded-lg border border-[#D7CBB8] bg-[#FAF7F1] px-3 py-2 text-[12px] text-[#4F3E2F]" data-testid="connect-save-notice">
+                {saveNotice}
+              </div>
+            )}
+            <button onClick={scheduleMeeting} disabled={saving || !bundle?.business_case} className="v3-btn-primary mt-4" data-testid="connect-save-meeting-btn">
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+              {saving ? 'Scheduling...' : 'Save Meeting Schedule'}
+            </button>
+          </InfoCard>
         )}
-        <button onClick={save} disabled={saving || !bundle?.business_case} className="v3-btn-primary mt-4" data-testid="connect-save-meeting-btn">
-          <Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save Meeting'}
-        </button>
-      </InfoCard>
+
+        {/* Combined AI Analysis Section */}
+        {meetings.length > 0 && (
+          <InfoCard title="Combined AI Transcript Analysis">
+            <p className="text-[12px] text-[#6E6657] mb-4">
+              Analyze transcripts from all Connect meetings to extract marketing intelligence, verify readiness criteria, and generate the stage recommendation.
+            </p>
+            <button 
+              onClick={runCombinedAnalysis} 
+              disabled={analyzing || !meetings.some(m => m.transcript)} 
+              className="v3-btn-primary flex items-center gap-1.5"
+              data-testid="connect-analyze-all-btn"
+            >
+              {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {analyzing ? 'Analyzing all transcripts...' : 'Analyze All Transcripts'}
+            </button>
+
+            {analysisResult && (
+              <div className="mt-5 rounded-xl border border-[#D7CBB8] bg-[#FAF7F1] p-5 space-y-4" data-testid="connect-analysis-results">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4DB] pb-3">
+                  <div>
+                    <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">AI Recommendation</span>
+                    <h4 className="text-[16px] font-bold text-[#1A1A1A] mt-0.5">{analysisResult.label}</h4>
+                  </div>
+                  <div className="text-[11px] bg-[#E8F3ED] text-[#1F4A3A] px-2 py-1 rounded-md font-semibold border border-[#BDE0CE]">
+                    Confidence Score: {analysisResult.confidence}%
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <h5 className="text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold mb-1">AI Reasons</h5>
+                    <ul className="list-disc pl-5 text-[13px] space-y-1 text-[#4F3E2F]">
+                      {(analysisResult.reasons || []).map((r, i) => <li key={i}>{r}</li>)}
+                    </ul>
+                  </div>
+                  {analysisResult.missing_context && analysisResult.missing_context.length > 0 && (
+                    <div>
+                      <h5 className="text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold mb-1">Missing Context</h5>
+                      <ul className="list-disc pl-5 text-[13px] space-y-1 text-[#B54A37]">
+                        {analysisResult.missing_context.map((m, i) => <li key={i}>{m}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-[#E8E4DB] pt-4 flex flex-wrap gap-2">
+                  {analysisResult.decision === 'promote' ? (
+                    <button onClick={handlePromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-btn">
+                      <CheckCircle2 className="w-3.5 h-3.5" /> Promote to Frame Phase
+                    </button>
+                  ) : (
+                    <button onClick={() => setShowAddForm(true)} className="v3-btn-secondary flex items-center gap-1">
+                      <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </InfoCard>
+        )}
+      </div>
     </FlowShell>
   );
 };
@@ -1183,9 +1414,95 @@ export const V3BusinessCaseFrameWaitingBrand = () => {
 };
 
 export const V3BusinessCaseFrameAdminReview = () => {
-  const { bundle } = useBusinessCaseBundle();
-  const comments = bundle?.alignment_snapshot?.brand_comments || [];
-  return <FlowShell title="Brand Responses / Admin Review" subtitle="Review the brand answers, edit the Alignment Snapshot questions if needed, and approve when complete."><InfoCard title="Comments">{comments.length ? comments.map((c) => <div key={c.id} className="rounded-lg border border-[#E8E4DB] p-3 mb-2 text-[13px]">{c.quoted_text || 'Snapshot section'}: {c.comment}</div>) : <p className="text-[13px] text-[#8A8A8A]">No brand comments yet.</p>}</InfoCard></FlowShell>;
+  const navigate = useNavigate();
+  const { id, bundle, reload } = useBusinessCaseBundle();
+  const snapshot = bundle?.alignment_snapshot;
+  const comments = snapshot?.brand_comments || [];
+  const isApproved = snapshot?.status === 'approved';
+  const approvedBy = snapshot?.approved_by;
+  const approvedAt = snapshot?.approved_at;
+  const [notice, setNotice] = useState(null);
+
+  const handleApproveAndProceed = async () => {
+    setNotice(null);
+    try {
+      await v3ApproveAlignmentAs(id, 'admin', 'admin');
+      const stage = bundle?.business_case?.stage;
+      if (stage === 'frame') {
+        await v3AdvanceBusinessCase(id, {
+          actor: 'admin',
+          override: true,
+          reason: 'Alignment Snapshot approved from Admin Review page.',
+        });
+      }
+      await reload();
+      navigate(adminRoute(`/business-cases/${id}/plan/brainstorm`));
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not approve and advance. Try generating and approving from the Snapshot page first.');
+    }
+  };
+
+  return (
+    <FlowShell title="Brand Responses / Admin Review" subtitle="Review the brand answers and comments, edit the Alignment Snapshot questions if needed, and approve when complete.">
+      {notice && (
+        <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]">
+          {notice}
+        </div>
+      )}
+
+      {/* Brand Approval Status */}
+      {isApproved && (
+        <div className="rounded-xl border-2 border-[#2E7D5B] bg-[#E8F5ED] p-4 mb-4 flex items-center gap-3" data-testid="admin-review-approved-banner">
+          <CheckCircle2 className="w-6 h-6 text-[#2E7D5B] flex-shrink-0" />
+          <div>
+            <p className="text-[14px] font-bold text-[#1A5E3C]">Alignment Snapshot Approved by Brand</p>
+            <p className="text-[12px] text-[#2E7D5B] mt-0.5">
+              Approved by <strong>{approvedBy || 'Brand'}</strong>
+              {approvedAt && <> on {new Date(approvedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} at {new Date(approvedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true })}</>}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <InfoCard title={`Brand Comments (${comments.length})`}>
+        {comments.length ? (
+          <div className="space-y-3">
+            {comments.map((c) => (
+              <div key={c.id} className="rounded-xl border-2 border-[#E8A33A] bg-[#FFF8E1] p-4 shadow-sm" data-testid={`brand-comment-${c.id}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <MessageSquare className="w-4 h-4 text-[#C47A1A]" />
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
+                  {c.status && <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${c.status === 'open' ? 'bg-[#FDEBD0] text-[#C47A1A] border border-[#E8A33A]' : 'bg-[#E8F5ED] text-[#2E7D5B] border border-[#2E7D5B]'}`}>{c.status}</span>}
+                </div>
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">
+                  Re: <strong className="text-[#4F3E2F]">{c.quoted_text || 'Snapshot section'}</strong>
+                </p>
+                <p className="text-[13px] text-[#1A1A1A] font-medium leading-relaxed">{c.comment}</p>
+                <div className="mt-2 flex items-center gap-3 text-[11px] text-[#8A8A8A]">
+                  <span>By: <strong className="text-[#C47A1A]">{c.author || 'Brand'}</strong></span>
+                  {c.created_at && <span>{new Date(c.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} at {new Date(c.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true })}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-[8px] border border-dashed border-[#D7CBB8] bg-[#FBFAF7] p-5 text-center text-[13px] text-[#6E6657]">
+            No brand comments yet. Once the brand reviews the Alignment Snapshot, their feedback will appear here highlighted in amber.
+          </div>
+        )}
+      </InfoCard>
+
+      {/* Actions */}
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/snapshot`))} className="v3-btn-secondary flex items-center gap-1.5" data-testid="admin-review-back-to-snapshot">
+          <Edit3 className="w-3.5 h-3.5" /> Edit Alignment Snapshot
+        </button>
+        <button onClick={handleApproveAndProceed} className="v3-btn-primary flex items-center gap-1.5" data-testid="admin-review-proceed-brainstorm">
+          <ArrowRight className="w-3.5 h-3.5" /> Approve & Proceed to Brainstorm
+        </button>
+      </div>
+    </FlowShell>
+  );
 };
 
 export const V3BusinessCaseFrameApproved = () => {
@@ -1193,6 +1510,154 @@ export const V3BusinessCaseFrameApproved = () => {
   const { id, bundle } = useBusinessCaseBundle();
   const snap = bundle?.alignment_snapshot || {};
   return <FlowShell title="Alignment Approved" subtitle="Confirm admin approval and move the Business Case into Plan."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/brainstorm`))} className="v3-btn-primary mt-4">Move to Plan Phase</button></InfoCard></FlowShell>;
+};
+
+export const V1BusinessCaseFrameTranscripts = () => {
+  const navigate = useNavigate();
+  const { id, bundle, reload } = useBusinessCaseBundle();
+  const [transcripts, setTranscripts] = useState([]);
+  const [notice, setNotice] = useState('');
+  const [generating, setGenerating] = useState(false);
+
+  // Load existing transcripts from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem(`transcripts_${id}`);
+    if (saved) {
+      setTranscripts(JSON.parse(saved));
+    }
+  }, [id]);
+
+  const saveTranscripts = (newTranscripts) => {
+    setTranscripts(newTranscripts);
+    localStorage.setItem(`transcripts_${id}`, JSON.stringify(newTranscripts));
+  };
+
+  const addTranscript = () => {
+    const newTranscript = {
+      id: `transcript-${Date.now()}`,
+      date: new Date().toISOString().split('T')[0],
+      session: `Session ${transcripts.length + 1}`,
+      content: '',
+    };
+    saveTranscripts([...transcripts, newTranscript]);
+  };
+
+  const removeTranscript = (transcriptId) => {
+    saveTranscripts(transcripts.filter(t => t.id !== transcriptId));
+  };
+
+  const updateTranscript = (transcriptId, field, value) => {
+    saveTranscripts(transcripts.map(t => 
+      t.id === transcriptId ? { ...t, [field]: value } : t
+    ));
+  };
+
+  const generateAlignmentSnapshot = async () => {
+    setGenerating(true);
+    setNotice('Generating alignment snapshot from transcripts...');
+    try {
+      await v3GenerateAlignmentFromTranscripts(id, transcripts);
+      await reload();
+      setNotice('Alignment snapshot generated successfully!');
+      navigate(adminRoute(`/business-cases/${id}/frame/snapshot`));
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Failed to generate alignment snapshot.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  return (
+    <FlowShell 
+      title="Upload Transcripts" 
+      subtitle="Upload transcripts from your calls, then generate the alignment snapshot."
+    >
+      {notice && (
+        <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-4 text-[12px] text-[#7A5A1E]">
+          {notice}
+        </div>
+      )}
+
+      <InfoCard 
+        title="Transcripts" 
+        action={
+          <button onClick={addTranscript} className="v3-btn-primary text-[12px] flex items-center gap-1">
+            <Plus className="w-3.5 h-3.5" /> Add Transcript
+          </button>
+        }
+      >
+        {transcripts.length === 0 ? (
+          <p className="text-[13px] text-[#8A8A8A]">No transcripts yet. Click "Add Transcript" to get started.</p>
+        ) : (
+          <div className="space-y-4">
+            {transcripts.map((transcript) => (
+              <div key={transcript.id} className="rounded-xl border border-[#E8E4DB] bg-white p-4 shadow-sm space-y-3">
+                <div className="flex items-center justify-between gap-2 border-b border-[#F1ECDF] pb-3">
+                  <div className="grid grid-cols-2 gap-3 flex-1">
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Date</label>
+                      <input
+                        type="date"
+                        value={transcript.date}
+                        onChange={(e) => updateTranscript(transcript.id, 'date', e.target.value)}
+                        className="w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Session Name</label>
+                      <input
+                        type="text"
+                        value={transcript.session}
+                        onChange={(e) => updateTranscript(transcript.id, 'session', e.target.value)}
+                        className="w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removeTranscript(transcript.id)}
+                    className="p-1.5 text-[#B54A37] hover:bg-[#FBF1EE] rounded-md"
+                    aria-label="Remove transcript"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Transcript Content</label>
+                  <textarea
+                    value={transcript.content}
+                    onChange={(e) => updateTranscript(transcript.id, 'content', e.target.value)}
+                    rows={6}
+                    placeholder="Paste your transcript here..."
+                    className="w-full rounded-md border border-[#E8E4DB] bg-[#FBFAF7] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </InfoCard>
+
+      {transcripts.length > 0 && (
+        <div className="mt-4">
+          <button
+            onClick={generateAlignmentSnapshot}
+            disabled={generating || transcripts.some(t => !t.content.trim())}
+            className="v3-btn-primary flex items-center gap-1.5"
+          >
+            {generating ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" /> Generating Alignment Snapshot...
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" /> Generate Alignment Snapshot from Transcripts
+              </>
+            )}
+          </button>
+        </div>
+      )}
+    </FlowShell>
+  );
 };
 
 const BS_VOICE_TYPES = ['Authority / Expert', 'Peer / Relatable', 'Entertainer / Cultural Driver', 'Niche Specialist'];

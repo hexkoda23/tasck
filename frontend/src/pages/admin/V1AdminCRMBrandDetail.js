@@ -8,9 +8,21 @@ import {
   User,
   Send,
   Trash2,
+  Loader2,
+  Sparkles,
+  Edit2,
+  Check,
 } from 'lucide-react';
-import { v3GetBrand, v3MoveBrandToBusinessCall, v3MoveBrandToFrame, v3DeleteBrand } from '../../lib/v3api';
+import {
+  v3GetBrand,
+  v3MoveBrandToBusinessCall,
+  v3MoveBrandToFrame,
+  v3DeleteBrand,
+  v3UpdateBrandDetails,
+  v3ScrapeBrandDetails,
+} from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
+import { toast } from 'sonner';
 
 const EMPTY_VALUE = 'Not captured yet';
 
@@ -26,7 +38,6 @@ const BRAND_DETAIL_FIELDS = [
   ['Location / HQ', ['hq', 'location', 'address']],
   ['Marketing budget', ['marketing_budget', 'budget', 'budget_range']],
   ['CRM status', ['status']],
-  ['Qualification status', ['qualification_status']],
   ['Source', ['source', 'lead_source', 'scrape_source']],
   ['Last interaction', ['last_interaction', 'lastInteraction']],
   ['Created', ['created_at', 'createdAt']],
@@ -42,6 +53,27 @@ const firstValue = (record, keys) => {
     if (value !== undefined && value !== null && String(value).trim() !== '') return value;
   }
   return '';
+};
+
+const formatDateTime = (val) => {
+  if (val === undefined || val === null || val === '') return '';
+  if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
+    try {
+      const d = new Date(val);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleString('en-GB', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true
+        });
+      }
+    } catch (e) {}
+  }
+  return String(val);
 };
 
 const textValue = (value) => {
@@ -67,6 +99,11 @@ const BrandLogo = ({ brand }) => {
   const [failed, setFailed] = useState(false);
   const logoUrl = logoUrlForBrand(brand);
   const initials = brandName(brand).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'BR';
+
+  useEffect(() => {
+    setFailed(false);
+  }, [logoUrl]);
+
   return (
     <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-[#D7CBB8] bg-white">
       {logoUrl && !failed ? (
@@ -121,6 +158,61 @@ const V1AdminCRMBrandDetail = () => {
   const [deleting, setDeleting] = useState(false);
   const [moving, setMoving] = useState(false);
   const [notice, setNotice] = useState('');
+  const [scraping, setScraping] = useState(false);
+  const [editingAbout, setEditingAbout] = useState(false);
+  const [aboutDraft, setAboutDraft] = useState('');
+  const [editingLogo, setEditingLogo] = useState(false);
+  const [logoDraft, setLogoDraft] = useState('');
+
+  const reloadData = async () => {
+    try {
+      const data = await v3GetBrand(id);
+      setBundle(data);
+    } catch (err) {
+      setNotice(err?.response?.data?.detail || err?.message || 'Failed to reload brand details.');
+    }
+  };
+
+  const handleScrape = async () => {
+    setScraping(true);
+    setNotice('');
+    try {
+      const res = await v3ScrapeBrandDetails(id);
+      if (res.ok) {
+        toast.success('Brand details scraped already');
+        await reloadData();
+      } else {
+        toast.error('Scraping returned no results.');
+      }
+    } catch (e) {
+      toast.error('Scraping failed.');
+      await reloadData();
+    } finally {
+      setScraping(false);
+    }
+  };
+
+  const handleSaveAbout = async () => {
+    try {
+      await v3UpdateBrandDetails(id, { about: aboutDraft });
+      toast.success('About section updated successfully.');
+      setEditingAbout(false);
+      await reloadData();
+    } catch (e) {
+      toast.error(e?.message || 'Failed to update about section.');
+    }
+  };
+
+  const handleSaveLogo = async () => {
+    try {
+      await v3UpdateBrandDetails(id, { logo_url: logoDraft });
+      toast.success('Logo updated successfully.');
+      setEditingLogo(false);
+      await reloadData();
+    } catch (e) {
+      toast.error(e?.message || 'Failed to update logo.');
+    }
+  };
 
   const handleDeleteBrand = async () => {
     setDeleting(true);
@@ -182,7 +274,7 @@ const V1AdminCRMBrandDetail = () => {
       const result = await v3MoveBrandToFrame(brand.id);
       const businessCaseId = result.business_case_id || result.business_case?.id;
       if (!businessCaseId) throw new Error('Business Case was not returned by the V3 workflow.');
-      navigate(adminRoute(`/business-cases/${businessCaseId}/frame/snapshot`));
+      navigate(adminRoute(`/business-cases/${businessCaseId}/frame/transcripts`));
     } catch (error) {
       setNotice(error?.response?.data?.detail || error?.message || 'Could not move this brand to the frame page.');
     } finally {
@@ -256,18 +348,142 @@ const V1AdminCRMBrandDetail = () => {
 
       <InfoCard title="Brand details">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {BRAND_DETAIL_FIELDS.map(([label, keys]) => <DetailRow key={label} label={label} value={firstValue(brand, keys)} />)}
+          {BRAND_DETAIL_FIELDS.map(([label, keys]) => {
+            const rawVal = firstValue(brand, keys);
+            
+            if (label === 'CRM accepted at' && (!rawVal || rawVal === EMPTY_VALUE)) {
+              return null;
+            }
+            
+            let displayVal = rawVal;
+            if (['Created', 'Updated', 'CRM accepted at'].includes(label)) {
+              displayVal = formatDateTime(rawVal);
+            }
+            
+            return <DetailRow key={label} label={label} value={displayVal} />;
+          })}
         </div>
       </InfoCard>
 
-      <InfoCard title="Scraped and source information">
+      <InfoCard
+        title="Scraped and source information"
+        action={
+          <button
+            type="button"
+            onClick={handleScrape}
+            disabled={scraping}
+            className="v3-btn-secondary text-[11px] py-1.5 px-3 flex items-center gap-1.5"
+            data-testid="crm-scrape-brand-btn"
+          >
+            {scraping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {scraping ? 'Scraping details...' : 'Scrape for brand details'}
+          </button>
+        }
+      >
         <div className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
           <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-4">
-            <div className="mb-2 flex items-center gap-2 text-[12px] font-semibold text-[#1A1A1A]"><FileText className="h-4 w-4 text-[#1F4A3A]" /> About</div>
-            <p className="whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">{aboutText || EMPTY_VALUE}</p>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-[12px] font-semibold text-[#1A1A1A]">
+                <FileText className="h-4 w-4 text-[#1F4A3A]" /> About
+              </div>
+              {!editingAbout && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAboutDraft(aboutText || '');
+                    setEditingAbout(true);
+                  }}
+                  className="p-1 hover:bg-[#F4F2EC] rounded text-[#8A8A8A] hover:text-[#1F4A3A] transition-colors"
+                  title="Edit About Section"
+                  data-testid="crm-edit-about-btn"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {editingAbout ? (
+              <div className="space-y-2 mt-2">
+                <textarea
+                  value={aboutDraft}
+                  onChange={(e) => setAboutDraft(e.target.value)}
+                  rows={6}
+                  className="w-full text-[13px] border border-[#D7CBB8] rounded-lg p-2 focus:outline-none focus:border-[#1F4A3A]"
+                  placeholder="Enter brand description..."
+                  data-testid="crm-about-textarea"
+                />
+                <div className="flex gap-2 justify-end">
+                  <button
+                    onClick={() => setEditingAbout(false)}
+                    className="px-2.5 py-1 text-[11px] rounded bg-[#F4F2EC] text-[#4F3E2F]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveAbout}
+                    className="px-2.5 py-1 text-[11px] rounded bg-[#1F4A3A] text-white flex items-center gap-1"
+                    data-testid="crm-save-about-btn"
+                  >
+                    <Check className="w-3 h-3" /> Save
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">{aboutText || EMPTY_VALUE}</p>
+            )}
           </div>
           <div className="grid gap-3">
-            <DetailRow label="Logo URL" value={logoUrlForBrand(brand)} />
+            <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Logo URL</p>
+                {!editingLogo && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLogoDraft(logoUrlForBrand(brand) || '');
+                      setEditingLogo(true);
+                    }}
+                    className="p-0.5 hover:bg-[#F4F2EC] rounded text-[#8A8A8A] hover:text-[#1F4A3A] transition-colors"
+                    data-testid="crm-edit-logo-btn"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {editingLogo ? (
+                <div className="space-y-2 mt-1.5">
+                  <input
+                    type="text"
+                    value={logoDraft}
+                    onChange={(e) => setLogoDraft(e.target.value)}
+                    className="w-full text-[12px] border border-[#D7CBB8] rounded p-1.5 focus:outline-none focus:border-[#1F4A3A]"
+                    placeholder="https://example.com/logo.png"
+                    data-testid="crm-logo-input"
+                  />
+                  {logoDraft && (
+                    <div className="flex justify-center p-2 bg-[#FBFAF7] border border-[#E8E4DB] rounded">
+                      <img src={logoDraft} alt="Preview" className="h-10 object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
+                    </div>
+                  )}
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => setEditingLogo(false)}
+                      className="px-2 py-0.5 text-[10px] rounded bg-[#F4F2EC] text-[#4F3E2F]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveLogo}
+                      className="px-2 py-0.5 text-[10px] rounded bg-[#1F4A3A] text-white"
+                      data-testid="crm-save-logo-btn"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-1 whitespace-pre-wrap break-all text-[13px] leading-5 text-[#1A1A1A]">{textValue(logoUrlForBrand(brand))}</p>
+              )}
+            </div>
             <DetailRow label="Website / source URL" value={website} />
             <DetailRow label="Notes" value={brand.notes || brand.source_notes || brand.scrape_notes} />
           </div>

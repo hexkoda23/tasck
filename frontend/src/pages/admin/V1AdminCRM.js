@@ -10,6 +10,7 @@ import { useV3Resource } from '../../lib/useV3Resource';
 import V3Modal from '../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles, Users } from 'lucide-react';
 import { adminRoute, getAdminRouteBase, V1_ADMIN_ROUTE_BASE } from '../../lib/v3AdminRouteBase';
+import { toast } from 'sonner';
 
 // Normalises API brand shape for the component
 const normaliseBrand = (b) => ({
@@ -74,6 +75,7 @@ const V1AdminCRM = () => {
   const normalised = brandList.map(normaliseBrand);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [validationErrors, setValidationErrors] = useState({});
   const [form, setForm] = useState({
     company: '',
     industry: '',
@@ -119,7 +121,35 @@ const V1AdminCRM = () => {
   }, []);
 
   const submitBrand = async () => {
-    if (!form.company || !form.industry || !form.primary_contact) return;
+    const requiredKeys = ['company', 'industry', 'primary_contact', 'role', 'email', 'hq'];
+    const errors = {};
+    let firstInvalidKey = null;
+
+    requiredKeys.forEach((key) => {
+      if (!String(form[key] || '').trim()) {
+        errors[key] = true;
+        if (!firstInvalidKey) {
+          firstInvalidKey = key;
+        }
+      }
+    });
+
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors);
+      if (firstInvalidKey) {
+        const element = document.getElementById(`form-div-${firstInvalidKey}`);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          const input = element.querySelector('input');
+          if (input) {
+            input.focus();
+          }
+        }
+      }
+      return;
+    }
+
+    setValidationErrors({});
     setSubmitting(true);
     try {
       if (isV1Admin) {
@@ -128,18 +158,19 @@ const V1AdminCRM = () => {
           source: 'v1_admin_crm',
           status: 'crm_accepted',
           qualification_status: 'accepted',
-          crm_accepted_at: new Date().toISOString(),
         });
         const brandId = created.id || created.brand_id || created.brand?.id;
         if (!brandId) {
           throw new Error('CRM brand was created but no brand id was returned.');
         }
+        toast.success("Saved to CRM!");
         setAddOpen(false);
         resetForm();
         navigate(adminRoute(`/crm-brands/${brandId}`));
         return;
       }
       const created = await v3CreateBrandQualificationCandidate({ ...form, source: 'manual_brand' });
+      toast.success("Saved to CRM!");
       setCreatedIntake(created);
       setAddOpen(false);
       resetForm();
@@ -341,14 +372,26 @@ const V1AdminCRM = () => {
 
       <V3Modal
         open={addOpen}
-        onClose={() => setAddOpen(false)}
+        onClose={() => {
+          if (window.confirm("Are you sure or proceed to cancel?")) {
+            setAddOpen(false);
+            resetForm();
+            setValidationErrors({});
+          }
+        }}
         title={isV1Admin ? 'Add Brand to CRM' : 'Add Brand for Qualification'}
         subtitle={isV1Admin ? 'Create the real CRM brand, review its full details, then move it to the Connect / Business Call page.' : 'Capture the lead and create its Brand Qualification Call before it enters CRM.'}
         testid="add-brand-modal"
         footer={
           <>
             <button
-              onClick={() => setAddOpen(false)}
+              onClick={() => {
+                if (window.confirm("Are you sure or proceed to cancel?")) {
+                  setAddOpen(false);
+                  resetForm();
+                  setValidationErrors({});
+                }
+              }}
               className="v3-btn-secondary"
               data-testid="add-brand-cancel"
             >
@@ -367,27 +410,41 @@ const V1AdminCRM = () => {
       >
         <div className="space-y-3">
           {[
-            { k: 'company', label: 'Company name', placeholder: 'e.g. Nigerian Breweries PLC' },
-            { k: 'industry', label: 'Industry', placeholder: 'e.g. FMCG — Beverages' },
-            { k: 'primary_contact', label: 'Primary contact', placeholder: 'e.g. Funke Adebiyi' },
-            { k: 'role', label: 'Contact role', placeholder: 'e.g. Brand Manager, Star Lager' },
-            { k: 'email', label: 'Contact email (strongly recommended)', placeholder: 'name@brand.com' },
+            { k: 'company', label: 'Company name', placeholder: 'e.g. Nigerian Breweries PLC', required: true },
+            { k: 'industry', label: 'Industry', placeholder: 'e.g. FMCG — Beverages', required: true },
+            { k: 'primary_contact', label: 'Primary contact', placeholder: 'e.g. Funke Adebiyi', required: true },
+            { k: 'role', label: 'Contact role', placeholder: 'e.g. Brand Manager, Star Lager', required: true },
+            { k: 'email', label: 'Contact email (strongly recommended)', placeholder: 'name@brand.com', required: true },
             { k: 'phone', label: 'Phone / WhatsApp', placeholder: '+234...' },
             { k: 'website', label: 'Website', placeholder: 'https://brand.com' },
-            { k: 'hq', label: 'HQ / location', placeholder: 'Lagos, Nigeria' },
+            { k: 'hq', label: 'HQ / location', placeholder: 'Lagos, Nigeria', required: true },
           ].map((f) => (
-            <div key={f.k}>
+            <div key={f.k} id={`form-div-${f.k}`}>
               <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
-                {f.label}
+                {f.label} {f.required && <span className="text-red-500 font-bold">*</span>}
               </label>
               <input
                 type="text"
                 value={form[f.k]}
-                onChange={(e) => setForm({ ...form, [f.k]: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, [f.k]: e.target.value });
+                  if (validationErrors[f.k]) {
+                    setValidationErrors((prev) => {
+                      const copy = { ...prev };
+                      delete copy[f.k];
+                      return copy;
+                    });
+                  }
+                }}
                 placeholder={f.placeholder}
-                className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
+                className={`w-full px-3 py-2 text-[13px] rounded-lg border bg-white focus:outline-none focus:border-[#1F4A3A] ${
+                  validationErrors[f.k] ? 'border-red-500 ring-1 ring-red-500' : 'border-[#E8E4DB]'
+                }`}
                 data-testid={`add-brand-${f.k}`}
               />
+              {validationErrors[f.k] && (
+                <p className="text-[10px] text-red-500 mt-0.5">{f.label} is required.</p>
+              )}
             </div>
           ))}
           <div>
