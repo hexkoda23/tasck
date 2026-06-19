@@ -92,6 +92,9 @@ export const v3ListBrainstorms = (bcId) => v3.get('/brainstorm-rounds', { params
 export const v3ContractPdfUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/pdf`;
 export const v3FinalReportPdfUrl = (reportId) => `${BACKEND_URL}/api/v3/final-reports/${reportId}/pdf`;
 export const v3FeedbackPdfUrl = (reportId) => `${BACKEND_URL}/api/v3/final-reports/${reportId}/feedback/pdf`;
+export const v3SendContractEmail = (contractId, payload) => v3.post(`/contracts/${contractId}/send-email`, payload).then(r => r.data);
+export const v3SendFinalReportEmail = (reportId, payload) => v3.post(`/final-reports/${reportId}/send-email`, payload).then(r => r.data);
+export const v3SendFeedbackEmail = (reportId, payload) => v3.post(`/final-reports/${reportId}/feedback/send-email`, payload).then(r => r.data);
 
 // -------- Contracts --------
 export const v3ListContracts = (bcId) => v3.get('/contracts', { params: { business_case_id: bcId } }).then(r => r.data);

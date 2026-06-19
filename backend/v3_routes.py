@@ -22,6 +22,9 @@ from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 import asyncio
 import html
+import smtplib
+import ssl
+from email.message import EmailMessage
 import json
 import logging
 import os
@@ -3702,6 +3705,120 @@ def make_v3_router(db):
         title = f"Feedback — {(rep.get('title') or 'Final Report')}"
         pdf_bytes = _render_pdf(title, blocks)
         return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="feedback-{report_id}.pdf"'})
+
+    # ------------------------------------------------------------------------
+    # SMTP — share contract / final report / feedback via real email
+    # ------------------------------------------------------------------------
+    def _smtp_send(to_email: str, subject: str, body: str, attachment_bytes: Optional[bytes] = None, attachment_name: Optional[str] = None) -> None:
+        host = os.environ.get("SMTP_HOST")
+        port = int(os.environ.get("SMTP_PORT", "587"))
+        username = os.environ.get("SMTP_USERNAME")
+        password = os.environ.get("SMTP_PASSWORD")
+        from_email = os.environ.get("SMTP_FROM_EMAIL", username or "")
+        from_name = os.environ.get("SMTP_FROM_NAME", "TASCK")
+        use_tls = (os.environ.get("SMTP_USE_TLS", "true").lower() == "true")
+        use_ssl = (os.environ.get("SMTP_USE_SSL", "false").lower() == "true")
+        if not all([host, username, password, from_email]):
+            raise HTTPException(500, "SMTP credentials are not fully configured on the server.")
+
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = f"{from_name} <{from_email}>"
+        msg["To"] = to_email
+        msg.set_content(body)
+        if attachment_bytes and attachment_name:
+            msg.add_attachment(attachment_bytes, maintype="application", subtype="pdf", filename=attachment_name)
+
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as srv:
+                srv.login(username, password)
+                srv.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=20) as srv:
+                srv.ehlo()
+                if use_tls:
+                    ctx = ssl.create_default_context()
+                    srv.starttls(context=ctx)
+                    srv.ehlo()
+                srv.login(username, password)
+                srv.send_message(msg)
+
+    class SendEmailPayload(BaseModel):
+        to_email: str
+        recipient_name: Optional[str] = None
+        custom_message: Optional[str] = None
+
+    @router.post("/contracts/{contract_id}/send-email")
+    async def send_contract_email(contract_id: str, payload: SendEmailPayload):
+        ctr = await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
+        if not ctr:
+            raise HTTPException(404, "Contract not found")
+        if not (ctr.get("sections") or []):
+            case = await db.v3_business_cases.find_one({"id": ctr.get("business_case_id")}, {"_id": 0}) or {}
+            brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+            creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+            sections = _build_contract_sections(ctr.get("template", "brand_msa"), (brand.get("company") or brand.get("name") or "Brand"), ((creator or {}).get("name") or "Creator"), ctr.get("value") or 0, case.get("title") or "Project")
+            await db.v3_contracts.update_one({"id": contract_id}, {"$set": {"sections": sections}})
+            ctr["sections"] = sections
+        pdf_bytes = _render_pdf(ctr.get("title") or "Contract", ctr.get("sections") or [])
+        body = (payload.custom_message or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nPlease find attached the contract for our project: {ctr.get('title', 'Contract')}.\n\nLet us know if you have any questions or amendments.\n\nWarm regards,\nThe TASCK Agency")
+        try:
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"Contract: {ctr.get('title', 'Contract')}", body, pdf_bytes, f"{ctr.get('template','contract')}.pdf")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, f"Failed to send contract email: {exc}")
+        await db.v3_contracts.update_one({"id": contract_id}, {"$set": {"last_sent_to": payload.to_email, "last_sent_at": _now_iso(), "status": "sent"}})
+        return {"ok": True, "sent_to": payload.to_email}
+
+    @router.post("/final-reports/{report_id}/send-email")
+    async def send_final_report_email(report_id: str, payload: SendEmailPayload):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        pdf_bytes = _render_pdf(rep.get("title") or "Final Report", rep.get("sections") or [])
+        body = (payload.custom_message or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nPlease find attached the final report for our project: {rep.get('title', 'Final Report')}.\n\nWe look forward to hearing your thoughts.\n\nWarm regards,\nThe TASCK Agency")
+        try:
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"Final Report: {rep.get('title', 'Project')}", body, pdf_bytes, f"final-report-{report_id}.pdf")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, f"Failed to send report email: {exc}")
+        await db.v3_final_reports.update_one({"id": report_id}, {"$set": {"report_sent_at": _now_iso(), "report_sent_to": payload.to_email}})
+        return {"ok": True, "sent_to": payload.to_email}
+
+    @router.post("/final-reports/{report_id}/feedback/send-email")
+    async def send_feedback_email(report_id: str, payload: SendEmailPayload):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        # Build feedback blocks and render PDF (re-using the same logic as the feedback_pdf endpoint)
+        fb = rep.get("feedback") or {}
+        blocks: List[Dict[str, Any]] = []
+        if fb.get("email_template"):
+            blocks.append({"heading": "Tab 1 — Email Template", "content": fb["email_template"]})
+        for group_key, group_label in [("brand_partner", "Brand Partner Feedback"), ("creative_partner", "Creative Partner Feedback")]:
+            block = fb.get(group_key) or {}
+            blocks.append({"heading": block.get("form_title", group_label), "content": (block.get("form_description") or "")})
+            header_lines = [f"Project name: {block.get('project_name', '—')}", f"Date: {block.get('date', '—')}"]
+            if "google_form_link" in block:
+                header_lines.append(f"Google form link: {block.get('google_form_link') or '—'}")
+            blocks.append({"content": "\n".join(header_lines)})
+            for idx, q in enumerate(block.get("questions") or []):
+                blocks.append({"heading": f"{idx + 1}. {q.get('label', '')}", "content": f"{q.get('question', '')}\nRating: {q.get('rating') if q.get('rating') is not None else '—'} / 10"})
+            blocks.append({"content": f"Optional comment: {block.get('optional_comment') or '—'}"})
+        pdf_bytes = _render_pdf(f"Feedback — {(rep.get('title') or 'Final Report')}", blocks)
+        body = (payload.custom_message or fb.get("email_template") or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nThank you for partnering with TASCK on this project. Please find attached the feedback form. We appreciate your responses.\n\nWarm regards,\nThe TASCK Agency")
+        try:
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"Feedback request — {rep.get('title', 'Project')}", body, pdf_bytes, f"feedback-{report_id}.pdf")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, f"Failed to send feedback email: {exc}")
+        await db.v3_final_reports.update_one({"id": report_id}, {"$set": {"feedback_sent_at": _now_iso(), "feedback_sent_to": payload.to_email}})
+        return {"ok": True, "sent_to": payload.to_email}
+
 
 
     class FeedbackPayload(BaseModel):
