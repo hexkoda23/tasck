@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
 import { v3AdminOverview } from '../../../lib/v3api';
+import { adminRoute } from '../../../lib/v3AdminRouteBase';
 import { FolderOpen, GitBranch, TrendingUp, Users, Clock } from 'lucide-react';
 
 const V3AdminOverview = () => {
@@ -165,7 +166,7 @@ const V3AdminOverview = () => {
             <button
               key={s.key}
               type="button"
-              onClick={() => navigate(`/v3/admin/business-cases?stage=${s.key}`)}
+              onClick={() => navigate(adminRoute(`/business-cases?stage=${s.key}`))}
               className="flex-1 p-3 rounded-lg text-left transition-transform hover:-translate-y-0.5 hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1F4A3A]/30"
               style={{ background: `${s.color}08`, border: `1px solid ${s.color}20` }}
               data-testid={`overview-pipeline-${s.key}`}
@@ -192,56 +193,59 @@ const V3AdminOverview = () => {
         </div>
       </div>
 
-      {/* Needs attention */}
-      <div className="mb-8" data-testid="overview-needs-attention">
-        <h2 className="text-[13px] font-semibold text-[#1A1A1A] mb-3">Needs your attention</h2>
-        {(overview.needs_attention || []).length === 0 ? (
-          <div className="v3-card p-6 text-center" style={{ background: '#F4F2EC' }}>
-            <p className="text-[12px] text-[#8A8A8A]">Everything is on track.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {(overview.needs_attention || []).slice(0, 6).map((item, i) => (
-              <div key={`${item.id}-${i}`} className="v3-card p-4" data-testid={`overview-attention-${i}`}>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-[13px] font-medium text-[#1A1A1A] truncate">{item.title || 'Untitled'}</p>
-                    <p className="text-[11px] text-[#6E6657] mt-0.5">{item.message}</p>
+      {/* Needs attention + Recent activity — side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8" style={{ alignItems: 'start' }}>
+        {/* Needs attention */}
+        <div data-testid="overview-needs-attention">
+          <h2 className="text-[13px] font-semibold text-[#1A1A1A] mb-3">Needs your attention</h2>
+          {(overview.needs_attention || []).length === 0 ? (
+            <div className="v3-card p-6 text-center" style={{ background: '#F4F2EC' }}>
+              <p className="text-[12px] text-[#8A8A8A]">Everything is on track.</p>
+            </div>
+          ) : (
+            <div className="space-y-2" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              {(overview.needs_attention || []).slice(0, 10).map((item, i) => (
+                <div key={`${item.id}-${i}`} className="v3-card p-4" data-testid={`overview-attention-${i}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium text-[#1A1A1A] truncate">{item.title || 'Untitled'}</p>
+                      <p className="text-[11px] text-[#6E6657] mt-0.5">{item.message}</p>
+                    </div>
+                    <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-[#F2EAD8] text-[#7A5F23] flex-shrink-0">
+                      {(item.type || '').replace(/_/g, ' ')}
+                    </span>
                   </div>
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-[#F2EAD8] text-[#7A5F23] flex-shrink-0">
-                    {(item.type || '').replace(/_/g, ' ')}
-                  </span>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-      {/* Recent activity */}
-      <div className="mb-8" data-testid="overview-recent-activity">
-        <h2 className="text-[13px] font-semibold text-[#1A1A1A] mb-3">Recent activity</h2>
-        {(overview.latest_activity || []).length === 0 ? (
-          <div className="v3-card p-6 text-center" style={{ background: '#F4F2EC' }}>
-            <p className="text-[12px] text-[#8A8A8A]">No recent activity. Run the CRM workbook import to populate data.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {(overview.latest_activity || []).slice(0, 8).map((item, i) => (
-              <div key={i} className="v3-card p-3 flex items-center justify-between gap-3" data-testid={`overview-activity-${i}`}>
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A] flex-shrink-0">
-                    {(item.type || '').replace(/_/g, ' ')}
+        {/* Recent activity */}
+        <div data-testid="overview-recent-activity">
+          <h2 className="text-[13px] font-semibold text-[#1A1A1A] mb-3">Recent activity</h2>
+          {(overview.latest_activity || []).length === 0 ? (
+            <div className="v3-card p-6 text-center" style={{ background: '#F4F2EC' }}>
+              <p className="text-[12px] text-[#8A8A8A]">No recent activity. Run the CRM workbook import to populate data.</p>
+            </div>
+          ) : (
+            <div className="space-y-2" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              {(overview.latest_activity || []).slice(0, 10).map((item, i) => (
+                <div key={i} className="v3-card p-3 flex items-center justify-between gap-3" data-testid={`overview-activity-${i}`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A] flex-shrink-0">
+                      {(item.type || '').replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-[12px] text-[#1A1A1A] truncate">{item.title || 'Untitled'}</span>
+                  </div>
+                  <span className="text-[10px] text-[#8A8A8A] flex-shrink-0" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                    {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
                   </span>
-                  <span className="text-[12px] text-[#1A1A1A] truncate">{item.title || 'Untitled'}</span>
                 </div>
-                <span className="text-[10px] text-[#8A8A8A] flex-shrink-0" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                  {item.created_at ? new Date(item.created_at).toLocaleDateString() : ''}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
