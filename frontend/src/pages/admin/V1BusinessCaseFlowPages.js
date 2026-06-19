@@ -1463,23 +1463,29 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   const sendEmailToBrand = async () => {
+    const recipient = recipientEmail.trim() || brandEmail || 'the registered brand email';
+    setSendPopup({
+      title: 'Sending',
+      message: `Sending Alignment Snapshot to ${recipient}...`,
+      tone: 'pending',
+    });
     try {
       await persistDraft();
       const result = await v3SendAlignmentToBrand(id, { recipient_email: recipientEmail.trim() || undefined });
       await reload();
       const status = result?.email?.status || 'queued';
       const deliveryError = result?.email?.delivery_error || '';
-      const recipient = result?.email?.to || recipientEmail.trim() || brandEmail;
+      const deliveredRecipient = result?.email?.to || recipientEmail.trim() || brandEmail;
       if (status === 'sent') {
         setSendPopup({
           title: 'Sent',
-          message: `Alignment Snapshot sent to ${recipient}. Check the inbox and spam folder in Gmail.`,
+          message: `Alignment Snapshot sent to ${deliveredRecipient}. Check the inbox and spam folder in Gmail.`,
           tone: 'success',
         });
       } else {
         setSendPopup({
           title: status === 'delivery_failed' ? 'Email not delivered' : 'Email queued',
-          message: deliveryError || `Alignment Snapshot queued for ${recipient}. SMTP delivery is not configured yet.`,
+          message: deliveryError || `Alignment Snapshot queued for ${deliveredRecipient}. SMTP delivery is not configured yet.`,
           tone: 'warning',
         });
       }
@@ -2376,12 +2382,20 @@ export const V3BusinessCasePlanBrief = () => {
     setNotice('AI generated a draft brief for every selected creator.');
   };
   const send = async (creator) => {
-    setNotice('');
+    setNotice(`Sending creative brief to ${creatorName(creator)}...`);
     const brief = briefs[creator.id] || generateCreatorBriefDraft(bundle, creator, planningFields || {});
     try {
       const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, brief_text: brief, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
       setSentBriefs((current) => ({ ...current, [creator.id]: doc }));
-      setNotice(`Creative brief emailed to ${creatorName(creator)}.`);
+      const status = doc?.email?.status || doc?.email_status || 'queued';
+      const recipient = doc?.email?.to || doc?.creator_contact_email || creatorContact(creator) || creatorName(creator);
+      if (status === 'sent') {
+        setNotice(`Creative brief sent to ${recipient} with creator portal login details.`);
+      } else if (status === 'delivery_failed') {
+        setNotice(doc?.email?.delivery_error || doc?.email_error || `Creative brief was saved but email delivery failed for ${recipient}.`);
+      } else {
+        setNotice(`Creative brief saved and queued for ${recipient}.`);
+      }
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || `Could not email ${creatorName(creator)} yet.`);
     }
@@ -2660,6 +2674,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   const [editedTitle, setEditedTitle] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [sendPopup, setSendPopup] = useState(null);
   const snapshot = bundle?.creative_snapshot || null;
 
   const generate = async () => {
@@ -2676,12 +2691,20 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   };
   const sendToBrand = async () => {
     setNotice('');
+    setSendPopup({ title: 'Sending', message: 'Sending Strategy Snapshot to the registered brand email...', tone: 'pending' });
     try {
-      await v3SendStrategySnapshotToBrand(id);
+      const result = await v3SendStrategySnapshotToBrand(id);
       await reload();
-      setNotice('Strategy Snapshot sent to the brand for review.');
+      const status = result?.email?.status || 'queued';
+      const recipient = result?.email?.to || getBrand(bundle)?.email || 'the registered brand email';
+      const deliveryError = result?.email?.delivery_error || '';
+      if (status === 'sent') {
+        setSendPopup({ title: 'Sent', message: `Strategy Snapshot sent to ${recipient}.`, tone: 'success' });
+      } else {
+        setSendPopup({ title: status === 'delivery_failed' ? 'Email not delivered' : 'Email queued', message: deliveryError || `Strategy Snapshot queued for ${recipient}.`, tone: 'warning' });
+      }
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not send Strategy Snapshot yet.');
+      setSendPopup({ title: 'Email not sent', message: e?.response?.data?.detail || e?.message || 'Could not send Strategy Snapshot yet.', tone: 'warning' });
     }
   };
   const approve = async () => {
@@ -2768,6 +2791,22 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
           </button>
         )}
       </div>
+      {sendPopup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4" data-testid="strategy-sent-popup">
+          <div className="w-full max-w-sm rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${sendPopup.tone === 'success' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : 'bg-[#FBF4E4] text-[#7A5A1E]'}`}>
+                {sendPopup.tone === 'success' ? <CheckCircle2 className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
+              </span>
+              <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{sendPopup.title}</h3>
+            </div>
+            <p className="text-[13px] leading-6 text-[#4F3E2F]">{sendPopup.message}</p>
+            <div className="mt-4 flex justify-end">
+              <button type="button" onClick={() => setSendPopup(null)} className="v3-btn-primary" data-testid="strategy-sent-popup-close">OK</button>
+            </div>
+          </div>
+        </div>
+      )}
       <InfoCard title="Strategy Snapshot">
         {!snapshot ? (
           <p className="text-[13px] text-[#8A8A8A]">No Strategy Snapshot generated yet.</p>

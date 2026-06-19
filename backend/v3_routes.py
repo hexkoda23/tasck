@@ -19,6 +19,7 @@ from io import BytesIO
 from pathlib import Path
 from dotenv import load_dotenv
 from email.message import EmailMessage
+from email.utils import formataddr, formatdate, make_msgid
 import asyncio
 import html
 import json
@@ -28,6 +29,7 @@ import re
 import requests
 import smtplib
 import uuid
+import zipfile
 
 from v3_seed import get_v3_seed_data
 import v3_tracker_v33
@@ -233,6 +235,233 @@ def _required_missing_fields(text: str, required: List[Tuple[str, List[str]]]) -
     return missing
 
 
+ALIGNMENT_SNAPSHOT_FIELD_SPECS = [
+    ("About The Organisation", "about_the_organisation"),
+    ("What are the Core Focus Areas", "core_focus_areas"),
+    ("Who are The Key Customers/Beneficiaries", "key_customers_beneficiaries"),
+    ("Key Goals or Metrics that are Tracked", "key_goals_metrics"),
+    ("What Success Looks Like / Timeline", "success_timeline"),
+    ("Focus", "focus"),
+    ("Priority", "priority"),
+    ("Date of connect", "date_of_connect"),
+]
+
+
+def _parse_json_object(text: str) -> Dict[str, Any]:
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end > start:
+        cleaned = cleaned[start:end + 1]
+    return json.loads(cleaned)
+
+
+def _response_to_text(response: Any) -> str:
+    if isinstance(response, str):
+        return response
+    for attr in ("text", "content", "message"):
+        value = getattr(response, attr, None)
+        if value:
+            return str(value)
+    return str(response or "")
+
+
+def _field_captured(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return False
+    unavailable_markers = (
+        "not captured",
+        "not provided",
+        "not mentioned",
+        "unclear",
+        "unknown",
+        "brand should confirm",
+        "admin review",
+    )
+    return not any(marker in text for marker in unavailable_markers)
+
+
+def _normalise_alignment_tool_result(card: Dict[str, Any]) -> Dict[str, Any]:
+    fields: Dict[str, Any] = {}
+    for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
+        value = str(card.get(key) or "").strip()
+        fields[key] = value[:1400] if value else f"Not captured clearly from the Connect transcript. Brand should confirm {label.lower()}."
+
+    try:
+        confidence = int(float(card.get("confidence", 0)))
+    except (TypeError, ValueError):
+        confidence = 0
+    captured = [label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS if _field_captured(fields.get(key))]
+    missing = [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS if label not in captured]
+    if not confidence:
+        confidence = int(round((len(captured) / len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)) * 100))
+
+    evidence_notes = card.get("evidence_notes")
+    if not isinstance(evidence_notes, list):
+        evidence_notes = [str(evidence_notes)] if evidence_notes else []
+
+    return {
+        **fields,
+        "confidence": max(0, min(confidence, 100)),
+        "captured_fields": captured,
+        "missing_fields": missing,
+        "evidence_notes": [str(item)[:300] for item in evidence_notes if str(item).strip()][:8],
+        "analysis_source": str(card.get("analysis_source") or "llm_alignment_tool"),
+        "generated_at": _now_iso(),
+    }
+
+
+def _alignment_tool_system_prompt() -> str:
+    return """
+You are TASCK's Connect-to-Frame Alignment Snapshot analyst.
+
+Read the CRM context and every Connect transcript. Extract only what is supported by the evidence. Do not invent facts, numbers, dates, audiences, priorities, or goals. If a field is unclear, say exactly what the brand should confirm. Produce polished Nigerian business English suitable for sending to a brand for review.
+
+Return JSON only, no markdown, with exactly these keys:
+{
+  "about_the_organisation": "string",
+  "core_focus_areas": "string",
+  "key_customers_beneficiaries": "string",
+  "key_goals_metrics": "string",
+  "success_timeline": "string",
+  "focus": "string",
+  "priority": "string",
+  "date_of_connect": "string",
+  "confidence": integer 0-100,
+  "evidence_notes": ["short evidence note"]
+}
+
+Confidence should reflect how many of the eight fields are clearly supported. Never use 100 unless all eight fields are explicit and risk-free.
+""".strip()
+
+
+def _alignment_tool_user_message(brand: Dict[str, Any], case: Dict[str, Any], combined_text: str) -> str:
+    return f"""
+CRM BRAND CONTEXT
+- Brand name: {brand.get("company") or brand.get("name") or case.get("brand_name") or ""}
+- Category/industry: {brand.get("category") or brand.get("industry") or brand.get("sector") or ""}
+- Website: {brand.get("website") or ""}
+- Stored about: {brand.get("about") or brand.get("brand_about") or brand.get("description") or ""}
+- Contact: {brand.get("primary_contact") or brand.get("contact_name") or ""} {brand.get("email") or ""}
+
+BUSINESS CASE CONTEXT
+- Title: {case.get("title") or ""}
+- Stage: {case.get("stage") or ""}
+- Estimated value: {case.get("estimated_value") or ""}
+
+CONNECT TRANSCRIPTS
+{combined_text}
+
+Extract the eight Alignment Snapshot fields from the transcripts and CRM context. If the transcripts contradict CRM context, prefer the transcript and mention the uncertainty in evidence_notes.
+""".strip()
+
+
+async def _call_alignment_analysis_tool(
+    combined_text: str,
+    brand: Dict[str, Any],
+    case: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if not (combined_text or "").strip():
+        return None
+
+    system_prompt = _alignment_tool_system_prompt()
+    user_message = _alignment_tool_user_message(brand, case, combined_text)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    custom_key = os.getenv("ALIGNMENT_ANALYZER_LLM_API_KEY") or os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
+    custom_base = (os.getenv("ALIGNMENT_ANALYZER_LLM_BASE_URL") or os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
+    openai_key = os.getenv("OPENAI_API_KEY")
+
+    try:
+        if emergent_key:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+            provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
+            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.0-flash"
+            chat = LlmChat(
+                api_key=emergent_key,
+                session_id=f"alignment-analyzer-{uuid.uuid4()}",
+                system_message=system_prompt,
+            ).with_model(provider, model)
+            response = await chat.send_message(UserMessage(text=user_message))
+            parsed = _parse_json_object(_response_to_text(response))
+            return _normalise_alignment_tool_result({**parsed, "analysis_source": f"emergent:{provider}/{model}"})
+
+        def _call_http_model() -> Optional[Dict[str, Any]]:
+            if anthropic_key:
+                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "claude-sonnet-4-20250514"
+                response = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": anthropic_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 1200,
+                        "temperature": 0.1,
+                        "system": system_prompt,
+                        "messages": [{"role": "user", "content": user_message}],
+                    },
+                    timeout=45,
+                )
+                response.raise_for_status()
+                data = response.json()
+                text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"anthropic:{model}"})
+
+            if custom_key and custom_base:
+                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "gpt-4o-mini"
+                response = requests.post(
+                    f"{custom_base}/chat/completions",
+                    headers={"Authorization": f"Bearer {custom_key}", "content-type": "application/json"},
+                    json={
+                        "model": model,
+                        "temperature": 0.1,
+                        "max_tokens": 1200,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message},
+                        ],
+                    },
+                    timeout=45,
+                )
+                response.raise_for_status()
+                text = response.json()["choices"][0]["message"]["content"]
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"custom:{model}"})
+
+            if openai_key:
+                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "gpt-4o-mini"
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {openai_key}", "content-type": "application/json"},
+                    json={
+                        "model": model,
+                        "temperature": 0.1,
+                        "max_tokens": 1200,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message},
+                        ],
+                    },
+                    timeout=45,
+                )
+                response.raise_for_status()
+                text = response.json()["choices"][0]["message"]["content"]
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"openai:{model}"})
+
+            return None
+
+        return await asyncio.to_thread(_call_http_model)
+    except Exception as exc:
+        logger.warning("Alignment analysis tool failed for business case %s: %s", case.get("id"), exc)
+        return None
+
 def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
     """Deterministic transcript extraction used by the transcript analysis layer.
 
@@ -397,18 +626,29 @@ def make_v3_router(db):
         use_ssl = os.getenv("SMTP_USE_SSL", "false").strip().lower() in {"1", "true", "yes"}
         use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() not in {"0", "false", "no"}
         message = EmailMessage()
-        message["From"] = f"{from_name} <{from_email}>"
+        message["From"] = formataddr((from_name, from_email))
         message["To"] = str(email.get("to") or "")
         message["Subject"] = str(email.get("subject") or "")
-        message.set_content(str(email.get("body") or ""))
+        message["Date"] = formatdate(localtime=False)
+        message["Message-ID"] = make_msgid(domain=from_email.split("@")[-1] if "@" in from_email else None)
+        reply_to = os.getenv("SMTP_REPLY_TO", from_email).strip()
+        if reply_to:
+            message["Reply-To"] = reply_to
+        plain_body = str(email.get("body") or "")
+        message.set_content(plain_body)
+        message.add_alternative(
+            "<html><body>" + html.escape(plain_body).replace("\n", "<br />") + "</body></html>",
+            subtype="html",
+        )
         for attachment in email.get("attachments") or []:
-            content = str(attachment.get("content") or "")
-            if not content:
+            content = attachment.get("content")
+            if content is None or content == "":
                 continue
-            filename = str(attachment.get("filename") or "alignment-snapshot.doc")
-            mime_type = str(attachment.get("mime_type") or "application/msword")
+            filename = str(attachment.get("filename") or "alignment-snapshot.docx")
+            mime_type = str(attachment.get("mime_type") or "application/octet-stream")
             maintype, _, subtype = mime_type.partition("/")
-            message.add_attachment(content.encode("utf-8"), maintype=maintype or "application", subtype=subtype or "msword", filename=filename)
+            payload = content if isinstance(content, bytes) else str(content).encode("utf-8")
+            message.add_attachment(payload, maintype=maintype or "application", subtype=subtype or "octet-stream", filename=filename)
         try:
             if use_ssl:
                 with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
@@ -436,6 +676,15 @@ def make_v3_router(db):
         creator_id: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
+        delivery_attachments = attachments or []
+        stored_attachments = []
+        for attachment in delivery_attachments:
+            stored_attachment = {key: value for key, value in attachment.items() if key != "content"}
+            content = attachment.get("content")
+            if content is not None and content != "":
+                payload = content if isinstance(content, bytes) else str(content).encode("utf-8")
+                stored_attachment["content_size"] = len(payload)
+            stored_attachments.append(stored_attachment)
         email = {
             "id": f"mail-{uuid.uuid4().hex[:8]}",
             "to": to,
@@ -445,13 +694,13 @@ def make_v3_router(db):
             "brand_id": brand_id,
             "business_case_id": business_case_id,
             "creator_id": creator_id,
-            "attachments": attachments or [],
+            "attachments": stored_attachments,
             "status": "queued",
             "queued_at": _now_iso(),
             "sent_at": None,
             "delivery_error": "",
         }
-        delivery = await asyncio.to_thread(_deliver_email_now, email)
+        delivery = await asyncio.to_thread(_deliver_email_now, {**email, "attachments": delivery_attachments})
         email.update(delivery)
         await db.v3_email_outbox.insert_one({**email})
         return email
@@ -948,6 +1197,36 @@ def make_v3_router(db):
             "welcome_email_id": welcome["id"],
         }
 
+    async def ensure_creator_account(creator: Dict[str, Any]) -> Dict[str, Any]:
+        existing = await db.v3_creator_accounts.find_one({"creator_id": creator["id"]}, {"_id": 0})
+        if existing:
+            return {
+                "username": existing.get("username"),
+                "temporary_password": existing.get("temporary_password") or existing.get("password"),
+                "must_change_password": existing.get("must_change_password", False),
+            }
+
+        username = _fallback_creator_email(creator).lower()
+        temp_password = _temporary_password()
+        account_doc = {
+            "id": f"acct-{uuid.uuid4().hex[:8]}",
+            "creator_id": creator["id"],
+            "role": "creator",
+            "username": username,
+            "temporary_password": temp_password,
+            "password": temp_password,
+            "must_change_password": True,
+            "status": "active",
+            "created_at": _now_iso(),
+            "last_login_at": None,
+            "password_changed_at": None,
+        }
+        await db.v3_creator_accounts.insert_one({**account_doc})
+        return {
+            "username": username,
+            "temporary_password": temp_password,
+            "must_change_password": True,
+        }
     class BrandPasswordChange(BaseModel):
         username: str
         current_password: str
@@ -1927,6 +2206,8 @@ def make_v3_router(db):
         if case.get("stage") != "frame":
             raise HTTPException(400, "Alignment Snapshot is only generated in the Frame stage.")
 
+        await analyze_all_connect_transcripts(bc_id)
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or case
         existing = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
         connect = case.get("connect", {}) or {}
@@ -1934,6 +2215,7 @@ def make_v3_router(db):
         brand_industry = brand.get("industry") or brand.get("sector") or brand.get("category") or "consumer culture"
         project_title = case.get("title") or f"{brand_company} Relationship Opportunity"
         mi = _marketing_intelligence_from_case(case)
+        alignment_fields = connect.get("alignment_tool_analysis") or mi.get("alignment_snapshot_fields") or {}
 
         def _usable_text(value: Any, fallback: str) -> str:
             text = str(value or "").strip()
@@ -2007,6 +2289,47 @@ def make_v3_router(db):
             ) if isinstance(item, dict) else str(item)
             for item in kpis[:5]
         ])
+        captured_channels = mi.get("key_marketing_channels") or connect.get("key_marketing_channels")
+        captured_kpis = mi.get("marketing_kpis") or connect.get("marketing_kpis")
+
+        def _brand_confirmation(label: str) -> str:
+            return f"Not captured clearly from the Connect transcript. Brand should confirm {label}."
+
+        def _alignment_answer(key: str, fallback: str) -> str:
+            if alignment_fields:
+                return _usable_text(alignment_fields.get(key), fallback)
+            return fallback
+
+        about_answer = _alignment_answer(
+            "about_the_organisation",
+            _usable_text(brand.get("about") or brand.get("brand_about") or brand.get("description"), _brand_confirmation("what the organisation does")),
+        )
+        core_focus_answer = _alignment_answer(
+            "core_focus_areas",
+            _usable_text(mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"), _brand_confirmation("the core focus areas")),
+        )
+        customers_answer = _alignment_answer(
+            "key_customers_beneficiaries",
+            _usable_text(mi.get("primary_target_audience") or connect.get("primary_target_audience"), _brand_confirmation("the key customers or beneficiaries")),
+        )
+        goals_answer = _alignment_answer(
+            "key_goals_metrics",
+            _usable_text(kpi_summary if captured_kpis else "", _brand_confirmation("the goals or metrics tracked")),
+        )
+        success_answer = _alignment_answer(
+            "success_timeline",
+            _usable_text(connect.get("timeline") or connect.get("campaign_timeline"), _brand_confirmation("success criteria and timeline")),
+        )
+        focus_answer = _alignment_answer(
+            "focus",
+            _usable_text(", ".join([str(channel) for channel in captured_channels]) if isinstance(captured_channels, list) else captured_channels, _brand_confirmation("the campaign focus")),
+        )
+        priority_answer = _alignment_answer(
+            "priority",
+            _usable_text(connect.get("priority") or connect.get("business_priority") or mi.get("priority"), _brand_confirmation("the priority level")),
+        )
+        date_answer = _alignment_answer("date_of_connect", _usable_text(date_of_connect, _brand_confirmation("the Connect call date")))
+
         scope_flags = [
             {"text": "Brand review", "reason": "Brand must review, comment, or approve the Alignment Snapshot before admin approval."},
         ]
@@ -2027,19 +2350,20 @@ def make_v3_router(db):
             "title": f"{brand_company} - Alignment Snapshot",
             "meta": "Alignment Snapshot for brand review. TASCK sends this to the brand so they can confirm it aligns with the Connect call, add comments if anything is off, or approve it before Plan.",
             "marketing_intelligence": mi,
+            "alignment_analysis_source": alignment_fields.get("analysis_source") if isinstance(alignment_fields, dict) else "deterministic_fallback",
             "brand_comments": (existing or {}).get("brand_comments", []),
             "sections": [
                 {"heading": "1. ALIGNMENT SNAPSHOT", "type": "questions", "content": (
                     "Brand should review each alignment field below, comment where anything does not match the Connect call, or approve when accurate."
                 ), "columns": ["Alignment field", "Brand response / comment"], "rows": [
-                    {"Alignment field": "About The Organisation", "Brand response / comment": _usable_text(brand.get("about") or brand.get("description"), f"{brand_company} is an established company in the {brand_industry} sector.")},
-                    {"Alignment field": "What are the Core Focus Areas", "Brand response / comment": _usable_text(mi.get("key_marketing_focus") or focus, "Expanding brand reach and engagement through creator marketing.")},
-                    {"Alignment field": "Who are The Key Customers/Beneficiaries", "Brand response / comment": _usable_text(mi.get("primary_target_audience") or audience, "Urban Nigerian consumers aged 18-34.")},
-                    {"Alignment field": "Key Goals or Metrics that are Tracked", "Brand response / comment": _usable_text(kpi_summary, "Qualified reach, engagement rate, and conversion signals.")},
-                    {"Alignment field": "What Success Looks Like / Timeline", "Brand response / comment": _usable_text(timeline, "Launch within 6-8 weeks of strategy approval.")},
-                    {"Alignment field": "Focus", "Brand response / comment": _usable_text(", ".join(channels), "Instagram, TikTok, YouTube.")},
-                    {"Alignment field": "Priority", "Brand response / comment": _usable_text(priority, "High priority campaign.")},
-                    {"Alignment field": "Date of connect", "Brand response / comment": _usable_text(date_of_connect, "Connect scheduled call(s).")},
+                    {"Alignment field": "About The Organisation", "Brand response / comment": about_answer},
+                    {"Alignment field": "What are the Core Focus Areas", "Brand response / comment": core_focus_answer},
+                    {"Alignment field": "Who are The Key Customers/Beneficiaries", "Brand response / comment": customers_answer},
+                    {"Alignment field": "Key Goals or Metrics that are Tracked", "Brand response / comment": goals_answer},
+                    {"Alignment field": "What Success Looks Like / Timeline", "Brand response / comment": success_answer},
+                    {"Alignment field": "Focus", "Brand response / comment": focus_answer},
+                    {"Alignment field": "Priority", "Brand response / comment": priority_answer},
+                    {"Alignment field": "Date of connect", "Brand response / comment": date_answer},
                 ]},
                 {"heading": "2. HOW THE BRAND SHOULD REVIEW THIS", "type": "numbered", "content": "This Alignment Snapshot is sent to the brand for review, comments, or approval before TASCK admin moves into Plan.", "items": [
                     "Review each Alignment Snapshot field against the Connect call.",
@@ -2213,6 +2537,101 @@ def make_v3_router(db):
             f"{''.join(sections)}</body></html>"
         )
 
+
+    def _docx_text(value: Any) -> str:
+        return html.escape(str(value or ""), quote=True)
+
+    def _docx_paragraph(value: Any, *, bold: bool = False) -> str:
+        run_props = "<w:rPr><w:b/></w:rPr>" if bold else ""
+        return f'<w:p><w:r>{run_props}<w:t xml:space="preserve">{_docx_text(value)}</w:t></w:r></w:p>'
+
+    def _docx_cell(value: Any, *, bold: bool = False) -> str:
+        return (
+            '<w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr>'
+            f"{_docx_paragraph(value, bold=bold)}</w:tc>"
+        )
+
+    def _docx_question_row(row: Any) -> Tuple[str, str]:
+        if isinstance(row, list):
+            question = row[0] if row else ""
+            answer = row[1] if len(row) > 1 else ""
+            return str(question or ""), str(answer or "")
+        if isinstance(row, dict):
+            question = row.get("Alignment field") or row.get("Question") or row.get("question") or ""
+            answer = row.get("Brand response / comment") or row.get("Brand answer") or row.get("answer") or ""
+            return str(question or ""), str(answer or "")
+        return str(row or ""), ""
+
+    def alignment_snapshot_docx_bytes(case: Dict[str, Any], brand: Dict[str, Any], snap: Dict[str, Any]) -> bytes:
+        blocks = [
+            _docx_paragraph(snap.get("title") or "Alignment Snapshot", bold=True),
+            _docx_paragraph(f"Brand: {brand.get('company') or brand.get('name') or 'Brand'}"),
+            _docx_paragraph(f"Business Case: {case.get('title') or 'Business Case'}"),
+            _docx_paragraph(snap.get("meta") or "Please review the Alignment Snapshot, comment where needed, and approve when accurate."),
+        ]
+        for section in snap.get("sections", []) or []:
+            blocks.append(_docx_paragraph(section.get("heading") or "Alignment section", bold=True))
+            if section.get("content"):
+                blocks.append(_docx_paragraph(section.get("content")))
+            if section.get("type") == "questions":
+                rows = [
+                    "<w:tr>"
+                    + _docx_cell("Alignment field", bold=True)
+                    + _docx_cell("Brand response / comment", bold=True)
+                    + "</w:tr>"
+                ]
+                for row in section.get("rows", []) or []:
+                    question, answer = _docx_question_row(row)
+                    rows.append("<w:tr>" + _docx_cell(question) + _docx_cell(answer) + "</w:tr>")
+                blocks.append(
+                    '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>'
+                    '<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:left w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:right w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    "</w:tblBorders></w:tblPr>"
+                    + "".join(rows)
+                    + "</w:tbl>"
+                )
+            elif section.get("items"):
+                for item in section.get("items", []) or []:
+                    blocks.append(_docx_paragraph(f"- {item}"))
+
+        document_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body>"
+            + "".join(blocks)
+            + '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+            '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
+            "</w:body></w:document>"
+        )
+        package = BytesIO()
+        with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as docx:
+            docx.writestr(
+                "[Content_Types].xml",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/word/document.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                "</Types>",
+            )
+            docx.writestr(
+                "_rels/.rels",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+                'Target="word/document.xml"/>'
+                "</Relationships>",
+            )
+            docx.writestr("word/document.xml", document_xml)
+        return package.getvalue()
+
     @router.post("/business-cases/{bc_id}/ai/alignment/send")
     async def send_alignment_to_brand(bc_id: str, payload: Optional[SendAlignmentPayload] = Body(None)):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -2285,7 +2704,7 @@ def make_v3_router(db):
                 f"Temporary password: {password}\n\n"
                 "You can approve it or add line-level comments for the admin team. A Google Docs-compatible copy is attached."
             )
-        document_html = alignment_snapshot_doc_html(case, brand, snap)
+        document_docx = alignment_snapshot_docx_bytes(case, brand, snap)
         email = await queue_email(
             to=recipient,
             subject=subject,
@@ -2297,9 +2716,9 @@ def make_v3_router(db):
                 "type": "google_docs_compatible_alignment_snapshot",
                 "id": snap["id"],
                 "title": snap.get("title"),
-                "filename": f"{snap['id']}-alignment-snapshot.doc",
-                "mime_type": "application/msword",
-                "content": document_html,
+                "filename": f"{snap['id']}-alignment-snapshot.docx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "content": document_docx,
                 "review_link": review_link,
             }],
         )
@@ -2481,15 +2900,35 @@ def make_v3_router(db):
                 brand_id=case["brand_id"],
                 business_case_id=payload.business_case_id,
             )
-        await queue_email(
+        creator_account = await ensure_creator_account(creator)
+        app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
+        creator_portal_url = f"{app_base_url}/v3/creator"
+        email = await queue_email(
             to=creator_email,
             subject=doc["subject"],
-            body=payload.brief_text,
+            body=(
+                f"Hello {creator.get('name') or 'there'},\n\n"
+                "Welcome to TASCK OS. A new creator brief is ready for your review.\n\n"
+                f"Business Case: {case['title']}\n"
+                f"Creator Portal: {creator_portal_url}\n"
+                f"Username: {creator_account.get('username', creator_email)}\n"
+                f"Temporary password: {creator_account.get('temporary_password') or 'Use your current TASCK password'}\n\n"
+                "Please log in, review the brief, and respond with your interest, fee expectation, conditions, and availability.\n\n"
+                "Creative Brief:\n"
+                f"{payload.brief_text}"
+            ),
             kind="creative_brief",
             brand_id=case["brand_id"],
             business_case_id=payload.business_case_id,
             creator_id=payload.creator_id,
             attachments=[{"type": "brief_text", "id": cb_id, "title": doc["subject"]}],
+        )
+        doc["email"] = email
+        doc["email_status"] = email.get("status")
+        doc["email_error"] = email.get("delivery_error") or ""
+        await db.v3_creative_briefs.update_one(
+            {"id": cb_id},
+            {"$set": {"email_status": doc["email_status"], "email_error": doc["email_error"]}},
         )
         await db.v3_business_cases.update_one(
             {"id": payload.business_case_id},
@@ -2576,23 +3015,24 @@ def make_v3_router(db):
         if not snap:
             raise HTTPException(404, "No Strategy Snapshot to send.")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        account = await ensure_brand_account(brand)
+        recipient = brand.get("email") or account.get("username") or ""
+        if not recipient:
+            raise HTTPException(400, "Brand email is required before sending the Strategy Snapshot.")
+
         sent_at = _now_iso()
-        await db.v3_creative_snapshots.update_one(
-            {"id": snap["id"]},
-            {"$set": {"status": "sent_to_brand", "shared_at": sent_at}},
-        )
-        await db.v3_business_cases.update_one(
-            {"id": bc_id},
-            {"$set": {"plan.creative_snapshot_status": "sent_to_brand", "updated_at": _now_iso()},
-             "$push": {"timeline": {"at": sent_at, "event": "strategy_snapshot_sent_to_brand", "snapshot_id": snap["id"]}}},
-        )
         email = await queue_email(
-            to=(brand or {}).get("email", ""),
-            subject=f"Strategy Snapshot ready for approval - {case['title']}",
+            to=recipient,
+            subject=f"Strategy Snapshot ready for review - {case['title']}",
             body=(
-                f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
-                f"The Strategy Snapshot for {case['title']} is ready in your TASCK brand portal. "
-                "You can approve it or add section-level comments for the admin team."
+                f"Hello {brand.get('primary_contact', 'there')},\n\n"
+                f"The Strategy Snapshot for {case['title']} is ready in your TASCK brand portal.\n\n"
+                "Please review the strategy, add comments if anything does not align, or approve it so TASCK can move into Delivery.\n\n"
+                f"Brand portal: {(os.getenv('FRONTEND_URL') or os.getenv('PUBLIC_APP_URL') or os.getenv('APP_BASE_URL') or 'http://localhost:7159').rstrip('/')}/brand/approvals\n"
+                f"Username: {account.get('username', recipient)}\n"
+                f"Temporary password: {account.get('temporary_password') or 'Use your current TASCK password'}"
             ),
             kind="strategy_snapshot_review",
             brand_id=case["brand_id"],
@@ -2601,10 +3041,11 @@ def make_v3_router(db):
         )
         delivery_status = email.get("status") or "queued"
         snapshot_status = "sent_to_brand" if delivery_status == "sent" else delivery_status
-        await db.v3_alignment_snapshots.update_one(
+        await db.v3_creative_snapshots.update_one(
             {"id": snap["id"]},
             {"$set": {
                 "status": snapshot_status,
+                "shared_at": email.get("sent_at") if delivery_status == "sent" else sent_at,
                 "sent_to_brand_at": email.get("sent_at") if delivery_status == "sent" else None,
                 "last_email_status": delivery_status,
                 "last_email_error": email.get("delivery_error") or "",
@@ -2613,11 +3054,11 @@ def make_v3_router(db):
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {
-                "frame.alignment_snapshot_status": snapshot_status,
-                "frame.alignment_email_status": delivery_status,
-                "frame.alignment_email_error": email.get("delivery_error") or "",
+                "plan.creative_snapshot_status": snapshot_status,
+                "plan.creative_snapshot_email_status": delivery_status,
+                "plan.creative_snapshot_email_error": email.get("delivery_error") or "",
                 "updated_at": _now_iso(),
-            }},
+            }, "$push": {"timeline": {"at": sent_at, "event": "strategy_snapshot_sent_to_brand", "snapshot_id": snap["id"], "email_status": delivery_status}}},
         )
         return {"ok": delivery_status == "sent", "sent_at": email.get("sent_at"), "email": email}
 
@@ -3446,9 +3887,18 @@ def make_v3_router(db):
 
         combined_text = "\n\n".join(transcripts).strip()
 
-        # Run extraction using the existing _extract_marketing_intelligence function
+        # Run transcript analysis. Use the configured model-backed analyzer for the
+        # Alignment Snapshot fields; keep deterministic extraction as the fallback.
         mi = _extract_marketing_intelligence(combined_text)
-
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
+        alignment_tool_result = await _call_alignment_analysis_tool(combined_text, brand, case)
+        if alignment_tool_result:
+            mi = {
+                **mi,
+                "alignment_snapshot_fields": alignment_tool_result,
+                "analysis_source": alignment_tool_result.get("analysis_source"),
+                "extraction_confidence": alignment_tool_result.get("confidence", 0) / 100,
+            }
         # Score Connect readiness against the V1 Alignment Snapshot question set.
         lower = combined_text.lower()
         alignment_requirements = [
@@ -3464,6 +3914,10 @@ def make_v3_router(db):
         captured = [label for label, markers in alignment_requirements if any(marker in lower for marker in markers)]
         missing = [label for label, _ in alignment_requirements if label not in captured]
         readiness = int(round((len(captured) / len(alignment_requirements)) * 100)) if alignment_requirements else 0
+        if alignment_tool_result:
+            captured = alignment_tool_result.get("captured_fields") or [label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS if _field_captured(alignment_tool_result.get(key))]
+            missing = alignment_tool_result.get("missing_fields") or [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS if label not in captured]
+            readiness = int(alignment_tool_result.get("confidence") or readiness)
 
         risk_flags = []
         for label, markers in [
@@ -3514,6 +3968,7 @@ def make_v3_router(db):
             "captured_context": captured,
             "risk_flags": risk_flags,
             "marketing_intelligence": mi,
+            "alignment_snapshot_fields": alignment_tool_result,
         }
 
         now = _now_iso()
@@ -3524,6 +3979,7 @@ def make_v3_router(db):
                 "connect.analysis": recommendation,
                 "connect.transcript": combined_text,
                 "connect.marketing_intelligence": mi,
+                "connect.alignment_tool_analysis": alignment_tool_result,
                 "connect.connect_status": "qualified_to_frame" if ai_recommendation == "promote" else "needs_business_call",
                 "connect.latest_meeting_date": ", ".join(meeting_dates) if meeting_dates else None,
                 "updated_at": now,
@@ -5583,6 +6039,7 @@ Produce the opportunity card JSON.
             }},
         )
         updated = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
+        account = await ensure_brand_account(brand)
         return {
             "candidate": updated,
             "brand": brand,
@@ -5590,6 +6047,7 @@ Produce the opportunity card JSON.
             "meeting": meeting,
             "meeting_id": meeting["id"],
             "qualification_meeting_id": meeting["id"],
+            "account": account,
         }
         if not brand:
             brand_id = f"brand-{uuid.uuid4().hex[:8]}"
@@ -7166,7 +7624,7 @@ Produce the opportunity card JSON.
             "next_action": "Review Alignment Snapshot",
         })
 
-        alignment_snapshot = await generate_alignment(bc_id)
+        alignment_snapshot = await generate_alignment_questions_for_v1(bc_id)
         business_case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         return {
             "ok": True,
