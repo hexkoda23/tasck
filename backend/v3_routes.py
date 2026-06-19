@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from dotenv import load_dotenv
+from email.message import EmailMessage
 import asyncio
 import html
 import smtplib
@@ -28,6 +29,7 @@ import logging
 import os
 import re
 import requests
+import smtplib
 import uuid
 
 from v3_seed import get_v3_seed_data
@@ -383,6 +385,49 @@ def make_v3_router(db):
 
     router.seed_v3 = seed_v3  # exposed so server.py can call it on startup
 
+    def _deliver_email_now(email: Dict[str, Any]) -> Dict[str, Any]:
+        host = os.getenv("SMTP_HOST", "").strip()
+        username = os.getenv("SMTP_USERNAME", "").strip()
+        password = os.getenv("SMTP_PASSWORD", "")
+        if not host or not username or not password:
+            return {
+                "status": "queued",
+                "delivery_error": "SMTP is not configured. Set SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM_EMAIL to send real email immediately.",
+            }
+        port = int(os.getenv("SMTP_PORT", "587"))
+        from_email = os.getenv("SMTP_FROM_EMAIL", username).strip()
+        from_name = os.getenv("SMTP_FROM_NAME", "TASCK OS").strip()
+        use_ssl = os.getenv("SMTP_USE_SSL", "false").strip().lower() in {"1", "true", "yes"}
+        use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() not in {"0", "false", "no"}
+        message = EmailMessage()
+        message["From"] = f"{from_name} <{from_email}>"
+        message["To"] = str(email.get("to") or "")
+        message["Subject"] = str(email.get("subject") or "")
+        message.set_content(str(email.get("body") or ""))
+        for attachment in email.get("attachments") or []:
+            content = str(attachment.get("content") or "")
+            if not content:
+                continue
+            filename = str(attachment.get("filename") or "alignment-snapshot.doc")
+            mime_type = str(attachment.get("mime_type") or "application/msword")
+            maintype, _, subtype = mime_type.partition("/")
+            message.add_attachment(content.encode("utf-8"), maintype=maintype or "application", subtype=subtype or "msword", filename=filename)
+        try:
+            if use_ssl:
+                with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
+                    smtp.login(username, password)
+                    smtp.send_message(message)
+            else:
+                with smtplib.SMTP(host, port, timeout=20) as smtp:
+                    if use_tls:
+                        smtp.starttls()
+                    smtp.login(username, password)
+                    smtp.send_message(message)
+        except (OSError, smtplib.SMTPException) as exc:
+            logger.warning("Immediate email delivery failed for %s: %s", email.get("to"), exc)
+            return {"status": "delivery_failed", "delivery_error": str(exc)}
+        return {"status": "sent", "sent_at": _now_iso(), "delivery_error": ""}
+
     async def queue_email(
         *,
         to: str,
@@ -407,10 +452,12 @@ def make_v3_router(db):
             "status": "queued",
             "queued_at": _now_iso(),
             "sent_at": None,
+            "delivery_error": "",
         }
+        delivery = await asyncio.to_thread(_deliver_email_now, email)
+        email.update(delivery)
         await db.v3_email_outbox.insert_one({**email})
         return email
-
     # ------------------------------------------------------------------------
     # BRANDS
     # ------------------------------------------------------------------------
@@ -1964,7 +2011,7 @@ def make_v3_router(db):
             for item in kpis[:5]
         ])
         scope_flags = [
-            {"text": "Brand responses", "reason": "Brand must answer the Alignment Snapshot questions before admin approval."},
+            {"text": "Brand review", "reason": "Brand must review, comment, or approve the Alignment Snapshot before admin approval."},
         ]
         as_id = (existing or {}).get("id") or f"as-{uuid.uuid4().hex[:8]}"
         generated_at = _now_iso()
@@ -1980,28 +2027,28 @@ def make_v3_router(db):
             "approved_by": None,
             "approved_by_party": None,
             "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
-            "title": f"{brand_company} - Alignment Snapshot Questions",
-            "meta": "Brand response form for the Alignment Snapshot. TASCK sends these questions to the brand, the brand fills the answers, and admin reviews and approves before Plan.",
+            "title": f"{brand_company} - Alignment Snapshot",
+            "meta": "Alignment Snapshot for brand review. TASCK sends this to the brand so they can confirm it aligns with the Connect call, add comments if anything is off, or approve it before Plan.",
             "marketing_intelligence": mi,
             "brand_comments": (existing or {}).get("brand_comments", []),
             "sections": [
-                {"heading": "1. ALIGNMENT SNAPSHOT QUESTIONS", "type": "questions", "content": (
-                    "Brand should answer each question below. Admin can edit the questions or add more before sending, and admin reviews the returned answers before approval."
-                ), "columns": ["Question", "Brand answer"], "rows": [
-                    {"Question": "About The Organisation", "Brand answer": _usable_text(brand.get("about") or brand.get("description"), f"{brand_company} is an established company in the {brand_industry} sector.")},
-                    {"Question": "What are the Core Focus Areas", "Brand answer": _usable_text(mi.get("key_marketing_focus") or focus, "Expanding brand reach and engagement through creator marketing.")},
-                    {"Question": "Who are The Key Customers/Beneficiaries", "Brand answer": _usable_text(mi.get("primary_target_audience") or audience, "Urban Nigerian consumers aged 18-34.")},
-                    {"Question": "Key Goals or Metrics that are Tracked", "Brand answer": _usable_text(kpi_summary, "Qualified reach, engagement rate, and conversion signals.")},
-                    {"Question": "What Success Looks Like / Timeline", "Brand answer": _usable_text(timeline, "Launch within 6-8 weeks of strategy approval.")},
-                    {"Question": "Focus", "Brand answer": _usable_text(", ".join(channels), "Instagram, TikTok, YouTube.")},
-                    {"Question": "Priority", "Brand answer": _usable_text(priority, "High priority campaign.")},
-                    {"Question": "Date of connect", "Brand answer": _usable_text(date_of_connect, "Connect scheduled call(s).")},
+                {"heading": "1. ALIGNMENT SNAPSHOT", "type": "questions", "content": (
+                    "Brand should review each alignment field below, comment where anything does not match the Connect call, or approve when accurate."
+                ), "columns": ["Alignment field", "Brand response / comment"], "rows": [
+                    {"Alignment field": "About The Organisation", "Brand response / comment": _usable_text(brand.get("about") or brand.get("description"), f"{brand_company} is an established company in the {brand_industry} sector.")},
+                    {"Alignment field": "What are the Core Focus Areas", "Brand response / comment": _usable_text(mi.get("key_marketing_focus") or focus, "Expanding brand reach and engagement through creator marketing.")},
+                    {"Alignment field": "Who are The Key Customers/Beneficiaries", "Brand response / comment": _usable_text(mi.get("primary_target_audience") or audience, "Urban Nigerian consumers aged 18-34.")},
+                    {"Alignment field": "Key Goals or Metrics that are Tracked", "Brand response / comment": _usable_text(kpi_summary, "Qualified reach, engagement rate, and conversion signals.")},
+                    {"Alignment field": "What Success Looks Like / Timeline", "Brand response / comment": _usable_text(timeline, "Launch within 6-8 weeks of strategy approval.")},
+                    {"Alignment field": "Focus", "Brand response / comment": _usable_text(", ".join(channels), "Instagram, TikTok, YouTube.")},
+                    {"Alignment field": "Priority", "Brand response / comment": _usable_text(priority, "High priority campaign.")},
+                    {"Alignment field": "Date of connect", "Brand response / comment": _usable_text(date_of_connect, "Connect scheduled call(s).")},
                 ]},
-                {"heading": "2. HOW THE BRAND SHOULD COMPLETE THIS", "type": "numbered", "content": "This form is sent to the brand for completion, then returned to TASCK for admin review.", "items": [
-                    "Answer each Alignment Snapshot question with clear, practical information.",
-                    "Add any missing context that TASCK needs before planning starts.",
-                    "Send the completed form back to TASCK for admin review.",
-                    "Admin approves the completed Alignment Snapshot before the Business Case moves into Plan.",
+                {"heading": "2. HOW THE BRAND SHOULD REVIEW THIS", "type": "numbered", "content": "This Alignment Snapshot is sent to the brand for review, comments, or approval before TASCK admin moves into Plan.", "items": [
+                    "Review each Alignment Snapshot field against the Connect call.",
+                    "Add comments wherever the snapshot does not align with the call.",
+                    "Send comments back to TASCK or approve the snapshot if it is accurate.",
+                    "Admin sees the brand approval or comments before moving the Business Case into Plan.",
                 ]},
             ],
             "scope_flags": scope_flags,
@@ -2133,14 +2180,14 @@ def make_v3_router(db):
             if content:
                 sections.append(f"<p>{content}</p>")
             if section.get("type") == "questions":
-                sections.append("<table><thead><tr><th>Question</th><th>Brand answer / comment</th></tr></thead><tbody>")
+                sections.append("<table><thead><tr><th>Alignment field</th><th>Brand response / comment</th></tr></thead><tbody>")
                 for row in section.get("rows", []) or []:
                     if isinstance(row, list):
                         question = row[0] if row else ""
                         answer = row[1] if len(row) > 1 else ""
                     else:
-                        question = row.get("Question") or row.get("question") or ""
-                        answer = row.get("Brand answer") or row.get("answer") or ""
+                        question = row.get("Alignment field") or row.get("Question") or row.get("question") or ""
+                        answer = row.get("Brand response / comment") or row.get("Brand answer") or row.get("answer") or ""
                     sections.append(
                         "<tr>"
                         f"<td>{html.escape(str(question))}</td>"
@@ -2162,10 +2209,10 @@ def make_v3_router(db):
             "th,td{border:1px solid #D7CBB8;padding:10px;vertical-align:top;font-size:12px;}"
             "th{background:#F4F2EC;text-align:left;color:#1F4A3A;}"
             "</style></head><body>"
-            f"<h1>{html.escape(str(snap.get('title') or 'Alignment Snapshot Questions'))}</h1>"
+            f"<h1>{html.escape(str(snap.get('title') or 'Alignment Snapshot'))}</h1>"
             f"<p><strong>Brand:</strong> {html.escape(str(brand.get('company') or brand.get('name') or 'Brand'))}</p>"
             f"<p><strong>Business Case:</strong> {html.escape(str(case.get('title') or 'Business Case'))}</p>"
-            f"<p>{html.escape(str(snap.get('meta') or 'Please complete the questions below and return them to TASCK.'))}</p>"
+            f"<p>{html.escape(str(snap.get('meta') or 'Please review the Alignment Snapshot, comment where needed, and approve when accurate.'))}</p>"
             f"{''.join(sections)}</body></html>"
         )
 
@@ -2184,7 +2231,8 @@ def make_v3_router(db):
         recipient = (payload.recipient_email if payload and payload.recipient_email else "") or brand.get("email") or account.get("username") or ""
         if not recipient:
             raise HTTPException(400, "Brand email is required before sending the Alignment Snapshot.")
-        review_link = "/brand/approvals"
+        app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
+        review_link = f"{app_base_url}/brand/approvals"
         sent_at = _now_iso()
         await db.v3_alignment_snapshots.update_one(
             {"id": snap["id"]},
@@ -2199,7 +2247,7 @@ def make_v3_router(db):
             (
                 section for section in snap.get("sections", [])
                 if section.get("type") == "questions"
-                or "ALIGNMENT SNAPSHOT QUESTIONS" in section.get("heading", "")
+                or "ALIGNMENT SNAPSHOT" in section.get("heading", "")
                 or "BRAND COMPLETION QUESTIONS" in section.get("heading", "")
             ),
             None,
@@ -2210,24 +2258,24 @@ def make_v3_router(db):
                 if isinstance(row, list) and row:
                     completion_questions.append(str(row[0]))
                 elif isinstance(row, dict):
-                    question = row.get("Question") or row.get("question")
+                    question = row.get("Alignment field") or row.get("Question") or row.get("question")
                     if question:
                         completion_questions.append(str(question))
         password = account.get("temporary_password") or "Use your current TASCK password"
         if completion_questions:
             question_text = "\n".join(f"- {question}" for question in completion_questions)
-            subject = f"Alignment Snapshot questions to complete - {case['title']}"
+            subject = f"Alignment Snapshot ready for review - {case['title']}"
             body = (
                 f"Hello {brand.get('primary_contact', 'there')},\n\n"
-                "Welcome to TASCK OS. Your Alignment Snapshot questionnaire is ready for your review.\n\n"
+                "Welcome to TASCK OS. Your Alignment Snapshot is ready for your review.\n\n"
                 f"Business Case: {case['title']}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
                 f"Temporary password: {password}\n\n"
-                "Please log in, answer or correct each field, add comments where needed, and approve the Alignment Snapshot when it is accurate. "
-                "TASCK will review the completed response before moving into Brainstorming.\n\n"
-                f"Questions to answer:\n{question_text}\n\n"
-                "A Google Docs-compatible copy of the questionnaire is attached for editing if you prefer to work in Docs."
+                "Please log in, review each field against the Connect call, add comments where anything does not align, and approve the Alignment Snapshot when it is accurate. "
+                "TASCK admin will review brand comments or approval before moving into Brainstorming.\n\n"
+                f"Alignment fields to review:\n{question_text}\n\n"
+                "A Google Docs-compatible copy of the Alignment Snapshot is attached for review if you prefer to work in Docs."
             )
         else:
             subject = f"Alignment Snapshot ready for approval - {case['title']}"
@@ -2258,7 +2306,27 @@ def make_v3_router(db):
                 "review_link": review_link,
             }],
         )
-        return {"ok": True, "sent_at": sent_at, "email": email}
+        delivery_status = email.get("status") or "queued"
+        snapshot_status = "sent_to_brand" if delivery_status == "sent" else delivery_status
+        await db.v3_alignment_snapshots.update_one(
+            {"id": snap["id"]},
+            {"$set": {
+                "status": snapshot_status,
+                "sent_to_brand_at": email.get("sent_at") if delivery_status == "sent" else None,
+                "last_email_status": delivery_status,
+                "last_email_error": email.get("delivery_error") or "",
+            }},
+        )
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {
+                "frame.alignment_snapshot_status": snapshot_status,
+                "frame.alignment_email_status": delivery_status,
+                "frame.alignment_email_error": email.get("delivery_error") or "",
+                "updated_at": _now_iso(),
+            }},
+        )
+        return {"ok": delivery_status == "sent", "sent_at": email.get("sent_at"), "email": email}
 
     class AlignmentCommentPayload(BaseModel):
         section_index: int
@@ -2287,7 +2355,7 @@ def make_v3_router(db):
         }
         question_snapshot = any(
             section.get("type") == "questions"
-            or "ALIGNMENT SNAPSHOT QUESTIONS" in section.get("heading", "")
+            or "ALIGNMENT SNAPSHOT" in section.get("heading", "")
             or "BRAND COMPLETION QUESTIONS" in section.get("heading", "")
             for section in snap.get("sections", [])
         )
@@ -2534,7 +2602,27 @@ def make_v3_router(db):
             business_case_id=bc_id,
             attachments=[{"type": "strategy_snapshot", "id": snap["id"], "title": snap.get("title")}],
         )
-        return {"ok": True, "sent_at": sent_at, "email": email}
+        delivery_status = email.get("status") or "queued"
+        snapshot_status = "sent_to_brand" if delivery_status == "sent" else delivery_status
+        await db.v3_alignment_snapshots.update_one(
+            {"id": snap["id"]},
+            {"$set": {
+                "status": snapshot_status,
+                "sent_to_brand_at": email.get("sent_at") if delivery_status == "sent" else None,
+                "last_email_status": delivery_status,
+                "last_email_error": email.get("delivery_error") or "",
+            }},
+        )
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {
+                "frame.alignment_snapshot_status": snapshot_status,
+                "frame.alignment_email_status": delivery_status,
+                "frame.alignment_email_error": email.get("delivery_error") or "",
+                "updated_at": _now_iso(),
+            }},
+        )
+        return {"ok": delivery_status == "sent", "sent_at": email.get("sent_at"), "email": email}
 
     class StrategySnapshotCommentPayload(BaseModel):
         section_index: int
@@ -3615,7 +3703,7 @@ def make_v3_router(db):
             contact_phone=contact.get("phone") or (brand or {}).get("phone") or "",
             scheduled_for=payload.scheduled_for,
             meeting_link=payload.meeting_link or "",
-            agenda=payload.agenda or "Confirm the missing Connect details before the brand questionnaire is sent.",
+            agenda=payload.agenda or "Confirm the missing Connect details before the Alignment Snapshot is sent.",
             parent_meeting_id=payload.meeting_id,
         ))
         await db.v3_business_cases.update_one(
