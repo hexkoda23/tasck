@@ -3361,30 +3361,22 @@ def make_v3_router(db):
         # Run extraction using the existing _extract_marketing_intelligence function
         mi = _extract_marketing_intelligence(combined_text)
 
-        # Perform similar readiness checks
+        # Score Connect readiness against the V1 Alignment Snapshot question set.
         lower = combined_text.lower()
-        readiness = 0
-        readiness += 10 if "objective" in lower or "goal" in lower or "focus" in lower else 0
-        readiness += 10 if "audience" in lower or "consumer" in lower or "buyer" in lower else 0
-        readiness += 10 if any(c.lower() in lower for c in ["instagram", "tiktok", "youtube", "x", "ooh", "tv", "radio", "events", "retail"]) else 0
-        readiness += 10 if any(k.lower() in lower for k in ["kpi", "reach", "engagement", "lift", "conversion", "sales", "leads"]) else 0
-        readiness += 10 if any(b.lower() in lower for b in ["budget", "fee", "rate", "naira", "₦", "$"]) else 0
-        readiness += 10 if "decision" in lower or "approve" in lower or "authority" in lower else 0
-        readiness += 15 if len(combined_text) >= 400 else (10 if len(combined_text) >= 200 else 0)
-        readiness += 25 if len(combined_text) >= 800 else 0
-        readiness = min(readiness, 100)
-
-        required = [
-            ("Marketing focus", ["focus", "objective", "goal", "challenge"]),
-            ("Target audience", ["audience", "consumer", "buyer"]),
-            ("Channels", ["instagram", "tiktok", "youtube", "channel", "events", "retail"]),
-            ("KPIs", ["kpi", "metric", "reach", "engagement", "conversion", "sales", "leads"]),
-            ("Budget", ["budget", "fee", "naira", "₦", "$"]),
-            ("Timeline", ["timeline", "date", "launch", "deadline"]),
-            ("Decision maker", ["decision", "approve", "authority"]),
+        alignment_requirements = [
+            ("About The Organisation", ["about the organisation", "about the organization", "organisation", "organization", "company", "brand", "business", "product", "service", "we are"]),
+            ("What are the Core Focus Areas", ["core focus", "focus area", "focus", "objective", "goal", "challenge", "priority area"]),
+            ("Who are The Key Customers/Beneficiaries", ["customer", "beneficiary", "audience", "consumer", "buyer", "client", "target market", "target audience"]),
+            ("Key Goals or Metrics that are Tracked", ["goal", "metric", "kpi", "tracked", "measure", "reach", "engagement", "conversion", "sales", "leads"]),
+            ("What Success Looks Like / Timeline", ["success", "timeline", "date", "launch", "deadline", "month", "week", "quarter"]),
+            ("Focus", ["focus", "campaign", "activation", "channel", "instagram", "tiktok", "youtube", "events", "retail", "pr"]),
+            ("Priority", ["priority", "urgent", "high priority", "low priority", "sequence", "first", "important"]),
+            ("Date of connect", ["date of connect", "connect date", "call date", "meeting on", "scheduled", "session", "202"]),
         ]
+        captured = [label for label, markers in alignment_requirements if any(marker in lower for marker in markers)]
+        missing = [label for label, _ in alignment_requirements if label not in captured]
+        readiness = int(round((len(captured) / len(alignment_requirements)) * 100)) if alignment_requirements else 0
 
-        missing = _required_missing_fields(combined_text, required)
         risk_flags = []
         for label, markers in [
             ("No budget or budget too low", ["no budget", "too low", "cannot afford", "free only"]),
@@ -3395,31 +3387,31 @@ def make_v3_router(db):
         ]:
             if any(marker in lower for marker in markers):
                 risk_flags.append(label)
+        if risk_flags:
+            readiness = min(readiness, 80)
 
         summary = mi.get("source_excerpt") or combined_text[:280] or "No transcripts provided yet."
 
-        # Decide recommendation
         if not combined_text:
             ai_recommendation = "reschedule"
             ai_reasons = ["Transcripts are empty, so TASCK cannot make a reliable decision."]
         elif risk_flags:
-            ai_recommendation = "delete"
-            ai_reasons = [f"Risk detected: {item}." for item in risk_flags]
+            ai_recommendation = "reschedule"
+            ai_reasons = [f"Risk needs another Connect call before Frame: {item}." for item in risk_flags]
         elif missing:
             ai_recommendation = "reschedule"
-            ai_reasons = [f"Missing required information: {', '.join(missing)}."]
-        elif readiness >= 55:
+            ai_reasons = [f"Missing Alignment Snapshot context: {', '.join(missing)}."]
+        elif readiness >= 75:
             ai_recommendation = "promote"
-            ai_reasons = ["Combined transcripts include enough decision, fit, budget, timeline, and marketing context."]
+            ai_reasons = ["Combined transcripts answer the Alignment Snapshot question set well enough to move into Frame."]
         else:
             ai_recommendation = "reschedule"
-            ai_reasons = ["Transcript is still too thin for a confident decision."]
+            ai_reasons = ["Combined transcripts are still too thin for a confident Frame recommendation."]
 
         recommendation_label = {
             "promote": "Promote to Frame",
             "reschedule": "Reschedule Business Call",
-            "delete": "Delete Brand From Pipeline",
-        }.get(ai_recommendation, ai_recommendation.replace("_", " ").title())
+        }.get(ai_recommendation, "Reschedule Business Call")
 
         recommendation = {
             "decision": ai_recommendation,
@@ -3428,7 +3420,8 @@ def make_v3_router(db):
             "reasons": ai_reasons,
             "missing_context": missing,
             "summary": summary,
-            "next_questions": [f"Clarify {item}." for item in missing] or BUSINESS_CALL_QUESTIONS,
+            "next_questions": [f"Clarify {item}." for item in missing] or [f"Confirm {label}." for label, _ in alignment_requirements],
+            "captured_context": captured,
             "risk_flags": risk_flags,
             "marketing_intelligence": mi,
         }

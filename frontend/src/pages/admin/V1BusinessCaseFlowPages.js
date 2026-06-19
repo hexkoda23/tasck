@@ -414,17 +414,18 @@ const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, bra
   return savedSessions;
 };
 
-const ConnectAnalysisResult = ({ result, onPromote, onReschedule, onDelete, promoteLabel = 'Promote to Frame Phase' }) => {
+const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel = 'Promote to Frame Regardless' }) => {
   if (!result) return null;
   const reasons = Array.isArray(result.reasons) ? result.reasons : [];
   const missing = Array.isArray(result.missing_context) ? result.missing_context : [];
   const confidence = Number(result.confidence || 0);
+  const displayedLabel = result.decision === 'promote' ? 'Promote to Frame' : 'Reschedule Business Call';
   return (
     <div className="mt-5 rounded-[8px] border border-[#D7CBB8] bg-[#FAF7F1] p-5 space-y-4" data-testid="connect-analysis-results">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4DB] pb-3">
         <div>
           <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">AI Recommendation</span>
-          <h4 className="mt-0.5 text-[16px] font-bold text-[#1A1A1A]">{result.label || 'Pending recommendation'}</h4>
+          <h4 className="mt-0.5 text-[16px] font-bold text-[#1A1A1A]">{displayedLabel}</h4>
         </div>
         <div className="rounded-md border border-[#BDE0CE] bg-[#E8F3ED] px-2 py-1 text-[11px] font-semibold text-[#1F4A3A]">
           Confidence Score: {Number.isFinite(confidence) ? confidence : 0}%
@@ -447,20 +448,12 @@ const ConnectAnalysisResult = ({ result, onPromote, onReschedule, onDelete, prom
       </div>
 
       <div className="flex flex-wrap gap-2 border-t border-[#E8E4DB] pt-4">
-        {result.decision === 'promote' ? (
-          <button type="button" onClick={onPromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-btn">
-            <CheckCircle2 className="w-3.5 h-3.5" /> {promoteLabel}
-          </button>
-        ) : (
-          <button type="button" onClick={onReschedule} className="v3-btn-secondary flex items-center gap-1" data-testid="connect-schedule-another-call-btn">
-            <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
-          </button>
-        )}
-        {result.decision === 'delete' && (
-          <button type="button" onClick={onDelete} className="v3-btn-secondary flex items-center gap-1 text-[#B54A37]" data-testid="connect-delete-pipeline-btn">
-            <Trash2 className="w-3.5 h-3.5" /> Delete Brand From Pipeline
-          </button>
-        )}
+        <button type="button" onClick={onReschedule} className="v3-btn-secondary flex items-center gap-1" data-testid="connect-schedule-another-call-btn">
+          <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
+        </button>
+        <button type="button" onClick={onPromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-regardless-btn">
+          <CheckCircle2 className="w-3.5 h-3.5" /> {promoteLabel}
+        </button>
       </div>
     </div>
   );
@@ -779,9 +772,11 @@ export const V3BusinessCaseConnectSchedule = () => {
   const loadMeetings = useCallback(async () => {
     try {
       const list = await v3ListMeetings({ business_case_id: id, stage: 'connect' });
-      const sessions = (list || []).filter((meeting) => meeting.meeting_type === 'business_call' || meeting.type === 'business_call')
-        .map(transcriptSessionFromMeeting);
-      setTranscriptSessions(sessions.length ? sessions : [createTranscriptSession(0)]);
+      const businessCallMeetings = (list || [])
+        .filter((meeting) => meeting.meeting_type === 'business_call' || meeting.type === 'business_call')
+        .sort((a, b) => String(b.updated_at || b.scheduled_for || b.created_at || '').localeCompare(String(a.updated_at || a.scheduled_for || a.created_at || '')));
+      const initialSession = businessCallMeetings.length ? transcriptSessionFromMeeting(businessCallMeetings[0], 0) : createTranscriptSession(0);
+      setTranscriptSessions([initialSession]);
     } catch (e) {
       setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not load Connect meetings.');
     } finally {
@@ -814,6 +809,7 @@ export const V3BusinessCaseConnectSchedule = () => {
 
   const addTranscriptSession = () => {
     setTranscriptSessions((current) => [...current, createTranscriptSession(current.length)]);
+    setSaveNotice('New transcript div added below.');
   };
 
   const removeTranscriptSession = (sessionId) => {
@@ -868,7 +864,6 @@ export const V3BusinessCaseConnectSchedule = () => {
         setAnalysisResult(res.recommendation);
         setSaveNotice('AI analysis complete from the saved Connect transcripts.');
         await reload();
-        await loadMeetings();
       } else {
         setSaveNotice('AI analysis failed.');
       }
@@ -881,22 +876,20 @@ export const V3BusinessCaseConnectSchedule = () => {
   };
 
   const handlePromote = async () => {
+    setSaving(true);
+    setSaveNotice('Saving transcripts, running analysis, and promoting to Frame...');
     try {
-      await v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted aggregated Connect transcript analysis.' });
+      const savedSessions = await saveTranscriptSessions();
+      if (!savedSessions.length) return;
+      await v3AnalyzeAllTranscripts(id);
+      await v3PromoteBusinessCaseConnect(id, { reason: 'Admin promoted to Frame regardless of Connect recommendation after transcript review.' });
       await v3GenerateAlignmentQuestions(id);
       await reload();
       navigate(adminRoute(`/business-cases/${id}/frame/snapshot`));
     } catch (e) {
       setSaveNotice(e?.response?.data?.detail || e?.message || 'Failed to promote business case to Frame.');
-    }
-  };
-
-  const handleDelete = async () => {
-    try {
-      await v3DeleteBusinessCaseConnect(id, { reason: 'Admin accepted AI recommendation to delete from Connect pipeline.' });
-      navigate(adminRoute('/business-cases'));
-    } catch (e) {
-      setSaveNotice(e?.response?.data?.detail || e?.message || 'Failed to delete brand from pipeline.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -941,7 +934,6 @@ export const V3BusinessCaseConnectSchedule = () => {
           result={analysisResult}
           onPromote={handlePromote}
           onReschedule={() => navigate(adminRoute(`/business-cases/${id}/connect/reschedule`))}
-          onDelete={handleDelete}
         />
       </InfoCard>
     </FlowShell>
@@ -1020,11 +1012,12 @@ export const V3BusinessCaseConnectAnalysis = () => {
   const bc = getCase(bundle);
   const analysis = location.state?.connectAnalysis || bc.connect?.analysis || {};
   const recommendation = analysis.recommendation || {};
+  const recommendationLabel = recommendation.decision === 'promote' ? 'Promote to Frame' : recommendation.decision ? 'Reschedule Business Call' : 'Pending analysis';
   return (
-    <FlowShell title="Connect AI Result" subtitle="Review extracted marketing intelligence, reasons, missing context, risk flags, and the promote/reschedule/delete recommendation." nextAction={recommendation.label || 'Analyze a transcript to unlock the decision.'}>
+    <FlowShell title="Connect AI Result" subtitle="Review extracted marketing intelligence, reasons, missing context, risk flags, and the promote/reschedule recommendation." nextAction={recommendationLabel}>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <InfoCard title="Recommendation">
-          <p className="text-xl font-semibold text-[#1A1A1A]">{recommendation.label || 'Pending analysis'}</p>
+          <p className="text-xl font-semibold text-[#1A1A1A]">{recommendationLabel}</p>
           <p className="text-[12px] text-[#6E6657] mt-2">{recommendation.summary || analysis.summary || 'No AI result stored yet.'}</p>
         </InfoCard>
         <InfoCard title="Missing context"><ul className="list-disc pl-5 text-[13px]">{(recommendation.missing_context || analysis.missing_information || []).map((x) => <li key={x}>{x}</li>)}</ul></InfoCard>
@@ -1032,9 +1025,8 @@ export const V3BusinessCaseConnectAnalysis = () => {
       </div>
       <InfoCard title="Decision actions">
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted Connect analysis.' }).then(() => navigate(adminRoute(`/business-cases/${id}/frame/snapshot`)))} className="v3-btn-primary"><CheckCircle2 className="w-3.5 h-3.5" /> Promote to Frame</button>
+          <button onClick={() => v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted Connect analysis.' }).then(() => v3GenerateAlignmentQuestions(id)).then(() => navigate(adminRoute(`/business-cases/${id}/frame/snapshot`)))} className="v3-btn-primary"><CheckCircle2 className="w-3.5 h-3.5" /> Promote to Frame</button>
           <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/reschedule`))} className="v3-btn-secondary"><RotateCcw className="w-3.5 h-3.5" /> Reschedule Business Call</button>
-          <button onClick={() => v3DeleteBusinessCaseConnect(id, { reason: 'Admin deleted from Connect analysis.' }).then(() => navigate(adminRoute('/business-cases')))} className="v3-btn-secondary text-[#B54A37]"><Trash2 className="w-3.5 h-3.5" /> Delete Brand From Pipeline</button>
         </div>
       </InfoCard>
     </FlowShell>
@@ -1196,7 +1188,6 @@ export const V3BusinessCaseConnectReschedule = () => {
           result={analysisResult}
           onPromote={generateSnapshotFromFollowUp}
           onReschedule={() => setNotice('Add another follow-up transcript above, then run the analysis again.')}
-          onDelete={() => v3DeleteBusinessCaseConnect(id, { reason: 'Admin accepted AI recommendation to delete from follow-up analysis.' }).then(() => navigate(adminRoute('/business-cases')))}
           promoteLabel="Generate Alignment Snapshot & Promote to Frame"
         />
       </InfoCard>
