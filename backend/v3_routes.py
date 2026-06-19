@@ -3395,18 +3395,20 @@ def make_v3_router(db):
         if not combined_text:
             ai_recommendation = "reschedule"
             ai_reasons = ["Transcripts are empty, so TASCK cannot make a reliable decision."]
-        elif risk_flags:
-            ai_recommendation = "reschedule"
-            ai_reasons = [f"Risk needs another Connect call before Frame: {item}." for item in risk_flags]
-        elif missing:
-            ai_recommendation = "reschedule"
-            ai_reasons = [f"Missing Alignment Snapshot context: {', '.join(missing)}."]
-        elif readiness >= 75:
+        elif readiness >= 70:
             ai_recommendation = "promote"
-            ai_reasons = ["Combined transcripts answer the Alignment Snapshot question set well enough to move into Frame."]
+            ai_reasons = ["Confidence is 70% or higher, so the combined transcripts are ready to move into Frame."]
+            if risk_flags:
+                ai_reasons.extend([f"Flag to review during Frame: {item}." for item in risk_flags])
+            if missing:
+                ai_reasons.append(f"Admin can refine these fields in Frame: {', '.join(missing)}.")
         else:
             ai_recommendation = "reschedule"
-            ai_reasons = ["Combined transcripts are still too thin for a confident Frame recommendation."]
+            ai_reasons = ["Confidence is below 70%, so schedule another Connect call before moving to Frame."]
+            if risk_flags:
+                ai_reasons.extend([f"Clarify risk before Frame: {item}." for item in risk_flags])
+            if missing:
+                ai_reasons.append(f"Missing Alignment Snapshot context: {', '.join(missing)}.")
 
         recommendation_label = {
             "promote": "Promote to Frame",

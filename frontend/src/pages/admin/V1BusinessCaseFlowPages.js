@@ -420,6 +420,7 @@ const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel =
   const missing = Array.isArray(result.missing_context) ? result.missing_context : [];
   const confidence = Number(result.confidence || 0);
   const displayedLabel = result.decision === 'promote' ? 'Promote to Frame' : 'Reschedule Business Call';
+  const promoteButtonLabel = result.decision === 'promote' ? 'Promote to Frame' : promoteLabel;
   return (
     <div className="mt-5 rounded-[8px] border border-[#D7CBB8] bg-[#FAF7F1] p-5 space-y-4" data-testid="connect-analysis-results">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4DB] pb-3">
@@ -452,7 +453,7 @@ const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel =
           <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
         </button>
         <button type="button" onClick={onPromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-regardless-btn">
-          <CheckCircle2 className="w-3.5 h-3.5" /> {promoteLabel}
+          <CheckCircle2 className="w-3.5 h-3.5" /> {promoteButtonLabel}
         </button>
       </div>
     </div>
@@ -875,22 +876,27 @@ export const V3BusinessCaseConnectSchedule = () => {
     }
   };
 
-  const handlePromote = async () => {
+  const handlePromote = () => {
     setSaving(true);
-    setSaveNotice('Saving transcripts, running analysis, and promoting to Frame...');
-    try {
-      const savedSessions = await saveTranscriptSessions();
-      if (!savedSessions.length) return;
+    setSaveNotice('Opening Frame phase while TASCK prepares the Alignment Snapshot...');
+    navigate(adminRoute(`/business-cases/${id}/frame/snapshot`), { state: { preparingFrame: true } });
+    const promoteAfterNavigation = async () => {
+      await saveConnectTranscriptSessions({
+        sessions: transcriptSessions,
+        businessCaseId: id,
+        bc,
+        brand,
+        contactName: form.contact_name,
+        contactEmail: form.contact_email,
+        sourceLabel: 'Connect transcript upload',
+      });
       await v3AnalyzeAllTranscripts(id);
       await v3PromoteBusinessCaseConnect(id, { reason: 'Admin promoted to Frame regardless of Connect recommendation after transcript review.' });
       await v3GenerateAlignmentQuestions(id);
-      await reload();
-      navigate(adminRoute(`/business-cases/${id}/frame/snapshot`));
-    } catch (e) {
-      setSaveNotice(e?.response?.data?.detail || e?.message || 'Failed to promote business case to Frame.');
-    } finally {
-      setSaving(false);
-    }
+    };
+    promoteAfterNavigation().catch((e) => {
+      console.error(e?.response?.data?.detail || e?.message || 'Failed to promote business case to Frame.');
+    });
   };
 
   return (
@@ -1025,7 +1031,12 @@ export const V3BusinessCaseConnectAnalysis = () => {
       </div>
       <InfoCard title="Decision actions">
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted Connect analysis.' }).then(() => v3GenerateAlignmentQuestions(id)).then(() => navigate(adminRoute(`/business-cases/${id}/frame/snapshot`)))} className="v3-btn-primary"><CheckCircle2 className="w-3.5 h-3.5" /> Promote to Frame</button>
+          <button onClick={() => {
+            navigate(adminRoute(`/business-cases/${id}/frame/snapshot`), { state: { preparingFrame: true } });
+            v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted Connect analysis.' })
+              .then(() => v3GenerateAlignmentQuestions(id))
+              .catch((e) => console.error(e?.response?.data?.detail || e?.message || 'Failed to promote business case to Frame.'));
+          }} className="v3-btn-primary"><CheckCircle2 className="w-3.5 h-3.5" /> Promote to Frame</button>
           <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/reschedule`))} className="v3-btn-secondary"><RotateCcw className="w-3.5 h-3.5" /> Reschedule Business Call</button>
         </div>
       </InfoCard>
@@ -1115,29 +1126,27 @@ export const V3BusinessCaseConnectReschedule = () => {
     }
   };
 
-  const generateSnapshotFromFollowUp = async () => {
+  const generateSnapshotFromFollowUp = () => {
     setSaving(true);
-    setNotice('Saving follow-up transcript and running AI analysis...');
-    try {
-      const savedSessions = await saveFollowUpTranscripts();
-      if (!savedSessions.length) return;
-      const res = await v3AnalyzeAllTranscripts(id);
-      const recommendation = res.recommendation;
-      setAnalysisResult(recommendation);
-      if (recommendation?.decision !== 'promote') {
-        setNotice('AI analysis still recommends more review before Frame. Check the reasons below before generating the Alignment Snapshot.');
-        await reload();
-        return;
-      }
+    setNotice('Opening Frame phase while TASCK prepares the Alignment Snapshot...');
+    navigate(adminRoute(`/business-cases/${id}/frame/snapshot`), { state: { preparingFrame: true } });
+    const promoteAfterNavigation = async () => {
+      await saveConnectTranscriptSessions({
+        sessions: transcriptSessions,
+        businessCaseId: id,
+        bc,
+        brand,
+        contactName: contact.primary_contact || brand.primary_contact || brand.company || '',
+        contactEmail: form.contact_email || brand.email || '',
+        sourceLabel: form.reason || 'Follow-up Connect transcript upload',
+      });
+      await v3AnalyzeAllTranscripts(id);
       await v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted follow-up transcript analysis and generated Alignment Snapshot.' });
       await v3GenerateAlignmentQuestions(id);
-      await reload();
-      navigate(adminRoute(`/business-cases/${id}/frame/snapshot`));
-    } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not generate the Alignment Snapshot from the follow-up call.');
-    } finally {
-      setSaving(false);
-    }
+    };
+    promoteAfterNavigation().catch((e) => {
+      console.error(e?.response?.data?.detail || e?.message || 'Could not generate the Alignment Snapshot from the follow-up call.');
+    });
   };
 
   return (
@@ -1169,9 +1178,9 @@ export const V3BusinessCaseConnectReschedule = () => {
         onUploadFile={uploadTranscriptFile}
       />
 
-      <InfoCard title="Generate Alignment Snapshot">
+      <InfoCard title="Combined AI Transcript Analysis">
         <p className="text-[12px] text-[#6E6657] mb-4">
-          TASCK will save this follow-up transcript, rerun the combined AI analysis, generate the Alignment Snapshot questions, and open the Frame phase when the recommendation is ready.
+          Analyze transcripts from all Connect meetings to extract marketing intelligence, verify readiness criteria, and generate the stage recommendation.
         </p>
         <button
           type="button"
@@ -1181,14 +1190,14 @@ export const V3BusinessCaseConnectReschedule = () => {
           data-testid="connect-followup-generate-snapshot-btn"
         >
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-          Generate Alignment Snapshot & Promote to Frame
+          Promote to Frame
         </button>
 
         <ConnectAnalysisResult
           result={analysisResult}
           onPromote={generateSnapshotFromFollowUp}
           onReschedule={() => setNotice('Add another follow-up transcript above, then run the analysis again.')}
-          promoteLabel="Generate Alignment Snapshot & Promote to Frame"
+          promoteLabel="Promote to Frame"
         />
       </InfoCard>
     </FlowShell>
@@ -1314,7 +1323,6 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
               <Plus className="w-3.5 h-3.5" /> Add question
             </button>
           </div>
-          <TextInput label="Brand instructions" rows={3} value={section.content || ''} onChange={(value) => onChange({ ...section, content: value })} />
 
           <div className="grid gap-3">
             {questions.map((item, questionIndex) => (
@@ -1341,26 +1349,38 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
 };
 export const V3BusinessCaseFrameSnapshot = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id, bundle, reload } = useBusinessCaseBundle();
   const snapshot = bundle?.alignment_snapshot;
   const [notice, setNotice] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [draft, setDraft] = useState(null);
   const [recipientEmail, setRecipientEmail] = useState('');
+  const [frameRefreshCount, setFrameRefreshCount] = useState(0);
   const stage = bundle?.business_case?.stage;
   const brand = getBrand(bundle);
+  const brandEmail = brand?.email || brand?.contact_email || brand?.primary_contact_email || '';
   const activeSnapshot = draft || snapshot;
   const hasSnapshot = Boolean(activeSnapshot?.title || activeSnapshot?.meta || activeSnapshot?.sections?.length);
+  const preparingFrame = Boolean(location.state?.preparingFrame);
 
   useEffect(() => {
     setDraft(cloneAlignmentSnapshot(snapshot));
   }, [snapshot]);
 
   useEffect(() => {
-    if (brand?.email && !recipientEmail) {
-      setRecipientEmail(brand.email);
+    if (brandEmail) {
+      setRecipientEmail(brandEmail);
     }
-  }, [brand?.email, recipientEmail]);
+  }, [brandEmail, id]);
+
+  useEffect(() => {
+    if (!preparingFrame || hasSnapshot || frameRefreshCount >= 10) return undefined;
+    const timer = window.setTimeout(() => {
+      reload().finally(() => setFrameRefreshCount((count) => count + 1));
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [frameRefreshCount, hasSnapshot, preparingFrame, reload]);
 
   const persistDraft = async () => {
     if (!draft?.id) return null;
@@ -1508,15 +1528,12 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
         {!hasSnapshot ? (
           <div className="rounded-[8px] border border-dashed border-[#D7CBB8] bg-[#FBFAF7] p-5 text-[13px] text-[#6E6657]">
-            Generate the Alignment Snapshot questions so the brand can answer the required Frame fields before admin approval.
+            {preparingFrame ? 'Preparing the Frame phase and Alignment Snapshot from the Connect transcripts. This will appear here shortly.' : 'Generate the Alignment Snapshot questions so the brand can answer the required Frame fields before admin approval.'}
           </div>
         ) : (
           <div className="space-y-4" data-testid="alignment-snapshot-editor">
             <div className="rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-4">
               <TextInput label="Snapshot title" value={activeSnapshot?.title || ''} onChange={(value) => setDraft({ ...(activeSnapshot || {}), title: value })} />
-              <div className="mt-3">
-                <TextInput label="Snapshot note" rows={3} value={activeSnapshot?.meta || ''} onChange={(value) => setDraft({ ...(activeSnapshot || {}), meta: value })} />
-              </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button onClick={saveEdits} className="v3-btn-primary" data-testid="alignment-save-edits-btn"><Save className="w-3.5 h-3.5" /> Save edits</button>
               </div>
@@ -1542,15 +1559,14 @@ export const V3BusinessCaseFrameSnapshot = () => {
           </div>
         )}
 
-        {hasSnapshot && (
-          <div data-testid="alignment-share-options" className="mt-4 rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-3">
+        <div data-testid="alignment-share-options" className="mt-4 rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-3">
             <label className="mb-3 block max-w-xl">
               <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Brand email / test email</span>
               <input
                 type="email"
                 value={recipientEmail}
                 onChange={(event) => setRecipientEmail(event.target.value)}
-                placeholder={brand?.email || 'name@brand.com'}
+                placeholder={brandEmail || 'name@brand.com'}
                 className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#1F4A3A]"
                 data-testid="alignment-recipient-email"
               />
@@ -1563,7 +1579,6 @@ export const V3BusinessCaseFrameSnapshot = () => {
             </div>
             <p className="mt-2 text-[12px] text-[#6E6657]">Save edits first if you changed the questions, then choose how the brand should receive the form.</p>
           </div>
-        )}
         {previewOpen && hasSnapshot && (
           <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-6" data-testid="alignment-preview-modal">
             <div className="w-full max-w-4xl rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
