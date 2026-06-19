@@ -208,7 +208,7 @@ const V1AdminCRM = () => {
           <div>
             <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">CRM</p>
             <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>
-              Brands
+              {isV1Admin ? 'CRM Brands' : 'Brands'}
             </h1>
             <p className="text-[#8A8A8A] text-sm">
               {normalised.length} accepted brands in CRM
@@ -224,15 +224,17 @@ const V1AdminCRM = () => {
           </div>
           <div className="flex gap-2">
             <button className="v3-btn-primary" data-testid="add-brand-btn" onClick={() => setAddOpen(true)}>
-              <Plus className="w-4 h-4" /> Add Brand
+              <Plus className="w-4 h-4" /> {isV1Admin ? 'Add Brand to CRM' : 'Add Brand'}
             </button>
-            <button
-              className="v3-btn-secondary"
-              data-testid="scrape-opportunities-btn"
-              onClick={() => navigate(adminRoute('/crm/opportunities'))}
-            >
-              <Sparkles className="w-4 h-4" /> Scan Opportunities
-            </button>
+            {!isV1Admin && (
+              <button
+                className="v3-btn-secondary"
+                data-testid="scrape-opportunities-btn"
+                onClick={() => navigate(adminRoute('/crm/opportunities'))}
+              >
+                <Sparkles className="w-4 h-4" /> Scan Opportunities
+              </button>
+            )}
           </div>
         </div>
 
@@ -290,7 +292,7 @@ const V1AdminCRM = () => {
             </p>
             {!search && trackFilter === 'all' && (
               <button className="v3-btn-primary mt-4" onClick={() => setAddOpen(true)}>
-                <Plus className="w-4 h-4" /> Add Brand
+                <Plus className="w-4 h-4" /> {isV1Admin ? 'Add Brand to CRM' : 'Add Brand'}
               </button>
             )}
           </div>

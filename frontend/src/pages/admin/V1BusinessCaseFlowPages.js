@@ -6,6 +6,7 @@ import {
   ArrowRight,
   CheckCircle2,
   Download,
+  Upload,
   Edit3,
   Eye,
   FileSignature,
@@ -22,8 +23,6 @@ import {
   Trash2,
   X,
   Loader2,
-  Calendar,
-  Link,
 } from 'lucide-react';
 import {
   v3AcceptCreatorBriefing,
@@ -48,6 +47,7 @@ import {
   v3CloseBusinessCase,
   v3CreateMeeting,
   v3UploadMeetingTranscript,
+  v3SaveMeetingContact,
   v3CreateSnapshot,
   v3DeclineCreatorBriefing,
   v3DeleteBusinessCaseConnect,
@@ -264,6 +264,203 @@ const AgendaEditor = ({ items, onChange }) => {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+};
+
+const createTranscriptSession = (index, overrides = {}) => ({
+  id: overrides.id || `transcript-${Date.now()}-${index}`,
+  meetingId: overrides.meetingId || '',
+  date: overrides.date || new Date().toISOString().slice(0, 10),
+  session: overrides.session || `Session ${index + 1}`,
+  content: overrides.content || '',
+});
+
+const transcriptSessionFromMeeting = (meeting, index) => {
+  const rawDate = meeting.call_date || meeting.scheduled_for || '';
+  const date = rawDate ? String(rawDate).slice(0, 10) : new Date().toISOString().slice(0, 10);
+  return createTranscriptSession(index, {
+    id: meeting.id || `meeting-${index}`,
+    meetingId: meeting.id || '',
+    date,
+    session: meeting.session_label || `Session ${index + 1}`,
+    content: meeting.transcript || '',
+  });
+};
+
+const transcriptHasContent = (session) => Boolean(String(session.content || '').trim());
+
+const TranscriptUploadPanel = ({ sessions, onAdd, onRemove, onChange, onUploadFile }) => (
+  <InfoCard
+    title="Transcripts"
+    action={(
+      <button type="button" onClick={onAdd} className="v3-btn-primary text-[12px] flex items-center gap-1.5" data-testid="connect-add-transcript-btn">
+        <Plus className="w-3.5 h-3.5" /> Add Transcript
+      </button>
+    )}
+  >
+    <div className="space-y-4">
+      {sessions.map((session) => (
+        <div key={session.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-4 shadow-sm">
+          <div className="grid gap-3 border-b border-[#F1ECDF] pb-4 lg:grid-cols-[minmax(160px,0.45fr)_minmax(240px,1fr)_36px] lg:items-end">
+            <label className="block">
+              <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Date</span>
+              <input
+                type="date"
+                value={session.date}
+                onChange={(event) => onChange(session.id, 'date', event.target.value)}
+                className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] outline-none focus:border-[#1F4A3A]"
+                data-testid={`connect-transcript-date-${session.id}`}
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Session Name</span>
+              <input
+                type="text"
+                value={session.session}
+                onChange={(event) => onChange(session.id, 'session', event.target.value)}
+                className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] outline-none focus:border-[#1F4A3A]"
+                data-testid={`connect-transcript-session-${session.id}`}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => onRemove(session.id)}
+              className="justify-self-end rounded-md p-2 text-[#B54A37] hover:bg-[#FBF1EE]"
+              aria-label="Remove transcript"
+              data-testid={`connect-remove-transcript-${session.id}`}
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Transcript Content</label>
+              <label className="v3-btn-secondary cursor-pointer text-[11px]">
+                <Upload className="w-3.5 h-3.5" /> Upload file
+                <input
+                  type="file"
+                  accept=".txt,.md,text/plain"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) onUploadFile(session.id, file);
+                    event.target.value = '';
+                  }}
+                  data-testid={`connect-upload-transcript-${session.id}`}
+                />
+              </label>
+            </div>
+            <textarea
+              value={session.content}
+              onChange={(event) => onChange(session.id, 'content', event.target.value)}
+              rows={7}
+              placeholder="Paste your transcript here..."
+              className="w-full rounded-md border border-[#E8E4DB] bg-[#FBFAF7] px-3 py-2 text-[13px] leading-6 text-[#1A1A1A] outline-none focus:border-[#1F4A3A] focus:bg-white"
+              data-testid={`connect-transcript-content-${session.id}`}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  </InfoCard>
+);
+
+const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, brand, contactName, contactEmail, sourceLabel }) => {
+  const cleanSessions = sessions.filter(transcriptHasContent);
+  if (!cleanSessions.length) {
+    throw new Error('Upload or paste at least one transcript before running analysis.');
+  }
+  const agenda = alignmentQuestionDefaults.join('\n');
+  const brandName = brand.company || brand.name || 'Brand';
+  const businessCaseTitle = bc.title || `${brandName} business case`;
+  const savedSessions = [];
+
+  for (const [index, session] of cleanSessions.entries()) {
+    const sessionName = session.session || `Session ${index + 1}`;
+    let meetingId = session.meetingId;
+    if (!meetingId) {
+      const meeting = await v3CreateMeeting({
+        title: `Business Call - Connect: ${businessCaseTitle} - ${sessionName}`,
+        meeting_type: 'business_call',
+        stage: 'connect',
+        entity_type: 'brand',
+        brand_id: bc.brand_id || brand.id,
+        business_case_id: businessCaseId,
+        business_case_title: businessCaseTitle,
+        entity_name: brandName,
+        contact_name: contactName || brand.primary_contact || '',
+        contact_email: contactEmail || brand.email || '',
+        contact_phone: brand.phone || '',
+        scheduled_for: session.date || null,
+        agenda,
+        meeting_notes: `${sourceLabel}. ${sessionName}`,
+      });
+      meetingId = meeting.id;
+    } else {
+      await v3SaveMeetingContact(meetingId, {
+        contact_name: contactName || brand.primary_contact || '',
+        contact_email: contactEmail || brand.email || '',
+        contact_phone: brand.phone || '',
+        scheduled_for: session.date || null,
+        meeting_notes: `${sourceLabel}. ${sessionName}`,
+      });
+    }
+    await v3UploadMeetingTranscript(meetingId, { transcript: session.content.trim() });
+    await v3AnalyzeMeetingTranscript(meetingId, {});
+    savedSessions.push({ ...session, meetingId });
+  }
+  return savedSessions;
+};
+
+const ConnectAnalysisResult = ({ result, onPromote, onReschedule, onDelete, promoteLabel = 'Promote to Frame Phase' }) => {
+  if (!result) return null;
+  const reasons = Array.isArray(result.reasons) ? result.reasons : [];
+  const missing = Array.isArray(result.missing_context) ? result.missing_context : [];
+  const confidence = Number(result.confidence || 0);
+  return (
+    <div className="mt-5 rounded-[8px] border border-[#D7CBB8] bg-[#FAF7F1] p-5 space-y-4" data-testid="connect-analysis-results">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4DB] pb-3">
+        <div>
+          <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">AI Recommendation</span>
+          <h4 className="mt-0.5 text-[16px] font-bold text-[#1A1A1A]">{result.label || 'Pending recommendation'}</h4>
+        </div>
+        <div className="rounded-md border border-[#BDE0CE] bg-[#E8F3ED] px-2 py-1 text-[11px] font-semibold text-[#1F4A3A]">
+          Confidence Score: {Number.isFinite(confidence) ? confidence : 0}%
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#8A8A8A]">AI Reasons</h5>
+          <ul className="list-disc space-y-1 pl-5 text-[13px] text-[#4F3E2F]">
+            {reasons.length ? reasons.map((reason, index) => <li key={`${reason}-${index}`}>{reason}</li>) : <li>No AI reasons returned yet.</li>}
+          </ul>
+        </div>
+        <div>
+          <h5 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-[#8A8A8A]">Missing Context</h5>
+          <ul className="list-disc space-y-1 pl-5 text-[13px] text-[#B54A37]">
+            {missing.length ? missing.map((item, index) => <li key={`${item}-${index}`}>{item}</li>) : <li>No missing context detected.</li>}
+          </ul>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 border-t border-[#E8E4DB] pt-4">
+        {result.decision === 'promote' ? (
+          <button type="button" onClick={onPromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-btn">
+            <CheckCircle2 className="w-3.5 h-3.5" /> {promoteLabel}
+          </button>
+        ) : (
+          <button type="button" onClick={onReschedule} className="v3-btn-secondary flex items-center gap-1" data-testid="connect-schedule-another-call-btn">
+            <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
+          </button>
+        )}
+        {result.decision === 'delete' && (
+          <button type="button" onClick={onDelete} className="v3-btn-secondary flex items-center gap-1 text-[#B54A37]" data-testid="connect-delete-pipeline-btn">
+            <Trash2 className="w-3.5 h-3.5" /> Delete Brand From Pipeline
+          </button>
+        )}
       </div>
     </div>
   );
@@ -570,40 +767,23 @@ export const V3BusinessCaseConnectSchedule = () => {
   const brand = getBrand(bundle);
   const bc = getCase(bundle);
 
-  const [meetings, setMeetings] = useState([]);
   const [loadingMeetings, setLoadingMeetings] = useState(true);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [form, setForm] = useState({
-    contact_name: '',
-    contact_email: '',
-    scheduled_for: '',
-    meeting_link: '',
-  });
-  const [agendaItems, setAgendaItems] = useState(alignmentQuestionDefaults);
+  const [transcriptSessions, setTranscriptSessions] = useState([createTranscriptSession(0)]);
+  const [form, setForm] = useState({ contact_name: '', contact_email: '' });
   const [saving, setSaving] = useState(false);
   const [saveNotice, setSaveNotice] = useState('');
   const [prefilled, setPrefilled] = useState(false);
-
-  // Transcripts states per meeting
-  const [transcriptsDraft, setTranscriptsDraft] = useState({});
-  const [savingTranscripts, setSavingTranscripts] = useState({});
-
-  // Combined AI Analysis states
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
   const loadMeetings = useCallback(async () => {
     try {
       const list = await v3ListMeetings({ business_case_id: id, stage: 'connect' });
-      setMeetings(list || []);
-      // Initialize drafts
-      const drafts = {};
-      (list || []).forEach(m => {
-        drafts[m.id] = m.transcript || '';
-      });
-      setTranscriptsDraft(drafts);
+      const sessions = (list || []).filter((meeting) => meeting.meeting_type === 'business_call' || meeting.type === 'business_call')
+        .map(transcriptSessionFromMeeting);
+      setTranscriptSessions(sessions.length ? sessions : [createTranscriptSession(0)]);
     } catch (e) {
-      console.error(e);
+      setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not load Connect meetings.');
     } finally {
       setLoadingMeetings(false);
     }
@@ -618,266 +798,152 @@ export const V3BusinessCaseConnectSchedule = () => {
     const loadedBrand = getBrand(bundle);
     const loadedCase = getCase(bundle);
     const contact = loadedCase.brand_contact_snapshot || {};
-    const nextContactName = (
-      contact.primary_contact ||
-      contact.contact_name ||
-      loadedBrand.primary_contact ||
-      loadedBrand.primaryContact ||
-      loadedBrand.company ||
-      loadedBrand.name ||
-      ''
-    );
-    const nextContactEmail = contact.email || contact.contact_email || loadedBrand.email || '';
     setForm((current) => ({
       ...current,
-      contact_name: current.contact_name || nextContactName,
-      contact_email: current.contact_email || nextContactEmail,
+      contact_name: current.contact_name || contact.primary_contact || contact.contact_name || loadedBrand.primary_contact || loadedBrand.primaryContact || loadedBrand.company || loadedBrand.name || '',
+      contact_email: current.contact_email || contact.email || contact.contact_email || loadedBrand.email || '',
     }));
     setPrefilled(true);
   }, [bundle, prefilled]);
 
-  // Load existing analysis if present
   useEffect(() => {
     if (bc?.connect?.analysis) {
       setAnalysisResult(bc.connect.analysis);
     }
   }, [bc]);
 
-  const scheduleMeeting = async () => {
-    if (!bundle?.business_case) {
-      setSaveNotice('Business Case details are still loading. Please try again in a moment.');
-      return;
-    }
-    const agenda = agendaItems.map((item) => item.trim()).filter(Boolean).join('\n');
-    setSaving(true);
-    setSaveNotice('');
+  const addTranscriptSession = () => {
+    setTranscriptSessions((current) => [...current, createTranscriptSession(current.length)]);
+  };
+
+  const removeTranscriptSession = (sessionId) => {
+    setTranscriptSessions((current) => {
+      const next = current.filter((session) => session.id !== sessionId);
+      return next.length ? next : [createTranscriptSession(0)];
+    });
+  };
+
+  const updateTranscriptSession = (sessionId, field, value) => {
+    setTranscriptSessions((current) => current.map((session) => (
+      session.id === sessionId ? { ...session, [field]: value } : session
+    )));
+  };
+
+  const uploadTranscriptFile = async (sessionId, file) => {
     try {
-      const meeting = await v3CreateMeeting({
-        title: `Business Call — Connect: ${bc.title || brand.company || 'Brand'}`,
-        meeting_type: 'business_call',
-        stage: 'connect',
-        entity_type: 'brand',
-        brand_id: bc.brand_id || brand.id,
-        business_case_id: id,
-        business_case_title: bc.title,
-        entity_name: brand.company || brand.name || '',
-        ...form,
-        agenda,
-        meeting_notes: agenda,
-      });
-      setSaveNotice('Meeting scheduled successfully!');
-      setShowAddForm(false);
-      // Reset form fields but keep contacts
-      setForm(prev => ({ ...prev, scheduled_for: '', meeting_link: '' }));
-      await loadMeetings();
-      await reload();
+      const content = await file.text();
+      updateTranscriptSession(sessionId, 'content', content);
+      setSaveNotice(`${file.name} loaded into the transcript session.`);
     } catch (e) {
-      setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not save the meeting. Please try again.');
-    } finally {
-      setSaving(false);
+      setSaveNotice(e?.message || 'Could not read the transcript file.');
     }
   };
 
-  const saveTranscript = async (meetingId) => {
-    setSavingTranscripts(prev => ({ ...prev, [meetingId]: true }));
-    try {
-      const text = transcriptsDraft[meetingId] || '';
-      await v3UploadMeetingTranscript(meetingId, { transcript: text });
-      // Call meeting-specific analyze to extract metadata locally/remotely
-      await v3AnalyzeMeetingTranscript(meetingId, {});
-      setSaveNotice('Transcript saved and indexed.');
-      await loadMeetings();
-      await reload();
-    } catch (e) {
-      setSaveNotice('Could not save transcript.');
-    } finally {
-      setSavingTranscripts(prev => ({ ...prev, [meetingId]: false }));
+  const saveTranscriptSessions = async () => {
+    if (!bundle?.business_case) {
+      throw new Error('Business Case details are still loading. Please try again in a moment.');
     }
+    setSaving(true);
+    const savedSessions = await saveConnectTranscriptSessions({
+      sessions: transcriptSessions,
+      businessCaseId: id,
+      bc,
+      brand,
+      contactName: form.contact_name,
+      contactEmail: form.contact_email,
+      sourceLabel: 'Connect transcript upload',
+    });
+    setTranscriptSessions(savedSessions.length ? savedSessions : [createTranscriptSession(0)]);
+    return savedSessions;
   };
 
   const runCombinedAnalysis = async () => {
     setAnalyzing(true);
+    setSaveNotice('Saving transcripts before analysis...');
     try {
+      const savedSessions = await saveTranscriptSessions();
+      if (!savedSessions.length) return;
       const res = await v3AnalyzeAllTranscripts(id);
       if (res.ok) {
         setAnalysisResult(res.recommendation);
-        setSaveNotice('AI Analysis complete.');
+        setSaveNotice('AI analysis complete from the saved Connect transcripts.');
         await reload();
+        await loadMeetings();
       } else {
-        setSaveNotice('AI Analysis failed.');
+        setSaveNotice('AI analysis failed.');
       }
     } catch (e) {
-      setSaveNotice('AI Analysis failed.');
+      setSaveNotice(e?.response?.data?.detail || e?.message || 'AI analysis failed.');
     } finally {
+      setSaving(false);
       setAnalyzing(false);
     }
   };
 
   const handlePromote = async () => {
     try {
-      await v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted aggregated Connect transcripts.' });
+      await v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted aggregated Connect transcript analysis.' });
+      await v3GenerateAlignmentQuestions(id);
       await reload();
       navigate(adminRoute(`/business-cases/${id}/frame/snapshot`));
     } catch (e) {
-      setSaveNotice('Failed to promote business case to Frame.');
+      setSaveNotice(e?.response?.data?.detail || e?.message || 'Failed to promote business case to Frame.');
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      await v3DeleteBusinessCaseConnect(id, { reason: 'Admin accepted AI recommendation to delete from Connect pipeline.' });
+      navigate(adminRoute('/business-cases'));
+    } catch (e) {
+      setSaveNotice(e?.response?.data?.detail || e?.message || 'Failed to delete brand from pipeline.');
     }
   };
 
   return (
-    <FlowShell title="Connect Schedule & Transcripts" subtitle="Schedule multiple meetings with the brand, upload/edit their transcripts, and run aggregate AI analysis." nextAction="Save transcripts for scheduled calls and run analysis to unlock Frame.">
+    <FlowShell title="Connect Schedule & Transcripts" subtitle="Upload each Connect call transcript by date and session, then run one combined AI analysis across every saved transcript." nextAction="Save transcript sessions and run analysis before moving to Frame.">
       {saveNotice && (
         <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]" data-testid="connect-save-notice-banner">
           {saveNotice}
         </div>
       )}
-      <div className="space-y-4">
-        {/* Scheduled Meetings List */}
-        <InfoCard 
-          title="Scheduled Meetings" 
-          action={
-            <button onClick={() => setShowAddForm(!showAddForm)} className="v3-btn-secondary py-1 px-3 text-[12px] flex items-center gap-1" data-testid="crm-schedule-call-btn">
-              {showAddForm ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-              {showAddForm ? 'Cancel' : 'Schedule Call'}
-            </button>
-          }
+
+      {loadingMeetings ? (
+        <div className="v3-card p-6 text-[13px] text-[#8A8A8A] flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading transcripts...
+        </div>
+      ) : (
+        <TranscriptUploadPanel
+          sessions={transcriptSessions}
+          onAdd={addTranscriptSession}
+          onRemove={removeTranscriptSession}
+          onChange={updateTranscriptSession}
+          onUploadFile={uploadTranscriptFile}
+        />
+      )}
+
+      <InfoCard title="Combined AI Transcript Analysis">
+        <p className="text-[12px] text-[#6E6657] mb-4">
+          Analyze transcripts from all Connect meetings to extract marketing intelligence, verify readiness criteria, and generate the stage recommendation.
+        </p>
+        <button
+          type="button"
+          onClick={runCombinedAnalysis}
+          disabled={analyzing || saving || !transcriptSessions.some(transcriptHasContent)}
+          className="v3-btn-primary flex items-center gap-1.5"
+          data-testid="connect-analyze-all-btn"
         >
-          {loadingMeetings ? (
-            <div className="text-[13px] text-[#8A8A8A] py-3 flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Loading meetings...</div>
-          ) : meetings.length === 0 ? (
-            <div className="rounded-[8px] border border-dashed border-[#D7CBB8] bg-[#FBFAF7] p-5 text-center text-[13px] text-[#6E6657]">
-              No meetings scheduled yet. Click "Schedule Call" to set up your first meeting with {brand.company || 'the brand'}.
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {meetings.map((m, idx) => (
-                <div key={m.id || idx} className="rounded-xl border border-[#E8E4DB] bg-white p-4 shadow-sm space-y-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#F1ECDF] pb-3">
-                    <div>
-                      <h3 className="font-semibold text-[#1A1A1A] text-[14px]">{m.title || `Connect Meeting #${idx + 1}`}</h3>
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[#6E6657] mt-1.5">
-                        <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5 text-[#1F4A3A]" /> {m.scheduled_for ? new Date(m.scheduled_for).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : 'TBD'}</span>
-                        {m.meeting_link && <span className="flex items-center gap-1"><Link className="w-3.5 h-3.5 text-[#1F4A3A]" /> <a href={m.meeting_link} target="_blank" rel="noreferrer" className="underline text-[#1F4A3A] hover:text-[#17382c]">{m.meeting_link}</a></span>}
-                      </div>
-                    </div>
-                    <div className="text-[11px] bg-[#FAF7F1] border border-[#D7CBB8] rounded px-2 py-1 text-[#4F3E2F]">
-                      Contact: <strong>{m.contact_name || 'Unspecified'}</strong> ({m.contact_email || 'No email'})
-                    </div>
-                  </div>
-                  
-                  {/* Transcript editor */}
-                  <div className="space-y-2">
-                    <label className="block text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold">Meeting Transcript</label>
-                    <textarea 
-                      value={transcriptsDraft[m.id] || ''} 
-                      onChange={(e) => setTranscriptsDraft({ ...transcriptsDraft, [m.id]: e.target.value })} 
-                      rows={5} 
-                      placeholder="Paste meeting transcript here..." 
-                      className="w-full rounded-lg border border-[#E8E4DB] p-3 text-[13px] focus:outline-none focus:border-[#1F4A3A] focus:bg-white bg-[#FBFAF7]" 
-                      data-testid={`transcript-textarea-${m.id}`}
-                    />
-                    <div className="flex justify-end">
-                      <button 
-                        onClick={() => saveTranscript(m.id)} 
-                        disabled={savingTranscripts[m.id] || transcriptsDraft[m.id] === m.transcript} 
-                        className="v3-btn-primary text-[11px] py-1 px-3 flex items-center gap-1"
-                        data-testid={`save-transcript-btn-${m.id}`}
-                      >
-                        {savingTranscripts[m.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                        {savingTranscripts[m.id] ? 'Saving...' : 'Save Transcript'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </InfoCard>
+          {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+          {analyzing ? 'Analyzing all transcripts...' : 'Analyze All Transcripts'}
+        </button>
 
-        {/* Schedule Call Form */}
-        {showAddForm && (
-          <InfoCard title="Schedule new meeting">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <TextInput label="Contact name" value={form.contact_name} onChange={(value) => setForm({ ...form, contact_name: value })} />
-              <TextInput label="Contact email" value={form.contact_email} onChange={(value) => setForm({ ...form, contact_email: value })} />
-              <DateTimeInput label="Date/time" value={form.scheduled_for} onChange={(value) => setForm({ ...form, scheduled_for: value })} />
-              <TextInput label="Meeting link" value={form.meeting_link} onChange={(value) => setForm({ ...form, meeting_link: value })} />
-              <div className="md:col-span-2">
-                <AgendaEditor items={agendaItems} onChange={setAgendaItems} />
-              </div>
-            </div>
-            {saveNotice && (
-              <div className="mt-4 rounded-lg border border-[#D7CBB8] bg-[#FAF7F1] px-3 py-2 text-[12px] text-[#4F3E2F]" data-testid="connect-save-notice">
-                {saveNotice}
-              </div>
-            )}
-            <button onClick={scheduleMeeting} disabled={saving || !bundle?.business_case} className="v3-btn-primary mt-4" data-testid="connect-save-meeting-btn">
-              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-              {saving ? 'Scheduling...' : 'Save Meeting Schedule'}
-            </button>
-          </InfoCard>
-        )}
-
-        {/* Combined AI Analysis Section */}
-        {meetings.length > 0 && (
-          <InfoCard title="Combined AI Transcript Analysis">
-            <p className="text-[12px] text-[#6E6657] mb-4">
-              Analyze transcripts from all Connect meetings to extract marketing intelligence, verify readiness criteria, and generate the stage recommendation.
-            </p>
-            <button 
-              onClick={runCombinedAnalysis} 
-              disabled={analyzing || !meetings.some(m => m.transcript)} 
-              className="v3-btn-primary flex items-center gap-1.5"
-              data-testid="connect-analyze-all-btn"
-            >
-              {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {analyzing ? 'Analyzing all transcripts...' : 'Analyze All Transcripts'}
-            </button>
-
-            {analysisResult && (
-              <div className="mt-5 rounded-xl border border-[#D7CBB8] bg-[#FAF7F1] p-5 space-y-4" data-testid="connect-analysis-results">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4DB] pb-3">
-                  <div>
-                    <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">AI Recommendation</span>
-                    <h4 className="text-[16px] font-bold text-[#1A1A1A] mt-0.5">{analysisResult.label}</h4>
-                  </div>
-                  <div className="text-[11px] bg-[#E8F3ED] text-[#1F4A3A] px-2 py-1 rounded-md font-semibold border border-[#BDE0CE]">
-                    Confidence Score: {analysisResult.confidence}%
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <h5 className="text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold mb-1">AI Reasons</h5>
-                    <ul className="list-disc pl-5 text-[13px] space-y-1 text-[#4F3E2F]">
-                      {(analysisResult.reasons || []).map((r, i) => <li key={i}>{r}</li>)}
-                    </ul>
-                  </div>
-                  {analysisResult.missing_context && analysisResult.missing_context.length > 0 && (
-                    <div>
-                      <h5 className="text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold mb-1">Missing Context</h5>
-                      <ul className="list-disc pl-5 text-[13px] space-y-1 text-[#B54A37]">
-                        {analysisResult.missing_context.map((m, i) => <li key={i}>{m}</li>)}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-
-                <div className="border-t border-[#E8E4DB] pt-4 flex flex-wrap gap-2">
-                  {analysisResult.decision === 'promote' ? (
-                    <button onClick={handlePromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-btn">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Promote to Frame Phase
-                    </button>
-                  ) : (
-                    <button onClick={() => setShowAddForm(true)} className="v3-btn-secondary flex items-center gap-1">
-                      <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </InfoCard>
-        )}
-      </div>
+        <ConnectAnalysisResult
+          result={analysisResult}
+          onPromote={handlePromote}
+          onReschedule={() => navigate(adminRoute(`/business-cases/${id}/connect/reschedule`))}
+          onDelete={handleDelete}
+        />
+      </InfoCard>
     </FlowShell>
   );
 };
@@ -976,25 +1042,163 @@ export const V3BusinessCaseConnectAnalysis = () => {
 };
 
 export const V3BusinessCaseConnectReschedule = () => {
-  const { id } = useBusinessCaseBundle();
-  const [form, setForm] = useState({ reason: '', scheduled_for: '', meeting_link: '', contact_email: '' });
-  const [done, setDone] = useState(false);
-  const reschedule = async () => {
-    await v3RescheduleBusinessCaseConnect(id, form);
-    await v3SendConnectRescheduleEmail(id, form);
-    setDone(true);
+  const navigate = useNavigate();
+  const { id, bundle, reload } = useBusinessCaseBundle();
+  const brand = getBrand(bundle);
+  const bc = getCase(bundle);
+  const contact = bc.brand_contact_snapshot || {};
+  const [form, setForm] = useState({
+    reason: 'Schedule another call to gather missing info.',
+    scheduled_for: '',
+    meeting_link: '',
+    contact_email: contact.email || brand.email || '',
+  });
+  const [transcriptSessions, setTranscriptSessions] = useState([createTranscriptSession(0, { session: 'Follow-up Session 1' })]);
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState(null);
+
+  useEffect(() => {
+    if (!form.contact_email && (contact.email || brand.email)) {
+      setForm((current) => ({ ...current, contact_email: contact.email || brand.email || '' }));
+    }
+  }, [brand.email, contact.email, form.contact_email]);
+
+  const addTranscriptSession = () => {
+    setTranscriptSessions((current) => [...current, createTranscriptSession(current.length, { session: `Follow-up Session ${current.length + 1}` })]);
   };
+
+  const removeTranscriptSession = (sessionId) => {
+    setTranscriptSessions((current) => {
+      const next = current.filter((session) => session.id !== sessionId);
+      return next.length ? next : [createTranscriptSession(0, { session: 'Follow-up Session 1' })];
+    });
+  };
+
+  const updateTranscriptSession = (sessionId, field, value) => {
+    setTranscriptSessions((current) => current.map((session) => (
+      session.id === sessionId ? { ...session, [field]: value } : session
+    )));
+  };
+
+  const uploadTranscriptFile = async (sessionId, file) => {
+    try {
+      const content = await file.text();
+      updateTranscriptSession(sessionId, 'content', content);
+      setNotice(`${file.name} loaded into the follow-up transcript.`);
+    } catch (e) {
+      setNotice(e?.message || 'Could not read the transcript file.');
+    }
+  };
+
+  const saveFollowUpTranscripts = async () => {
+    if (!bundle?.business_case) {
+      throw new Error('Business Case details are still loading. Please try again in a moment.');
+    }
+    const savedSessions = await saveConnectTranscriptSessions({
+      sessions: transcriptSessions,
+      businessCaseId: id,
+      bc,
+      brand,
+      contactName: contact.primary_contact || brand.primary_contact || brand.company || '',
+      contactEmail: form.contact_email || brand.email || '',
+      sourceLabel: form.reason || 'Follow-up Connect transcript upload',
+    });
+    setTranscriptSessions(savedSessions.length ? savedSessions : [createTranscriptSession(0, { session: 'Follow-up Session 1' })]);
+    return savedSessions;
+  };
+
+  const saveRescheduleEmail = async () => {
+    setSaving(true);
+    setNotice('');
+    try {
+      await v3RescheduleBusinessCaseConnect(id, form);
+      await v3SendConnectRescheduleEmail(id, form);
+      setNotice('Follow-up call saved and reschedule email queued. Add the returned transcript below when the call is complete.');
+      await reload();
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save the follow-up call.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generateSnapshotFromFollowUp = async () => {
+    setSaving(true);
+    setNotice('Saving follow-up transcript and running AI analysis...');
+    try {
+      const savedSessions = await saveFollowUpTranscripts();
+      if (!savedSessions.length) return;
+      const res = await v3AnalyzeAllTranscripts(id);
+      const recommendation = res.recommendation;
+      setAnalysisResult(recommendation);
+      if (recommendation?.decision !== 'promote') {
+        setNotice('AI analysis still recommends more review before Frame. Check the reasons below before generating the Alignment Snapshot.');
+        await reload();
+        return;
+      }
+      await v3PromoteBusinessCaseConnect(id, { reason: 'Admin accepted follow-up transcript analysis and generated Alignment Snapshot.' });
+      await v3GenerateAlignmentQuestions(id);
+      await reload();
+      navigate(adminRoute(`/business-cases/${id}/frame/snapshot`));
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not generate the Alignment Snapshot from the follow-up call.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <FlowShell title="Reschedule Business Call" subtitle="Capture missing details, propose the next call, and send a clean summary email." nextAction="Send the reschedule email after saving the new meeting details.">
-      <InfoCard title="Reschedule details">
+    <FlowShell title="Schedule Another Connect Call" subtitle="Capture the follow-up call, save the transcript, rerun combined AI analysis, then generate the Alignment Snapshot only when the case is ready for Frame." nextAction="Gather the missing info, then generate the Alignment Snapshot.">
+      {notice && (
+        <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]" data-testid="connect-reschedule-notice">
+          {notice}
+        </div>
+      )}
+
+      <InfoCard title="Follow-up call details">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <TextInput label="Reason / missing details" rows={4} value={form.reason} onChange={(value) => setForm({ ...form, reason: value })} />
           <TextInput label="Contact email" value={form.contact_email} onChange={(value) => setForm({ ...form, contact_email: value })} />
           <TextInput label="New date/time" value={form.scheduled_for} onChange={(value) => setForm({ ...form, scheduled_for: value })} />
           <TextInput label="Meeting link" value={form.meeting_link} onChange={(value) => setForm({ ...form, meeting_link: value })} />
         </div>
-        <button onClick={reschedule} className="v3-btn-primary mt-4"><Mail className="w-3.5 h-3.5" /> Save + send summary email</button>
-        {done && <p className="text-[12px] text-[#1F4A3A] mt-3">Reschedule meeting and email queued.</p>}
+        <button type="button" onClick={saveRescheduleEmail} disabled={saving} className="v3-btn-secondary mt-4">
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
+          Save + send summary email
+        </button>
+      </InfoCard>
+
+      <TranscriptUploadPanel
+        sessions={transcriptSessions}
+        onAdd={addTranscriptSession}
+        onRemove={removeTranscriptSession}
+        onChange={updateTranscriptSession}
+        onUploadFile={uploadTranscriptFile}
+      />
+
+      <InfoCard title="Generate Alignment Snapshot">
+        <p className="text-[12px] text-[#6E6657] mb-4">
+          TASCK will save this follow-up transcript, rerun the combined AI analysis, generate the Alignment Snapshot questions, and open the Frame phase when the recommendation is ready.
+        </p>
+        <button
+          type="button"
+          onClick={generateSnapshotFromFollowUp}
+          disabled={saving || !transcriptSessions.some(transcriptHasContent)}
+          className="v3-btn-primary flex items-center gap-1.5"
+          data-testid="connect-followup-generate-snapshot-btn"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+          Generate Alignment Snapshot & Promote to Frame
+        </button>
+
+        <ConnectAnalysisResult
+          result={analysisResult}
+          onPromote={generateSnapshotFromFollowUp}
+          onReschedule={() => setNotice('Add another follow-up transcript above, then run the analysis again.')}
+          onDelete={() => v3DeleteBusinessCaseConnect(id, { reason: 'Admin accepted AI recommendation to delete from follow-up analysis.' }).then(() => navigate(adminRoute('/business-cases')))}
+          promoteLabel="Generate Alignment Snapshot & Promote to Frame"
+        />
       </InfoCard>
     </FlowShell>
   );
@@ -1151,13 +1355,21 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const [notice, setNotice] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [draft, setDraft] = useState(null);
+  const [recipientEmail, setRecipientEmail] = useState('');
   const stage = bundle?.business_case?.stage;
+  const brand = getBrand(bundle);
   const activeSnapshot = draft || snapshot;
   const hasSnapshot = Boolean(activeSnapshot?.title || activeSnapshot?.meta || activeSnapshot?.sections?.length);
 
   useEffect(() => {
     setDraft(cloneAlignmentSnapshot(snapshot));
   }, [snapshot]);
+
+  useEffect(() => {
+    if (brand?.email && !recipientEmail) {
+      setRecipientEmail(brand.email);
+    }
+  }, [brand?.email, recipientEmail]);
 
   const persistDraft = async () => {
     if (!draft?.id) return null;
@@ -1227,7 +1439,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   const copyBrandReviewLink = () => {
-    const link = `${window.location.origin}/v3/brand/approvals`;
+    const link = `${window.location.origin}/brand/approvals`;
     if (!navigator.clipboard) {
       setNotice(`Brand review link: ${link}`);
       return;
@@ -1241,29 +1453,31 @@ export const V3BusinessCaseFrameSnapshot = () => {
     setNotice(null);
     try {
       await persistDraft();
-      await v3SendAlignmentToBrand(id);
+      await v3SendAlignmentToBrand(id, { recipient_email: recipientEmail.trim() || undefined });
       await reload();
-      setNotice('Sent to brand page and brand email. The brand can fill the Alignment Snapshot fields and send it back for admin review.');
+      setNotice('Sent to brand page and brand email with the welcome message, login details, and Google Docs-compatible Alignment Snapshot attached.');
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not send the Alignment Snapshot questions. Generate them first.');
     }
   };
 
-  const downloadPdf = () => {
+  const downloadGoogleDoc = () => {
     if (!activeSnapshot) {
       setNotice('Generate the Alignment Snapshot questions before downloading them.');
       return;
     }
-    const printWindow = window.open('', '_blank', 'width=900,height=1100');
-    if (!printWindow) {
-      setNotice('Allow pop-ups to download the snapshot as a PDF.');
-      return;
-    }
-    printWindow.document.write(snapshotPrintHtml(activeSnapshot));
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => printWindow.print(), 200);
-    setNotice('PDF export opened. Choose Save as PDF in the print dialog.');
+    const html = snapshotPrintHtml(activeSnapshot);
+    const blob = new Blob([html], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const title = (activeSnapshot.title || 'alignment-snapshot').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
+    link.href = url;
+    link.download = (title || 'alignment-snapshot') + '-google-docs.doc';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setNotice('Google Docs-compatible document downloaded. Upload or open the .doc file in Google Docs to edit it.');
   };
 
   const shareWhatsApp = () => {
@@ -1271,7 +1485,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
       setNotice('Generate the Alignment Snapshot questions before sharing them.');
       return;
     }
-    const link = `${window.location.origin}/v3/brand/approvals`;
+    const link = `${window.location.origin}/brand/approvals`;
     const text = `${activeSnapshot.title || 'Alignment Snapshot'}\n${link}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
@@ -1339,10 +1553,21 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
         {hasSnapshot && (
           <div data-testid="alignment-share-options" className="mt-4 rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-3">
+            <label className="mb-3 block max-w-xl">
+              <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Brand email / test email</span>
+              <input
+                type="email"
+                value={recipientEmail}
+                onChange={(event) => setRecipientEmail(event.target.value)}
+                placeholder={brand?.email || 'name@brand.com'}
+                className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#1F4A3A]"
+                data-testid="alignment-recipient-email"
+              />
+            </label>
             <div className="flex flex-wrap gap-2">
               <button data-testid="alignment-email-brand-btn" onClick={sendEmailToBrand} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Send questions to brand</button>
               <button data-testid="alignment-copy-link-btn" onClick={copyBrandReviewLink} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
-              <button data-testid="alignment-download-pdf-btn" onClick={downloadPdf} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download PDF</button>
+              <button data-testid="alignment-download-google-docs-btn" onClick={downloadGoogleDoc} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download Google Docs</button>
               <button data-testid="alignment-whatsapp-share-btn" onClick={shareWhatsApp} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
             </div>
             <p className="mt-2 text-[12px] text-[#6E6657]">Save edits first if you changed the questions, then choose how the brand should receive the form.</p>
@@ -1515,21 +1740,14 @@ export const V3BusinessCaseFrameApproved = () => {
 export const V1BusinessCaseFrameTranscripts = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
+  const bc = getCase(bundle);
+  const brand = getBrand(bundle);
   const [transcripts, setTranscripts] = useState([]);
   const [notice, setNotice] = useState('');
   const [generating, setGenerating] = useState(false);
 
-  // Load existing transcripts from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem(`transcripts_${id}`);
-    if (saved) {
-      setTranscripts(JSON.parse(saved));
-    }
-  }, [id]);
-
   const saveTranscripts = (newTranscripts) => {
     setTranscripts(newTranscripts);
-    localStorage.setItem(`transcripts_${id}`, JSON.stringify(newTranscripts));
   };
 
   const addTranscript = () => {
@@ -1552,14 +1770,36 @@ export const V1BusinessCaseFrameTranscripts = () => {
     ));
   };
 
+  const uploadTranscriptFile = async (transcriptId, file) => {
+    if (!file) return;
+    try {
+      const content = await file.text();
+      updateTranscript(transcriptId, 'content', content);
+      setNotice(`${file.name} loaded into this transcript session.`);
+    } catch (error) {
+      setNotice(error?.message || 'Could not read the uploaded transcript file.');
+    }
+  };
+
   const generateAlignmentSnapshot = async () => {
     setGenerating(true);
     setNotice('Generating alignment snapshot from transcripts...');
     try {
-      await v3GenerateAlignmentFromTranscripts(id, transcripts);
+      const brandId = bc.brand_id || brand.id;
+      const cleanTranscripts = transcripts.filter((item) => item.content && item.content.trim());
+      if (!brandId) {
+        setNotice('Brand id is missing on this Business Case.');
+        return;
+      }
+      if (!cleanTranscripts.length) {
+        setNotice('Upload or paste at least one transcript before generating the Alignment Snapshot.');
+        return;
+      }
+      const result = await v3GenerateAlignmentFromTranscripts(brandId, cleanTranscripts);
+
       await reload();
-      setNotice('Alignment snapshot generated successfully!');
-      navigate(adminRoute(`/business-cases/${id}/frame/snapshot`));
+      setNotice('Alignment snapshot generated from all transcript sessions.');
+      navigate(adminRoute(`/business-cases/${result.business_case_id || id}/frame/snapshot`));
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Failed to generate alignment snapshot.');
     } finally {
@@ -1569,8 +1809,8 @@ export const V1BusinessCaseFrameTranscripts = () => {
 
   return (
     <FlowShell 
-      title="Upload Transcripts" 
-      subtitle="Upload transcripts from your calls, then generate the alignment snapshot."
+      title="Upload Call Transcripts"
+      subtitle="Add each call as its own dated session. TASCK scans all transcripts together before creating the Alignment Snapshot questions."
     >
       {notice && (
         <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-4 text-[12px] text-[#7A5A1E]">
@@ -1622,7 +1862,13 @@ export const V1BusinessCaseFrameTranscripts = () => {
                   </button>
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">Transcript Content</label>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Transcript Content</label>
+                    <label className="v3-btn-secondary cursor-pointer text-[11px]">
+                      <Upload className="w-3.5 h-3.5" /> Upload file
+                      <input type="file" accept=".txt,.md,.doc,.docx,text/plain" className="hidden" onChange={(event) => uploadTranscriptFile(transcript.id, event.target.files?.[0])} />
+                    </label>
+                  </div>
                   <textarea
                     value={transcript.content}
                     onChange={(e) => updateTranscript(transcript.id, 'content', e.target.value)}

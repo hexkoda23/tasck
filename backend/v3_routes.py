@@ -19,6 +19,7 @@ from io import BytesIO
 from pathlib import Path
 from dotenv import load_dotenv
 import asyncio
+import html
 import json
 import logging
 import os
@@ -860,7 +861,7 @@ def make_v3_router(db):
         if existing:
             return {
                 "username": existing.get("username"),
-                "temporary_password": existing.get("temporary_password"),
+                "temporary_password": existing.get("temporary_password") or existing.get("password"),
                 "must_change_password": existing.get("must_change_password", False),
             }
 
@@ -2117,8 +2118,56 @@ def make_v3_router(db):
         )
         return await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
 
+    class SendAlignmentPayload(BaseModel):
+        recipient_email: Optional[str] = None
+
+    def alignment_snapshot_doc_html(case: Dict[str, Any], brand: Dict[str, Any], snap: Dict[str, Any]) -> str:
+        sections: List[str] = []
+        for section in snap.get("sections", []) or []:
+            heading = html.escape(str(section.get("heading") or "Alignment section"))
+            content = html.escape(str(section.get("content") or "")).replace("\n", "<br />")
+            sections.append(f"<h2>{heading}</h2>")
+            if content:
+                sections.append(f"<p>{content}</p>")
+            if section.get("type") == "questions":
+                sections.append("<table><thead><tr><th>Question</th><th>Brand answer / comment</th></tr></thead><tbody>")
+                for row in section.get("rows", []) or []:
+                    if isinstance(row, list):
+                        question = row[0] if row else ""
+                        answer = row[1] if len(row) > 1 else ""
+                    else:
+                        question = row.get("Question") or row.get("question") or ""
+                        answer = row.get("Brand answer") or row.get("answer") or ""
+                    sections.append(
+                        "<tr>"
+                        f"<td>{html.escape(str(question))}</td>"
+                        f"<td>{html.escape(str(answer))}</td>"
+                        "</tr>"
+                    )
+                sections.append("</tbody></table>")
+            elif section.get("items"):
+                sections.append("<ul>")
+                for item in section.get("items", []) or []:
+                    sections.append(f"<li>{html.escape(str(item))}</li>")
+                sections.append("</ul>")
+        return (
+            '<!doctype html><html><head><meta charset="utf-8" />'
+            "<style>"
+            "body{font-family:Arial,sans-serif;color:#1A1A1A;line-height:1.5;margin:32px;}"
+            "h1{color:#1F4A3A;font-size:24px;}h2{font-size:16px;margin-top:24px;color:#4F3E2F;}"
+            "p{font-size:12px;}table{border-collapse:collapse;width:100%;margin-top:10px;}"
+            "th,td{border:1px solid #D7CBB8;padding:10px;vertical-align:top;font-size:12px;}"
+            "th{background:#F4F2EC;text-align:left;color:#1F4A3A;}"
+            "</style></head><body>"
+            f"<h1>{html.escape(str(snap.get('title') or 'Alignment Snapshot Questions'))}</h1>"
+            f"<p><strong>Brand:</strong> {html.escape(str(brand.get('company') or brand.get('name') or 'Brand'))}</p>"
+            f"<p><strong>Business Case:</strong> {html.escape(str(case.get('title') or 'Business Case'))}</p>"
+            f"<p>{html.escape(str(snap.get('meta') or 'Please complete the questions below and return them to TASCK.'))}</p>"
+            f"{''.join(sections)}</body></html>"
+        )
+
     @router.post("/business-cases/{bc_id}/ai/alignment/send")
-    async def send_alignment_to_brand(bc_id: str):
+    async def send_alignment_to_brand(bc_id: str, payload: Optional[SendAlignmentPayload] = Body(None)):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
@@ -2126,6 +2175,13 @@ def make_v3_router(db):
         if not snap:
             raise HTTPException(404, "No Alignment Snapshot to send.")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        account = await ensure_brand_account(brand)
+        recipient = (payload.recipient_email if payload and payload.recipient_email else "") or brand.get("email") or account.get("username") or ""
+        if not recipient:
+            raise HTTPException(400, "Brand email is required before sending the Alignment Snapshot.")
+        review_link = "/brand/approvals"
         sent_at = _now_iso()
         await db.v3_alignment_snapshots.update_one(
             {"id": snap["id"]},
@@ -2154,32 +2210,53 @@ def make_v3_router(db):
                     question = row.get("Question") or row.get("question")
                     if question:
                         completion_questions.append(str(question))
+        password = account.get("temporary_password") or "Use your current TASCK password"
         if completion_questions:
             question_text = "\n".join(f"- {question}" for question in completion_questions)
             subject = f"Alignment Snapshot questions to complete - {case['title']}"
             body = (
-                f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
-                f"The Alignment Snapshot questions for {case['title']} are ready in your TASCK brand portal. "
-                "Please answer or correct each field and send it back to TASCK. Admin will review and approve the completed Alignment Snapshot before Plan begins.\n\n"
-                f"Questions to answer:\n{question_text}"
+                f"Hello {brand.get('primary_contact', 'there')},\n\n"
+                "Welcome to TASCK OS. Your Alignment Snapshot questionnaire is ready for your review.\n\n"
+                f"Business Case: {case['title']}\n"
+                f"Brand portal: {review_link}\n"
+                f"Username: {account.get('username', '')}\n"
+                f"Temporary password: {password}\n\n"
+                "Please log in, answer or correct each field, add comments where needed, and approve the Alignment Snapshot when it is accurate. "
+                "TASCK will review the completed response before moving into Brainstorming.\n\n"
+                f"Questions to answer:\n{question_text}\n\n"
+                "A Google Docs-compatible copy of the questionnaire is attached for editing if you prefer to work in Docs."
             )
         else:
             subject = f"Alignment Snapshot ready for approval - {case['title']}"
             body = (
-                f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
-                f"The Alignment Snapshot for {case['title']} is ready in your TASCK brand portal. "
-                "You can approve it or add line-level comments for the admin team."
+                f"Hello {brand.get('primary_contact', 'there')},\n\n"
+                "Welcome to TASCK OS. Your Alignment Snapshot is ready in your TASCK brand portal.\n\n"
+                f"Business Case: {case['title']}\n"
+                f"Brand portal: {review_link}\n"
+                f"Username: {account.get('username', '')}\n"
+                f"Temporary password: {password}\n\n"
+                "You can approve it or add line-level comments for the admin team. A Google Docs-compatible copy is attached."
             )
+        document_html = alignment_snapshot_doc_html(case, brand, snap)
         email = await queue_email(
-            to=(brand or {}).get("email", ""),
+            to=recipient,
             subject=subject,
             body=body,
             kind="alignment_snapshot_review",
             brand_id=case["brand_id"],
             business_case_id=bc_id,
-            attachments=[{"type": "alignment_snapshot", "id": snap["id"], "title": snap.get("title")}],
+            attachments=[{
+                "type": "google_docs_compatible_alignment_snapshot",
+                "id": snap["id"],
+                "title": snap.get("title"),
+                "filename": f"{snap['id']}-alignment-snapshot.doc",
+                "mime_type": "application/msword",
+                "content": document_html,
+                "review_link": review_link,
+            }],
         )
         return {"ok": True, "sent_at": sent_at, "email": email}
+
     class AlignmentCommentPayload(BaseModel):
         section_index: int
         line_index: Optional[int] = None
@@ -6696,6 +6773,201 @@ Produce the opportunity card JSON.
         transcript: str
         actor: str = "admin"
         source: str = "v1_simplified_admin"
+
+    class BrandCallTranscriptItem(BaseModel):
+        transcript: str
+        call_date: Optional[str] = None
+        session_label: Optional[str] = None
+        notes: Optional[str] = None
+
+    class BrandFrameTranscriptsPayload(BaseModel):
+        transcripts: List[BrandCallTranscriptItem]
+        actor: str = "admin"
+        source: str = "v1_admin_multi_transcript_frame"
+
+    def format_transcript_session(index: int, item: BrandCallTranscriptItem) -> str:
+        label = (item.session_label or f"Session {index + 1}").strip()
+        date = (item.call_date or "Date not captured").strip()
+        notes = (item.notes or "").strip()
+        transcript = item.transcript.strip()
+        note_line = f"\nNotes: {notes}" if notes else ""
+        return f"--- {label} | {date} ---{note_line}\n{transcript}"
+
+    @router.post("/brands/{brand_id}/frame-transcripts")
+    async def process_brand_frame_transcripts(brand_id: str, payload: BrandFrameTranscriptsPayload):
+        clean_items = [item for item in payload.transcripts if item.transcript and item.transcript.strip()]
+        if not clean_items:
+            raise HTTPException(400, "At least one transcript is required")
+
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+
+        existing_cases = await db.v3_business_cases.find(
+            {"brand_id": brand_id, "stage": {"$in": ["connect", "frame"]}, "status": {"$ne": "deleted"}},
+            {"_id": 0},
+        ).sort("updated_at", -1).to_list(1)
+        case = existing_cases[0] if existing_cases else None
+        if not case:
+            created = await move_brand_to_business_call(brand_id)
+            case = created["business_case"]
+
+        bc_id = case["id"]
+        brand_name = brand.get("company") or brand.get("name") or "Brand"
+        now = _now_iso()
+        meeting_ids: List[str] = []
+        transcript_records: List[Dict[str, Any]] = []
+        for index, item in enumerate(clean_items):
+            session_label = (item.session_label or f"Session {index + 1}").strip()
+            call_date = (item.call_date or "").strip()
+            meeting = await create_meeting(MeetingCreate(
+                title=f"Business Call Transcript - {brand_name} - {session_label}",
+                meeting_type="business_call",
+                stage="connect",
+                entity_type="brand",
+                source=payload.source,
+                business_case_id=bc_id,
+                brand_id=brand_id,
+                rm_id=case.get("rm_id") or brand.get("rm_id") or payload.actor,
+                entity_name=brand_name,
+                business_case_title=case.get("title") or f"{brand_name} business case",
+                contact_name=brand.get("primary_contact") or "",
+                contact_role=brand.get("role") or "",
+                contact_email=brand.get("email") or "",
+                contact_phone=brand.get("phone") or "",
+                scheduled_for=call_date or None,
+                agenda="Multi-session transcript upload for Frame Alignment Snapshot.",
+                meeting_notes=f"Uploaded by {payload.actor} from {payload.source}. {item.notes or ''}".strip(),
+            ))
+            meeting_id = meeting["id"]
+            meeting_ids.append(meeting_id)
+            await db.v3_meetings.update_one(
+                {"id": meeting_id},
+                {"$set": {
+                    "transcript": item.transcript.strip(),
+                    "call_date": call_date,
+                    "session_label": session_label,
+                    "updated_at": now,
+                }},
+            )
+            transcript_records.append({
+                "meeting_id": meeting_id,
+                "session_label": session_label,
+                "call_date": call_date,
+                "notes": item.notes or "",
+                "transcript": item.transcript.strip(),
+            })
+
+        combined_transcript = "\n\n".join(format_transcript_session(index, item) for index, item in enumerate(clean_items))
+        aggregate_meeting = await create_meeting(MeetingCreate(
+            title=f"Combined Business Call Analysis - {brand_name}",
+            meeting_type="business_call",
+            stage="connect",
+            entity_type="brand",
+            source=f"{payload.source}_combined",
+            business_case_id=bc_id,
+            brand_id=brand_id,
+            rm_id=case.get("rm_id") or brand.get("rm_id") or payload.actor,
+            entity_name=brand_name,
+            business_case_title=case.get("title") or f"{brand_name} business case",
+            contact_name=brand.get("primary_contact") or "",
+            contact_role=brand.get("role") or "",
+            contact_email=brand.get("email") or "",
+            contact_phone=brand.get("phone") or "",
+            agenda="Combined transcript analysis for Alignment Snapshot questions.",
+            meeting_notes=f"Combined analysis across {len(clean_items)} uploaded transcript(s).",
+        ))
+        aggregate_meeting_id = aggregate_meeting["id"]
+        await db.v3_meetings.update_one(
+            {"id": aggregate_meeting_id},
+            {"$set": {"transcript": combined_transcript, "updated_at": now}},
+        )
+        meeting_ids.append(aggregate_meeting_id)
+
+        analysis = await analyze_meeting_transcript(aggregate_meeting_id)
+        marketing_intelligence = (
+            analysis.get("marketing_intelligence")
+            or analysis.get("detected_fields")
+            or _extract_marketing_intelligence(combined_transcript)
+        )
+        readiness_score = int(analysis.get("readiness_score") or 0)
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {
+                    "stage": "frame",
+                    "connect.source": payload.source,
+                    "connect.connect_status": "qualified_to_frame",
+                    "connect.transcript": combined_transcript,
+                    "connect.transcripts": transcript_records,
+                    "connect.analysis": analysis,
+                    "connect.marketing_intelligence": marketing_intelligence,
+                    "connect.stated_intent": marketing_intelligence.get("key_marketing_focus") or analysis.get("summary") or "",
+                    "connect.latest_meeting_id": aggregate_meeting_id,
+                    "connect.latest_business_call_id": aggregate_meeting_id,
+                    "connect.transcript_source_count": len(clean_items),
+                    "connect.promoted_at": now,
+                    "frame.readiness_score": readiness_score,
+                    "next_action": STAGE_NEXT_ACTIONS["frame"],
+                    "updated_at": now,
+                },
+                "$addToSet": {
+                    "business_call_meeting_ids": {"$each": meeting_ids},
+                    "connect.meeting_ids": {"$each": meeting_ids},
+                },
+                "$push": {
+                    "timeline": {
+                        "at": now,
+                        "event": "v1_multi_transcripts_processed",
+                        "meeting_ids": meeting_ids,
+                        "transcript_count": len(clean_items),
+                        "actor": payload.actor,
+                    }
+                },
+            },
+        )
+        await db.v3_brands.update_one(
+            {"id": brand_id},
+            {
+                "$set": {
+                    "status": "business_case_active",
+                    "qualification_status": "accepted",
+                    "crm_accepted_at": brand.get("crm_accepted_at") or now,
+                    "last_interaction": f"{len(clean_items)} transcript(s) processed",
+                    "updated_at": now,
+                },
+                "$addToSet": {
+                    "business_case_ids": bc_id,
+                    "business_call_meeting_ids": {"$each": meeting_ids},
+                },
+            },
+        )
+        await db.v3_interactions.insert_one({
+            "id": f"int-{uuid.uuid4().hex[:8]}",
+            "brand_id": brand_id,
+            "business_case_id": bc_id,
+            "meeting_id": aggregate_meeting_id,
+            "type": "business_call",
+            "title": "Multiple brand call transcripts analyzed",
+            "author": payload.actor,
+            "date_iso": now,
+            "content": f"{analysis.get('summary', 'Business call transcripts analyzed.')}\n\nTranscript sessions: {len(clean_items)}",
+            "next_action": "Review Alignment Snapshot questions",
+        })
+
+        alignment_snapshot = await generate_alignment_questions_for_v1(bc_id)
+        business_case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        return {
+            "ok": True,
+            "brand_id": brand_id,
+            "meeting_ids": meeting_ids,
+            "aggregate_meeting_id": aggregate_meeting_id,
+            "business_case_id": bc_id,
+            "alignment_snapshot_id": alignment_snapshot["id"],
+            "business_case": business_case,
+            "alignment_snapshot": alignment_snapshot,
+            "transcript_analysis": analysis,
+        }
 
     @router.post("/brands/{brand_id}/call-transcript")
     async def process_brand_call_transcript(brand_id: str, payload: BrandCallTranscriptPayload):

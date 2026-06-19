@@ -134,6 +134,7 @@ import V3CreatorSettings from './pages/v3/creator/V3CreatorSettings';
 import V1RoleSelector from './pages/v1/V1RoleSelector';
 import V1AdminCRM from './pages/admin/V1AdminCRM';
 import V1AdminCRMBrandDetail from './pages/admin/V1AdminCRMBrandDetail';
+import V1AdminBrandCallRedirect from './pages/admin/V1AdminBrandCallRedirect';
 import FeedbackAdmin from './pages/FeedbackAdmin';
 
 // Pages
@@ -354,7 +355,7 @@ function AppRoutes() {
       >
         <Route index element={<V3AdminOverview />} />
         <Route path="crm-brands" element={<V1AdminCRM />} />
-        <Route path="crm-brands/:brandId/call" element={<Navigate to="/admin/crm-brands" replace />} />
+        <Route path="crm-brands/:brandId/call" element={<V1AdminBrandCallRedirect />} />
         <Route path="pipeline" element={<V3AdminPipeline />} />
         <Route path="projects" element={<V3AdminProjects />} />
         <Route path="projects/:id" element={<V3AdminProjectDetail />} />

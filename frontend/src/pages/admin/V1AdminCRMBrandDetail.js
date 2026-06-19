@@ -16,7 +16,6 @@ import {
 import {
   v3GetBrand,
   v3MoveBrandToBusinessCall,
-  v3MoveBrandToFrame,
   v3DeleteBrand,
   v3UpdateBrandDetails,
   v3ScrapeBrandDetails,
@@ -271,12 +270,15 @@ const V1AdminCRMBrandDetail = () => {
     setMoving(true);
     setNotice('');
     try {
-      const result = await v3MoveBrandToFrame(brand.id);
+      const result = await v3MoveBrandToBusinessCall(brand.id);
       const businessCaseId = result.business_case_id || result.business_case?.id;
-      if (!businessCaseId) throw new Error('Business Case was not returned by the V3 workflow.');
+      if (!businessCaseId) {
+        setNotice('Business Case was not returned by the V3 workflow.');
+        return;
+      }
       navigate(adminRoute(`/business-cases/${businessCaseId}/frame/transcripts`));
     } catch (error) {
-      setNotice(error?.response?.data?.detail || error?.message || 'Could not move this brand to the frame page.');
+      setNotice(error?.response?.data?.detail || error?.message || 'Could not open the transcript workspace.');
     } finally {
       setMoving(false);
     }
@@ -339,7 +341,7 @@ const V1AdminCRMBrandDetail = () => {
               <Send className="h-3.5 w-3.5" /> {moving ? 'Opening call page...' : 'Move to call page'}
             </button>
             <button type="button" onClick={moveToFramePage} disabled={moving} className="v3-btn-secondary w-full flex items-center justify-center gap-1.5" style={{ borderColor: '#C49B5F', color: '#C49B5F' }} data-testid="v1-move-to-frame">
-              <BriefcaseBusiness className="h-3.5 w-3.5" /> {moving ? 'Moving to frame...' : 'Move to frame'}
+              <BriefcaseBusiness className="h-3.5 w-3.5" /> {moving ? 'Opening transcripts...' : 'Move to frame'}
             </button>
           </div>
         </div>
