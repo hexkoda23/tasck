@@ -649,16 +649,17 @@ const alignmentQuestionsFromSection = (section) => {
     return alignmentQuestionDefaults.map((question) => ({ question, answer: '' }));
   }
   return rows.map((row) => ({
-    question: questionValueFromRow(row, columns, 'Question', 0) || 'Question',
-    answer: questionValueFromRow(row, columns, 'Brand answer / correction', 2)
+    question: questionValueFromRow(row, columns, 'Alignment field', 0) || questionValueFromRow(row, columns, 'Question', 0) || 'Alignment field',
+    answer: questionValueFromRow(row, columns, 'Brand response / comment', 1)
+      || questionValueFromRow(row, columns, 'Brand answer / correction', 2)
       || questionValueFromRow(row, columns, 'Brand answer', 1)
       || '',
   }));
 };
 
 const alignmentRowsFromQuestions = (questions) => questions.map((item) => ({
-  Question: item.question,
-  'Brand answer': item.answer,
+  'Alignment field': item.question,
+  'Brand response / comment': item.answer,
 }));
 
 const isAlignmentQuestionSection = (section) => (
@@ -1301,7 +1302,7 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
   const updateQuestions = (nextQuestions) => onChange({
     ...section,
     type: 'questions',
-    columns: ['Question', 'Brand answer'],
+    columns: ['Alignment field', 'Brand response / comment'],
     rows: alignmentRowsFromQuestions(nextQuestions),
   });
   const updateQuestion = (questionIndex, patch) => updateQuestions(questions.map((item, idx) => (
@@ -1320,7 +1321,7 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
           <div className="grid gap-3 md:grid-cols-[1fr_180px] md:items-end">
             <TextInput label="Form heading" value={section.heading || ''} onChange={(value) => onChange({ ...section, heading: value })} />
             <button type="button" onClick={addQuestion} className="v3-btn-secondary text-[11px]">
-              <Plus className="w-3.5 h-3.5" /> Add question
+              <Plus className="w-3.5 h-3.5" /> Add field
             </button>
           </div>
 
@@ -1331,13 +1332,13 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
                   <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F4F2EC] text-[11px] font-semibold text-[#4F3E2F]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     {questionIndex + 1}
                   </span>
-                  <button type="button" onClick={() => removeQuestion(questionIndex)} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove Alignment Snapshot question ${questionIndex + 1}`}>
+                  <button type="button" onClick={() => removeQuestion(questionIndex)} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove Alignment Snapshot field ${questionIndex + 1}`}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
                 <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(220px,0.9fr)_minmax(280px,1.1fr)]">
-                  <TextInput label="Question for brand" value={item.question} onChange={(value) => updateQuestion(questionIndex, { question: value })} />
-                  <TextInput label="Brand answer" rows={4} value={item.answer} onChange={(value) => updateQuestion(questionIndex, { answer: value })} />
+                  <TextInput label="Alignment field" value={item.question} onChange={(value) => updateQuestion(questionIndex, { question: value })} />
+                  <TextInput label="Brand response / comment" rows={4} value={item.answer} onChange={(value) => updateQuestion(questionIndex, { answer: value })} />
                 </div>
               </div>
             ))}
@@ -1356,6 +1357,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [draft, setDraft] = useState(null);
   const [recipientEmail, setRecipientEmail] = useState('');
+  const [sendPopup, setSendPopup] = useState(null);
   const [frameRefreshCount, setFrameRefreshCount] = useState(0);
   const stage = bundle?.business_case?.stage;
   const brand = getBrand(bundle);
@@ -1401,7 +1403,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
       const generated = await v3GenerateAlignmentQuestions(id);
       setDraft(cloneAlignmentSnapshot(generated));
       await reload();
-      setNotice('Alignment Snapshot questions generated. Send them to the brand to answer, then review the returned response before admin approval.');
+      setNotice('Alignment Snapshot generated. Send it to the brand for review, comments, or approval before admin approval.');
     } catch (e) {
       const detail = e?.response?.data?.detail;
       if (e?.response?.status === 400 && String(detail || '').includes('Frame stage')) {
@@ -1443,7 +1445,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
   const openPreview = () => {
     if (!hasSnapshot) {
-      setNotice('Generate the Alignment Snapshot questions before previewing them.');
+      setNotice('Generate the Alignment Snapshot before previewing it.');
       return;
     }
     setPreviewOpen(true);
@@ -1461,20 +1463,38 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   const sendEmailToBrand = async () => {
-    setNotice(null);
     try {
       await persistDraft();
-      await v3SendAlignmentToBrand(id, { recipient_email: recipientEmail.trim() || undefined });
+      const result = await v3SendAlignmentToBrand(id, { recipient_email: recipientEmail.trim() || undefined });
       await reload();
-      setNotice('Sent to brand page and brand email with the welcome message, login details, and Google Docs-compatible Alignment Snapshot attached.');
+      const status = result?.email?.status || 'queued';
+      const deliveryError = result?.email?.delivery_error || '';
+      const recipient = result?.email?.to || recipientEmail.trim() || brandEmail;
+      if (status === 'sent') {
+        setSendPopup({
+          title: 'Sent',
+          message: `Alignment Snapshot sent to ${recipient}. Check the inbox and spam folder in Gmail.`,
+          tone: 'success',
+        });
+      } else {
+        setSendPopup({
+          title: status === 'delivery_failed' ? 'Email not delivered' : 'Email queued',
+          message: deliveryError || `Alignment Snapshot queued for ${recipient}. SMTP delivery is not configured yet.`,
+          tone: 'warning',
+        });
+      }
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not send the Alignment Snapshot questions. Generate them first.');
+      setSendPopup({
+        title: 'Email not sent',
+        message: e?.response?.data?.detail || e?.message || 'Could not send the Alignment Snapshot. Generate it first.',
+        tone: 'warning',
+      });
     }
   };
 
   const downloadGoogleDoc = () => {
     if (!activeSnapshot) {
-      setNotice('Generate the Alignment Snapshot questions before downloading them.');
+      setNotice('Generate the Alignment Snapshot before downloading it.');
       return;
     }
     const html = snapshotPrintHtml(activeSnapshot);
@@ -1493,7 +1513,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
   const shareWhatsApp = () => {
     if (!activeSnapshot) {
-      setNotice('Generate the Alignment Snapshot questions before sharing them.');
+      setNotice('Generate the Alignment Snapshot before sharing it.');
       return;
     }
     const link = `${window.location.origin}/brand/approvals`;
@@ -1509,12 +1529,12 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   return (
-    <FlowShell title="Alignment Snapshot Questions" subtitle="Generate, edit, save, and send the brand questionnaire to the Brand Portal and email." nextAction="Generate the questions from the approved business call, then send them to the brand for answers.">
+    <FlowShell title="Alignment Snapshot" subtitle="Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand, review comments or approval, then move to Plan.">
       <InfoCard
-        title="Brand response form"
+        title="Alignment Snapshot"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
-            <button data-testid="alignment-generate-btn" onClick={generateSnapshot} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate Questions</button>
+            <button data-testid="alignment-generate-btn" onClick={generateSnapshot} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate Snapshot</button>
             <button data-testid="alignment-preview-btn" onClick={openPreview} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Preview</button>
             <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
           </div>
@@ -1528,7 +1548,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
         {!hasSnapshot ? (
           <div className="rounded-[8px] border border-dashed border-[#D7CBB8] bg-[#FBFAF7] p-5 text-[13px] text-[#6E6657]">
-            {preparingFrame ? 'Preparing the Frame phase and Alignment Snapshot from the Connect transcripts. This will appear here shortly.' : 'Generate the Alignment Snapshot questions so the brand can answer the required Frame fields before admin approval.'}
+            {preparingFrame ? 'Preparing the Frame phase and Alignment Snapshot from the Connect transcripts. This will appear here shortly.' : 'Generate the Alignment Snapshot so the brand can review it against the Connect call before admin approval.'}
           </div>
         ) : (
           <div className="space-y-4" data-testid="alignment-snapshot-editor">
@@ -1572,19 +1592,35 @@ export const V3BusinessCaseFrameSnapshot = () => {
               />
             </label>
             <div className="flex flex-wrap gap-2">
-              <button data-testid="alignment-email-brand-btn" onClick={sendEmailToBrand} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Send questions to brand</button>
+              <button data-testid="alignment-email-brand-btn" onClick={sendEmailToBrand} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Send Alignment Snapshot to brand</button>
               <button data-testid="alignment-copy-link-btn" onClick={copyBrandReviewLink} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
               <button data-testid="alignment-download-google-docs-btn" onClick={downloadGoogleDoc} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download Google Docs</button>
               <button data-testid="alignment-whatsapp-share-btn" onClick={shareWhatsApp} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
             </div>
-            <p className="mt-2 text-[12px] text-[#6E6657]">Save edits first if you changed the questions, then choose how the brand should receive the form.</p>
+            <p className="mt-2 text-[12px] text-[#6E6657]">Save edits first if you changed the snapshot, then send it to the brand for review, comments, or approval.</p>
           </div>
+        {sendPopup && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4" data-testid="alignment-sent-popup">
+            <div className="w-full max-w-sm rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
+              <div className="mb-3 flex items-center gap-2">
+                <span className={`flex h-8 w-8 items-center justify-center rounded-full ${sendPopup.tone === 'success' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : 'bg-[#FBF4E4] text-[#7A5A1E]'}`}>
+                  {sendPopup.tone === 'success' ? <CheckCircle2 className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
+                </span>
+                <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{sendPopup.title}</h3>
+              </div>
+              <p className="text-[13px] leading-6 text-[#4F3E2F]">{sendPopup.message}</p>
+              <div className="mt-4 flex justify-end">
+                <button type="button" onClick={() => setSendPopup(null)} className="v3-btn-primary" data-testid="alignment-sent-popup-close">OK</button>
+              </div>
+            </div>
+          </div>
+        )}
         {previewOpen && hasSnapshot && (
           <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 px-4 py-6" data-testid="alignment-preview-modal">
             <div className="w-full max-w-4xl rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Alignment Snapshot Questions Preview</p>
+                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Alignment Snapshot Preview</p>
                   <h3 className="text-lg font-semibold text-[#1A1A1A]">{activeSnapshot?.title || 'Alignment Snapshot'}</h3>
                 </div>
                 <button type="button" onClick={() => setPreviewOpen(false)} className="v3-btn-secondary text-[11px]" data-testid="alignment-preview-close-btn">
@@ -1641,7 +1677,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
 export const V3BusinessCaseFrameWaitingBrand = () => {
   const { bundle } = useBusinessCaseBundle();
   const snap = bundle?.alignment_snapshot || {};
-  return <FlowShell title="Waiting for Brand Response" subtitle="Track questionnaire status, sent date, brand email, reminders, and returned answers."><InfoCard title="Brand response status"><p className="text-[13px]">Status: {snap.status || 'not sent'}</p><p className="text-[13px]">Sent: {snap.sent_to_brand_at || snap.shared_at || 'Pending'}</p><p className="text-[13px] mt-2">Comments: {(snap.brand_comments || []).length}</p></InfoCard></FlowShell>;
+  return <FlowShell title="Waiting for Brand Response" subtitle="Track snapshot status, sent date, brand email, reminders, comments, and approval."><InfoCard title="Brand response status"><p className="text-[13px]">Status: {snap.status || 'not sent'}</p><p className="text-[13px]">Sent: {snap.sent_to_brand_at || snap.shared_at || 'Pending'}</p><p className="text-[13px] mt-2">Comments: {(snap.brand_comments || []).length}</p></InfoCard></FlowShell>;
 };
 
 export const V3BusinessCaseFrameAdminReview = () => {
@@ -2913,7 +2949,7 @@ const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
 };
 
 const SHARE_OPTIONS = (label, brandEmail, creatorEmail, includeCreator = false) => [
-  { key: 'email_brand', icon: Mail, label: brandEmail ? `Send questions to brand (${brandEmail})` : 'Send questions to brand' },
+  { key: 'email_brand', icon: Mail, label: brandEmail ? `Send Alignment Snapshot to brand (${brandEmail})` : 'Send Alignment Snapshot to brand' },
   ...(includeCreator ? [{ key: 'email_creator', icon: Mail, label: creatorEmail ? `Email to creator (${creatorEmail})` : 'Email to creator' }] : []),
   { key: 'copy_link', icon: FileText, label: `Copy ${label} link` },
   { key: 'download_pdf', icon: Download, label: `Download ${label} as PDF` },
