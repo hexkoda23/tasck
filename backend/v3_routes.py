@@ -1411,6 +1411,87 @@ def make_v3_router(db):
         )
         return {"ok": True, "business_case": doc, "business_case_id": bc_id, "created": True}
 
+    @router.post("/brands/{brand_id}/move-to-frame")
+    async def move_brand_to_frame(brand_id: str):
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        existing_cases = await db.v3_business_cases.find(
+            {
+                "brand_id": brand_id,
+                "status": {"$ne": "deleted"},
+                "stage": {"$nin": ["closed", "archived"]},
+            },
+            {"_id": 0},
+        ).sort([("updated_at", -1), ("created_at", -1)]).to_list(1)
+        
+        now = _now_iso()
+        if existing_cases:
+            existing = existing_cases[0]
+            bc_id = existing["id"]
+            updates = {
+                "stage": "frame",
+                "connect.connect_status": "qualified_to_frame",
+                "connect.promoted_at": now,
+                "connect.promote_reason": "Directly moved to Frame from CRM Brand Detail.",
+                "next_action": STAGE_NEXT_ACTIONS["frame"],
+                "updated_at": now,
+            }
+            await db.v3_business_cases.update_one(
+                {"id": bc_id},
+                {"$set": updates, "$push": {"timeline": {"at": now, "event": "connect_promoted_to_frame"}}},
+            )
+            await db.v3_brands.update_one(
+                {"id": brand_id},
+                {"$set": {"status": "qualified_to_frame", "updated_at": now}},
+            )
+            updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+            return {"ok": True, "business_case": updated, "business_case_id": bc_id, "created": False}
+            
+        bc_id = f"bc-{uuid.uuid4().hex[:8]}"
+        doc = {
+            "id": bc_id,
+            "brand_id": brand_id,
+            "creator_id": None,
+            "title": f"{brand.get('company') or brand.get('name') or 'Brand'} — Business Case Frame",
+            "stage": "frame",
+            "engagement_track": brand.get("engagement_track_default") or "paid",
+            "estimated_value": 0,
+            "rm_id": brand.get("rm_id") or "admin",
+            "created_at": now,
+            "days_in_stage": 0,
+            "next_action": STAGE_NEXT_ACTIONS["frame"],
+            "health": "new",
+            "scope_creep_locked": False,
+            "brand_contact_snapshot": {
+                "primary_contact": brand.get("primary_contact") or brand.get("primaryContact") or "",
+                "role": brand.get("role") or "",
+                "email": brand.get("email") or "",
+                "phone": brand.get("phone") or "",
+                "website": brand.get("website") or "",
+            },
+            "connect": {
+                "source": "crm_brand",
+                "connect_status": "qualified_to_frame",
+                "stated_intent": brand.get("notes") or brand.get("key_marketing_focus") or "",
+                "brand_snapshot": brand,
+                "meeting_ids": [],
+                "marketing_intelligence": {},
+            },
+            "frame": {},
+            "plan": {},
+            "deliver": {},
+            "closure": {"final_report_checklist": DEFAULT_FINAL_REPORT_CHECKLIST},
+            "timeline": [{"at": now, "event": "brand_moved_to_frame", "brand_id": brand_id}],
+            "updated_at": now,
+        }
+        await db.v3_business_cases.insert_one({**doc})
+        await db.v3_brands.update_one(
+            {"id": brand_id},
+            {"$set": {"status": "qualified_to_frame", "updated_at": now}, "$addToSet": {"business_case_ids": bc_id}},
+        )
+        return {"ok": True, "business_case": doc, "business_case_id": bc_id, "created": True}
+
     # ------------------------------------------------------------------------
     # STAGE ADVANCEMENT
     # ------------------------------------------------------------------------

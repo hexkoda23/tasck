@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
-import { v3GetBrand, v3CreateInteraction, v3MoveBrandToBusinessCall, v3ListRelationshipManagers, v3DeleteBrand } from '../../../lib/v3api';
+import { v3GetBrand, v3CreateInteraction, v3MoveBrandToBusinessCall, v3MoveBrandToFrame, v3ListRelationshipManagers, v3DeleteBrand } from '../../../lib/v3api';
 import {
   ChevronLeft,
   Mail,
@@ -14,6 +14,7 @@ import {
   X,
   MessageSquare,
   Trash2,
+  BriefcaseBusiness,
 } from 'lucide-react';
 import V3Modal from '../../../components/v3/V3Modal';
 
@@ -143,6 +144,17 @@ const V3AdminBrandDetail = () => {
       navigate(`/v3/admin/business-cases/${result.business_case_id}/connect`);
     } catch (e) {
       alert(e.response?.data?.detail || e.message || 'Failed to create Business Call — Connect.');
+    }
+  };
+
+  const moveToFrame = async () => {
+    const brand = bundle?.brand;
+    if (!brand) return;
+    try {
+      const result = await v3MoveBrandToFrame(brand.id);
+      navigate(`/v3/admin/business-cases/${result.business_case_id}/frame/snapshot`);
+    } catch (e) {
+      alert(e.response?.data?.detail || e.message || 'Failed to move brand to Frame.');
     }
   };
 
@@ -422,6 +434,14 @@ const V3AdminBrandDetail = () => {
                   onClick={moveToBusinessCall}
                 >
                   <Plus className="w-3.5 h-3.5" /> Move Brand to Business Call
+                </button>
+                <button
+                  className="v3-btn-secondary text-[11px]"
+                  style={{ borderColor: '#C49B5F', color: '#C49B5F' }}
+                  data-testid="add-interaction-btn-frame"
+                  onClick={moveToFrame}
+                >
+                  <BriefcaseBusiness className="w-3.5 h-3.5" /> Move to frame
                 </button>
               </div>
             </div>

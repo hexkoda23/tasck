@@ -22,6 +22,7 @@ export const v3GetBrand = (brandId) => v3.get(`/brands/${brandId}`).then(r => r.
 export const v3CreateBrand = (payload) => v3.post('/brands', payload).then(r => r.data);
 export const v3CreateBrandQualificationCandidate = (payload) => v3.post('/brands/qualification-candidates', payload).then(r => r.data);
 export const v3MoveBrandToBusinessCall = (brandId) => v3.post(`/brands/${brandId}/business-call`).then(r => r.data);
+export const v3MoveBrandToFrame = (brandId) => v3.post(`/brands/${brandId}/move-to-frame`).then(r => r.data);
 export const v3DeleteBrand = (brandId) => v3.delete(`/brands/${brandId}`).then(r => r.data);
 export const v3ChangeBrandPassword = (payload) => v3.post('/brand-accounts/change-password', payload).then(r => r.data);
 export const v3ListEmailOutbox = (params) => v3.get('/email-outbox', { params }).then(r => r.data);

@@ -8,7 +8,7 @@ import {
   User,
   Send,
 } from 'lucide-react';
-import { v3GetBrand, v3MoveBrandToBusinessCall } from '../../lib/v3api';
+import { v3GetBrand, v3MoveBrandToBusinessCall, v3MoveBrandToFrame } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 
 const EMPTY_VALUE = 'Not captured yet';
@@ -159,6 +159,22 @@ const V1AdminCRMBrandDetail = () => {
     }
   };
 
+  const moveToFramePage = async () => {
+    if (!brand?.id) return;
+    setMoving(true);
+    setNotice('');
+    try {
+      const result = await v3MoveBrandToFrame(brand.id);
+      const businessCaseId = result.business_case_id || result.business_case?.id;
+      if (!businessCaseId) throw new Error('Business Case was not returned by the V3 workflow.');
+      navigate(adminRoute(`/business-cases/${businessCaseId}/frame/snapshot`));
+    } catch (error) {
+      setNotice(error?.response?.data?.detail || error?.message || 'Could not move this brand to the frame page.');
+    } finally {
+      setMoving(false);
+    }
+  };
+
   if (loading) {
     return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading brand details...</div>;
   }
@@ -198,9 +214,14 @@ const V1AdminCRMBrandDetail = () => {
               </div>
             </div>
           </div>
-          <button type="button" onClick={moveToCallPage} disabled={moving} className="v3-btn-primary" data-testid="v1-move-to-call-page">
-            <Send className="h-3.5 w-3.5" /> {moving ? 'Opening call page...' : 'Move to call page'}
-          </button>
+          <div className="flex flex-col gap-2 shrink-0 min-w-[200px]">
+            <button type="button" onClick={moveToCallPage} disabled={moving} className="v3-btn-primary w-full flex items-center justify-center gap-1.5" data-testid="v1-move-to-call-page">
+              <Send className="h-3.5 w-3.5" /> {moving ? 'Opening call page...' : 'Move to call page'}
+            </button>
+            <button type="button" onClick={moveToFramePage} disabled={moving} className="v3-btn-secondary w-full flex items-center justify-center gap-1.5" style={{ borderColor: '#C49B5F', color: '#C49B5F' }} data-testid="v1-move-to-frame">
+              <BriefcaseBusiness className="h-3.5 w-3.5" /> {moving ? 'Moving to frame...' : 'Move to frame'}
+            </button>
+          </div>
         </div>
         {notice && <div className="mt-4 rounded-[8px] border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2 text-[12px] text-[#7A5A1E]">{notice}</div>}
       </div>
