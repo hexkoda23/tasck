@@ -10,6 +10,7 @@ import {
 import { formatNairaV3 } from '../../../lib/v3data';
 import V3BrandOnboarding from '../../../components/v3/V3BrandOnboarding';
 import { ArrowRight, CheckCircle, Clock, FileText, FolderOpen, Gauge, Sparkles } from 'lucide-react';
+import { brandRoute } from '../../../lib/v3AdminRouteBase';
 
 const stageLabel = {
   connect: 'Connector',
@@ -97,7 +98,7 @@ const V3BrandOverview = () => {
           <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-3">Current priority</p>
           {pendingApprovals[0] ? (
             <button
-              onClick={() => navigate('/v3/brand/approvals')}
+              onClick={() => navigate(brandRoute('/v3/brand/approvals'))}
               className="w-full text-left rounded border border-[#C49B5F] bg-[#C49B5F12] p-4 hover:bg-[#F2EAD8] transition-colors"
               data-testid="brand-overview-primary-approval"
             >
@@ -125,7 +126,7 @@ const V3BrandOverview = () => {
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-[13px] font-semibold text-[#1A1A1A] uppercase tracking-wider">Project flow</h2>
-            <button onClick={() => navigate('/v3/brand/projects')} className="text-[11px] text-[#1F4A3A] inline-flex items-center gap-1">
+            <button onClick={() => navigate(brandRoute('/v3/brand/projects'))} className="text-[11px] text-[#1F4A3A] inline-flex items-center gap-1">
               All projects <ArrowRight className="w-3 h-3" />
             </button>
           </div>
@@ -136,7 +137,7 @@ const V3BrandOverview = () => {
               return (
                 <button
                   key={bc.id}
-                  onClick={() => navigate(`/v3/brand/projects/${bc.id}`)}
+                  onClick={() => navigate(brandRoute(`/v3/brand/projects/${bc.id}`))}
                   className="w-full v3-card p-4 text-left hover:border-[#D4CDBF] transition-colors group"
                   data-testid={`brand-overview-project-${bc.id}`}
                 >

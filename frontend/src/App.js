@@ -288,25 +288,19 @@ function AppRoutes() {
         <Route path="settings" element={<SettingsPage />} />
       </Route>
 
+      <Route path="/brand/login" element={<V3BrandLogin />} />
+
       {/* Brand Portal */}
-      <Route 
-        path="/brand" 
-        element={
-          <ProtectedRoute allowedRoles={['brand']}>
-            <DashboardLayout role="brand" />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<BrandOverview />} />
-        <Route path="discover" element={<BrandDiscover />} />
-        <Route path="campaigns" element={<BrandCampaigns />} />
-        <Route path="approvals" element={<BrandApprovals />} />
-        <Route path="analytics" element={<BrandAnalytics />} />
-        <Route path="spend" element={<BrandSpend />} />
-        <Route path="wallet" element={<WalletPage />} />
-        <Route path="messages" element={<MessagesPage />} />
-        <Route path="reports" element={<ReportsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
+      <Route path="/brand" element={<V3Layout portal="brand" />}>
+        <Route index element={<V3BrandOverview />} />
+        <Route path="projects" element={<V3BrandProjects />} />
+        <Route path="projects/:id" element={<V3BrandProjectDetail />} />
+        <Route path="approvals" element={<V3BrandApprovals />} />
+        <Route path="documents" element={<V3BrandDocuments />} />
+        <Route path="invoices" element={<V3BrandInvoices />} />
+        <Route path="messages" element={<V3BrandMessages />} />
+        <Route path="settings" element={<V3BrandSettings />} />
+        <Route path="change-password" element={<V3BrandChangePassword />} />
       </Route>
 
       {/* Super Creative Portal */}

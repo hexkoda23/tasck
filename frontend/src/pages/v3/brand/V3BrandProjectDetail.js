@@ -6,6 +6,7 @@ import { getStoredDemoBundle, saveStoredDemoBundle } from '../../../lib/v3demoSt
 import { getBrandPortalSession, loadBrandPortalBundle } from '../../../lib/v3brandPortal';
 import V3DocumentSurface from '../../../components/v3/V3DocumentSurface';
 import { ChevronLeft, CheckCircle, Circle, Clock, FileText, Send, ShieldCheck } from 'lucide-react';
+import { brandRoute } from '../../../lib/v3AdminRouteBase';
 
 const tabs = [
   { key: 'summary', label: 'Summary' },
@@ -212,7 +213,7 @@ const V3BrandProjectDetail = () => {
 
   return (
     <div data-testid="v3-brand-project-detail">
-      <button onClick={() => navigate('/v3/brand/projects')} className="inline-flex items-center gap-1.5 text-[#8A8A8A] text-[12px] mb-6 hover:text-[#5C5C5C] transition-colors">
+      <button onClick={() => navigate(brandRoute('/v3/brand/projects'))} className="inline-flex items-center gap-1.5 text-[#8A8A8A] text-[12px] mb-6 hover:text-[#5C5C5C] transition-colors">
         <ChevronLeft className="w-3.5 h-3.5" /> All projects
       </button>
 

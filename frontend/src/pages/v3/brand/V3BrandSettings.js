@@ -2,6 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getBrandPortalBrand, getBrandPortalSession } from '../../../lib/v3brandPortal';
 import { Bell, User, Shield } from 'lucide-react';
+import { brandRoute } from '../../../lib/v3AdminRouteBase';
 
 const V3BrandSettings = () => {
   const navigate = useNavigate();
@@ -49,7 +50,7 @@ const V3BrandSettings = () => {
                 <p className="text-[12px] text-[#8A8A8A]">Change the temporary password from your welcome email.</p>
               </div>
             </div>
-            <button onClick={() => navigate('/v3/brand/change-password')} className="v3-btn-primary text-[12px]">Change Password</button>
+            <button onClick={() => navigate(brandRoute('/v3/brand/change-password'))} className="v3-btn-primary text-[12px]">Change Password</button>
           </div>
         </div>
       </div>

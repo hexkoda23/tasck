@@ -4,6 +4,7 @@ import Logo from '../../components/shared/Logo';
 import V3NotificationCenter from './V3NotificationCenter';
 import V3CommandK from './V3CommandK';
 import { getBrandPortalBrand, getBrandPortalSession } from '../../lib/v3brandPortal';
+import { adminRoute, brandRoute } from '../../lib/v3AdminRouteBase';
 import {
   BarChart3,
   BookOpen,
@@ -115,9 +116,16 @@ const V3Layout = ({ portal }) => {
   const brandSession = portal === 'brand' ? getBrandPortalSession() : null;
   const brand = portal === 'brand' ? getBrandPortalBrand() : null;
 
+  const resolvePath = (path) => {
+    if (portal === 'admin') return adminRoute(path, location.pathname);
+    if (portal === 'brand') return brandRoute(path, location.pathname);
+    return path;
+  };
+
   const isActive = (item) => {
-    if (item.exact) return location.pathname === item.path;
-    return location.pathname.startsWith(item.path);
+    const resolvedPath = resolvePath(item.path);
+    if (item.exact) return location.pathname === resolvedPath;
+    return location.pathname.startsWith(resolvedPath);
   };
 
   const navTestId = (label) => `v3-nav-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
@@ -141,11 +149,12 @@ const V3Layout = ({ portal }) => {
         <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
           {config.items.map((item) => {
             const Icon = item.icon;
+            const resolvedPath = resolvePath(item.path);
             const active = isActive(item);
             return (
               <button
                 key={item.path}
-                onClick={() => navigate(item.path)}
+                onClick={() => navigate(resolvedPath)}
                 className={`v3-nav-item ${active ? 'v3-nav-item--active' : ''}`}
                 data-testid={navTestId(item.label)}
               >

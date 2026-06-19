@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { formatNairaV3 } from '../../../lib/v3data';
 import { getBrandPortalBrand, getBrandPortalSession, isPendingApprovalStatus, loadBrandPortalBundles } from '../../../lib/v3brandPortal';
 import { ArrowRight, CheckCircle, Clock, FileText, GitBranch } from 'lucide-react';
+import { brandRoute } from '../../../lib/v3AdminRouteBase';
 
 const FLOW = [
   { key: 'connect', label: 'Connector' },
@@ -99,7 +100,7 @@ const V3BrandProjects = () => {
           return (
             <button
               key={bc.id}
-              onClick={() => navigate(`/v3/brand/projects/${bc.id}`)}
+              onClick={() => navigate(brandRoute(`/v3/brand/projects/${bc.id}`))}
               className="w-full v3-card p-5 text-left hover:border-[#D4CDBF] transition-colors group"
               data-testid={`brand-proj-${bc.id}`}
             >

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Logo from '../../../components/shared/Logo';
 import { brandDemoAccounts, getBrandPortalAccountByEmail, setBrandPortalSession } from '../../../lib/v3brandPortal';
 import { Building2, CheckCircle, Eye, EyeOff, Lock } from 'lucide-react';
+import { brandRoute } from '../../../lib/v3AdminRouteBase';
 
 const PasswordInput = ({ value, onChange, placeholder, testid }) => {
   const [visible, setVisible] = useState(false);
@@ -45,7 +46,7 @@ const V3BrandLogin = () => {
     }
     setBusy(true);
     setBrandPortalSession(account);
-    navigate('/v3/brand');
+    navigate(brandRoute('/v3/brand'));
   };
 
   return (
@@ -85,7 +86,7 @@ const V3BrandLogin = () => {
             <button type="submit" disabled={busy || !form.email || !form.password} className="v3-btn-primary w-full mt-5 justify-center" data-testid="brand-login-submit">
               <Lock className="w-3.5 h-3.5" /> {busy ? 'Signing in...' : 'Sign in'}
             </button>
-            <button type="button" onClick={() => navigate('/v3/brand/change-password')} className="v3-btn-secondary w-full mt-2 justify-center" data-testid="brand-login-change-password">
+            <button type="button" onClick={() => navigate(brandRoute('/v3/brand/change-password'))} className="v3-btn-secondary w-full mt-2 justify-center" data-testid="brand-login-change-password">
               Change temporary password
             </button>
           </div>
