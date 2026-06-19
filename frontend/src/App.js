@@ -21,6 +21,7 @@ import V2Placeholder from './pages/v2/V2Placeholder';
 
 // V3 Layout + Pages
 import V3Layout from './components/v3/V3Layout';
+import V1AdminLayout from './pages/admin/V1AdminLayout';
 import V3RoleSelector from './pages/v3/V3RoleSelector';
 import V3Placeholder from './pages/v3/V3Placeholder';
 import V3AdminOverview from './pages/v3/admin/V3AdminOverview';
@@ -46,6 +47,7 @@ import V3AdminFeedback from './pages/v3/admin/V3AdminFeedback';
 import V3AdminScopeChange from './pages/v3/admin/V3AdminScopeChange';
 import V3AdminContractPreview from './pages/v3/admin/V3AdminContractPreview';
 import V3AdminBusinessCases from './pages/v3/admin/V3AdminBusinessCases';
+import V1AdminBusinessCases from './pages/admin/V1AdminBusinessCases';
 import {
   V3AdminMeetingsOverview,
   V3AdminQualificationCalls,
@@ -80,6 +82,29 @@ import {
   V3BusinessCaseDeliverables,
   V3BusinessCaseFinalReport,
 } from './pages/v3/admin/businessCaseFlow/V3BusinessCaseFlowPages';
+import {
+  V3BusinessCaseStageHome as V1BusinessCaseStageHome,
+  V3BusinessCaseConnect as V1BusinessCaseConnect,
+  V3BusinessCaseConnectSchedule as V1BusinessCaseConnectSchedule,
+  V3BusinessCaseConnectQuestions as V1BusinessCaseConnectQuestions,
+  V3BusinessCaseConnectAnalysis as V1BusinessCaseConnectAnalysis,
+  V3BusinessCaseConnectReschedule as V1BusinessCaseConnectReschedule,
+  V3BusinessCaseFrameSnapshot as V1BusinessCaseFrameSnapshot,
+  V3BusinessCaseFrameWaitingBrand as V1BusinessCaseFrameWaitingBrand,
+  V3BusinessCaseFrameAdminReview as V1BusinessCaseFrameAdminReview,
+  V3BusinessCaseFrameApproved as V1BusinessCaseFrameApproved,
+  V3BusinessCasePlanBrainstorm as V1BusinessCasePlanBrainstorm,
+  V3BusinessCasePlanCreatorScan as V1BusinessCasePlanCreatorScan,
+  V3BusinessCasePlanBrief as V1BusinessCasePlanBrief,
+  V3BusinessCasePlanCreatorBriefingCall as V1BusinessCasePlanCreatorBriefingCall,
+  V3BusinessCasePlanStrategySnapshot as V1BusinessCasePlanStrategySnapshot,
+  V3BusinessCasePlanWaitingBrand as V1BusinessCasePlanWaitingBrand,
+  V3BusinessCaseDeliverySummary as V1BusinessCaseDeliverySummary,
+  V3BusinessCaseContractStudio as V1BusinessCaseContractStudio,
+  V3BusinessCaseDeliveryWaitingSignatures as V1BusinessCaseDeliveryWaitingSignatures,
+  V3BusinessCaseDeliverables as V1BusinessCaseDeliverables,
+  V3BusinessCaseFinalReport as V1BusinessCaseFinalReport,
+} from './pages/admin/V1BusinessCaseFlowPages';
 import V3BrandInreach from './pages/v3/V3BrandInreach';
 
 // V3 Brand Portal Pages
@@ -106,6 +131,8 @@ import V3CreatorSettings from './pages/v3/creator/V3CreatorSettings';
 
 // V1 Role Selector
 import V1RoleSelector from './pages/v1/V1RoleSelector';
+import V1AdminCRM from './pages/admin/V1AdminCRM';
+import V1AdminCRMBrandDetail from './pages/admin/V1AdminCRMBrandDetail';
 import FeedbackAdmin from './pages/FeedbackAdmin';
 
 // Pages
@@ -147,16 +174,6 @@ import BrandCampaigns from './pages/brand/BrandCampaigns';
 import BrandApprovals from './pages/brand/BrandApprovals';
 import BrandAnalytics from './pages/brand/BrandAnalytics';
 import BrandSpend from './pages/brand/BrandSpend';
-
-// Admin Pages
-import AdminOverview from './pages/admin/AdminOverview';
-import AdminUsers from './pages/admin/AdminUsers';
-import AdminDisputes from './pages/admin/AdminDisputes';
-import AdminContracts from './pages/admin/AdminContracts';
-import AdminAuditLogs from './pages/admin/AdminAuditLogs';
-import AdminPermissions from './pages/admin/AdminPermissions';
-import AdminWallets from './pages/admin/AdminWallets';
-import AdminSettings from './pages/admin/AdminSettings';
 
 // Shared Pages
 import MessagesPage from './pages/shared/MessagesPage';
@@ -336,18 +353,74 @@ function AppRoutes() {
         path="/admin" 
         element={
           <ProtectedRoute allowedRoles={['admin']}>
-            <DashboardLayout role="admin" />
+            <V1AdminLayout />
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminOverview />} />
-        <Route path="users" element={<AdminUsers />} />
-        <Route path="disputes" element={<AdminDisputes />} />
-        <Route path="contracts" element={<AdminContracts />} />
-        <Route path="audit" element={<AdminAuditLogs />} />
-        <Route path="permissions" element={<AdminPermissions />} />
-        <Route path="wallets" element={<AdminWallets />} />
-        <Route path="settings" element={<AdminSettings />} />
+        <Route index element={<V3AdminOverview />} />
+        <Route path="crm-brands" element={<V1AdminCRM />} />
+        <Route path="crm-brands/:brandId/call" element={<Navigate to="/admin/crm-brands" replace />} />
+        <Route path="pipeline" element={<V3AdminPipeline />} />
+        <Route path="projects" element={<V3AdminProjects />} />
+        <Route path="projects/:id" element={<V3AdminProjectDetail />} />
+        <Route path="projects/:id/brainstorm" element={<V3AdminBrainstorm />} />
+        <Route path="projects/:id/feedback" element={<V3AdminFeedback />} />
+        <Route path="projects/:id/scope-changes" element={<V3AdminScopeChange />} />
+        <Route path="projects/:id/contract" element={<V3AdminContractPreview />} />
+        <Route path="crm" element={<Navigate to="/admin/crm-brands" replace />} />
+        <Route path="crm/opportunities" element={<V3AdminOpportunityScanner />} />
+        <Route path="crm-brands/:id" element={<V1AdminCRMBrandDetail />} />
+        <Route path="crm/:id" element={<V1AdminCRMBrandDetail />} />
+        <Route path="meetings" element={<V3AdminMeetingsOverview />} />
+        <Route path="meetings/qualification" element={<V3AdminQualificationCalls />} />
+        <Route path="meetings/qualification/:meetingId" element={<V3AdminQualificationCallDetail />} />
+        <Route path="meetings/connector" element={<V3AdminConnectorCalls />} />
+        <Route path="meetings/connector/:meetingId" element={<V3AdminConnectorCallDetail />} />
+        <Route path="meetings/business" element={<V3AdminConnectorCalls />} />
+        <Route path="meetings/business/:meetingId" element={<V3AdminConnectorCallDetail />} />
+        <Route path="meetings/business-calls" element={<V3AdminConnectorCalls />} />
+        <Route path="meetings/business-calls/:businessCaseId" element={<V1BusinessCaseConnect />} />
+        <Route path="meetings/business-calls/:businessCaseId/schedule" element={<V1BusinessCaseConnectSchedule />} />
+        <Route path="meetings/business-calls/:businessCaseId/questions" element={<V1BusinessCaseConnectQuestions />} />
+        <Route path="meetings/business-calls/:businessCaseId/analysis" element={<V1BusinessCaseConnectAnalysis />} />
+        <Route path="meetings/business-calls/:businessCaseId/reschedule" element={<V1BusinessCaseConnectReschedule />} />
+        <Route path="meetings/creator-fit" element={<V3AdminCreatorFitCalls />} />
+        <Route path="meetings/creator-fit/:meetingId" element={<V3AdminCreatorFitCallDetail />} />
+        <Route path="meetings/creator-briefing" element={<V3AdminCreatorBriefingCalls />} />
+        <Route path="meetings/creator-briefing/:meetingId" element={<V3AdminCreatorBriefingCallDetail />} />
+        <Route path="business-cases" element={<V1AdminBusinessCases />} />
+        <Route path="business-cases/:id" element={<V1BusinessCaseStageHome />} />
+        <Route path="business-cases/:id/connect" element={<V1BusinessCaseConnect />} />
+        <Route path="business-cases/:id/connect/schedule" element={<V1BusinessCaseConnectSchedule />} />
+        <Route path="business-cases/:id/connect/questions" element={<V1BusinessCaseConnectQuestions />} />
+        <Route path="business-cases/:id/connect/analysis" element={<V1BusinessCaseConnectAnalysis />} />
+        <Route path="business-cases/:id/connect/reschedule" element={<V1BusinessCaseConnectReschedule />} />
+        <Route path="business-cases/:id/frame/snapshot" element={<V1BusinessCaseFrameSnapshot />} />
+        <Route path="business-cases/:id/frame/waiting-brand" element={<V1BusinessCaseFrameWaitingBrand />} />
+        <Route path="business-cases/:id/frame/admin-review" element={<V1BusinessCaseFrameAdminReview />} />
+        <Route path="business-cases/:id/frame/approved" element={<V1BusinessCaseFrameApproved />} />
+        <Route path="business-cases/:id/plan/brainstorm" element={<V1BusinessCasePlanBrainstorm />} />
+        <Route path="business-cases/:id/plan/creator-scan" element={<V1BusinessCasePlanCreatorScan />} />
+        <Route path="business-cases/:id/plan/brief" element={<V1BusinessCasePlanBrief />} />
+        <Route path="business-cases/:id/plan/creator-briefing-call" element={<V1BusinessCasePlanCreatorBriefingCall />} />
+        <Route path="business-cases/:id/plan/strategy-snapshot" element={<V1BusinessCasePlanStrategySnapshot />} />
+        <Route path="business-cases/:id/plan/waiting-brand" element={<V1BusinessCasePlanWaitingBrand />} />
+        <Route path="business-cases/:id/delivery/summary" element={<V1BusinessCaseDeliverySummary />} />
+        <Route path="business-cases/:id/delivery/contracts" element={<V1BusinessCaseContractStudio />} />
+        <Route path="business-cases/:id/delivery/waiting-signatures" element={<V1BusinessCaseDeliveryWaitingSignatures />} />
+        <Route path="business-cases/:id/delivery/deliverables" element={<V1BusinessCaseDeliverables />} />
+        <Route path="business-cases/:id/reporting/final-report" element={<V1BusinessCaseFinalReport />} />
+        <Route path="creators" element={<V3AdminCreators />} />
+        <Route path="creators/:id" element={<V3AdminCreatorDetail />} />
+        <Route path="contracts" element={<V3AdminContracts />} />
+        <Route path="templates" element={<V3AdminTemplates />} />
+        <Route path="insights" element={<V3AdminInsights />} />
+        <Route path="reports" element={<V3AdminReports />} />
+        <Route path="wallet" element={<V3AdminWallet />} />
+        <Route path="fees" element={<V3AdminFees />} />
+        <Route path="settings" element={<V3AdminSettings />} />
+        <Route path="tasks" element={<V3AdminTasks />} />
+        <Route path="users" element={<V3AdminUsers />} />
       </Route>
 
       {/* V3 Brand Inreach (public form) */}
@@ -477,3 +550,6 @@ function App() {
 }
 
 export default App;
+
+
+

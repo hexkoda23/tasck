@@ -423,6 +423,8 @@ CRITICAL RULES
 
 7. Populate brand-context fields ONLY from explicit or strongly-implied source
    signal. If unknown, return null. DO NOT GUESS TO FILL SPACE.
+   about should be a short source-grounded organisation description. logo_url should
+   be a real source/website logo URL only when available; otherwise return null.
 
 8. likelihood_to_work_with_tta:
    - "Likely"    — clear creator-led intent, named brief, recent activity
@@ -440,6 +442,8 @@ OUTPUT SCHEMA — return exactly these fields:
   "industry": string or "Other",
   "country": "Nigeria",
   "website": string url or null,
+  "about": string or null,
+  "logo_url": string url or null,
   "primary_contact_name": string or null,
   "primary_contact_role": string or null,
   "primary_contact_email": string or null,
@@ -520,6 +524,8 @@ def normalise_card(card: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         "industry": card.get("industry") or "Other",
         "country": card.get("country") or "Nigeria",
         "website": card.get("website") or None,
+        "about": card.get("about") or None,
+        "logo_url": card.get("logo_url") or None,
         "primary_contact_name": card.get("primary_contact_name") or None,
         "primary_contact_role": card.get("primary_contact_role") or None,
         "primary_contact_email": card.get("primary_contact_email") or None,

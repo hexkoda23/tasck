@@ -58,6 +58,27 @@ def _domain_from_url(value: str) -> str:
     return match.group(1).replace("www.", "") if match else ""
 
 
+def _compact_text(value: Any, limit: int = 900) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        text = "; ".join(f"{key}: {item}" for key, item in value.items() if item)
+    elif isinstance(value, list):
+        text = "; ".join(str(item) for item in value if item)
+    else:
+        text = str(value)
+    return " ".join(text.split())[:limit]
+
+
+def _brand_logo_from_source(source_url: str, raw_logo: Any = None) -> str:
+    logo = str(raw_logo or "").strip()
+    if logo:
+        return logo[:500]
+    domain = _domain_from_url(source_url)
+    if domain:
+        return f"https://www.google.com/s2/favicons?sz=128&domain_url=https://{domain}"
+    return ""
+
 def _country_to_gl(country: str) -> str:
     value = (country or "Nigeria").strip().lower()
     if len(value) == 2:
@@ -76,7 +97,7 @@ def _fallback_creator_email(creator: Dict[str, Any]) -> str:
     email = creator.get("email") or creator.get("manager_email")
     if email:
         return email
-    return f"{_slug(creator.get('name', 'creator'))}@creator.tasck.demo"
+    return f"{_slug(creator.get('name', 'creator'))}@creator.tasck.local"
 
 
 CRM_VISIBLE_BRAND_STATUSES = {
@@ -210,7 +231,7 @@ def _required_missing_fields(text: str, required: List[Tuple[str, List[str]]]) -
 
 
 def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
-    """Deterministic transcript extraction used by the demo AI layer.
+    """Deterministic transcript extraction used by the transcript analysis layer.
 
     The production version can swap this for an LLM/transcription provider while
     keeping the same response contract.
@@ -487,32 +508,61 @@ def make_v3_router(db):
         hq: Optional[str] = None
         website: Optional[str] = None
         rm_id: Optional[str] = None
+        status: Optional[str] = None
+        qualification_status: Optional[str] = None
+        crm_accepted_at: Optional[str] = None
+        marketing_budget: Optional[str] = None
+        notes: Optional[str] = None
+        about: Optional[str] = None
+        brand_about: Optional[str] = None
+        logo_url: Optional[str] = None
+        brand_logo_url: Optional[str] = None
 
     @router.post("/brands")
     async def create_brand(payload: BrandCreate):
         brand_id = f"brand-{uuid.uuid4().hex[:8]}"
         rm = await _relationship_manager(payload.rm_id)
+        now = _now_iso()
+        brand_status = payload.status or "Lead — initial conversations"
+        crm_accepted_at = payload.crm_accepted_at
+        if brand_status == "crm_accepted" and not crm_accepted_at:
+            crm_accepted_at = now
+        about_text = _compact_text(payload.about or payload.brand_about)
+        logo_url = payload.logo_url or payload.brand_logo_url or ""
         doc = {
             "id": brand_id,
             "company": payload.company,
             "industry": payload.industry,
             "website": payload.website or "",
+            "about": about_text,
+            "brand_about": about_text,
+            "logo_url": logo_url,
+            "brand_logo_url": logo_url,
             "hq": payload.hq or "",
             "primary_contact": payload.primary_contact,
             "role": payload.role,
             "email": payload.email or "",
             "phone": payload.phone or "",
-            "status": "Lead — initial conversations",
+            "status": brand_status,
             "lead_score": payload.lead_score,
             "last_interaction": "just now",
             "engagement_track_default": payload.engagement_track_default,
-            "created_at": _now_iso(),
+            "created_at": now,
+            "updated_at": now,
             "rm_id": rm.get("id", ""),
             "relationship_manager": rm,
             "relationshipManager": rm,
             "relationship_manager_name": rm.get("name", ""),
             "relationship_manager_email": rm.get("email", ""),
         }
+        if payload.qualification_status:
+            doc["qualification_status"] = payload.qualification_status
+        if crm_accepted_at:
+            doc["crm_accepted_at"] = crm_accepted_at
+        if payload.marketing_budget:
+            doc["marketing_budget"] = payload.marketing_budget
+        if payload.notes:
+            doc["notes"] = payload.notes
         await db.v3_brands.insert_one({**doc})
 
         # Auto-create the primary contact record so the brand isn't orphaned
@@ -528,7 +578,7 @@ def make_v3_router(db):
         }
         await db.v3_contacts.insert_one({**contact_doc})
 
-        username = (payload.email or f"{_slug(payload.company)}@brand.tasck.demo").lower()
+        username = (payload.email or f"{_slug(payload.company)}@brand.tasck.local").lower()
         temp_password = _temporary_password()
         account_doc = {
             "id": f"acct-{uuid.uuid4().hex[:8]}",
@@ -645,11 +695,17 @@ def make_v3_router(db):
     async def create_brand_qualification_candidate(payload: BrandQualificationCandidateCreate):
         brand_id = f"brand-{uuid.uuid4().hex[:8]}"
         rm = await _relationship_manager(payload.rm_id)
+        about_text = _compact_text(payload.about or payload.brand_about)
+        logo_url = payload.logo_url or payload.brand_logo_url or ""
         doc = {
             "id": brand_id,
             "company": payload.company,
             "industry": payload.industry,
             "website": payload.website or "",
+            "about": about_text,
+            "brand_about": about_text,
+            "logo_url": logo_url,
+            "brand_logo_url": logo_url,
             "hq": payload.hq or "",
             "primary_contact": payload.primary_contact,
             "role": payload.role,
@@ -704,7 +760,7 @@ def make_v3_router(db):
                 "must_change_password": existing.get("must_change_password", False),
             }
 
-        username = (brand.get("email") or f"{_slug(brand.get('company'))}@brand.tasck.demo").lower()
+        username = (brand.get("email") or f"{_slug(brand.get('company'))}@brand.tasck.local").lower()
         temp_password = _temporary_password()
         account_doc = {
             "id": f"acct-{uuid.uuid4().hex[:8]}",
@@ -1103,9 +1159,9 @@ def make_v3_router(db):
                 "rate_card": "TBD - outreach required",
                 "reliability": 7.0 + min(idx, 2) * 0.2,
                 "platforms": template["platforms"],
-                "email": f"hello@{_slug(name)}.demo",
+                "email": f"hello@{_slug(name)}.local",
                 "manager_name": "Public contact",
-                "manager_email": f"hello@{_slug(name)}.demo",
+                "manager_email": f"hello@{_slug(name)}.local",
                 "audience": mi.get("primary_target_audience") or template["audience"],
                 "categories": [focus],
                 "source": "web_discovery_simulated",
@@ -1299,11 +1355,16 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
-        existing = await db.v3_business_cases.find_one(
-            {"brand_id": brand_id, "stage": "connect", "status": {"$ne": "deleted"}},
+        existing_cases = await db.v3_business_cases.find(
+            {
+                "brand_id": brand_id,
+                "status": {"$ne": "deleted"},
+                "stage": {"$nin": ["closed", "archived"]},
+            },
             {"_id": 0},
-        )
-        if existing:
+        ).sort([("updated_at", -1), ("created_at", -1)]).to_list(1)
+        if existing_cases:
+            existing = existing_cases[0]
             return {"ok": True, "business_case": existing, "business_case_id": existing["id"], "created": False}
         now = _now_iso()
         bc_id = f"bc-{uuid.uuid4().hex[:8]}"
@@ -1355,7 +1416,7 @@ def make_v3_router(db):
     # ------------------------------------------------------------------------
     STAGE_ORDER = ["connect", "frame", "plan", "deliver", "closed"]
     STAGE_NEXT_ACTIONS = {
-        "frame": "Generate, edit, and send the Alignment Snapshot for approval.",
+        "frame": "Generate, edit, and send the Alignment Snapshot questions for brand response.",
         "plan": "Select creatives, send the brief, capture the creative discussion, and draft the Strategy Snapshot.",
         "deliver": "Generate contracts, manage budget and timeline planning, and track campaign delivery.",
         "closed": "Generate the final report, collect feedback, and close the project.",
@@ -1434,7 +1495,7 @@ def make_v3_router(db):
         return updated
 
     # ------------------------------------------------------------------------
-    # AI ALIGNMENT SNAPSHOT — generate (mocked AI; deterministic content)
+    # AI ALIGNMENT SNAPSHOT — generate deterministic content from real Connect data
     # ------------------------------------------------------------------------
     @router.post("/business-cases/{bc_id}/ai/alignment")
     async def generate_alignment(bc_id: str):
@@ -1625,6 +1686,154 @@ def make_v3_router(db):
         )
         return doc
 
+    @router.post("/business-cases/{bc_id}/ai/alignment/questions")
+    async def generate_alignment_questions_for_v1(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        if case.get("stage") != "frame":
+            raise HTTPException(400, "Alignment Snapshot is only generated in the Frame stage.")
+
+        existing = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
+        connect = case.get("connect", {}) or {}
+        brand_company = brand.get("company") or brand.get("name") or case.get("brand_name") or case.get("title") or "Brand"
+        brand_industry = brand.get("industry") or brand.get("sector") or brand.get("category") or "consumer culture"
+        project_title = case.get("title") or f"{brand_company} Relationship Opportunity"
+        mi = _marketing_intelligence_from_case(case)
+
+        def _usable_text(value: Any, fallback: str) -> str:
+            text = str(value or "").strip()
+            if not text or text.lower() in {"admin review required.", "admin review required", "confirm with brand.", "pending admin review."}:
+                return fallback
+            return text
+
+        def _money(value: Any) -> str:
+            try:
+                amount = int(float(value or 0))
+            except (TypeError, ValueError):
+                amount = 0
+            if amount <= 0:
+                return "NGN 75,000,000 - NGN 120,000,000 directional working range"
+            return f"NGN {amount:,} directional working range"
+
+        has_call_context = bool(
+            mi.get("source_excerpt")
+            or connect.get("analysis")
+            or connect.get("transcript")
+            or connect.get("latest_meeting_id")
+            or connect.get("latest_business_call_id")
+        )
+        focus = _usable_text(
+            mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"),
+            f"Turn {brand_company}'s {brand_industry} advantage into a sharper creator-led narrative that improves qualified consideration and conversion.",
+        )
+        audience = _usable_text(
+            mi.get("primary_target_audience") or connect.get("primary_target_audience"),
+            f"Urban Nigerian consumers and professional decision-makers who already engage with {brand_industry} content but need stronger proof, relevance, and trust cues before action.",
+        )
+        challenge = _usable_text(
+            connect.get("marketing_challenge") or connect.get("current_marketing_challenge") or connect.get("observed_challenge"),
+            f"{brand_company} has an opportunity to move from broad awareness into clearer behavior change by matching the right creator voices to the right purchase or adoption moments.",
+        )
+        timeline = _usable_text(
+            connect.get("timeline") or connect.get("campaign_timeline"),
+            "6-8 weeks from snapshot approval to launch readiness, with reporting after the first campaign cycle.",
+        )
+        decision_maker = _usable_text(
+            connect.get("decision_maker") or brand.get("primary_contact") or brand.get("contact_name"),
+            "Brand lead plus finance or senior marketing approver to confirm during Plan.",
+        )
+        channels = mi.get("key_marketing_channels") or connect.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"]
+        channels = [str(channel) for channel in channels if str(channel).strip()][:6] or ["Instagram", "TikTok", "YouTube", "PR"]
+        kpis = mi.get("marketing_kpis") or connect.get("marketing_kpis") or [
+            {"kpi": "Qualified reach", "target": "1.5M-3M relevant impressions across selected creator channels."},
+            {"kpi": "Engagement quality", "target": "Above benchmark saves, comments, profile visits, and story interactions."},
+            {"kpi": "Conversion signal", "target": "Track leads, inquiries, sales lift, sign-ups, or booked consultations based on brand objective."},
+        ]
+        if not isinstance(kpis, list) or not kpis:
+            kpis = [{"kpi": "Qualified reach", "target": "Confirm target with brand."}]
+        budget_range = _money(case.get("estimated_value") or connect.get("budget") or connect.get("budget_range"))
+        date_of_connect = _usable_text(
+            connect.get("date_of_connect")
+            or connect.get("connected_at")
+            or connect.get("promoted_at")
+            or connect.get("latest_meeting_date")
+            or connect.get("created_at")
+            or case.get("created_at"),
+            "Brand to confirm the Connect call date.",
+        )
+        priority = _usable_text(
+            connect.get("priority") or connect.get("business_priority") or mi.get("priority"),
+            "Brand to confirm priority level and sequence.",
+        )
+        kpi_summary = "; ".join([
+            (
+                f"{item.get('kpi', item.get('label', 'Metric'))}: "
+                f"{item.get('target', item.get('value', 'Confirm target'))}"
+            ) if isinstance(item, dict) else str(item)
+            for item in kpis[:5]
+        ])
+        scope_flags = [
+            {"text": "Brand responses", "reason": "Brand must answer the Alignment Snapshot questions before admin approval."},
+        ]
+        as_id = (existing or {}).get("id") or f"as-{uuid.uuid4().hex[:8]}"
+        generated_at = _now_iso()
+        doc = {
+            "id": as_id,
+            "business_case_id": bc_id,
+            "status": "under_review",
+            "generated_at": generated_at,
+            "last_edited_at": None,
+            "last_edited_by": None,
+            "sent_to_brand_at": None,
+            "approved_at": None,
+            "approved_by": None,
+            "approved_by_party": None,
+            "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
+            "title": f"{brand_company} - Alignment Snapshot Questions",
+            "meta": "Brand response form for the Alignment Snapshot. TASCK sends these questions to the brand, the brand fills the answers, and admin reviews and approves before Plan.",
+            "marketing_intelligence": mi,
+            "brand_comments": (existing or {}).get("brand_comments", []),
+            "sections": [
+                {"heading": "1. ALIGNMENT SNAPSHOT QUESTIONS", "type": "questions", "content": (
+                    "Brand should answer each question below. Admin can edit the questions or add more before sending, and admin reviews the returned answers before approval."
+                ), "columns": ["Question", "Brand answer"], "rows": [
+                    {"Question": "About The Organisation", "Brand answer": ""},
+                    {"Question": "What are the Core Focus Areas", "Brand answer": ""},
+                    {"Question": "Who are The Key Customers/Beneficiaries", "Brand answer": ""},
+                    {"Question": "Key Goals or Metrics that are Tracked", "Brand answer": ""},
+                    {"Question": "What Success Looks Like / Timeline", "Brand answer": ""},
+                    {"Question": "Focus", "Brand answer": ""},
+                    {"Question": "Priority", "Brand answer": ""},
+                    {"Question": "Date of connect", "Brand answer": ""},
+                ]},
+                {"heading": "2. HOW THE BRAND SHOULD COMPLETE THIS", "type": "numbered", "content": "This form is sent to the brand for completion, then returned to TASCK for admin review.", "items": [
+                    "Answer each Alignment Snapshot question with clear, practical information.",
+                    "Add any missing context that TASCK needs before planning starts.",
+                    "Send the completed form back to TASCK for admin review.",
+                    "Admin approves the completed Alignment Snapshot before the Business Case moves into Plan.",
+                ]},
+            ],
+            "scope_flags": scope_flags,
+        }
+        if existing:
+            await db.v3_alignment_snapshots.update_one({"id": as_id}, {"$set": doc})
+        else:
+            await db.v3_alignment_snapshots.insert_one({**doc})
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {
+                "frame.alignment_snapshot_id": as_id,
+                "frame.alignment_snapshot_status": "under_review",
+                "frame.alignment_snapshot_generated_at": generated_at,
+                "frame.scope_flags_total": len(doc["scope_flags"]),
+                "frame.scope_flags_resolved": 0,
+                "updated_at": _now_iso(),
+            }, "$push": {"timeline": {"at": generated_at, "event": "alignment_regenerated" if existing else "alignment_generated", "snapshot_id": as_id}}}
+        )
+        return doc
+
     class ApproveAlignmentPayload(BaseModel):
         approver: str
         approver_party: str = "admin"
@@ -1742,21 +1951,50 @@ def make_v3_router(db):
             {"$set": {"frame.alignment_snapshot_status": "sent_to_brand", "updated_at": _now_iso()},
              "$push": {"timeline": {"at": sent_at, "event": "alignment_sent_to_brand", "snapshot_id": snap["id"]}}},
         )
-        email = await queue_email(
-            to=(brand or {}).get("email", ""),
-            subject=f"Alignment Snapshot ready for approval - {case['title']}",
-            body=(
+        completion_section = next(
+            (
+                section for section in snap.get("sections", [])
+                if section.get("type") == "questions"
+                or "ALIGNMENT SNAPSHOT QUESTIONS" in section.get("heading", "")
+                or "BRAND COMPLETION QUESTIONS" in section.get("heading", "")
+            ),
+            None,
+        )
+        completion_questions: List[str] = []
+        if completion_section:
+            for row in completion_section.get("rows", []):
+                if isinstance(row, list) and row:
+                    completion_questions.append(str(row[0]))
+                elif isinstance(row, dict):
+                    question = row.get("Question") or row.get("question")
+                    if question:
+                        completion_questions.append(str(question))
+        if completion_questions:
+            question_text = "\n".join(f"- {question}" for question in completion_questions)
+            subject = f"Alignment Snapshot questions to complete - {case['title']}"
+            body = (
+                f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
+                f"The Alignment Snapshot questions for {case['title']} are ready in your TASCK brand portal. "
+                "Please answer or correct each field and send it back to TASCK. Admin will review and approve the completed Alignment Snapshot before Plan begins.\n\n"
+                f"Questions to answer:\n{question_text}"
+            )
+        else:
+            subject = f"Alignment Snapshot ready for approval - {case['title']}"
+            body = (
                 f"Hello {(brand or {}).get('primary_contact', 'there')},\n\n"
                 f"The Alignment Snapshot for {case['title']} is ready in your TASCK brand portal. "
                 "You can approve it or add line-level comments for the admin team."
-            ),
+            )
+        email = await queue_email(
+            to=(brand or {}).get("email", ""),
+            subject=subject,
+            body=body,
             kind="alignment_snapshot_review",
             brand_id=case["brand_id"],
             business_case_id=bc_id,
             attachments=[{"type": "alignment_snapshot", "id": snap["id"], "title": snap.get("title")}],
         )
         return {"ok": True, "sent_at": sent_at, "email": email}
-
     class AlignmentCommentPayload(BaseModel):
         section_index: int
         line_index: Optional[int] = None
@@ -1782,13 +2020,26 @@ def make_v3_router(db):
             "created_at": _now_iso(),
             "resolved_at": None,
         }
-        await db.v3_alignment_snapshots.update_one({"id": snapshot_id}, {"$push": {"brand_comments": comment}})
-        await db.v3_business_cases.update_one(
-            {"id": snap["business_case_id"]},
-            {"$set": {"updated_at": _now_iso()}, "$push": {"timeline": {"at": _now_iso(), "event": "brand_alignment_comment", "comment_id": comment["id"]}}},
+        question_snapshot = any(
+            section.get("type") == "questions"
+            or "ALIGNMENT SNAPSHOT QUESTIONS" in section.get("heading", "")
+            or "BRAND COMPLETION QUESTIONS" in section.get("heading", "")
+            for section in snap.get("sections", [])
         )
+        if question_snapshot:
+            comment_count = len(snap.get("brand_comments", []) or []) + 1
+            await db.v3_alignment_snapshots.update_one({"id": snapshot_id}, {"$set": {"status": "pending_admin_review"}, "$push": {"brand_comments": comment}})
+            await db.v3_business_cases.update_one(
+                {"id": snap["business_case_id"]},
+                {"$set": {"updated_at": _now_iso(), "frame.alignment_snapshot_status": "pending_admin_review", "frame.comment_count": comment_count}, "$push": {"timeline": {"at": _now_iso(), "event": "brand_alignment_comment", "comment_id": comment["id"]}}},
+            )
+        else:
+            await db.v3_alignment_snapshots.update_one({"id": snapshot_id}, {"$push": {"brand_comments": comment}})
+            await db.v3_business_cases.update_one(
+                {"id": snap["business_case_id"]},
+                {"$set": {"updated_at": _now_iso()}, "$push": {"timeline": {"at": _now_iso(), "event": "brand_alignment_comment", "comment_id": comment["id"]}}},
+            )
         return comment
-
     @router.post("/alignment-snapshots/{snapshot_id}/comments/{comment_id}/resolve")
     async def resolve_alignment_comment(snapshot_id: str, comment_id: str):
         result = await db.v3_alignment_snapshots.update_one(
@@ -2280,7 +2531,7 @@ def make_v3_router(db):
             pass  # nothing special
         elif next_state == "approved":
             update["rm_approved_at"] = ts
-            update["brand_approved_at"] = ts  # combined in this mock
+            update["brand_approved_at"] = ts  # combined in this workflow
             update["payment_released"] = True
 
         await db.v3_deliverables.update_one({"id": deliverable_id}, {"$set": update})
@@ -2873,7 +3124,7 @@ def make_v3_router(db):
             contact_phone=contact.get("phone") or (brand or {}).get("phone") or "",
             scheduled_for=payload.scheduled_for,
             meeting_link=payload.meeting_link or "",
-            agenda=payload.agenda or "Confirm missing Connect details for Alignment Snapshot readiness.",
+            agenda=payload.agenda or "Confirm the missing Connect details before the brand questionnaire is sent.",
             parent_meeting_id=payload.meeting_id,
         ))
         await db.v3_business_cases.update_one(
@@ -3835,6 +4086,8 @@ def make_v3_router(db):
                     "link": item.get("link") or item.get("source_link") or item.get("url") or "",
                     "snippet": item.get("snippet") or item.get("description") or item.get("source") or "",
                     "displayed_link": item.get("displayed_link") or item.get("source") or "",
+                    "thumbnail": item.get("thumbnail") or item.get("image") or "",
+                    "favicon": item.get("favicon") or item.get("source_icon") or "",
                 })
         return [item for item in buckets if item["title"] and item["link"]]
 
@@ -3853,8 +4106,9 @@ CRITICAL RULES:
 6. Industry must be one of: {industries_list}. If none fit, use "Other".
 7. Campaign type must be one of: {campaign_types_list}. If none fit, use "marketing campaign".
 8. detected_keywords must contain 3-7 specific source terms: brand, campaign, product, cultural moment, season, creator, audience, or KPI.
-9. Tone: professional Nigerian English. Assume Nigerian cultural context. TTA matches brands to creators for cultural translation, not media buying or PR. Use Naira/NGN for money.
-10. Output is JSON only. No preamble, no markdown, no code fences. If invalid, still output JSON with brand_name null, confidence_score 30, and an honest pain_point.
+9. about must be a short source-grounded organisation description; logo_url must be a real logo/image URL only if visible in source metadata, otherwise null.
+10. Tone: professional Nigerian English. Assume Nigerian cultural context. TTA matches brands to creators for cultural translation, not media buying or PR. Use Naira/NGN for money.
+11. Output is JSON only. No preamble, no markdown, no code fences. If invalid, still output JSON with brand_name null, confidence_score 30, and an honest pain_point.
 
 Return exactly this schema and no other fields:
 {{
@@ -3864,6 +4118,8 @@ Return exactly this schema and no other fields:
   "campaign_type": string,
   "country": "{template.country}",
   "confidence_score": integer,
+  "about": string or null,
+  "logo_url": string or null,
   "pain_point": string,
   "suggested_opportunity_angle": string,
   "detected_keywords": array of 3-7 strings,
@@ -3895,6 +4151,8 @@ SEARCH RESULT TO ANALYZE:
 - Snippet: {item.get("snippet", "")}
 - Source: {item.get("displayed_link") or item.get("source") or _domain_from_url(item.get("link", ""))}
 - URL: {item.get("link", "")}
+- Thumbnail: {item.get("thumbnail", "")}
+- Favicon: {item.get("favicon", "")}
 
 Produce the opportunity card JSON.
 """.strip()
@@ -3930,6 +4188,8 @@ Produce the opportunity card JSON.
             "campaign_type": campaign_type,
             "country": template.country,
             "confidence_score": max(0, min(confidence, 100)),
+            "about": str(card.get("about") or "")[:900] or None,
+            "logo_url": str(card.get("logo_url") or "")[:500] or None,
             "pain_point": str(card.get("pain_point") or "Source context was insufficient to extract a confident brand opportunity.")[:800],
             "suggested_opportunity_angle": str(card.get("suggested_opportunity_angle") or "No actionable angle - recommend manual review before pursuing this result.")[:900],
             "detected_keywords": keywords,
@@ -4103,6 +4363,11 @@ Produce the opportunity card JSON.
             industry,
             campaign_type,
         )
+        raw_logo = (llm_card or {}).get("logo_url") or item.get("thumbnail") or item.get("favicon")
+        logo_url = _brand_logo_from_source(source_url, raw_logo)
+        about_text = _compact_text((llm_card or {}).get("about") or source_snippet or (llm_card or {}).get("pain_point"))
+        if brand_name and about_text and not about_text.lower().startswith(str(brand_name).lower()):
+            about_text = _compact_text(f"{brand_name}: {about_text}")
         return {
             "id": f"oppcand-{uuid.uuid4().hex[:8]}",
             "scan_id": scan_id,
@@ -4128,6 +4393,10 @@ Produce the opportunity card JSON.
             "source_domain": _domain_from_url(source_url),
             "source_title": item["title"][:220],
             "source_snippet": source_snippet,
+            "about": about_text,
+            "brand_about": about_text,
+            "logo_url": logo_url,
+            "brand_logo_url": logo_url,
             "detected_keywords": detected_keywords,
             "confidence_score": confidence,
             "contact_email": _extract_email(text),
@@ -4388,6 +4657,10 @@ Produce the opportunity card JSON.
                         "industry": v33_card["industry"] or candidate.get("industry") or "Other",
                         "country": v33_card["country"] or candidate.get("country") or "Nigeria",
                         "website": v33_card["website"],
+                        "about": v33_card.get("about") or candidate.get("about"),
+                        "brand_about": v33_card.get("about") or candidate.get("brand_about") or candidate.get("about"),
+                        "logo_url": v33_card.get("logo_url") or candidate.get("logo_url"),
+                        "brand_logo_url": v33_card.get("logo_url") or candidate.get("brand_logo_url") or candidate.get("logo_url"),
                         "primary_contact_name": v33_card["primary_contact_name"],
                         "primary_contact_role": v33_card["primary_contact_role"],
                         "primary_contact_email": v33_card["primary_contact_email"],
@@ -4464,6 +4737,10 @@ Produce the opportunity card JSON.
                             "key_marketing_channels": merged.get("key_marketing_channels"),
                             "marketing_kpis": merged.get("marketing_kpis"),
                             "website": merged.get("website"),
+                            "about": merged.get("about") or merged.get("brand_about"),
+                            "brand_about": merged.get("brand_about") or merged.get("about"),
+                            "logo_url": merged.get("logo_url") or merged.get("brand_logo_url"),
+                            "brand_logo_url": merged.get("brand_logo_url") or merged.get("logo_url"),
                             "primary_contact_name": merged.get("primary_contact_name"),
                             "primary_contact_role": merged.get("primary_contact_role"),
                             "primary_contact_email": merged.get("primary_contact_email"),
@@ -4711,6 +4988,16 @@ Produce the opportunity card JSON.
         contact_role = candidate.get("primary_contact_role") or "Brand contact"
         contact_phone = candidate.get("primary_contact_phone") or ""
         contact_linkedin = candidate.get("primary_contact_linkedin") or ""
+        brand_about = _compact_text(
+            candidate.get("about")
+            or candidate.get("brand_about")
+            or candidate.get("brand_profile")
+            or candidate.get("source_snippet")
+            or candidate.get("why_this_matters")
+        )
+        brand_logo_url = candidate.get("logo_url") or candidate.get("brand_logo_url") or _brand_logo_from_source(
+            candidate.get("website") or candidate.get("source_url") or ""
+        )
         if not brand:
             brand_id = f"brand-{uuid.uuid4().hex[:8]}"
             brand = {
@@ -4718,6 +5005,10 @@ Produce the opportunity card JSON.
                 "company": partner_name or "Discovered Brand",
                 "industry": candidate.get("industry") or "Other",
                 "website": candidate.get("website") or (f"https://{candidate.get('source_domain')}" if candidate.get("source_domain") else candidate.get("source_url", "")),
+                "about": brand_about,
+                "brand_about": brand_about,
+                "logo_url": brand_logo_url,
+                "brand_logo_url": brand_logo_url,
                 "hq": candidate.get("country") or "Nigeria",
                 "primary_contact": contact_name,
                 "role": contact_role,
@@ -4763,6 +5054,7 @@ Produce the opportunity card JSON.
             for key in [
                 "key_marketing_focus", "primary_target_audience", "key_marketing_channels",
                 "marketing_kpis", "likelihood_to_work_with_tta", "brand_type",
+                "about", "brand_about", "logo_url", "brand_logo_url",
             ]:
                 incoming = candidate.get(key)
                 if incoming and not brand.get(key):
@@ -4804,6 +5096,8 @@ Produce the opportunity card JSON.
             "Suggested angle": candidate.get("suggested_opportunity_angle"),
             "Source URL": candidate.get("source_url"),
             "Website": brand.get("website"),
+            "About": brand.get("about") or brand.get("brand_about"),
+            "Brand logo": brand.get("logo_url") or brand.get("brand_logo_url"),
             "Contact email": contact_email,
             "Contact phone": contact_phone,
         }
@@ -6096,6 +6390,138 @@ Produce the opportunity card JSON.
         })
         return {"ok": True, "business_case": case, "business_case_id": bc_id}
 
+    class BrandCallTranscriptPayload(BaseModel):
+        transcript: str
+        actor: str = "admin"
+        source: str = "v1_simplified_admin"
+
+    @router.post("/brands/{brand_id}/call-transcript")
+    async def process_brand_call_transcript(brand_id: str, payload: BrandCallTranscriptPayload):
+        transcript = payload.transcript.strip()
+        if not transcript:
+            raise HTTPException(400, "Transcript is required")
+
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+
+        existing_cases = await db.v3_business_cases.find(
+            {"brand_id": brand_id, "stage": {"$in": ["connect", "frame"]}, "status": {"$ne": "deleted"}},
+            {"_id": 0},
+        ).sort("updated_at", -1).to_list(1)
+        case = existing_cases[0] if existing_cases else None
+        if not case:
+            created = await move_brand_to_business_call(brand_id)
+            case = created["business_case"]
+
+        bc_id = case["id"]
+        brand_name = brand.get("company") or brand.get("name") or "Brand"
+        now = _now_iso()
+        meeting = await create_meeting(MeetingCreate(
+            title=f"Business Call Transcript - {brand_name}",
+            meeting_type="business_call",
+            stage="connect",
+            entity_type="brand",
+            source=payload.source,
+            business_case_id=bc_id,
+            brand_id=brand_id,
+            rm_id=case.get("rm_id") or brand.get("rm_id") or payload.actor,
+            entity_name=brand_name,
+            business_case_title=case.get("title") or f"{brand_name} business case",
+            contact_name=brand.get("primary_contact") or "",
+            contact_role=brand.get("role") or "",
+            contact_email=brand.get("email") or "",
+            contact_phone=brand.get("phone") or "",
+            agenda="Analyze brand call transcript and generate the Alignment Snapshot.",
+            meeting_notes=f"Uploaded by {payload.actor} from {payload.source}.",
+        ))
+        meeting_id = meeting["id"]
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"transcript": transcript, "updated_at": now}},
+        )
+
+        analysis = await analyze_meeting_transcript(meeting_id)
+        marketing_intelligence = (
+            analysis.get("marketing_intelligence")
+            or analysis.get("detected_fields")
+            or _extract_marketing_intelligence(transcript)
+        )
+        readiness_score = int(analysis.get("readiness_score") or 0)
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {
+                    "stage": "frame",
+                    "connect.source": payload.source,
+                    "connect.connect_status": "qualified_to_frame",
+                    "connect.transcript": transcript,
+                    "connect.analysis": analysis,
+                    "connect.marketing_intelligence": marketing_intelligence,
+                    "connect.stated_intent": marketing_intelligence.get("key_marketing_focus") or analysis.get("summary") or "",
+                    "connect.latest_meeting_id": meeting_id,
+                    "connect.latest_business_call_id": meeting_id,
+                    "connect.promoted_at": now,
+                    "frame.readiness_score": readiness_score,
+                    "next_action": STAGE_NEXT_ACTIONS["frame"],
+                    "updated_at": now,
+                },
+                "$addToSet": {
+                    "business_call_meeting_ids": meeting_id,
+                    "connect.meeting_ids": meeting_id,
+                },
+                "$push": {
+                    "timeline": {
+                        "at": now,
+                        "event": "v1_simplified_call_transcript_processed",
+                        "meeting_id": meeting_id,
+                        "actor": payload.actor,
+                    }
+                },
+            },
+        )
+        await db.v3_brands.update_one(
+            {"id": brand_id},
+            {
+                "$set": {
+                    "status": "business_case_active",
+                    "qualification_status": "accepted",
+                    "crm_accepted_at": brand.get("crm_accepted_at") or now,
+                    "last_interaction": "call transcript processed",
+                    "updated_at": now,
+                },
+                "$addToSet": {
+                    "business_case_ids": bc_id,
+                    "business_call_meeting_ids": meeting_id,
+                },
+            },
+        )
+        await db.v3_interactions.insert_one({
+            "id": f"int-{uuid.uuid4().hex[:8]}",
+            "brand_id": brand_id,
+            "business_case_id": bc_id,
+            "meeting_id": meeting_id,
+            "type": "business_call",
+            "title": "Brand call transcript analyzed",
+            "author": payload.actor,
+            "date_iso": now,
+            "content": f"{analysis.get('summary', 'Business call transcript analyzed.')}\n\nTranscript:\n{transcript}",
+            "next_action": "Review Alignment Snapshot",
+        })
+
+        alignment_snapshot = await generate_alignment(bc_id)
+        business_case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        return {
+            "ok": True,
+            "brand_id": brand_id,
+            "meeting_id": meeting_id,
+            "business_case_id": bc_id,
+            "alignment_snapshot_id": alignment_snapshot["id"],
+            "business_case": business_case,
+            "alignment_snapshot": alignment_snapshot,
+            "transcript_analysis": analysis,
+        }
+
     @router.post("/meetings/{meeting_id}/business/reschedule")
     async def reschedule_business_call(meeting_id: str, payload: MeetingDecisionPayload = MeetingDecisionPayload()):
         meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
@@ -6365,3 +6791,5 @@ Produce the opportunity card JSON.
         }
 
     return router
+
+
