@@ -34,6 +34,9 @@ import {
   v3ContractPdfUrl,
   v3FinalReportPdfUrl,
   v3FeedbackPdfUrl,
+  v3SendContractEmail,
+  v3SendFinalReportEmail,
+  v3SendFeedbackEmail,
   v3CreateBrief,
   v3CreateContract,
   v3UpdateContract,
@@ -2163,7 +2166,7 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
   const openPreview = async () => {
     // Legacy contracts may have empty sections — hit the PDF endpoint which backfills the doc, then refresh the list.
     if (!(contract.sections && contract.sections.length) && onRefresh) {
-      try { await fetch(v3ContractPdfUrl(contract.id), { method: 'GET' }); } catch (_e) {}
+      try { await fetch(v3ContractPdfUrl(contract.id), { method: 'GET' }); } catch (_e) { /* backfill best-effort */ }
       await onRefresh();
     }
     setPreviewOpen(true);
@@ -2262,7 +2265,7 @@ export const V3BusinessCaseContractStudio = () => {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not save contract.');
     }
   };
-  const handleShare = (contract, option) => {
+  const handleShare = async (contract, option) => {
     if (option.key === 'copy_link') {
       const link = `${window.location.origin}/v3/admin/business-cases/${id}/delivery/contracts#${contract.id}`;
       navigator.clipboard?.writeText(link);
@@ -2279,7 +2282,22 @@ export const V3BusinessCaseContractStudio = () => {
       window.open(`https://wa.me/?text=${text}`, '_blank');
       return;
     }
-    setNotice(`${option.label} — queued. (Email send wiring pending — placeholder UX.)`);
+    if (option.key === 'email_brand' || option.key === 'email_creator') {
+      const isCreator = option.key === 'email_creator';
+      const defaultTo = isCreator ? creatorEmail : brandEmail;
+      const recipientName = isCreator ? (bundle?.creator?.name || '') : (brand?.company || brand?.name || '');
+      const toEmail = window.prompt(`Send contract via email to ${isCreator ? 'creator' : 'brand'}:`, defaultTo || '');
+      if (!toEmail) return;
+      setNotice(`Sending contract to ${toEmail}…`);
+      try {
+        await v3SendContractEmail(contract.id, { to_email: toEmail, recipient_name: recipientName });
+        await refreshContracts();
+        setNotice(`Contract emailed to ${toEmail}.`);
+      } catch (e) {
+        setNotice(e?.response?.data?.detail || e?.message || 'Could not send the email.');
+      }
+      return;
+    }
   };
   const handleSign = async (contract) => {
     try {
@@ -2580,8 +2598,27 @@ export const V3BusinessCaseFinalReport = () => {
     } else if (option.key === 'whatsapp') {
       const text = encodeURIComponent(`${isReport ? 'Final Report' : 'Feedback'} ready: ${report?.title || ''}\n${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report`);
       window.open(`https://wa.me/?text=${text}`, '_blank');
+    } else if (option.key === 'email_brand' || option.key === 'email_creator') {
+      const isCreatorRecipient = option.key === 'email_creator';
+      const defaultTo = isCreatorRecipient ? creatorEmail : brandEmail;
+      const recipientName = isCreatorRecipient ? (bundle?.creator?.name || '') : (brand?.company || brand?.name || '');
+      const toEmail = window.prompt(`Send ${isReport ? 'report' : 'feedback'} via email to ${isCreatorRecipient ? 'creator' : 'brand'}:`, defaultTo || '');
+      if (!toEmail) return;
+      setNotice(`Sending ${isReport ? 'report' : 'feedback'} to ${toEmail}…`);
+      try {
+        if (isReport) {
+          await v3SendFinalReportEmail(report.id, { to_email: toEmail, recipient_name: recipientName });
+        } else {
+          await v3SendFeedbackEmail(report.id, { to_email: toEmail, recipient_name: recipientName });
+        }
+        await reload();
+        setNotice(`${isReport ? 'Report' : 'Feedback'} emailed to ${toEmail}.`);
+      } catch (e) {
+        setNotice(e?.response?.data?.detail || e?.message || 'Could not send the email.');
+      }
+      return; // mark-sent already done by backend
     } else {
-      setNotice(`${option.label} — queued. (Email send wiring pending — placeholder UX.)`);
+      setNotice(`${option.label} — queued.`);
     }
     // Mark sent on any email_brand/email_creator/copy_link/download/whatsapp action
     try {
