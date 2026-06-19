@@ -7,8 +7,9 @@ import {
   FileText,
   User,
   Send,
+  Trash2,
 } from 'lucide-react';
-import { v3GetBrand, v3MoveBrandToBusinessCall, v3MoveBrandToFrame } from '../../lib/v3api';
+import { v3GetBrand, v3MoveBrandToBusinessCall, v3MoveBrandToFrame, v3DeleteBrand } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 
 const EMPTY_VALUE = 'Not captured yet';
@@ -116,8 +117,22 @@ const V1AdminCRMBrandDetail = () => {
   const navigate = useNavigate();
   const [bundle, setBundle] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [moving, setMoving] = useState(false);
   const [notice, setNotice] = useState('');
+
+  const handleDeleteBrand = async () => {
+    setDeleting(true);
+    try {
+      await v3DeleteBrand(id);
+      navigate(adminRoute('/crm-brands'));
+    } catch (e) {
+      setNotice(e.response?.data?.detail || e.message || 'Failed to delete brand.');
+      setDeleting(false);
+      setDeleteConfirmOpen(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -196,9 +211,22 @@ const V1AdminCRMBrandDetail = () => {
 
   return (
     <div className="space-y-5" data-testid="v1-brand-detail">
-      <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
-        <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
-      </button>
+      <div className="flex items-center justify-between gap-4">
+        <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
+          <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
+        </button>
+        <button
+          type="button"
+          onClick={() => setDeleteConfirmOpen(true)}
+          disabled={deleting}
+          className="inline-flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg border border-[#E0B0A4] bg-[#FBF1EE] text-[#B54A37] hover:bg-[#F5D9D2] transition-colors disabled:opacity-50"
+          data-testid="v1-brand-delete-button"
+          title="Delete this brand and all its linked records"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+          {deleting ? 'Deleting…' : 'Delete brand'}
+        </button>
+      </div>
 
       <div className="v3-card p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -312,6 +340,50 @@ const V1AdminCRMBrandDetail = () => {
       </div>
 
 
+      {/* Delete confirmation modal */}
+      {deleteConfirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          data-testid="brand-delete-confirm"
+        >
+          <div className="v3-card w-full max-w-md bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-[#FBF1EE] flex items-center justify-center flex-shrink-0">
+                <Trash2 className="w-5 h-5 text-[#B54A37]" />
+              </div>
+              <div>
+                <h3 className="text-[16px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                  Delete this brand?
+                </h3>
+                <p className="text-[12px] text-[#6E6657] mt-1 leading-relaxed">
+                  <strong>{brand.company}</strong> and all its linked records (contacts, business cases,
+                  interactions, meetings, contracts, projects, fees, wallet, reports, tasks, queued emails)
+                  will be permanently removed. This cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-[#F1ECDF]">
+              <button
+                onClick={() => setDeleteConfirmOpen(false)}
+                disabled={deleting}
+                className="v3-btn-secondary text-[12px]"
+                data-testid="brand-delete-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteBrand}
+                disabled={deleting}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#B54A37] text-white text-[12px] font-medium hover:bg-[#9E3E2D] disabled:opacity-50"
+                data-testid="brand-delete-confirm-button"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {deleting ? 'Deleting…' : 'Yes, delete brand'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
