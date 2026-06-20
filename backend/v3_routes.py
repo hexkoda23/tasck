@@ -614,6 +614,94 @@ def make_v3_router(db):
 
     router.seed_v3 = seed_v3  # exposed so server.py can call it on startup
 
+    def _smtp_flag(name: str, default: bool) -> bool:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _email_domain(address: str) -> str:
+        return address.rsplit("@", 1)[-1].lower() if "@" in address else ""
+
+    def _smtp_sender_identity(username: str) -> Tuple[str, str, str]:
+        configured_from = os.getenv("SMTP_FROM_EMAIL", username).strip()
+        from_name = os.getenv("SMTP_FROM_NAME", "TASCK OS").strip() or "TASCK OS"
+        allow_custom_from = _smtp_flag("SMTP_ALLOW_CUSTOM_FROM", False)
+        username_domain = _email_domain(username)
+        configured_domain = _email_domain(configured_from)
+        if username_domain and configured_domain and username_domain != configured_domain and not allow_custom_from:
+            reply_to = configured_from
+            return username, from_name, reply_to
+        reply_to = os.getenv("SMTP_REPLY_TO", configured_from or username).strip()
+        return configured_from or username, from_name, reply_to
+
+    def _smtp_transactional_html(plain_body: str, from_email: str) -> str:
+        escaped_body = html.escape(plain_body).replace("\n", "<br />")
+        footer = html.escape(
+            os.getenv(
+                "SMTP_EMAIL_FOOTER",
+                f"This transactional email was sent by TASCK OS. Reply to {from_email} if you need help.",
+            )
+        )
+        return (
+            '<!doctype html><html><body style="margin:0;padding:24px;font-family:Arial,sans-serif;color:#1a1a1a;line-height:1.5;">'
+            f'<div style="max-width:680px;margin:0 auto;font-size:14px;">{escaped_body}'
+            f'<hr style="border:none;border-top:1px solid #e7dfd2;margin:24px 0;" />'
+            f'<p style="font-size:12px;color:#6b6258;">{footer}</p></div></body></html>'
+        )
+
+    def _add_transactional_headers(message: EmailMessage, email: Dict[str, Any], from_email: str, reply_to: str) -> None:
+        domain = _email_domain(from_email)
+        message["Date"] = formatdate(localtime=False)
+        message["Message-ID"] = make_msgid(domain=domain or None)
+        if reply_to:
+            message["Reply-To"] = reply_to
+        organization = os.getenv("SMTP_ORGANIZATION", "TASCK").strip()
+        if organization:
+            message["Organization"] = organization
+        message["X-Mailer"] = "TASCK OS"
+        message["X-Entity-Ref-ID"] = str(email.get("id") or uuid.uuid4().hex)
+        message["X-Auto-Response-Suppress"] = "All"
+        message["Auto-Submitted"] = "auto-generated"
+        if domain:
+            message["List-ID"] = f"TASCK OS transactional <transactional.{domain}>"
+        feedback_id = str(email.get("kind") or "transactional").replace(" ", "_")[:40]
+        message["Feedback-ID"] = f"{feedback_id}:tasck:transactional"
+        unsubscribe_url = os.getenv("SMTP_UNSUBSCRIBE_URL", "").strip()
+        unsubscribe_email = os.getenv("SMTP_UNSUBSCRIBE_EMAIL", "").strip()
+        if unsubscribe_url:
+            message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+            message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+        elif unsubscribe_email:
+            message["List-Unsubscribe"] = f"<mailto:{unsubscribe_email}>"
+
+    def _send_smtp_message(
+        message: EmailMessage,
+        *,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        use_ssl: bool,
+        use_tls: bool,
+        envelope_from: str,
+        to_email: str,
+    ) -> None:
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as smtp:
+                smtp.login(username, password)
+                smtp.send_message(message, from_addr=envelope_from, to_addrs=[to_email])
+        else:
+            with smtplib.SMTP(host, port, timeout=20) as smtp:
+                smtp.ehlo()
+                if use_tls:
+                    ctx = ssl.create_default_context()
+                    smtp.starttls(context=ctx)
+                    smtp.ehlo()
+                smtp.login(username, password)
+                smtp.send_message(message, from_addr=envelope_from, to_addrs=[to_email])
+
     def _deliver_email_now(email: Dict[str, Any]) -> Dict[str, Any]:
         host = os.getenv("SMTP_HOST", "").strip()
         username = os.getenv("SMTP_USERNAME", "").strip()
@@ -623,51 +711,48 @@ def make_v3_router(db):
                 "status": "queued",
                 "delivery_error": "SMTP is not configured. Set SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM_EMAIL to send real email immediately.",
             }
+        to_email = str(email.get("to") or "").strip()
+        if not to_email or to_email.endswith(".tasck.local"):
+            return {"status": "delivery_failed", "delivery_error": "A real recipient email address is required before sending."}
+
         port = int(os.getenv("SMTP_PORT", "587"))
-        from_email = os.getenv("SMTP_FROM_EMAIL", username).strip()
-        from_name = os.getenv("SMTP_FROM_NAME", "TASCK OS").strip()
-        use_ssl = os.getenv("SMTP_USE_SSL", "false").strip().lower() in {"1", "true", "yes"}
-        use_tls = os.getenv("SMTP_USE_TLS", "true").strip().lower() not in {"0", "false", "no"}
+        from_email, from_name, reply_to = _smtp_sender_identity(username)
+        envelope_from = os.getenv("SMTP_ENVELOPE_FROM", os.getenv("SMTP_RETURN_PATH", from_email)).strip() or from_email
+        use_ssl = _smtp_flag("SMTP_USE_SSL", False)
+        use_tls = _smtp_flag("SMTP_USE_TLS", True)
         message = EmailMessage()
         message["From"] = formataddr((from_name, from_email))
-        message["To"] = str(email.get("to") or "")
+        message["To"] = to_email
         message["Subject"] = str(email.get("subject") or "")
-        message["Date"] = formatdate(localtime=False)
-        message["Message-ID"] = make_msgid(domain=from_email.split("@")[-1] if "@" in from_email else None)
-        reply_to = os.getenv("SMTP_REPLY_TO", from_email).strip()
-        if reply_to:
-            message["Reply-To"] = reply_to
+        _add_transactional_headers(message, email, from_email, reply_to)
         plain_body = str(email.get("body") or "")
         message.set_content(plain_body)
-        message.add_alternative(
-            "<html><body>" + html.escape(plain_body).replace("\n", "<br />") + "</body></html>",
-            subtype="html",
-        )
+        message.add_alternative(_smtp_transactional_html(plain_body, reply_to or from_email), subtype="html")
         for attachment in email.get("attachments") or []:
             content = attachment.get("content")
             if content is None or content == "":
                 continue
-            filename = str(attachment.get("filename") or "alignment-snapshot.docx")
+            filename = str(attachment.get("filename") or "attachment.dat")
             mime_type = str(attachment.get("mime_type") or "application/octet-stream")
             maintype, _, subtype = mime_type.partition("/")
             payload = content if isinstance(content, bytes) else str(content).encode("utf-8")
             message.add_attachment(payload, maintype=maintype or "application", subtype=subtype or "octet-stream", filename=filename)
         try:
-            if use_ssl:
-                with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
-                    smtp.login(username, password)
-                    smtp.send_message(message)
-            else:
-                with smtplib.SMTP(host, port, timeout=20) as smtp:
-                    if use_tls:
-                        smtp.starttls()
-                    smtp.login(username, password)
-                    smtp.send_message(message)
+            _send_smtp_message(
+                message,
+                host=host,
+                port=port,
+                username=username,
+                password=password,
+                use_ssl=use_ssl,
+                use_tls=use_tls,
+                envelope_from=envelope_from,
+                to_email=to_email,
+            )
         except (OSError, smtplib.SMTPException) as exc:
             logger.warning("Immediate email delivery failed for %s: %s", email.get("to"), exc)
             return {"status": "delivery_failed", "delivery_error": str(exc)}
         return {"status": "sent", "sent_at": _now_iso(), "delivery_error": ""}
-
     async def queue_email(
         *,
         to: str,
@@ -753,6 +838,10 @@ def make_v3_router(db):
         account = await db.v3_brand_accounts.find_one({"brand_id": brand_id}, {"_id": 0})
         emails = await db.v3_email_outbox.find({"brand_id": brand_id}, {"_id": 0}).sort("queued_at", -1).to_list(100)
         opportunities = await db.v3_opportunities.find({"brand_id": brand_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+        case_ids = [case.get("id") for case in cases if case.get("id")]
+        deliverables = []
+        if case_ids:
+            deliverables = await db.v3_deliverables.find({"business_case_id": {"$in": case_ids}}, {"_id": 0}).sort("created_at", -1).to_list(500)
         return {
             "brand": brand,
             "contacts": contacts,
@@ -761,6 +850,7 @@ def make_v3_router(db):
             "account": account,
             "emails": emails,
             "opportunities": opportunities,
+            "deliverables": deliverables,
         }
 
     @router.delete("/brands/{brand_id}")
@@ -3710,40 +3800,24 @@ def make_v3_router(db):
     # SMTP — share contract / final report / feedback via real email
     # ------------------------------------------------------------------------
     def _smtp_send(to_email: str, subject: str, body: str, attachment_bytes: Optional[bytes] = None, attachment_name: Optional[str] = None) -> None:
-        host = os.environ.get("SMTP_HOST")
-        port = int(os.environ.get("SMTP_PORT", "587"))
-        username = os.environ.get("SMTP_USERNAME")
-        password = os.environ.get("SMTP_PASSWORD")
-        from_email = os.environ.get("SMTP_FROM_EMAIL", username or "")
-        from_name = os.environ.get("SMTP_FROM_NAME", "TASCK")
-        use_tls = (os.environ.get("SMTP_USE_TLS", "true").lower() == "true")
-        use_ssl = (os.environ.get("SMTP_USE_SSL", "false").lower() == "true")
-        if not all([host, username, password, from_email]):
-            raise HTTPException(500, "SMTP credentials are not fully configured on the server.")
-
-        msg = EmailMessage()
-        msg["Subject"] = subject
-        msg["From"] = f"{from_name} <{from_email}>"
-        msg["To"] = to_email
-        msg.set_content(body)
+        attachments = []
         if attachment_bytes and attachment_name:
-            msg.add_attachment(attachment_bytes, maintype="application", subtype="pdf", filename=attachment_name)
-
-        if use_ssl:
-            ctx = ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, context=ctx, timeout=20) as srv:
-                srv.login(username, password)
-                srv.send_message(msg)
-        else:
-            with smtplib.SMTP(host, port, timeout=20) as srv:
-                srv.ehlo()
-                if use_tls:
-                    ctx = ssl.create_default_context()
-                    srv.starttls(context=ctx)
-                    srv.ehlo()
-                srv.login(username, password)
-                srv.send_message(msg)
-
+            attachments.append({
+                "filename": attachment_name,
+                "mime_type": "application/pdf",
+                "content": attachment_bytes,
+            })
+        delivery = _deliver_email_now({
+            "id": f"mail-{uuid.uuid4().hex[:8]}",
+            "to": to_email,
+            "subject": subject,
+            "body": body,
+            "kind": "document_share",
+            "attachments": attachments,
+        })
+        if delivery.get("status") != "sent":
+            detail = delivery.get("delivery_error") or "SMTP delivery did not complete."
+            raise HTTPException(502, str(detail))
     class SendEmailPayload(BaseModel):
         to_email: str
         recipient_name: Optional[str] = None
@@ -4570,15 +4644,25 @@ def make_v3_router(db):
         business_case_id: str
         title: str
         notes: Optional[str] = None
+        delivery_date: Optional[str] = None
+        delivery_time: Optional[str] = None
+        delivery_timeframe: Optional[str] = None
 
     @router.post("/deliverables")
     async def add_deliverable(payload: DeliverableCreate):
         d_id = f"del-{uuid.uuid4().hex[:8]}"
+        created_at = _now_iso()
         doc = {
             "id": d_id,
             "business_case_id": payload.business_case_id,
             "title": payload.title,
             "notes": payload.notes or "",
+            "delivery_date": payload.delivery_date or "",
+            "delivery_time": payload.delivery_time or "",
+            "delivery_timeframe": payload.delivery_timeframe or "",
+            "scheduled_for": " ".join([item for item in [payload.delivery_date, payload.delivery_time] if item]) or "",
+            "created_at": created_at,
+            "updated_at": created_at,
             "status": "pending_upload",
             "rm_approved_at": None,
             "brand_approved_at": None,
@@ -4588,14 +4672,17 @@ def make_v3_router(db):
         all_d = await db.v3_deliverables.find({"business_case_id": payload.business_case_id}, {"_id": 0}).to_list(500)
         await db.v3_business_cases.update_one(
             {"id": payload.business_case_id},
-            {"$set": {"deliver.milestones_total": len(all_d), "updated_at": _now_iso()},
-             "$push": {"timeline": {"at": _now_iso(), "event": "deliverable_added", "deliverable_id": d_id}}},
+            {"$set": {"deliver.milestones_total": len(all_d), "updated_at": created_at},
+             "$push": {"timeline": {"at": created_at, "event": "deliverable_added", "deliverable_id": d_id}}},
         )
         return doc
 
     class DeliverableUpdate(BaseModel):
         title: Optional[str] = None
         notes: Optional[str] = None
+        delivery_date: Optional[str] = None
+        delivery_time: Optional[str] = None
+        delivery_timeframe: Optional[str] = None
         status: Optional[str] = None
 
     @router.patch("/deliverables/{deliverable_id}")
@@ -4605,6 +4692,8 @@ def make_v3_router(db):
             raise HTTPException(404, "Deliverable not found")
         updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
         if updates:
+            updates["scheduled_for"] = " ".join([item for item in [updates.get("delivery_date", d.get("delivery_date")), updates.get("delivery_time", d.get("delivery_time"))] if item]) or d.get("scheduled_for", "")
+            updates["updated_at"] = _now_iso()
             await db.v3_deliverables.update_one({"id": deliverable_id}, {"$set": updates})
         return await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
 

@@ -3210,16 +3210,22 @@ export const V3BusinessCaseDeliverables = () => {
   const { id, bundle, reload } = useBusinessCaseBundle();
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
+  const [deliveryDate, setDeliveryDate] = useState('');
+  const [deliveryTime, setDeliveryTime] = useState('');
+  const [deliveryTimeframe, setDeliveryTimeframe] = useState('');
   const [rows, setRows] = useState([]);
   const [notice, setNotice] = useState('');
   useEffect(() => { v3ListDeliverables(id).then((data) => setRows(Array.isArray(data) ? data : [])); }, [id]);
   const add = async () => {
     if (!title.trim()) { setNotice('Add a deliverable title first.'); return; }
     setNotice('');
-    const row = await v3AddDeliverable({ business_case_id: id, title, notes });
+    const row = await v3AddDeliverable({ business_case_id: id, title, notes, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_timeframe: deliveryTimeframe });
     setRows([row, ...rows]);
     setTitle('');
     setNotes('');
+    setDeliveryDate('');
+    setDeliveryTime('');
+    setDeliveryTimeframe('');
   };
   const openReporting = async () => {
     setNotice('');
@@ -3246,6 +3252,23 @@ export const V3BusinessCaseDeliverables = () => {
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Deliverable notes</span>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={5} className="mt-1 w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Describe scope, format, duration, owner, due date, channels, references, success markers…" data-testid="deliverable-notes-input" />
           </label>
+          <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-3" data-testid="deliverable-schedule-panel">
+            <p className="mb-3 text-[10px] uppercase tracking-wider text-[#8A8A8A]">Delivery date, time, and timeframe</p>
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Scheduled date</span>
+                <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="deliverable-date-input" />
+              </label>
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Scheduled time</span>
+                <input type="time" value={deliveryTime} onChange={(e) => setDeliveryTime(e.target.value)} className="mt-1 w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="deliverable-time-input" />
+              </label>
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Delivery timeframe</span>
+                <input value={deliveryTimeframe} onChange={(e) => setDeliveryTimeframe(e.target.value)} className="mt-1 w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" placeholder="e.g., 2 production days / Launch week" data-testid="deliverable-timeframe-input" />
+              </label>
+            </div>
+          </div>
           <div className="flex justify-end">
             <button onClick={add} className="v3-btn-primary" data-testid="deliverable-add-btn"><PackageCheck className="w-3.5 h-3.5" /> Add deliverable</button>
           </div>
@@ -3262,6 +3285,11 @@ export const V3BusinessCaseDeliverables = () => {
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-semibold text-[#1A1A1A]">{row.title}</p>
                     {row.notes && <p className="mt-1 text-[12px] text-[#6E6657] whitespace-pre-wrap">{row.notes}</p>}
+                    <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-[#6E6657]">
+                      <span className="rounded bg-[#F4F2EC] px-2 py-1">Added: {row.created_at ? new Date(row.created_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : 'Not recorded'}</span>
+                      <span className="rounded bg-[#F4F2EC] px-2 py-1">Scheduled: {[row.delivery_date, row.delivery_time].filter(Boolean).join(' ') || row.scheduled_for || 'Not recorded'}</span>
+                      <span className="rounded bg-[#F4F2EC] px-2 py-1">Timeframe: {row.delivery_timeframe || 'Not recorded'}</span>
+                    </div>
                   </div>
                   <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657] uppercase tracking-wider">{row.status}</span>
                 </div>

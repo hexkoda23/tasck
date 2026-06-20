@@ -12,6 +12,8 @@ import {
   Sparkles,
   Edit2,
   Check,
+  ChevronDown,
+  PackageCheck,
 } from 'lucide-react';
 import {
   v3GetBrand,
@@ -147,6 +149,32 @@ const SmallRecord = ({ title, subtitle, body, href }) => (
     {body && <p className="mt-2 whitespace-pre-wrap break-words leading-5 text-[#5C5C5C]">{shortText(body)}</p>}
   </div>
 );
+const emailContentKey = (email) => {
+  const subject = String(email?.subject || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const body = String(email?.body || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const isAlignment = subject.includes('alignment snapshot') || String(email?.kind || '').includes('alignment');
+  return isAlignment ? `alignment:${subject}:${body}` : `${email?.id || subject}:${body}`;
+};
+
+const dedupeEmails = (emails) => {
+  const seen = new Map();
+  emails.forEach((email) => {
+    const key = emailContentKey(email);
+    const existing = seen.get(key);
+    if (!existing) {
+      seen.set(key, { ...email, duplicate_count: 1 });
+      return;
+    }
+    seen.set(key, { ...existing, duplicate_count: (existing.duplicate_count || 1) + 1 });
+  });
+  return Array.from(seen.values());
+};
+
+const formatDeliverableSchedule = (row) => {
+  const scheduled = [row?.delivery_date, row?.delivery_time].filter(Boolean).join(' ') || row?.scheduled_for || '';
+  return scheduled || 'Schedule not recorded';
+};
+
 
 const V1AdminCRMBrandDetail = () => {
   const { id } = useParams();
@@ -162,6 +190,7 @@ const V1AdminCRMBrandDetail = () => {
   const [aboutDraft, setAboutDraft] = useState('');
   const [editingLogo, setEditingLogo] = useState(false);
   const [logoDraft, setLogoDraft] = useState('');
+  const [deliverablesOpen, setDeliverablesOpen] = useState(false);
 
   const reloadData = async () => {
     try {
@@ -247,6 +276,8 @@ const V1AdminCRMBrandDetail = () => {
   const interactions = Array.isArray(bundle?.interactions) ? bundle.interactions : [];
   const opportunities = Array.isArray(bundle?.opportunities) ? bundle.opportunities : [];
   const emails = Array.isArray(bundle?.emails) ? bundle.emails : [];
+  const visibleEmails = dedupeEmails(emails);
+  const deliverables = Array.isArray(bundle?.deliverables) ? bundle.deliverables : [];
   const account = bundle?.account || null;
 
   const moveToCallPage = async () => {
@@ -552,7 +583,25 @@ const V1AdminCRMBrandDetail = () => {
               <p className="text-[#5C5C5C]">Username: {account?.username || EMPTY_VALUE}</p>
               <p className="text-[#5C5C5C]">Status: {account?.status || EMPTY_VALUE}</p>
             </div>
-            {emails.slice(0, 4).map((email, index) => <SmallRecord key={email.id || index} title={email.subject || 'Queued email'} subtitle={[email.to, email.status].filter(Boolean).join(' | ')} body={email.body} />)}
+            <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]" data-testid="brand-deliverables-panel">
+              <button type="button" onClick={() => setDeliverablesOpen((open) => !open)} className="flex w-full items-center justify-between gap-3 text-left" data-testid="brand-deliverables-toggle">
+                <span className="flex items-center gap-2 font-semibold text-[#1A1A1A]"><PackageCheck className="h-4 w-4 text-[#1F4A3A]" /> Deliverables for this brand ({deliverables.length})</span>
+                <ChevronDown className={`h-4 w-4 text-[#8A8A8A] transition-transform ${deliverablesOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {deliverablesOpen && (
+                <div className="mt-3 grid gap-2">
+                  {deliverables.length ? deliverables.map((row) => (
+                    <SmallRecord
+                      key={row.id}
+                      title={row.title || 'Deliverable'}
+                      subtitle={[row.status, formatDeliverableSchedule(row), row.delivery_timeframe].filter(Boolean).join(' | ')}
+                      body={[row.notes, row.created_at ? `Added: ${formatDateTime(row.created_at)}` : ''].filter(Boolean).join('\n')}
+                    />
+                  )) : <p className="text-[13px] text-[#8A8A8A]">No deliverables have been added for this brand yet.</p>}
+                </div>
+              )}
+            </div>
+            {visibleEmails.slice(0, 4).map((email, index) => <SmallRecord key={email.id || index} title={email.subject || 'Queued email'} subtitle={[email.to, email.status, email.duplicate_count > 1 ? `${email.duplicate_count} duplicate sends collapsed` : ''].filter(Boolean).join(' | ')} body={email.body} />)}
           </div>
         </InfoCard>
       </div>
