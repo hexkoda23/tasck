@@ -1913,6 +1913,21 @@ def make_v3_router(db):
             query["rm_id"] = rm_id
         return await db.v3_business_cases.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
 
+    @router.post("/business-cases/{bc_id}/continue")
+    async def continue_business_case(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        now = _now_iso()
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {"updated_at": now, "last_interaction_at": now},
+                "$push": {"timeline": {"at": now, "event": "v1_admin_continued_project", "actor": "admin"}},
+            },
+        )
+        updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        return {"ok": True, "business_case": updated, "business_case_id": bc_id}
     @router.get("/business-cases/{bc_id}")
     async def get_business_case(bc_id: str):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -2006,6 +2021,7 @@ def make_v3_router(db):
 
     class BrandProjectStartPayload(BaseModel):
         force_new: bool = False
+        title: Optional[str] = None
 
     @router.post("/brands/{brand_id}/business-call")
     async def move_brand_to_business_call(brand_id: str, payload: BrandProjectStartPayload = BrandProjectStartPayload()):
@@ -2029,7 +2045,7 @@ def make_v3_router(db):
             "id": bc_id,
             "brand_id": brand_id,
             "creator_id": None,
-            "title": f"{brand.get('company') or brand.get('name') or 'Brand'} â€” Business Call Connect",
+            "title": (payload.title or "").strip() or f"{brand.get('company') or brand.get('name') or 'Brand'} - Business Call Connect",
             "stage": "connect",
             "engagement_track": brand.get("engagement_track_default") or "paid",
             "estimated_value": 0,
@@ -2113,7 +2129,7 @@ def make_v3_router(db):
             "id": bc_id,
             "brand_id": brand_id,
             "creator_id": None,
-            "title": f"{brand.get('company') or brand.get('name') or 'Brand'} â€” Business Case Frame",
+            "title": (payload.title or "").strip() or f"{brand.get('company') or brand.get('name') or 'Brand'} - Business Case Frame",
             "stage": "frame",
             "engagement_track": brand.get("engagement_track_default") or "paid",
             "estimated_value": 0,

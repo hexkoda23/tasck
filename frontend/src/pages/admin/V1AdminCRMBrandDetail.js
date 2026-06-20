@@ -19,6 +19,7 @@ import {
   v3GetBrand,
   v3MoveBrandToBusinessCall,
   v3MoveBrandToFrame,
+  v3ContinueBusinessCase,
   v3DeleteBrand,
   v3UpdateBrandDetails,
   v3ScrapeBrandDetails,
@@ -222,6 +223,7 @@ const V1AdminCRMBrandDetail = () => {
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
   const [projectChoiceOpen, setProjectChoiceOpen] = useState(false);
   const [projectChoiceDismissed, setProjectChoiceDismissed] = useState(false);
+  const [newProjectTitle, setNewProjectTitle] = useState('');
 
   const reloadData = async () => {
     try {
@@ -338,11 +340,20 @@ const V1AdminCRMBrandDetail = () => {
     return false;
   };
 
-  const continueExistingProject = () => {
+  const continueExistingProject = async () => {
     if (!activeBusinessCase?.id) return;
+    setMoving(true);
     setProjectChoiceOpen(false);
     setProjectChoiceDismissed(true);
-    navigate(businessCasePhasePath(activeBusinessCase.id, activeBusinessCase));
+    try {
+      const result = await v3ContinueBusinessCase(activeBusinessCase.id);
+      const continued = result.business_case || activeBusinessCase;
+      navigate(businessCasePhasePath(activeBusinessCase.id, continued));
+    } catch (error) {
+      navigate(businessCasePhasePath(activeBusinessCase.id, activeBusinessCase));
+    } finally {
+      setMoving(false);
+    }
   };
 
   const startBrandProject = async (target, forceNew = false) => {
@@ -350,9 +361,11 @@ const V1AdminCRMBrandDetail = () => {
     setMoving(true);
     setNotice('');
     try {
+      const customTitle = forceNew ? newProjectTitle.trim() : '';
+      const payload = { force_new: forceNew, title: customTitle || undefined };
       const result = target === 'frame'
-        ? await v3MoveBrandToFrame(brand.id, { force_new: forceNew })
-        : await v3MoveBrandToBusinessCall(brand.id, { force_new: forceNew });
+        ? await v3MoveBrandToFrame(brand.id, payload)
+        : await v3MoveBrandToBusinessCall(brand.id, payload);
       const businessCaseId = result.business_case_id || result.business_case?.id;
       if (!businessCaseId) throw new Error('Business Case was not returned by the V3 workflow.');
       setProjectChoiceOpen(false);
@@ -667,7 +680,7 @@ const V1AdminCRMBrandDetail = () => {
         <InfoCard title="Interactions">
           {interactions.length ? (
             <div className="grid gap-2">
-              {interactions.slice(0, 8).map((interaction, index) => <SmallRecord key={interaction.id || index} title={interaction.title || interaction.type || 'Interaction'} subtitle={interaction.date_iso || interaction.created_at || interaction.author} body={interaction.content || interaction.summary || interaction.next_action} />)}
+              {interactions.slice(0, 8).map((interaction, index) => <SmallRecord key={interaction.id || index} title={interaction.title || interaction.type || 'Interaction'} subtitle={[formatDateTime(interaction.date_iso || interaction.created_at), interaction.author].filter(Boolean).join(' | ')} body={interaction.content || interaction.summary || interaction.next_action} />)}
             </div>
           ) : (
             <p className="text-[13px] text-[#8A8A8A]">No interactions recorded yet.</p>
@@ -722,6 +735,18 @@ const V1AdminCRMBrandDetail = () => {
               <p className="mt-1 text-[#6E6657]">Stage: {activeBusinessCase.stage || EMPTY_VALUE}</p>
               <p className="mt-1 text-[#8A8A8A]">Updated: {formatDateTime(activeBusinessCase.updated_at || activeBusinessCase.created_at)}</p>
             </div>
+            <label className="mt-4 block text-[10px] uppercase tracking-wider text-[#8A8A8A]">
+              New business case name
+              <input
+                type="text"
+                value={newProjectTitle}
+                onChange={(event) => setNewProjectTitle(event.target.value)}
+                className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] normal-case tracking-normal text-[#1A1A1A] focus:outline-none focus:border-[#1F4A3A]"
+                placeholder={`${brandName(brand)} - New campaign / project name`}
+                data-testid="brand-new-project-title"
+              />
+            </label>
+            <p className="mt-1 text-[11px] leading-5 text-[#8A8A8A]">Leave blank to use the default V3 business case name.</p>
             <div className="mt-5 grid gap-2 sm:grid-cols-2">
               <button type="button" onClick={continueExistingProject} className="v3-btn-primary justify-center" data-testid="brand-continue-project">
                 Continue
