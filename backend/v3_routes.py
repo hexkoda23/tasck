@@ -80,11 +80,15 @@ def _compact_text(value: Any, limit: int = 900) -> str:
 
 def _brand_logo_from_source(source_url: str, raw_logo: Any = None) -> str:
     logo = str(raw_logo or "").strip()
-    if logo:
-        return logo[:500]
     domain = _domain_from_url(source_url)
+    if logo:
+        if logo.startswith("//"):
+            logo = f"https:{logo}"
+        elif logo.startswith("/") and domain:
+            logo = f"https://{domain}{logo}"
+        return logo[:500]
     if domain:
-        return f"https://www.google.com/s2/favicons?sz=128&domain_url=https://{domain}"
+        return f"https://logo.clearbit.com/{domain}"
     return ""
 
 def _country_to_gl(country: str) -> str:
@@ -625,7 +629,7 @@ def make_v3_router(db):
 
     def _smtp_sender_identity(username: str) -> Tuple[str, str, str]:
         configured_from = os.getenv("SMTP_FROM_EMAIL", username).strip()
-        from_name = os.getenv("SMTP_FROM_NAME", "TASCK OS").strip() or "TASCK OS"
+        from_name = os.getenv("SMTP_FROM_NAME", "TASCK").strip() or "TASCK"
         allow_custom_from = _smtp_flag("SMTP_ALLOW_CUSTOM_FROM", False)
         username_domain = _email_domain(username)
         configured_domain = _email_domain(configured_from)
@@ -640,7 +644,7 @@ def make_v3_router(db):
         footer = html.escape(
             os.getenv(
                 "SMTP_EMAIL_FOOTER",
-                f"This transactional email was sent by TASCK OS. Reply to {from_email} if you need help.",
+                f"This transactional email was sent by TASCK. Reply to {from_email} if you need help.",
             )
         )
         return (
@@ -659,12 +663,12 @@ def make_v3_router(db):
         organization = os.getenv("SMTP_ORGANIZATION", "TASCK").strip()
         if organization:
             message["Organization"] = organization
-        message["X-Mailer"] = "TASCK OS"
+        message["X-Mailer"] = "TASCK"
         message["X-Entity-Ref-ID"] = str(email.get("id") or uuid.uuid4().hex)
         message["X-Auto-Response-Suppress"] = "All"
         message["Auto-Submitted"] = "auto-generated"
         if domain:
-            message["List-ID"] = f"TASCK OS transactional <transactional.{domain}>"
+            message["List-ID"] = f"TASCK transactional <transactional.{domain}>"
         feedback_id = str(email.get("kind") or "transactional").replace(" ", "_")[:40]
         message["Feedback-ID"] = f"{feedback_id}:tasck:transactional"
         unsubscribe_url = os.getenv("SMTP_UNSUBSCRIBE_URL", "").strip()
@@ -942,28 +946,21 @@ def make_v3_router(db):
                         if paragraphs:
                             scraped_about = _re.sub(r'<[^>]+>', '', paragraphs[0]).strip()[:500]
 
-                    # Extract logo
-                    og_image = _re.search(r'<meta[^>]*property=["\']og:image["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
-                    apple_icon = _re.search(r'<link[^>]*rel=["\']apple-touch-icon["\'][^>]*href=["\']([^"\'>]+)', html, _re.I)
-                    favicon = _re.search(r'<link[^>]*rel=["\'][^"\'>]*icon["\'][^>]*href=["\']([^"\'>]+)', html, _re.I)
-
-                    raw_logo = ""
-                    if og_image:
-                        raw_logo = og_image.group(1).strip()
-                    elif apple_icon:
-                        raw_logo = apple_icon.group(1).strip()
-                    elif favicon:
-                        raw_logo = favicon.group(1).strip()
-
-                    if raw_logo:
-                        if raw_logo.startswith("//"):
-                            scraped_logo = f"https:{raw_logo}"
-                        elif raw_logo.startswith("/"):
-                            from urllib.parse import urlparse
-                            parsed = urlparse(url)
-                            scraped_logo = f"{parsed.scheme}://{parsed.netloc}{raw_logo}"
-                        else:
-                            scraped_logo = raw_logo
+                    # Extract the best available brand image/logo from the page before falling back to a domain logo service.
+                    logo_candidates = []
+                    for pattern in [
+                        r'<meta[^>]*(?:property|name)=["\']og:logo["\'][^>]*content=["\']([^"\'>]+)',
+                        r'<meta[^>]*(?:property|name)=["\']og:image["\'][^>]*content=["\']([^"\'>]+)',
+                        r'<meta[^>]*(?:property|name)=["\']twitter:image["\'][^>]*content=["\']([^"\'>]+)',
+                        r'<link[^>]*rel=["\'][^"\'>]*(?:apple-touch-icon|mask-icon|icon|shortcut icon)[^"\'>]*["\'][^>]*href=["\']([^"\'>]+)',
+                        r'<img[^>]*(?:class|id|alt|src)=["\'][^"\'>]*logo[^"\'>]*["\'][^>]*src=["\']([^"\'>]+)',
+                        r'<img[^>]*src=["\']([^"\'>]*logo[^"\'>]*)["\'][^>]*>',
+                        r'"logo"\s*:\s*"([^"\n]+)"',
+                    ]:
+                        logo_candidates.extend(match.strip() for match in _re.findall(pattern, html, _re.I | _re.S) if match and str(match).strip())
+                    if logo_candidates:
+                        from urllib.parse import urljoin
+                        scraped_logo = _brand_logo_from_source(url, urljoin(url, logo_candidates[0]))
             except Exception as e:
                 logger.warning(f"Scrape failed for {url}: {e}")
 
@@ -971,7 +968,7 @@ def make_v3_router(db):
         if not scraped_about:
             scraped_about = f"{brand_name} is a leading organization focused on delivering high-quality products and services in their industry. Scraped website details highlight their focus on innovation, customer service, and market expansion."
         if not scraped_logo:
-            scraped_logo = f"https://logo.clearbit.com/{website}" if website else ""
+            scraped_logo = _brand_logo_from_source(website)
 
         # Persist scraped results to brand
         updates = {"updated_at": _now_iso()}
@@ -1092,13 +1089,16 @@ def make_v3_router(db):
 
         welcome = await queue_email(
             to=username,
-            subject="Welcome to TASCK OS - your brand portal access",
+            subject="Welcome to TASCK - Brand portal access",
             body=(
-                f"Welcome to TASCK OS, {payload.primary_contact}.\n\n"
-                f"Your brand account for {payload.company} is ready.\n"
-                f"Username: {username}\n"
+                f"Hello {payload.primary_contact},\n\n"
+                f"Welcome to TASCK. Your brand portal account for {payload.company} has been created successfully.\n\n"
+                "You can use the login details below to access your brand portal, review project updates, respond to TASCK documents, and approve items that require your attention.\n\n"
+                f"Portal username: {username}\n"
                 f"Temporary password: {temp_password}\n\n"
-                "On first login, please change your password from the brand portal."
+                "For security, please change this temporary password after your first login. If you did not expect this account or need help signing in, please reply to this email and the TASCK team will assist you.\n\n"
+                "Warm regards,\n"
+                "The TASCK Team"
             ),
             kind="brand_welcome",
             brand_id=brand_id,
@@ -1273,13 +1273,16 @@ def make_v3_router(db):
         await db.v3_brand_accounts.insert_one({**account_doc})
         welcome = await queue_email(
             to=username,
-            subject="Welcome to TASCK OS - your brand portal access",
+            subject="Welcome to TASCK - Brand portal access",
             body=(
-                f"Welcome to TASCK OS, {brand.get('primary_contact') or 'Marketing Team'}.\n\n"
-                f"Your brand account for {brand.get('company')} is ready.\n"
-                f"Username: {username}\n"
+                f"Hello {brand.get('primary_contact') or 'Marketing Team'},\n\n"
+                f"Welcome to TASCK. Your brand portal account for {brand.get('company')} has been created successfully.\n\n"
+                "You can use the login details below to access your brand portal, review project updates, respond to TASCK documents, and approve items that require your attention.\n\n"
+                f"Portal username: {username}\n"
                 f"Temporary password: {temp_password}\n\n"
-                "On first login, please change your password from the brand portal."
+                "For security, please change this temporary password after your first login. If you did not expect this account or need help signing in, please reply to this email and the TASCK team will assist you.\n\n"
+                "Warm regards,\n"
+                "The TASCK Team"
             ),
             kind="brand_welcome",
             brand_id=brand["id"],
@@ -3042,6 +3045,7 @@ def make_v3_router(db):
             raise HTTPException(400, "Brand email is required before sending the Alignment Snapshot.")
         app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
         review_link = f"{app_base_url}/brand/approvals"
+        project_title = _clean_document_text(case.get("title") or snap.get("title") or "Alignment Snapshot", "Alignment Snapshot")
         sent_at = _now_iso()
         await db.v3_alignment_snapshots.update_one(
             {"id": snap["id"]},
@@ -3076,7 +3080,7 @@ def make_v3_router(db):
             subject = f"Alignment Snapshot ready for review - {project_title}"
             body = (
                 f"Hello {brand.get('primary_contact', 'there')},\n\n"
-                "Welcome to TASCK OS. Your Alignment Snapshot is ready for your review.\n\n"
+                "Welcome to TASCK. Your Alignment Snapshot is ready for your review.\n\n"
                 f"Business Case: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
@@ -3090,7 +3094,7 @@ def make_v3_router(db):
             subject = f"Alignment Snapshot ready for approval - {project_title}"
             body = (
                 f"Hello {brand.get('primary_contact', 'there')},\n\n"
-                "Welcome to TASCK OS. Your Alignment Snapshot is ready in your TASCK brand portal.\n\n"
+                "Welcome to TASCK. Your Alignment Snapshot is ready in your TASCK brand portal.\n\n"
                 f"Business Case: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
@@ -3301,7 +3305,7 @@ def make_v3_router(db):
             subject=doc["subject"],
             body=(
                 f"Hello {creator.get('name') or 'there'},\n\n"
-                "Welcome to TASCK OS. A new creator brief is ready for your review.\n\n"
+                "Welcome to TASCK. A new creator brief is ready for your review.\n\n"
                 f"Business Case: {project_title}\n"
                 f"Creator Portal: {creator_portal_url}\n"
                 f"Username: {creator_account.get('username', creator_email)}\n"
@@ -3371,7 +3375,7 @@ def make_v3_router(db):
         docx_bytes = document_docx_bytes(
             brief.get("subject") or "Creative Brief",
             [{"heading": "Creative Brief", "content": brief.get("brief_text") or ""}],
-            "Google Docs-compatible creator brief. The creator may review, comment, and respond through TASCK OS.",
+            "Google Docs-compatible creator brief. The creator may review, comment, and respond through TASCK.",
         )
         return StreamingResponse(
             BytesIO(docx_bytes),
@@ -3675,7 +3679,7 @@ def make_v3_router(db):
                 "The project timeline will be confirmed through the approved Strategy Snapshot, deliverables schedule, and execution plan. TASCK will submit key materials for review where approval is required. The Brand should provide consolidated feedback so the project can move efficiently. Any change in approval route, decision maker, launch date, budget, or legal requirement must be communicated to TASCK as soon as it is known."
             )},
             {"heading": "7. Performance, Reporting, and Acceptance", "content": (
-                "TASCK will coordinate delivery and provide a final report using the information available from the approved deliverables, creator outputs, campaign performance, and project records. The Brand will review the final report and provide feedback or acceptance within a reasonable period. Once accepted, the project may be closed in TASCK OS."
+                "TASCK will coordinate delivery and provide a final report using the information available from the approved deliverables, creator outputs, campaign performance, and project records. The Brand will review the final report and provide feedback or acceptance within a reasonable period. Once accepted, the project may be closed in TASCK."
             )},
             {"heading": "8. Intellectual Property and Usage", "content": (
                 "Ownership and usage rights for project materials will follow the approved brief, creator contracts, paid usage terms, and any written rights schedule. TASCK does not grant rights beyond those actually secured from creators, production partners, or third parties. The Brand must not extend usage, paid media, territory, duration, exclusivity, or adaptation beyond the approved rights without written confirmation."

@@ -120,26 +120,53 @@ const logoUrlForBrand = (brand) => firstValue(brand, ['logo_url', 'brand_logo_ur
 const brandName = (brand) => cleanV1Text(firstValue(brand, ['company', 'name', 'brand_name']) || 'Brand');
 const brandIndustry = (brand) => cleanV1Text(firstValue(brand, ['industry', 'category', 'sector']) || 'Uncategorised');
 
+const domainFromWebsite = (website = '') => {
+  const raw = String(website || '').trim();
+  if (!raw) return '';
+  try {
+    return new URL(raw.startsWith('http') ? raw : 'https://' + raw).hostname.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
+};
+
+const logoCandidatesForBrand = (brand) => {
+  const direct = logoUrlForBrand(brand);
+  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url']));
+  return [
+    direct,
+    domain ? 'https://logo.clearbit.com/' + domain : '',
+    domain ? 'https://www.google.com/s2/favicons?sz=256&domain_url=https://' + domain : '',
+    domain ? 'https://icons.duckduckgo.com/ip3/' + domain + '.ico' : '',
+  ].filter(Boolean).filter((value, index, array) => array.indexOf(value) === index);
+};
+
 const BrandLogo = ({ brand }) => {
-  const [failed, setFailed] = useState(false);
-  const logoUrl = logoUrlForBrand(brand);
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const logoCandidates = logoCandidatesForBrand(brand);
+  const logoCandidateKey = logoCandidates.join('|');
+  const logoUrl = logoCandidates[candidateIndex] || '';
   const initials = brandName(brand).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'BR';
 
   useEffect(() => {
-    setFailed(false);
-  }, [logoUrl]);
+    setCandidateIndex(0);
+  }, [brand?.id, logoCandidateKey]);
 
   return (
     <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-[#D7CBB8] bg-white">
-      {logoUrl && !failed ? (
-        <img src={logoUrl} alt={`${brandName(brand)} logo`} onError={() => setFailed(true)} className="h-full w-full object-contain p-2" />
+      {logoUrl ? (
+        <img
+          src={logoUrl}
+          alt={brandName(brand) + ' logo'}
+          onError={() => setCandidateIndex((current) => current + 1)}
+          className="h-full w-full object-contain p-2"
+        />
       ) : (
         <span className="text-[18px] font-semibold text-[#1F4A3A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{initials}</span>
       )}
     </div>
   );
 };
-
 const InfoCard = ({ title, children, action }) => (
   <div className="v3-card p-5">
     <div className="mb-3 flex items-center justify-between gap-3">

@@ -390,7 +390,7 @@ const TranscriptUploadPanel = ({ sessions, onAdd, onRemove, onChange, onUploadFi
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Transcript Content</label>
               <label className="v3-btn-secondary cursor-pointer text-[11px]">
-                <Upload className="w-3.5 h-3.5" /> Upload file
+                <Upload className="w-3.5 h-3.5" /> Upload Meeting Transcript
                 <input
                   type="file"
                   accept=".txt,.md,text/plain"
@@ -542,6 +542,18 @@ const cleanV1Text = (value) => {
 const cleanMoneyText = (value) => cleanV1Text(value).replace(/NGN\s*/gi, '\u20a6');
 const brandDisplayName = (brand) => cleanV1Text(brand?.company || brand?.name || brand?.brand_name || 'Brand');
 const creatorName = (creator) => cleanV1Text(creator?.name || creator?.creator_name || creator?.creative_name || creator?.company_name || creator?.id || 'Creator');
+const creatorSpecialty = (creator) => cleanV1Text(
+  creator?.specialty
+  || creator?.Specialty
+  || creator?.genre
+  || creator?.category
+  || creator?.niche
+  || creator?.content_type
+  || creator?.contentType
+  || creator?.primary_platform
+  || creator?.platform
+  || 'Creator profile'
+);
 const selectedCreatorQuery = (ids) => encodeURIComponent(ids.join(','));
 
 const creatorBriefLink = (businessCaseId, creatorId) => `${window.location.origin}/creator/briefs/${businessCaseId}?creator=${encodeURIComponent(creatorId)}`;
@@ -1186,7 +1198,7 @@ export const V3BusinessCaseConnectQuestions = () => {
         <InfoCard title="Transcript paste/upload">
           <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} rows={12} className="w-full rounded-lg border border-[#E8E4DB] p-3 text-[13px]" />
           <div className="flex gap-2 mt-3">
-            <button onClick={analyze} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Analyze Transcript</button>
+            <button onClick={analyze} className="v3-btn-primary"><Upload className="w-3.5 h-3.5" /> Upload Meeting Transcript</button>
           </div>
           {analysis && <p className="text-[12px] text-[#1F4A3A] mt-3">{analysis.recommendation?.label || analysis.ai_recommendation}</p>}
         </InfoCard>
@@ -2089,7 +2101,7 @@ export const V1BusinessCaseFrameTranscripts = () => {
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Transcript Content</label>
                     <label className="v3-btn-secondary cursor-pointer text-[11px]">
-                      <Upload className="w-3.5 h-3.5" /> Upload file
+                      <Upload className="w-3.5 h-3.5" /> Upload Meeting Transcript
                       <input type="file" accept=".txt,.md,.doc,.docx,text/plain" className="hidden" onChange={(event) => uploadTranscriptFile(transcript.id, event.target.files?.[0])} />
                     </label>
                   </div>
