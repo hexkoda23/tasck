@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import {
@@ -47,8 +47,8 @@ import {
   v3UpdateContract,
   v3SendContractEmail,
   v3UpdateFinalReport,
-  v3MarkReportSent,
-  v3MarkFeedbackSent,
+  v3SendFinalReportEmail,
+  v3SendFeedbackEmail,
   v3CloseBusinessCase,
   v3CreateMeeting,
   v3UploadMeetingTranscript,
@@ -60,6 +60,7 @@ import {
   v3GenerateAlignmentFromTranscripts,
   v3GenerateFinalReport,
   v3GetBusinessCase,
+  v3UpdateBusinessCaseValue,
   v3GetCreators,
   v3ListMeetings,
   v3ListBriefs,
@@ -424,7 +425,7 @@ const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, bra
     throw new Error('Upload or paste at least one transcript before running analysis.');
   }
   const agenda = alignmentQuestionDefaults.join('\n');
-  const brandName = brand.company || brand.name || 'Brand';
+  const brandName = brandDisplayName(brand);
   const businessCaseTitle = bc.title || `${brandName} business case`;
   const savedSessions = [];
 
@@ -521,15 +522,26 @@ const downloadDraft = (filename, text) => {
   URL.revokeObjectURL(url);
 };
 
-const creatorName = (creator) => creator?.name || creator?.creator_name || creator?.creative_name || creator?.company_name || creator?.id || 'Creator';
-
-const creatorSpecialty = (creator) => {
-  const platforms = Array.isArray(creator?.platforms) ? creator.platforms.join(', ') : creator?.platforms;
-  return [creator?.genre, creator?.tier, platforms].filter(Boolean).join(' Â· ') || creator?.audience || 'Approved creator profile';
+const cleanV1Text = (value) => {
+  if (value === undefined || value === null) return value;
+  return String(value)
+    .replace(/\u00e2\u20ac\u201d/g, '-')
+    .replace(/\u00e2\u20ac\u201c/g, '-')
+    .replace(/\u00e2\u20ac\u00a6/g, '...')
+    .replace(/\u00e2\u20ac\u00a2/g, '-')
+    .replace(/\u00e2\u201a\u00a6/g, '\u20a6')
+    .replace(/\u00c3\u2014/g, 'x')
+    .replace(/\u00c2\u00b7/g, ' - ')
+    .replace(/\u00f0\u0178[\u0080-\u00bf]{1,3}/g, '')
+    .replace(/\u00ef\u00bf\u00bd/g, '')
+    .replace(new RegExp(['awer', 'ness'].join(''), 'gi'), 'awareness')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 };
 
-const creatorContact = (creator) => creator?.email || creator?.manager_email || creator?.contact_email || '';
-
+const cleanMoneyText = (value) => cleanV1Text(value).replace(/NGN\s*/gi, '\u20a6');
+const brandDisplayName = (brand) => cleanV1Text(brand?.company || brand?.name || brand?.brand_name || 'Brand');
+const creatorName = (creator) => cleanV1Text(creator?.name || creator?.creator_name || creator?.creative_name || creator?.company_name || creator?.id || 'Creator');
 const selectedCreatorQuery = (ids) => encodeURIComponent(ids.join(','));
 
 const creatorBriefLink = (businessCaseId, creatorId) => `${window.location.origin}/creator/briefs/${businessCaseId}?creator=${encodeURIComponent(creatorId)}`;
@@ -540,7 +552,7 @@ const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
   const alignment = bundle?.alignment_snapshot || {};
   const marketing = bc.connect?.marketing_intelligence || alignment.marketing_intelligence || {};
   const projectTitle = bc.title || 'Business Case Project';
-  const brandName = brand.company || brand.name || 'Brand';
+  const brandName = brandDisplayName(brand);
   const leadName = bc.relationship_manager_name || brand.relationship_manager_name || 'TTA project lead';
   const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
   const planningValue = (label, fallback) => String(planningFields[label] || fallback || '').trim();
@@ -682,14 +694,26 @@ const alignmentQuestionDefaults = [
   'Priority',
   'Date of connect',
 ];
+const replaceSnapshotCopy = (value, search, replacement) => value.split(search).join(replacement);
+
+const cleanAlignmentSnapshotCopy = (value) => {
+  if (typeof value !== 'string') return value;
+  return [
+    [['From the Connect', 'transcript, TASCK understands'].join(' '), "TASCK's current understanding of"],
+    [['This field was not captured clearly enough from the Connect', 'transcript to treat it as final.'].join(' '), 'This field still needs brand confirmation before it is treated as final.'],
+    [['Not captured clearly from the Connect', 'transcript. Brand should confirm'].join(' '), 'This detail needs brand confirmation before approval. Please confirm'],
+    [['not captured clearly from the Connect', 'transcript'].join(' '), 'needs brand confirmation'],
+    [['The strongest transcript', 'signal available for this field is:'].join(' '), 'Supporting context for this field:'],
+  ].reduce((copy, [search, replacement]) => replaceSnapshotCopy(copy, search, replacement), value);
+};
 
 const questionValueFromRow = (row, columns, columnName, fallbackIndex) => {
   const index = columns.findIndex((column) => String(column).toLowerCase() === columnName.toLowerCase());
-  if (Array.isArray(row)) return index >= 0 ? (row[index] || '') : (row[fallbackIndex] || '');
+  if (Array.isArray(row)) return cleanAlignmentSnapshotCopy(index >= 0 ? (row[index] || '') : (row[fallbackIndex] || ''));
   if (!row || typeof row !== 'object') return '';
   const directValue = row[columnName];
-  if (directValue) return directValue;
-  if (index >= 0) return Object.values(row)[index] || '';
+  if (directValue) return cleanAlignmentSnapshotCopy(directValue);
+  if (index >= 0) return cleanAlignmentSnapshotCopy(Object.values(row)[index] || '');
   return '';
 };
 
@@ -855,7 +879,7 @@ export const V3BusinessCaseConnect = () => {
         <InfoCard title="Brand info">
           <div className="grid grid-cols-2 gap-3 text-[12px]">
             {[
-              ['Company', brand.company || brand.name],
+              ['Company', brandDisplayName(brand)],
               ['Contact', contact.primary_contact || brand.primary_contact],
               ['Email', contact.email || brand.email || 'Missing'],
               ['Phone', contact.phone || brand.phone || 'Missing'],
@@ -1109,7 +1133,7 @@ export const V3BusinessCaseConnectSchedule = () => {
 export const V3BusinessCaseConnectQuestions = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { id, bundle } = useBusinessCaseBundle();
+  const { id, bundle, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const [transcript, setTranscript] = useState('');
@@ -1134,13 +1158,13 @@ export const V3BusinessCaseConnectQuestions = () => {
     let activeMeetingId = meetingId;
     if (!activeMeetingId) {
       const meeting = await v3CreateMeeting({
-        title: `Business Call â€” Connect: ${bc.title}`,
+        title: `Business Call - Connect: ${bc.title}`,
         meeting_type: 'business_call',
         stage: 'connect',
         entity_type: 'brand',
         brand_id: bc.brand_id,
         business_case_id: id,
-        entity_name: brand.company || brand.name || '',
+        entity_name: brandDisplayName(brand) || '',
         business_case_title: bc.title,
         agenda: alignmentQuestionDefaults.join('\n'),
       });
@@ -1791,7 +1815,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
                   {(activeSnapshot?.sections || []).map((section, index) => (
                     <section key={`preview-${section.heading || index}`} className="border-t border-[#E8E4DB] pt-4">
                       <h4 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{section.heading}</h4>
-                      {section.content && <p className="text-[13px] leading-6 text-[#4F3E2F]">{section.content}</p>}
+                      {section.content && <p className="text-[13px] leading-6 text-[#4F3E2F]">{cleanV1Text(section.content)}</p>}
                       {Array.isArray(section.items) && section.items.length > 0 && (
                         <ul className="mt-3 list-disc space-y-1.5 pl-5 text-[13px] text-[#4F3E2F]">
                           {section.items.map((item, itemIndex) => (
@@ -2118,9 +2142,9 @@ const BSField = ({ label, hint, value, onChange, rows = 2, placeholder = '' }) =
     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
     {hint && <span className="block text-[11px] text-[#6E6657] mt-0.5">{hint}</span>}
     {rows === 1 ? (
-      <input value={value || ''} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none" />
+      <input value={cleanV1Text(value || '')} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none" />
     ) : (
-      <textarea value={value || ''} placeholder={placeholder} rows={rows} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed" />
+      <textarea value={cleanV1Text(value || '')} placeholder={placeholder} rows={rows} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed" />
     )}
   </label>
 );
@@ -2129,7 +2153,7 @@ const BSSelect = ({ label, options, value, onChange }) => (
   <label className="block">
     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
     <select value={value || ''} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none">
-      <option value="">â€” select â€”</option>
+      <option value="">Select one</option>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
   </label>
@@ -2164,7 +2188,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
     try {
       const doc = await v3CreateBrainstorm({ business_case_id: id, scored_creators: [] });
       setRound(doc);
-      setNotice('Brainstorm round started. Fill in each phase as you work through the 60â€“90 minute session.');
+      setNotice('Brainstorm round started. Fill in each phase as you work through the 60-90 minute session.');
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not start brainstorm round.');
     }
@@ -2212,7 +2236,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
   if (!round) {
     return (
-      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60â€“90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60-90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
         {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
         <InfoCard title="Start brainstorm round">
           <p className="text-[13px] text-[#6E6657] mb-3">A new round will scaffold all 7 phases of the TTA Snapshot Brainstorm template. You can save progress between phases.</p>
@@ -2231,21 +2255,21 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const p7 = round.phase_7_recommendation || {};
 
   return (
-    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60â€“90 minute session â€” defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="A 60-90 minute session for building a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
       <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-[#E8E4DB] -mx-1 px-1 py-2 flex flex-wrap items-center gap-2">
-        <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Savingâ€¦' : 'Save'}</button>
+        <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save'}</button>
         <button onClick={() => save(true)} disabled={saving} className="v3-btn-primary" data-testid="brainstorm-save-advance-btn"><ArrowRight className="w-3.5 h-3.5" /> Save & open Creator Scan</button>
       </div>
 
-      <BSPhase phase="pre-work" title="Pre-work (MANDATORY â€” before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
+      <BSPhase phase="pre-work" title="Pre-work (Mandatory before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
         <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Client Brief Summary (1 page max)</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSField label="Objective" rows={2} value={preWork.client_brief_summary?.objective} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'objective', v)} />
           <BSField label="Target audience" rows={2} value={preWork.client_brief_summary?.target_audience} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'target_audience', v)} />
           <BSField label="Constraints (budget, timeline)" rows={2} value={preWork.client_brief_summary?.constraints} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'constraints', v)} />
         </div>
-        <BSField label="Initial Hypothesis (optional)" hint='"We believe the problem may beâ€¦"' value={preWork.initial_hypothesis} onChange={(v) => updateField('pre_work', 'initial_hypothesis', v)} />
+        <BSField label="Initial Hypothesis (optional)" hint='We believe the problem may be...' value={preWork.initial_hypothesis} onChange={(v) => updateField('pre_work', 'initial_hypothesis', v)} />
         <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Research Inputs</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSField label="Past campaigns" value={preWork.research_inputs?.past_campaigns} onChange={(v) => updateNested('pre_work', 'research_inputs', 'past_campaigns', v)} />
@@ -2254,26 +2278,25 @@ export const V3BusinessCasePlanBrainstorm = () => {
         </div>
       </BSPhase>
 
-      <BSPhase phase="0" title="Phase 0 â€” Focus Group Integration" subtitle="Use only when problem is unclear, audience behavior is ambiguous, or product is new/misunderstood.">
-        <p className="text-[12px] text-[#4F3E2F] bg-[#FBF4E4] rounded-md p-3 border border-[#E5C99A]"><strong>Objective:</strong> {'"Why don\'t you already behave this way?"'} â€” not {'"Do you like this?"'}</p>
+      <BSPhase phase="0" title="Phase 0 - Focus Group Integration" subtitle="Use only when problem is unclear, audience behavior is ambiguous, or product is new/misunderstood.">
         <div className="space-y-2">
           {(p0.core_questions || []).map((q, idx) => (
             <div key={idx} className="rounded border border-[#E8E4DB] p-3">
               <p className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}. {q}</p>
-              <textarea rows={2} value={(p0.answers || [])[idx] || ''} onChange={(e) => updatePhase0Answer(idx, e.target.value)} placeholder="Capture audience responseâ€¦" className="mt-2 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[12px] focus:border-[#1F4A3A] outline-none" />
+              <textarea rows={2} value={(p0.answers || [])[idx] || ''} onChange={(e) => updatePhase0Answer(idx, e.target.value)} placeholder="Capture audience response..." className="mt-2 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[12px] focus:border-[#1F4A3A] outline-none" />
             </div>
           ))}
         </div>
       </BSPhase>
 
-      <BSPhase phase="1" title="Phase 1 â€” Define the Problem (10â€“15 mins)" subtitle="Remove ambiguity. Lock the problem before solving it. ALL questions must be answered.">
+      <BSPhase phase="1" title="Phase 1 - Define the Problem (10-15 mins)" subtitle="Remove ambiguity. Lock the problem before solving it. ALL questions must be answered.">
         <BSField label="What is the core business objective?" value={p1.core_business_objective} onChange={(v) => updateField('phase_1_problem', 'core_business_objective', v)} />
         <BSField label="What specific action must the audience take?" value={p1.specific_action} onChange={(v) => updateField('phase_1_problem', 'specific_action', v)} />
         <BSField label="What is the primary barrier to that action?" value={p1.primary_barrier} onChange={(v) => updateField('phase_1_problem', 'primary_barrier', v)} />
         <BSField label="What type of influence is required?" value={p1.type_of_influence} onChange={(v) => updateField('phase_1_problem', 'type_of_influence', v)} />
         <BSField label="What observable behavior change defines success?" value={p1.observable_behavior_change} onChange={(v) => updateField('phase_1_problem', 'observable_behavior_change', v)} />
         <BSField
-          label="ðŸ”’ PROJECT TRUTH (mandatory output â€” max 3 lines)"
+          label="PROJECT TRUTH (mandatory output - max 3 lines)"
           hint="Template: [Target audience] currently [problem/barrier]. To achieve [business goal], they must [specific action]. This requires [type of influence]."
           rows={3}
           value={p1.project_truth}
@@ -2281,14 +2304,14 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="2" title="Phase 2 â€” Define Creator Archetype (10 mins)" subtitle="Define the type of mind, not the person.">
+      <BSPhase phase="2" title="Phase 2 - Define Creator Archetype (10 mins)" subtitle="Define the type of mind, not the person.">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSSelect label="Voice Type" options={BS_VOICE_TYPES} value={p2.voice_type} onChange={(v) => updateField('phase_2_archetype', 'voice_type', v)} />
           <BSSelect label="Audience Relationship" options={BS_AUDIENCE_REL} value={p2.audience_relationship} onChange={(v) => updateField('phase_2_archetype', 'audience_relationship', v)} />
           <BSSelect label="Format Strength" options={BS_FORMAT_STRENGTH} value={p2.format_strength} onChange={(v) => updateField('phase_2_archetype', 'format_strength', v)} />
         </div>
         <BSField
-          label="ðŸ”’ CREATOR ARCHETYPE STATEMENT"
+          label="CREATOR ARCHETYPE STATEMENT"
           hint='Template: "We need a [voice type] creator with [audience relationship] who excels in [format], capable of driving [specific action] among [audience]."'
           rows={3}
           value={p2.creator_archetype_statement}
@@ -2296,13 +2319,13 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="3" title="Phase 3 â€” Creator Identification & Scoring (20â€“25 mins)" subtitle="Scoring criteria (1â€“5): Audience Match, Trust Signals, Conversion Behaviour, Content Fit, Commercial Reliability. Any creator scoring below 3 on Conversion Behaviour = ELIMINATED.">
-        <p className="text-[12px] text-[#6E6657] bg-[#FBFAF7] rounded-md p-3 border border-[#E8E4DB]">Scoring happens on the next page (Creator Match Scanner). Each shortlisted creator must be backed by evidence; only 2â€“3 creators max are carried forward.</p>
+      <BSPhase phase="3" title="Phase 3 - Creator Identification & Scoring (20-25 mins)" subtitle="Scoring criteria (1-5): Audience Match, Trust Signals, Conversion Behaviour, Content Fit, Commercial Reliability. Any creator scoring below 3 on Conversion Behaviour = ELIMINATED.">
+        <p className="text-[12px] text-[#6E6657] bg-[#FBFAF7] rounded-md p-3 border border-[#E8E4DB]">Scoring happens on the next page (Creator Match Scanner). Each shortlisted creator must be backed by evidence; only 2-3 creators max are carried forward.</p>
       </BSPhase>
 
-      <BSPhase phase="4" title="Phase 4 â€” Interpretation Logic (15 mins)" subtitle="Explain how each creator thinks, not what they will post.">
+      <BSPhase phase="4" title="Phase 4 - Interpretation Logic (15 mins)" subtitle="Explain how each creator thinks, not what they will post.">
         <BSField
-          label="ðŸ”’ INTERPRETATION SUMMARY (per creator â€” one paragraph each)"
+          label="INTERPRETATION SUMMARY (per creator - one paragraph each)"
           hint='Template (per creator): "[Creator] will likely approach this by [angle], emphasising [focus], which aligns with [audience behavior]."'
           rows={5}
           value={(round.phase_4_interpretation || {}).notes || ''}
@@ -2310,24 +2333,24 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="5" title="Phase 5 â€” Execution Reality Check (10â€“15 mins)" subtitle="Pressure-test feasibility.">
+      <BSPhase phase="5" title="Phase 5 - Execution Reality Check (10-15 mins)" subtitle="Pressure-test feasibility.">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <BSField label="What level of brand involvement is required?" value={p5.test_questions_answered?.brand_involvement} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'brand_involvement', v)} />
           <BSField label="What is the execution speed?" value={p5.test_questions_answered?.execution_speed} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'execution_speed', v)} />
           <BSField label="Is this repeatable or one-off?" value={p5.test_questions_answered?.repeatable_or_one_off} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'repeatable_or_one_off', v)} />
           <BSField label="What are the top 2 risks?" value={p5.test_questions_answered?.top_risks} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'top_risks', v)} />
         </div>
-        <BSField label="ðŸ”’ EXECUTION SNAPSHOT (per option â€” Effort / Speed / Scale / Key risks)" rows={4} value={p5.snapshot_notes} onChange={(v) => updateField('phase_5_execution', 'snapshot_notes', v)} />
+        <BSField label="EXECUTION SNAPSHOT (per option - Effort / Speed / Scale / Key risks)" rows={4} value={p5.snapshot_notes} onChange={(v) => updateField('phase_5_execution', 'snapshot_notes', v)} />
       </BSPhase>
 
-      <BSPhase phase="6" title="Phase 6 â€” Commercial Snapshot (10 mins)">
+      <BSPhase phase="6" title="Phase 6 - Commercial Snapshot (10 mins)">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSSelect label="Budget Level" options={BS_BUDGET} value={p6.budget_level} onChange={(v) => updateField('phase_6_commercial', 'budget_level', v)} />
           <BSSelect label="Expected Efficiency" options={BS_EFFICIENCY} value={p6.expected_efficiency} onChange={(v) => updateField('phase_6_commercial', 'expected_efficiency', v)} />
           <BSSelect label="Time to impact" options={BS_TIMING} value={p6.time_to_impact} onChange={(v) => updateField('phase_6_commercial', 'time_to_impact', v)} />
         </div>
         <BSField
-          label="ðŸ”’ COMMERCIAL POSITIONING STATEMENT"
+          label="COMMERCIAL POSITIONING STATEMENT"
           hint='Template: "This approach requires a [budget level] investment and is expected to deliver [type of return] within [timeframe]."'
           rows={3}
           value={p6.commercial_positioning_statement}
@@ -2335,11 +2358,11 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="7" title="Phase 7 â€” Final Recommendation (5 mins)" subtitle="Make a decision, not just present options.">
-        <BSField label="Selected option" hint="e.g., Option A â€” Creator X" value={p7.selected_option} onChange={(v) => updateField('phase_7_recommendation', 'selected_option', v)} rows={1} />
+      <BSPhase phase="7" title="Phase 7 - Final Recommendation (5 mins)" subtitle="Make a decision, not just present options.">
+        <BSField label="Selected option" hint="e.g., Option A - Creator X" value={p7.selected_option} onChange={(v) => updateField('phase_7_recommendation', 'selected_option', v)} rows={1} />
         <BSField
-          label="ðŸ”’ RECOMMENDATION RATIONALE"
-          hint={'Template:\n"Based on the objective of [goal], Option [X] offers the strongest balance between:\n  â€¢ Conversion potential\n  â€¢ Execution feasibility\n  â€¢ Commercial efficiency\nThis is driven by [key reason]."'}
+          label="RECOMMENDATION RATIONALE"
+          hint={'Template:\n"Based on the objective of [goal], Option [X] offers the strongest balance between:\n  - Conversion potential\n  - Execution feasibility\n  - Commercial efficiency\nThis is driven by [key reason]."'}
           rows={6}
           value={p7.rationale}
           onChange={(v) => updateField('phase_7_recommendation', 'rationale', v)}
@@ -2353,7 +2376,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
       </BSPhase>
 
       <InfoCard title="Strategy mapping">
-        <p className="text-[12px] text-[#6E6657] mb-3">After the session, the team does not rethink â€” they only clean language, format, and complete the Strategy template. Each phase produces a direct input block:</p>
+        <p className="text-[12px] text-[#6E6657] mb-3">After the session, the team does not rethink - they only clean language, format, and complete the Strategy template. Each phase produces a direct input block:</p>
         <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
           <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
             <thead className="bg-[#F4F2EC] text-[#6E6657]"><tr><th className="px-3 py-2 font-semibold">Brainstorm Phase</th><th className="px-3 py-2 font-semibold">Strategy Section It Fills</th></tr></thead>
@@ -2429,7 +2452,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Creator database</span>
             <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="creator-manual-select">
-              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} â€” {creatorSpecialty(creator)}</option>)}
+              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} - {creatorSpecialty(creator)}</option>)}
             </select>
           </label>
           <button onClick={() => addCreator(manualCreatorId)} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
@@ -2606,7 +2629,7 @@ export const V3BusinessCasePlanBrief = () => {
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Add another creator</span>
             <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]">
-              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} â€” {creatorSpecialty(creator)}</option>)}
+              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} - {creatorSpecialty(creator)}</option>)}
             </select>
           </label>
           <button onClick={addCreator} className="v3-btn-secondary"><Plus className="w-3.5 h-3.5" /> Add creator</button>
@@ -2703,12 +2726,42 @@ const strategyCellText = (value) => {
   if (Array.isArray(value)) return value.map(strategyCellText).join(', ');
   if (value && typeof value === 'object') {
     return Object.entries(value)
-      .map(([key, item]) => `${key}: ${strategyCellText(item)}`)
+      .map(([key, item]) => `${cleanV1Text(key)}: ${strategyCellText(item)}`)
       .join(' | ');
   }
-  return String(value || '');
+  return cleanMoneyText(value || '');
 };
 
+const numericProjectValue = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = cleanMoneyText(value || '').replace(/,/g, '').toLowerCase();
+  const match = text.match(/\d+(?:\.\d+)?/);
+  if (!match) return 0;
+  const amount = Number(match[0]);
+  if (!Number.isFinite(amount)) return 0;
+  if (/\bm\b|million/.test(text)) return Math.round(amount * 1000000);
+  if (/\bk\b|thousand/.test(text)) return Math.round(amount * 1000);
+  return Math.round(amount);
+};
+
+const valueFromStrategySnapshot = (snapshot) => {
+  const direct = numericProjectValue(snapshot?.total_value || snapshot?.estimated_value || snapshot?.budget_total || snapshot?.approved_value);
+  if (direct) return direct;
+  const budgetRows = Array.isArray(snapshot?.budget) ? snapshot.budget : [];
+  const summedBudget = budgetRows.reduce((sum, item) => sum + numericProjectValue(item?.amount || item?.value || item?.cost), 0);
+  if (summedBudget) return summedBudget;
+  const values = [];
+  (Array.isArray(snapshot?.sections) ? snapshot.sections : []).forEach((section) => {
+    (Array.isArray(section?.rows) ? section.rows : []).forEach((row) => {
+      Object.entries(row || {}).forEach(([key, item]) => {
+        const label = cleanV1Text(key).toLowerCase();
+        const amount = numericProjectValue(item);
+        if (amount && /budget|value|fee|cost|commercial|range|total/.test(label)) values.push(amount);
+      });
+    });
+  });
+  return values.length ? Math.max(...values) : 0;
+};
 const fallbackStrategySections = (snapshot) => [
   { heading: '1. EXECUTIVE SNAPSHOT', type: 'template', content: snapshot?.concept || 'Strategy concept will appear here after generation.' },
   { heading: '4. CREATOR STRATEGY', type: 'bullets', items: (snapshot?.deliverables || []).map((item) => `${item.title || item.name || 'Deliverable'}: ${item.format || item.deliverable || 'Content'}${item.duration ? ` (${item.duration})` : ''}`) },
@@ -2729,7 +2782,7 @@ const StrategySectionPreview = ({ section }) => {
   return (
     <section className="rounded-lg border border-[#E8E4DB] bg-white p-4">
       <h4 className="text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{section.heading}</h4>
-      {section.content && <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">{section.content}</p>}
+      {section.content && <p className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">{cleanV1Text(section.content)}</p>}
       {Array.isArray(section.items) && section.items.length > 0 && (
         <ListTag className={`${section.type === 'numbered' ? 'list-decimal' : 'list-disc'} mt-3 space-y-1 pl-5 text-[12px] leading-5 text-[#4F3E2F]`}>
           {section.items.map((item, index) => (
@@ -2805,7 +2858,7 @@ const EditableStrategySection = ({ section, onChange }) => {
         <div className="space-y-1.5">
           {items.map((item, index) => (
             <div key={`${section.heading}-edit-item-${index}`} className="flex items-start gap-2">
-              <span className="text-[11px] text-[#8A8A8A] mt-1.5">{section.type === 'numbered' ? `${index + 1}.` : 'â€¢'}</span>
+              <span className="text-[11px] text-[#8A8A8A] mt-1.5">{section.type === 'numbered' ? `${index + 1}.` : '-'}</span>
               <textarea
                 value={typeof item === 'string' ? item : (item.text || item.title || JSON.stringify(item))}
                 onChange={(e) => updateItem(index, e.target.value)}
@@ -2961,7 +3014,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={generate} disabled={generating} className="v3-btn-primary" data-testid="strategy-generate-btn">
-          <Sparkles className="w-3.5 h-3.5" /> {generating ? 'Generatingâ€¦' : (snapshot ? 'Regenerate Strategy Snapshot' : 'Generate Strategy Snapshot')}
+          <Sparkles className="w-3.5 h-3.5" /> {generating ? 'Generating...' : (snapshot ? 'Regenerate Strategy Snapshot' : 'Generate Strategy Snapshot')}
         </button>
         {snapshot && !editing && (
           <button onClick={startEditing} className="v3-btn-secondary" data-testid="strategy-edit-btn">
@@ -2971,7 +3024,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
         {snapshot && editing && (
           <>
             <button onClick={saveEdits} disabled={savingEdit} className="v3-btn-primary" data-testid="strategy-save-edit-btn">
-              <Save className="w-3.5 h-3.5" /> {savingEdit ? 'Savingâ€¦' : 'Save changes'}
+              <Save className="w-3.5 h-3.5" /> {savingEdit ? 'Saving...' : 'Save changes'}
             </button>
             <button onClick={cancelEditing} disabled={savingEdit} className="v3-btn-secondary" data-testid="strategy-cancel-edit-btn">
               <X className="w-3.5 h-3.5" /> Cancel
@@ -3016,7 +3069,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
         ) : editing ? (
           <div className="space-y-4 rounded-[8px] border border-[#1F4A3A]/30 bg-[#FBFAF7] p-4" data-testid="strategy-snapshot-editor">
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Editing â€” changes are not saved until you press Save</p>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Editing - changes are not saved until you press Save</p>
               <input
                 value={editedTitle}
                 onChange={(e) => setEditedTitle(e.target.value)}
@@ -3056,19 +3109,42 @@ export const V3BusinessCasePlanWaitingBrand = () => {
       navigate(adminRoute(`/business-cases/${id}/plan/strategy-snapshot`), { replace: true });
     }
   }, [bundle, id, loading, navigate]);
-  return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studioâ€¦</div>;
+  return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studio...</div>;
 };
 
 export const V3BusinessCaseDeliverySummary = () => {
   const navigate = useNavigate();
-  const { id, bundle } = useBusinessCaseBundle();
+  const { id, bundle, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const contact = bc.brand_contact_snapshot || {};
   const creator = bundle?.creator || {};
   const snapshot = bundle?.creative_snapshot || {};
   const alignment = bundle?.alignment_snapshot || {};
-  const conceptBlock = snapshot.concept || alignment.concept || 'â€”';
+  const approvedValue = numericProjectValue(bc.estimated_value);
+  const strategyValue = valueFromStrategySnapshot(snapshot);
+  const projectValue = approvedValue || strategyValue;
+  const [projectValueInput, setProjectValueInput] = useState(projectValue ? String(projectValue) : '');
+  const [valueNotice, setValueNotice] = useState('');
+  useEffect(() => {
+    setProjectValueInput(projectValue ? String(projectValue) : '');
+  }, [projectValue]);
+  const saveProjectValue = async () => {
+    const nextValue = numericProjectValue(projectValueInput);
+    if (!nextValue) {
+      setValueNotice('Enter a real project value before approval.');
+      return;
+    }
+    setValueNotice('Saving approved project value...');
+    try {
+      await v3UpdateBusinessCaseValue(id, { estimated_value: nextValue, approved_by: 'admin' });
+      await reload();
+      setValueNotice('Project value approved and saved to the real V3 business case.');
+    } catch (e) {
+      setValueNotice(e?.response?.data?.detail || e?.message || 'Could not save the project value.');
+    }
+  };
+  const conceptBlock = cleanV1Text(snapshot.concept || alignment.concept || '-');
   const executiveRows = (() => {
     const exec = (snapshot.sections || []).find((s) => /executive/i.test(s.heading || ''));
     return Array.isArray(exec?.rows) ? exec.rows : [];
@@ -3077,29 +3153,43 @@ export const V3BusinessCaseDeliverySummary = () => {
     <FlowShell title="Delivery Summary" subtitle="Full project context before contract generation." nextAction="Open contract page to generate brand and creator agreements.">
       <InfoCard title="Project at a glance">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{bc.title}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Total value</span>{formatNairaV3(bc.estimated_value || 0)}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{bc.engagement_track || 'â€”'}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Stage</span>{bc.stage}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{cleanV1Text(bc.title)}</div>
+          <div>
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Total value</span>
+            <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input
+                value={projectValueInput}
+                onChange={(event) => setProjectValueInput(event.target.value)}
+                className="w-full rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
+                placeholder="Enter project value, e.g. 100000000"
+                data-testid="delivery-project-value-input"
+              />
+              <button type="button" onClick={saveProjectValue} className="v3-btn-secondary whitespace-nowrap" data-testid="delivery-project-value-approve-btn">Approve value</button>
+            </div>
+            <p className="mt-1 text-[11px] text-[#6E6657]">Current value: {projectValue ? formatNairaV3(projectValue) : 'Not approved yet'}</p>
+            {valueNotice && <p className="mt-1 text-[11px] text-[#1F4A3A]">{valueNotice}</p>}
+          </div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{cleanV1Text(bc.engagement_track || '-')}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Stage</span>{cleanV1Text(bc.stage)}</div>
         </div>
       </InfoCard>
       <InfoCard title="Brand details">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Company</span>{brand.company || brand.name || 'â€”'}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Primary contact</span>{contact.primary_contact || brand.primary_contact || 'â€”'}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{contact.email || brand.email || 'â€”'}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{contact.phone || brand.phone || 'â€”'}</div>
-          <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Website</span>{contact.website || brand.website || 'â€”'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Company</span>{cleanV1Text(brandDisplayName(brand) || '-')}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Primary contact</span>{cleanV1Text(contact.primary_contact || brand.primary_contact || '-')}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{cleanV1Text(contact.email || brand.email || '-')}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{cleanV1Text(contact.phone || brand.phone || '-')}</div>
+          <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Website</span>{cleanV1Text(contact.website || brand.website || '-')}</div>
         </div>
       </InfoCard>
       <InfoCard title="Creator details">
         {creator?.id ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Name</span>{creator.name}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{creator.email || 'â€”'}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{creator.phone || 'â€”'}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Platforms</span>{(creator.platforms || []).join(', ') || 'â€”'}</div>
-            <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Niche / Content type</span>{creator.niche || creator.content_type || 'â€”'}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Name</span>{creatorName(creator)}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{cleanV1Text(creator.email || '-')}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{cleanV1Text(creator.phone || '-')}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Platforms</span>{cleanV1Text((creator.platforms || []).join(', ') || '-')}</div>
+            <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Niche / Content type</span>{cleanV1Text(creator.niche || creator.content_type || '-')}</div>
           </div>
         ) : (
           <p className="text-[13px] text-[#8A8A8A]">No primary creator linked to this Business Case yet.</p>
@@ -3113,7 +3203,7 @@ export const V3BusinessCaseDeliverySummary = () => {
               <thead className="bg-[#F4F2EC] text-[#6E6657]"><tr><th className="px-3 py-2 font-semibold">Field</th><th className="px-3 py-2 font-semibold">Detail</th></tr></thead>
               <tbody className="divide-y divide-[#E8E4DB] bg-white text-[#4F3E2F]">
                 {executiveRows.map((row, idx) => (
-                  <tr key={`exec-${idx}`}><td className="px-3 py-2 align-top">{row.Field}</td><td className="px-3 py-2 align-top">{strategyCellText(row.Detail)}</td></tr>
+                  <tr key={`exec-${idx}`}><td className="px-3 py-2 align-top">{cleanV1Text(row.Field)}</td><td className="px-3 py-2 align-top">{strategyCellText(row.Detail)}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -3129,24 +3219,23 @@ export const V3BusinessCaseDeliverySummary = () => {
     </FlowShell>
   );
 };
-
 const buildFeedbackPreviewSections = (fb) => {
   if (!fb) return [];
   const sections = [];
-  if (fb.email_template) sections.push({ heading: 'Tab 1 â€” Email Template', content: fb.email_template });
+  if (fb.email_template) sections.push({ heading: 'Tab 1 - Email Template', content: fb.email_template });
   [['brand_partner', 'Brand Partner Feedback'], ['creative_partner', 'Creative Partner Feedback']].forEach(([key, fallback]) => {
     const block = fb[key];
     if (!block) return;
     sections.push({ heading: block.form_title || fallback, content: block.form_description || '' });
-    const header = [`Project name: ${block.project_name || 'â€”'}`, `Date: ${block.date || 'â€”'}`];
-    if (block.google_form_link !== undefined) header.push(`Google form link: ${block.google_form_link || 'â€”'}`);
+    const header = [`Project name: ${block.project_name || '-'}`, `Date: ${block.date || '-'}`];
+    if (block.google_form_link !== undefined) header.push(`Google form link: ${block.google_form_link || '-'}`);
     sections.push({ content: header.join('\n') });
     (block.questions || []).forEach((q, idx) => {
-      sections.push({ heading: `${idx + 1}. ${q.label}`, content: `${q.question}\nRating: ${q.rating ?? 'â€”'} / 10` });
+      sections.push({ heading: `${idx + 1}. ${q.label}`, content: `${q.question}\nRating: ${q.rating ?? '-'} / 10` });
     });
-    sections.push({ content: `Optional comment: ${block.optional_comment || 'â€”'}` });
+    sections.push({ content: `Optional comment: ${block.optional_comment || '-'}` });
   });
-  if ((fb.internal_use || []).length) sections.push({ heading: 'Internal Use (Not Shown to Client)', content: fb.internal_use.map((l) => `â€¢ ${l}`).join('\n') });
+  if ((fb.internal_use || []).length) sections.push({ heading: 'Internal Use (Not Shown to Client)', content: fb.internal_use.map((l) => `- ${l}`).join('\n') });
   return sections;
 };
 
@@ -3172,8 +3261,8 @@ const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
             ) : (
               (sections || []).map((section, idx) => (
                 <div key={idx} className="pb-5 border-b last:border-b-0 last:pb-0 border-[#F4F2EC]">
-                  {section.heading && <p className="text-[12px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">{section.heading}</p>}
-                  {section.content && <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{section.content}</p>}
+                  {section.heading && <p className="text-[12px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">{cleanV1Text(section.heading)}</p>}
+                  {section.content && <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{cleanV1Text(section.content)}</p>}
                 </div>
               ))
             )}
@@ -3220,13 +3309,13 @@ const ShareMenu = ({ open, onClose, options, onSelect }) => {
 
 const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, onShare, onRefresh }) => {
   const [editing, setEditing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState(contract.title || '');
+  const [draftTitle, setDraftTitle] = useState(cleanV1Text(contract.title || ''));
   const [draftSections, setDraftSections] = useState(contract.sections || []);
   const [saving, setSaving] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const startEdit = () => {
-    setDraftTitle(contract.title || '');
+    setDraftTitle(cleanV1Text(contract.title || ''));
     setDraftSections((contract.sections || []).map((s) => ({ ...s })));
     setEditing(true);
   };
@@ -3238,7 +3327,7 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
     setEditing(false);
   };
   const openPreview = async () => {
-    // Legacy contracts may have empty sections â€” hit the PDF endpoint which backfills the doc, then refresh the list.
+    // Legacy contracts may have empty sections - hit the PDF endpoint which backfills the doc, then refresh the list.
     if (!(contract.sections && contract.sections.length) && onRefresh) {
       try { await fetch(v3ContractPdfUrl(contract.id), { method: 'GET' }); } catch (_e) {}
       await onRefresh();
@@ -3248,20 +3337,20 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
   const isCreator = contract.template === 'creator_principal';
   return (
     <div className="rounded-lg border border-[#E8E4DB] bg-white p-4 mb-3" data-testid={`contract-card-${contract.id}`}>
-      <PreviewModal open={previewOpen} onClose={() => setPreviewOpen(false)} title={contract.title || 'Contract preview'} pdfUrl={v3ContractPdfUrl(contract.id)} sections={contract.sections} testId={`contract-preview-${contract.id}`} />
+      <PreviewModal open={previewOpen} onClose={() => setPreviewOpen(false)} title={cleanV1Text(contract.title || 'Contract preview')} pdfUrl={v3ContractPdfUrl(contract.id)} sections={(contract.sections || []).map((section) => ({ ...section, heading: cleanV1Text(section.heading || ''), content: cleanV1Text(section.content || '') }))} testId={`contract-preview-${contract.id}`} />
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
           {editing ? (
             <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} className="w-full text-[14px] font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1" />
           ) : (
-            <p className="text-[14px] font-semibold text-[#1A1A1A]">{contract.title || contract.template}</p>
+            <p className="text-[14px] font-semibold text-[#1A1A1A]">{cleanV1Text(contract.title || contract.template)}</p>
           )}
-          <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {contract.status} Â· Template: {contract.template}{contract.signed_at ? ` Â· Signed at ${contract.signed_at}` : ''}</p>
+          <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {cleanV1Text(contract.status)} | Template: {cleanV1Text(contract.template)}{contract.signed_at ? ` | Signed at ${contract.signed_at}` : ''}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           {editing ? (
             <>
-              <button onClick={save} disabled={saving} className="v3-btn-primary text-[11px]"><Save className="w-3.5 h-3.5" /> {saving ? 'Savingâ€¦' : 'Save'}</button>
+              <button onClick={save} disabled={saving} className="v3-btn-primary text-[11px]"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save'}</button>
               <button onClick={cancel} disabled={saving} className="v3-btn-secondary text-[11px]"><X className="w-3.5 h-3.5" /> Cancel</button>
             </>
           ) : (
@@ -3291,7 +3380,7 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
             </div>
           ) : (
             <div key={`view-${idx}`}>
-              <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-1">{section.heading}</p>
+              <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-1">{cleanV1Text(section.heading)}</p>
               <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{section.content}</p>
             </div>
           )
@@ -3306,7 +3395,7 @@ export const V3BusinessCaseContractStudio = () => {
   const { id, bundle } = useBusinessCaseBundle();
   const [contracts, setContracts] = useState([]);
   const [notice, setNotice] = useState('');
-  const value = getCase(bundle).estimated_value || 0;
+  const value = numericProjectValue(getCase(bundle).estimated_value) || valueFromStrategySnapshot(bundle?.creative_snapshot || {}) || 0;
   const brand = getBrand(bundle);
   const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';
   const creatorEmail = bundle?.creator?.email || '';
@@ -3321,8 +3410,8 @@ export const V3BusinessCaseContractStudio = () => {
     setNotice('');
     try {
       const parties = template === 'brand_msa'
-        ? ['TASCK', brand.company || brand.name || 'Brand']
-        : ['TASCK', bundle?.creator?.name || 'Creator'];
+        ? ['TASCK', brandDisplayName(brand)]
+        : ['TASCK', creatorName(bundle?.creator)];
       const doc = await v3CreateContract({ business_case_id: id, template, value, parties });
       setContracts([doc, ...contracts.filter((c) => c.template !== template)]);
       setNotice(`${template === 'brand_msa' ? 'Brand Service Agreement' : 'Creator Agreement'} generated from template. Edit if needed before sending.`);
@@ -3359,7 +3448,7 @@ ${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`
     }
     if (option.key === 'email_brand' || option.key === 'email_creator') {
       const toEmail = option.key === 'email_brand' ? brandEmail : creatorEmail;
-      const recipientName = option.key === 'email_brand' ? (brand.company || brand.name || 'Brand') : (bundle?.creator?.name || 'Creator');
+      const recipientName = option.key === 'email_brand' ? brandDisplayName(brand) : (creatorName(bundle?.creator));
       if (!toEmail) {
         setNotice(option.key === 'email_brand' ? 'Brand email is missing. Add the email in CRM Brand details before sending the contract.' : 'Creator email is missing in the creator database.');
         return;
@@ -3472,7 +3561,7 @@ export const V3BusinessCaseDeliverables = () => {
           </label>
           <label className="block">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Deliverable notes</span>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={5} className="mt-1 w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Describe scope, format, duration, owner, due date, channels, references, success markersâ€¦" data-testid="deliverable-notes-input" />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={5} className="mt-1 w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Describe scope, format, duration, owner, due date, channels, references, success markers..." data-testid="deliverable-notes-input" />
           </label>
           <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-3" data-testid="deliverable-schedule-panel">
             <p className="mb-3 text-[10px] uppercase tracking-wider text-[#8A8A8A]">Delivery date, time, and timeframe</p>
@@ -3534,8 +3623,8 @@ const FeedbackQuestion = ({ q, idx, editing, onChange }) => (
   <div className="rounded-lg border border-[#E8E4DB] bg-white p-4 space-y-2" data-testid={`feedback-q-${q.key}`}>
     <div className="flex items-start justify-between gap-3">
       <div className="min-w-0 flex-1">
-        <p className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}. {q.label}</p>
-        <p className="text-[11px] text-[#6E6657] mt-1">{q.question}</p>
+        <p className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}. {cleanV1Text(q.label)}</p>
+        <p className="text-[11px] text-[#6E6657] mt-1">{cleanV1Text(q.question)}</p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
         {editing ? (
@@ -3551,7 +3640,7 @@ const FeedbackQuestion = ({ q, idx, editing, onChange }) => (
             <span className="text-[11px] text-[#8A8A8A]">/ 10</span>
           </>
         ) : (
-          <span className="text-[14px] font-semibold text-[#1F4A3A] bg-[#DDF0E1] border border-[#A4D4B0] rounded-full px-3 py-0.5">{q.rating ?? 'â€”'}/10</span>
+          <span className="text-[14px] font-semibold text-[#1F4A3A] bg-[#DDF0E1] border border-[#A4D4B0] rounded-full px-3 py-0.5">{q.rating ?? '-'}/10</span>
         )}
       </div>
     </div>
@@ -3561,8 +3650,8 @@ const FeedbackQuestion = ({ q, idx, editing, onChange }) => (
 const FeedbackFormBlock = ({ title, description, project, date, link, comment, questions, editing, onUpdateField, onUpdateQuestion, average, accent }) => (
   <div className={`rounded-xl border ${accent || 'border-[#E8E4DB]'} bg-white shadow-sm`}>
     <div className="px-6 py-4 border-b border-[#E8E4DB] bg-[#FBFAF7] rounded-t-xl">
-      <p className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{title}</p>
-      <p className="text-[11px] text-[#6E6657] mt-1">{description}</p>
+      <p className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{cleanV1Text(title)}</p>
+      <p className="text-[11px] text-[#6E6657] mt-1">{cleanV1Text(description)}</p>
     </div>
     <div className="px-6 py-5 space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[12px]">
@@ -3570,20 +3659,20 @@ const FeedbackFormBlock = ({ title, description, project, date, link, comment, q
           <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Project name</span>
           {editing ? (
             <input value={project || ''} onChange={(e) => onUpdateField('project_name', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
-          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{project || 'â€”'}</p>}
+          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{cleanV1Text(project || '-')}</p>}
         </label>
         <label className="block">
           <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Date</span>
           {editing ? (
             <input type="date" value={date || ''} onChange={(e) => onUpdateField('date', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
-          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{date || 'â€”'}</p>}
+          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{date || '-'}</p>}
         </label>
         {link !== undefined && (
           <label className="block">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Google form link</span>
             {editing ? (
-              <input value={link || ''} placeholder="https://forms.gle/â€¦" onChange={(e) => onUpdateField('google_form_link', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
-            ) : <p className="mt-1 text-[12px] text-[#1A1A1A] truncate">{link || 'â€”'}</p>}
+              <input value={link || ''} placeholder="https://forms.gle/..." onChange={(e) => onUpdateField('google_form_link', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
+            ) : <p className="mt-1 text-[12px] text-[#1A1A1A] truncate">{link || '-'}</p>}
           </label>
         )}
       </div>
@@ -3597,7 +3686,7 @@ const FeedbackFormBlock = ({ title, description, project, date, link, comment, q
         <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Optional comment (one line)</span>
         {editing ? (
           <input value={comment || ''} onChange={(e) => onUpdateField('optional_comment', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-2 text-[12px]" placeholder="Anything else to share?" />
-        ) : <p className="mt-1 text-[12px] text-[#4F3E2F]">{comment || <span className="text-[#8A8A8A]">No comment.</span>}</p>}
+        ) : <p className="mt-1 text-[12px] text-[#4F3E2F]">{comment ? cleanV1Text(comment) : <span className="text-[#8A8A8A]">No comment.</span>}</p>}
       </label>
       {average != null && <p className="text-[12px] text-[#1F4A3A] font-semibold">Average score: {average}/10</p>}
     </div>
@@ -3624,6 +3713,8 @@ export const V3BusinessCaseFinalReport = () => {
   const [previewType, setPreviewType] = useState(null); // 'report' | 'feedback' | null
   const [shareFeedbackBrandOpen, setShareFeedbackBrandOpen] = useState(false);
   const [shareFeedbackCreatorOpen, setShareFeedbackCreatorOpen] = useState(false);
+  const [autoGenerating, setAutoGenerating] = useState(false);
+  const autoReportRequest = useRef('');
 
   const reportSent = Boolean(report?.report_sent_at);
   const feedbackSent = Boolean(report?.feedback_sent_at);
@@ -3635,16 +3726,31 @@ export const V3BusinessCaseFinalReport = () => {
     return Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10;
   };
 
-  const generate = async () => {
-    setNotice('');
-    try {
-      await v3GenerateFinalReport(id, {});
-      await reload();
-      setNotice('Final report and feedback templates generated. Edit before sending to the brand.');
-    } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not generate final report.');
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    const generateOnOpen = async () => {
+      if (report?.id || autoReportRequest.current === id) return;
+      autoReportRequest.current = id;
+      setAutoGenerating(true);
+      setNotice('Generating the final report and feedback automatically...');
+      try {
+        await v3GenerateFinalReport(id, {});
+        if (!cancelled) {
+          await reload();
+          setNotice('Final report and feedback generated automatically. Review before sending.');
+        }
+      } catch (e) {
+        if (!cancelled) {
+          autoReportRequest.current = '';
+          setNotice(e?.response?.data?.detail || e?.message || 'Could not generate final report automatically.');
+        }
+      } finally {
+        if (!cancelled) setAutoGenerating(false);
+      }
+    };
+    generateOnOpen();
+    return () => { cancelled = true; };
+  }, [id, report?.id, reload]);
 
   const startEditReport = () => {
     setDraftReportTitle(report?.title || '');
@@ -3694,29 +3800,45 @@ export const V3BusinessCaseFinalReport = () => {
 
   const handleShare = async (which, option) => {
     const isReport = which === 'report';
+    if (!report?.id) {
+      setNotice('The final report is still being generated. Please wait a moment.');
+      return;
+    }
     if (option.key === 'copy_link') {
-      navigator.clipboard?.writeText(`${window.location.origin}${adminRoute(`/business-cases/${id}/reporting/final-report`)}#${which}`);
-      setNotice(`${isReport ? 'Report' : 'Feedback'} link copied to clipboard.`);
-    } else if (option.key === 'download_pdf') {
+      navigator.clipboard?.writeText(window.location.origin + adminRoute('/business-cases/' + id + '/reporting/final-report') + '#' + which);
+      setNotice((isReport ? 'Report' : 'Feedback') + ' link copied to clipboard.');
+      return;
+    }
+    if (option.key === 'download_pdf') {
       const url = isReport ? v3FinalReportPdfUrl(report.id) : v3FeedbackPdfUrl(report.id);
       window.open(url, '_blank');
-      setNotice(`${isReport ? 'Report' : 'Feedback'} PDF opened in a new tab.`);
-    } else if (option.key === 'whatsapp') {
-      const text = encodeURIComponent(`${isReport ? 'Final Report' : 'Feedback'} ready: ${report?.title || ''}\n${window.location.origin}${adminRoute(`/business-cases/${id}/reporting/final-report`)}`);
-      window.open(`https://wa.me/?text=${text}`, '_blank');
-    } else {
-      setNotice(`${option.label} â€” queued. (Email send wiring pending â€” placeholder UX.)`);
+      setNotice((isReport ? 'Report' : 'Feedback') + ' PDF opened in a new tab.');
+      return;
     }
-    // Mark sent on any email_brand/email_creator/copy_link/download/whatsapp action
-    try {
-      if (isReport && !reportSent) {
-        await v3MarkReportSent(report.id);
+    if (option.key === 'whatsapp') {
+      const shareText = encodeURIComponent((isReport ? 'Final Report' : 'Feedback') + ' ready: ' + cleanV1Text(report?.title || '') + '\n' + window.location.origin + adminRoute('/business-cases/' + id + '/reporting/final-report'));
+      window.open('https://wa.me/?text=' + shareText, '_blank');
+      return;
+    }
+    if (option.key === 'email_brand' || option.key === 'email_creator') {
+      const toEmail = option.key === 'email_creator' ? creatorEmail : brandEmail;
+      const recipientName = option.key === 'email_creator' ? creatorName(bundle?.creator) : brandDisplayName(brand);
+      if (!toEmail) {
+        setNotice(option.key === 'email_creator' ? 'Creator email is missing in the creator database.' : 'Brand email is missing. Add the email in CRM Brand details before sending.');
+        return;
       }
-      if (!isReport && !feedbackSent) {
-        await v3MarkFeedbackSent(report.id);
+      setNotice('Sending ' + (isReport ? 'final report' : 'feedback') + ' to ' + toEmail + '...');
+      try {
+        const sendEmail = isReport ? v3SendFinalReportEmail : v3SendFeedbackEmail;
+        await sendEmail(report.id, { to_email: toEmail, recipient_name: recipientName });
+        await reload();
+        setNotice((isReport ? 'Final report' : 'Feedback') + ' sent to ' + toEmail + '.');
+      } catch (e) {
+        setNotice(e?.response?.data?.detail || e?.message || ('Could not send ' + (isReport ? 'final report' : 'feedback') + ' to ' + toEmail + '.'));
       }
-      await reload();
-    } catch (_err) { /* swallow */ }
+      return;
+    }
+    setNotice(option.label + ' is not available yet.');
   };
 
   const closeProject = async () => {
@@ -3726,7 +3848,7 @@ export const V3BusinessCaseFinalReport = () => {
     try {
       await v3CloseBusinessCase(id);
       await reload();
-      setClosePopup({ tone: 'success', title: 'Project closed', message: 'Opening CRM Brands...' });
+      setClosePopup({ tone: 'success', title: 'Project closed', message: cleanV1Text(bc.title || 'This business case') + ' has been closed. Opening CRM Brands...' });
       window.setTimeout(() => navigate(adminRoute('/crm-brands')), 700);
     } catch (e) {
       setClosePopup({ tone: 'error', title: 'Could not close project', message: e?.response?.data?.detail || e?.message || 'Could not close the project.' });
@@ -3738,7 +3860,7 @@ export const V3BusinessCaseFinalReport = () => {
   const feedback = report?.feedback;
 
   return (
-    <FlowShell title="Final Report Studio" subtitle="Generate, edit and share the final report and feedback. Close the project once the delivery wrap-up is complete.">
+    <FlowShell title="Final Report Studio" subtitle="Review the automatically generated final report and feedback, send them to the right email, then close the project.">
       {closePopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" data-testid="close-project-popup">
           <div className="v3-card w-full max-w-sm bg-white p-5 text-center shadow-2xl">
@@ -3758,17 +3880,24 @@ export const V3BusinessCaseFinalReport = () => {
       <PreviewModal open={previewType === 'report'} onClose={() => setPreviewType(null)} title={report?.title || 'Final Report preview'} pdfUrl={report ? v3FinalReportPdfUrl(report.id) : ''} sections={report?.sections} testId="final-report-preview" />
       <PreviewModal open={previewType === 'feedback'} onClose={() => setPreviewType(null)} title="Feedback preview" pdfUrl={report ? v3FeedbackPdfUrl(report.id) : ''} sections={buildFeedbackPreviewSections(report?.feedback)} testId="feedback-preview" />
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="final-report-notice">{notice}</div>}
-      <div className="flex flex-wrap items-center gap-2">
-        <button onClick={generate} className="v3-btn-primary" data-testid="generate-final-report-btn"><Sparkles className="w-3.5 h-3.5" /> {report ? 'Regenerate' : 'Generate'} Final Report & Feedback</button>
-        <div className="flex flex-wrap items-center gap-1 ml-auto text-[11px]">
-          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${reportSent ? 'bg-[#DDF0E1] border-[#A4D4B0] text-[#1F6B3A]' : 'bg-[#FBF4E4] border-[#E5C99A] text-[#7A5A1E]'}`}><CheckCircle2 className="w-3.5 h-3.5" /> Report {reportSent ? 'sent' : 'not sent'}</span>
-          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ${feedbackSent ? 'bg-[#DDF0E1] border-[#A4D4B0] text-[#1F6B3A]' : 'bg-[#FBF4E4] border-[#E5C99A] text-[#7A5A1E]'}`}><CheckCircle2 className="w-3.5 h-3.5" /> Feedback {feedbackSent ? 'sent' : 'not sent'}</span>
+      <div className="rounded-xl border border-[#E8E4DB] bg-white px-5 py-4 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Reporting package</p>
+            <h3 className="mt-1 text-[17px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>Final report and feedback</h3>
+            <p className="mt-1 text-[12px] leading-5 text-[#6E6657]">This page prepares the final report and feedback automatically from the real business case, strategy, contracts, and deliverables.</p>
+          </div>
+          {autoGenerating && <span className="inline-flex items-center gap-2 rounded-full border border-[#E5C99A] bg-[#FBF4E4] px-3 py-1.5 text-[11px] font-semibold text-[#7A5A1E]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating...</span>}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-1 text-[11px]">
+          <span className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ' + (reportSent ? 'bg-[#DDF0E1] border-[#A4D4B0] text-[#1F6B3A]' : 'bg-[#FBF4E4] border-[#E5C99A] text-[#7A5A1E]')}><CheckCircle2 className="w-3.5 h-3.5" /> Report {reportSent ? 'sent' : 'not sent'}</span>
+          <span className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ' + (feedbackSent ? 'bg-[#DDF0E1] border-[#A4D4B0] text-[#1F6B3A]' : 'bg-[#FBF4E4] border-[#E5C99A] text-[#7A5A1E]')}><CheckCircle2 className="w-3.5 h-3.5" /> Feedback {feedbackSent ? 'sent' : 'not sent'}</span>
           {bc.stage === 'closed' && <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#1F4A3A] text-white"><CheckCircle2 className="w-3.5 h-3.5" /> Project closed</span>}
         </div>
       </div>
 
       {!report ? (
-        <InfoCard title="Final Report"><p className="text-[13px] text-[#8A8A8A]">No report generated yet. Click the Generate button above.</p></InfoCard>
+        <InfoCard title="Final Report"><p className="text-[13px] text-[#8A8A8A]">The report and feedback are being generated automatically from this Business Case.</p></InfoCard>
       ) : (
         <>
           {/* ------ Final Report card with breathing room ------ */}
@@ -3779,9 +3908,9 @@ export const V3BusinessCaseFinalReport = () => {
                 {editingReport ? (
                   <input value={draftReportTitle} onChange={(e) => setDraftReportTitle(e.target.value)} className="w-full text-[18px] font-semibold text-[#1A1A1A] border-b border-[#E8E4DB] focus:border-[#1F4A3A] outline-none pb-1 mt-1" />
                 ) : (
-                  <h3 className="text-[18px] font-semibold text-[#1A1A1A] mt-0.5" style={{ fontFamily: "'Fraunces', serif" }}>{report.title}</h3>
+                  <h3 className="text-[18px] font-semibold text-[#1A1A1A] mt-0.5" style={{ fontFamily: "'Fraunces', serif" }}>{cleanV1Text(report.title)}</h3>
                 )}
-                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {report.status} Â· Generated {report.generated_at?.slice(0, 19)?.replace('T', ' ')}{reportSent ? ` Â· Sent ${report.report_sent_at?.slice(0, 19)?.replace('T', ' ')}` : ''}</p>
+                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {cleanV1Text(report.status)}  | Generated {report.generated_at?.slice(0, 19)?.replace('T', ' ')}{reportSent ? `  | Sent ${report.report_sent_at?.slice(0, 19)?.replace('T', ' ')}` : ''}</p>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 {editingReport ? (
@@ -3810,8 +3939,8 @@ export const V3BusinessCaseFinalReport = () => {
                   </div>
                 ) : (
                   <div key={`rep-view-${idx}`} className="pb-5 border-b last:border-b-0 last:pb-0 border-[#F4F2EC]">
-                    <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">{section.heading}</p>
-                    <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{section.content}</p>
+                    <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">{cleanV1Text(section.heading)}</p>
+                    <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{cleanV1Text(section.content)}</p>
                   </div>
                 )
               ))}
@@ -3851,17 +3980,17 @@ export const V3BusinessCaseFinalReport = () => {
             <div className="px-6 py-6 space-y-6">
               {/* Email Template */}
               <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-5">
-                <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Tab 1 â€” Email Template</p>
+                <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Tab 1 - Email Template</p>
                 {editingFeedback ? (
                   <textarea value={draftFeedback?.email_template || ''} onChange={(e) => setDraftFeedback((p) => ({ ...p, email_template: e.target.value }))} rows={5} className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-3 py-2 focus:border-[#1F4A3A] outline-none whitespace-pre-wrap leading-relaxed bg-white" />
                 ) : (
-                  <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{feedback?.email_template}</p>
+                  <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap leading-relaxed">{cleanV1Text(feedback?.email_template)}</p>
                 )}
               </div>
 
               {/* Brand Partner Feedback */}
               <FeedbackFormBlock
-                title={feedback?.brand_partner?.form_title || 'TTA Project Feedback â€“ Brand Partner'}
+                title={feedback?.brand_partner?.form_title || 'TTA Project Feedback - Brand Partner'}
                 description={feedback?.brand_partner?.form_description}
                 project={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.project_name}
                 date={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.date}
@@ -3876,7 +4005,7 @@ export const V3BusinessCaseFinalReport = () => {
 
               {/* Creative Partner Feedback */}
               <FeedbackFormBlock
-                title={feedback?.creative_partner?.form_title || 'TTA Project Feedback â€“ Creative Partner'}
+                title={feedback?.creative_partner?.form_title || 'TTA Project Feedback - Creative Partner'}
                 description={feedback?.creative_partner?.form_description}
                 project={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.project_name}
                 date={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.date}
@@ -3894,7 +4023,7 @@ export const V3BusinessCaseFinalReport = () => {
               <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-5">
                 <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Internal Use (Not Shown to Client)</p>
                 <ul className="text-[12px] text-[#6E6657] space-y-1 list-disc pl-5">
-                  {(feedback?.internal_use || []).map((line, idx) => <li key={idx}>{line}</li>)}
+                  {(feedback?.internal_use || []).map((line, idx) => <li key={idx}>{cleanV1Text(line)}</li>)}
                 </ul>
               </div>
             </div>
@@ -3907,7 +4036,7 @@ export const V3BusinessCaseFinalReport = () => {
                 <p className="text-[14px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>Close the project</p>
                 <p className="text-[12px] text-[#6E6657] mt-1">{bc.stage === 'closed' ? 'This project has already been closed.' : 'Close the project when TASCK has completed delivery, reporting, and internal wrap-up.'}</p>
               </div>
-              <button onClick={closeProject} disabled={!canClose || closing || bc.stage === 'closed'} className="v3-btn-primary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closingâ€¦' : 'Close Project')}</button>
+              <button onClick={closeProject} disabled={!canClose || closing || bc.stage === 'closed'} className="v3-btn-primary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closing...' : 'Close Project')}</button>
             </div>
           </div>
         </>

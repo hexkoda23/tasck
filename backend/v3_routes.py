@@ -1,14 +1,14 @@
-"""TASCK OS v3 â€” Backend Routes
+"""TASCK OS v3 - Backend Routes
 All `/api/v3/*` endpoints powering the v3.2 spec architecture.
 
 Business Case primitive: every project is one document in `v3_business_cases`,
-spanning all four stages (Connect â†’ Frame â†’ Plan â†’ Deliver) plus closure.
+spanning all four stages (Connect -> Frame -> Plan -> Deliver) plus closure.
 
 Stage advancement rules:
-  connect â†’ frame  : Connect status must be `qualified_to_frame`
-  frame   â†’ plan   : Alignment Snapshot approved; all scope flags resolved
-  plan    â†’ deliver: Strategy Snapshot approved AND contract signed
-  deliver â†’ closed : Closure checklist complete (final report + feedback)
+  connect -> frame  : Connect status must be `qualified_to_frame`
+  frame   -> plan   : Alignment Snapshot approved; all scope flags resolved
+  plan    -> deliver: Strategy Snapshot approved AND contract signed
+  deliver -> closed : Closure checklist complete (final report + feedback)
 """
 from fastapi import APIRouter, HTTPException, Header, Depends, Body
 from fastapi.responses import StreamingResponse
@@ -56,7 +56,7 @@ def _temporary_password() -> str:
 
 
 def _brand_created_at_key(brand: Dict[str, Any]) -> str:
-    # Pure chronological sort â€” most recently created brand first.
+    # Pure chronological sort - most recently created brand first.
     created_at = brand.get("created_at") or brand.get("updated_at") or brand.get("imported_at") or ""
     return created_at if isinstance(created_at, str) else ""
 
@@ -292,7 +292,7 @@ def _normalise_alignment_tool_result(card: Dict[str, Any]) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
     for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
         value = str(card.get(key) or "").strip()
-        fields[key] = value[:1400] if value else f"Not captured clearly from the Connect transcript. Brand should confirm {label.lower()}."
+        fields[key] = value[:1400] if value else f"This detail needs brand confirmation before approval. Please confirm {label.lower()}."
 
     try:
         confidence = int(float(card.get("confidence", 0)))
@@ -543,7 +543,7 @@ def _marketing_intelligence_from_case(case: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def make_v3_router(db):
-    """Factory â€” receives the motor DB handle and returns a FastAPI router."""
+    """Factory - receives the motor DB handle and returns a FastAPI router."""
     router = APIRouter(prefix="/api/v3", tags=["v3"])
 
     async def _relationship_manager(rm_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1018,7 +1018,7 @@ def make_v3_router(db):
         brand_id = f"brand-{uuid.uuid4().hex[:8]}"
         rm = await _relationship_manager(payload.rm_id)
         now = _now_iso()
-        brand_status = payload.status or "Lead â€” initial conversations"
+        brand_status = payload.status or "Lead - initial conversations"
         crm_accepted_at = payload.crm_accepted_at
         if brand_status == "crm_accepted" and not crm_accepted_at:
             crm_accepted_at = now
@@ -1928,6 +1928,32 @@ def make_v3_router(db):
         )
         updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         return {"ok": True, "business_case": updated, "business_case_id": bc_id}
+    class BusinessCaseValueUpdate(BaseModel):
+        estimated_value: float = Field(..., ge=0)
+        approved_by: Optional[str] = "admin"
+
+    @router.patch("/business-cases/{bc_id}/value")
+    async def update_business_case_value(bc_id: str, payload: BusinessCaseValueUpdate):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        now = _now_iso()
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {
+                    "estimated_value": payload.estimated_value,
+                    "value_approved_at": now,
+                    "value_approved_by": payload.approved_by or "admin",
+                    "updated_at": now,
+                    "last_interaction_at": now,
+                },
+                "$push": {"timeline": {"at": now, "event": "v1_admin_project_value_approved", "actor": payload.approved_by or "admin", "value": payload.estimated_value}},
+            },
+        )
+        updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        return {"ok": True, "business_case": updated, "business_case_id": bc_id}
+
     @router.get("/business-cases/{bc_id}")
     async def get_business_case(bc_id: str):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -2052,7 +2078,7 @@ def make_v3_router(db):
             "rm_id": brand.get("rm_id") or "admin",
             "created_at": now,
             "days_in_stage": 0,
-            "next_action": "Schedule Business Call â€” Connect.",
+            "next_action": "Schedule Business Call - Connect.",
             "health": "new",
             "scope_creep_locked": False,
             "brand_contact_snapshot": {
@@ -2253,7 +2279,7 @@ def make_v3_router(db):
         return updated
 
     # ------------------------------------------------------------------------
-    # AI ALIGNMENT SNAPSHOT â€” generate deterministic content from real Connect data
+    # AI ALIGNMENT SNAPSHOT - generate deterministic content from real Connect data
     # ------------------------------------------------------------------------
     @router.post("/business-cases/{bc_id}/ai/alignment")
     async def generate_alignment(bc_id: str):
@@ -2539,7 +2565,7 @@ def make_v3_router(db):
         captured_kpis = mi.get("marketing_kpis") or connect.get("marketing_kpis")
 
         def _brand_confirmation(label: str) -> str:
-            return f"Not captured clearly from the Connect transcript. Brand should confirm {label}."
+            return f"This detail needs brand confirmation before approval. Please confirm {label}."
 
         def _alignment_answer(key: str, fallback: str) -> str:
             if alignment_fields:
@@ -2583,18 +2609,23 @@ def make_v3_router(db):
 
         def _detailed_alignment_answer(label: str, answer: str, confirmation_hint: str) -> str:
             base = str(answer or "").strip()
-            missing = (not base) or base.startswith("Not captured clearly") or "Brand should confirm" in base
+            missing = (
+                (not base)
+                or base.startswith("Not captured clearly")
+                or base.startswith("This detail needs brand confirmation")
+                or "Brand should confirm" in base
+            )
             if missing:
                 return (
-                    f"This field was not captured clearly enough from the Connect transcript to treat it as final. "
-                    f"For {label}, TASCK needs the brand to confirm {confirmation_hint}. "
-                    "The brand should add the precise wording, correct any assumptions, and approve only when the statement matches the call and the organisation's current business reality."
+                    f"{label} still needs brand confirmation before it is treated as final. "
+                    f"TASCK needs the brand to confirm {confirmation_hint}. "
+                    "The brand should add precise wording, correct any assumptions, and approve only when the statement matches the conversation and the organisation's current business reality."
                 )
-            evidence = f" The strongest transcript signal available for this field is: {source_excerpt}" if source_excerpt else ""
+            evidence = f" Supporting context for this field: {source_excerpt}" if source_excerpt else ""
             return (
-                f"From the Connect transcript, TASCK understands {label} as follows: {base}. "
-                "This should be treated as the working alignment position for the project, because it captures what the brand appeared to prioritise during the call and turns it into a usable planning input for TASCK. "
-                f"The brand should review the wording carefully, add nuance where needed, and correct anything that does not fully represent the call before approval.{evidence}"
+                f"TASCK's current understanding of {label} is: {base}. "
+                "This is the working alignment position for the project, shaped from the brand conversation and organised into a clear planning input for TASCK. "
+                f"The brand should review the wording carefully, add nuance where needed, and correct anything that does not fully represent the discussion before approval.{evidence}"
             )
 
         about_answer = _detailed_alignment_answer("About The Organisation", about_answer, "what the organisation does, who it serves, and why the market should care")
@@ -2735,7 +2766,7 @@ def make_v3_router(db):
         else:
             updates["frame.strategy_development_fee_invoice_id"] = None
             updates["frame.strategy_development_fee_paid"] = False
-            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement â€” TTA absorbs strategy cost."
+            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement - TTA absorbs strategy cost."
 
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_approved", "by": payload.approver}}})
         return {"ok": True, "approved_at": approved_at}
@@ -3042,11 +3073,11 @@ def make_v3_router(db):
         password = account.get("temporary_password") or "Use your current TASCK password"
         if completion_questions:
             question_text = "\n".join(f"- {question}" for question in completion_questions)
-            subject = f"Alignment Snapshot ready for review - {case['title']}"
+            subject = f"Alignment Snapshot ready for review - {project_title}"
             body = (
                 f"Hello {brand.get('primary_contact', 'there')},\n\n"
                 "Welcome to TASCK OS. Your Alignment Snapshot is ready for your review.\n\n"
-                f"Business Case: {case['title']}\n"
+                f"Business Case: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
                 f"Temporary password: {password}\n\n"
@@ -3056,11 +3087,11 @@ def make_v3_router(db):
                 "A Google Docs-compatible copy of the Alignment Snapshot is attached for review if you prefer to work in Docs."
             )
         else:
-            subject = f"Alignment Snapshot ready for approval - {case['title']}"
+            subject = f"Alignment Snapshot ready for approval - {project_title}"
             body = (
                 f"Hello {brand.get('primary_contact', 'there')},\n\n"
                 "Welcome to TASCK OS. Your Alignment Snapshot is ready in your TASCK brand portal.\n\n"
-                f"Business Case: {case['title']}\n"
+                f"Business Case: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
                 f"Temporary password: {password}\n\n"
@@ -3197,7 +3228,7 @@ def make_v3_router(db):
         return {"ok": True, "paid_at": paid_at}
 
     # ------------------------------------------------------------------------
-    # CREATIVE BRIEFS  (Plan flagship #2 â€” per-creator)
+    # CREATIVE BRIEFS  (Plan flagship #2 - per-creator)
     # ------------------------------------------------------------------------
     class CreativeBriefCreate(BaseModel):
         business_case_id: str
@@ -3223,7 +3254,7 @@ def make_v3_router(db):
             "sent_at": _now_iso(),
             "responded_at": None,
             "status": "sent",
-            "subject": payload.subject or f"Creative Brief - {case['title']}",
+            "subject": payload.subject or f"Creative Brief - {project_title}",
             "brief_text": payload.brief_text,
             "creator_contact_email": creator_email,
             "reminder_count": 0,
@@ -3253,9 +3284,9 @@ def make_v3_router(db):
             }
             await queue_email(
                 to=(brand or {}).get("email", ""),
-                subject=f"Strategy Development Fee issued - {case['title']}",
+                subject=f"Strategy Development Fee issued - {project_title}",
                 body=(
-                    f"The creator brief for {case['title']} has been sent. "
+                    f"The creator brief for {project_title} has been sent. "
                     "The Strategy Development Fee has been issued for commercial approval and will be tracked before Delivery."
                 ),
                 kind="strategy_development_fee_invoice",
@@ -3271,7 +3302,7 @@ def make_v3_router(db):
             body=(
                 f"Hello {creator.get('name') or 'there'},\n\n"
                 "Welcome to TASCK OS. A new creator brief is ready for your review.\n\n"
-                f"Business Case: {case['title']}\n"
+                f"Business Case: {project_title}\n"
                 f"Creator Portal: {creator_portal_url}\n"
                 f"Username: {creator_account.get('username', creator_email)}\n"
                 f"Temporary password: {creator_account.get('temporary_password') or 'Use your current TASCK password'}\n\n"
@@ -3426,11 +3457,11 @@ def make_v3_router(db):
         sent_at = _now_iso()
         email = await queue_email(
             to=recipient,
-            subject=f"Strategy Snapshot ready for review - {case['title']}",
+            subject=f"Strategy Snapshot ready for review - {project_title}",
             body=chr(10).join([
                 f"Hello {brand.get('primary_contact', 'there')},",
                 "",
-                f"The Strategy Snapshot for {case['title']} is ready in your TASCK brand portal.",
+                f"The Strategy Snapshot for {project_title} is ready in your TASCK brand portal.",
                 "",
                 "Please log in to your existing TASCK brand page and review the strategy carefully. You can add comments if any section does not align with the campaign direction, or approve it straight away so TASCK can proceed into Delivery. The attached Google Docs-compatible copy is included for easier review, internal circulation, and comment capture.",
                 "",
@@ -3543,116 +3574,153 @@ def make_v3_router(db):
         value: float
         parties: List[str]
 
+    def _clean_document_text(value: Any, fallback: str = "") -> str:
+        text = str(value or fallback or "")
+        replacements = {
+            "\u00e2\u20ac\u201d": "-",
+            "\u00e2\u20ac\u201c": "-",
+            "\u00e2\u20ac\u00a6": "...",
+            "\u00e2\u20ac\u00a2": "-",
+            "\u00e2\u201a\u00a6": "\u20a6",
+            "\u00c3\u2014": "x",
+            "\u00c2\u00b7": " - ",
+            "\u00e2\u20ac\u02dc": "'",
+            "\u00e2\u20ac\u2122": "'",
+        }
+        for bad, good in replacements.items():
+            text = text.replace(bad, good)
+        return " ".join(text.replace("awer" + "ness", "awareness").split())
+
     def _build_contract_sections(template: str, brand_name: str, creator_name: str, value: float, project_title: str) -> List[Dict[str, Any]]:
         """Return ordered editable sections for the requested contract template."""
-        money = f"â‚¦{int(value):,}" if value else "â‚¦TBC"
+        brand_name = _clean_document_text(brand_name, "Brand")
+        creator_name = _clean_document_text(creator_name, "Creator")
+        project_title = _clean_document_text(project_title, "Project")
+        money = f"\u20a6{int(value):,}" if value else "\u20a6TBC"
+        agreement_date = _now_iso()[:10]
         if template == "creator_principal":
             return [
-                {"heading": "Executive Summary", "content": (
-                    f"This Agreement sets out the terms under which {creator_name} is engaged by {brand_name} to create, lead, coordinate, and deliver the project: {project_title}. "
-                    "You are engaged as an independent creator and retain creative and operational control, subject to agreed deliverables, timelines and budgets. "
-                    "The Brand acts through its non-exclusive agent, The TASCK Agency (TTA), which provides administrative infrastructure, operational resources and reporting systems. "
-                    "Your fees are clearly defined and administered through TTA on behalf of the Brand. A 10% agency fee applies and is deducted at source. "
-                    "All fees are exclusive of VAT. Confidentiality, IP ownership (Brand owns Project IP; Parties retain pre-existing IP), Nigerian law, and arbitration apply."
+                {"heading": "Independent Creator Agreement", "content": (
+                    f"This Independent Creator Agreement is dated {agreement_date} and is made for the project titled {project_title}. "
+                    f"It records the working relationship between {creator_name}, {brand_name}, and TASCK Creative Company Limited, trading operationally as The TASCK Agency. "
+                    "The document is written for clear review before signature: it explains the creator role, the brand responsibilities, TASCK's coordination role, the fee basis, approval process, usage rights, reporting expectations, and the signature requirements."
                 )},
-                {"heading": "Parties", "content": (
-                    f"This Independent Creator Agreement is made between {brand_name} ('Brand'), and {creator_name} ('You/Yours'), acting in coordination with TASCK Creative Company Limited (TTA)."
+                {"heading": "1. Parties", "content": (
+                    f"Creator: {creator_name}.\n"
+                    f"Brand: {brand_name}.\n"
+                    "Agency / coordinator: TASCK Creative Company Limited, trading as The TASCK Agency.\n\n"
+                    "The Creator is engaged as an independent creative partner. Nothing in this Agreement creates an employment relationship, partnership, or exclusive agency relationship unless the parties agree to that separately in writing."
                 )},
-                {"heading": "1. Scope of Agreement", "content": (
-                    "1.1 Project Responsibilities â€” You shall be primarily responsible for the creation, leadership, coordination and delivery of the Project, including (where applicable) creative direction, stakeholder engagement, sponsor/vendor coordination, guest management, logistics, event setup, invoicing through TTA systems and reporting.\n"
-                    "1.2 Post-Project Responsibilities â€” Deliver a narrative and financial report summarising outcomes, learnings and expenditure in the format reasonably prescribed by TTA on behalf of the Brand.\n"
-                    "1.3 TTA's Role â€” TTA will formally engage and authorise you, grant access to internal resources (accounting, legal, music etc.), facilitate meetings, and act solely as a support function. TTA does not assume creative control."
+                {"heading": "2. Project Reference", "content": (
+                    f"Project title: {project_title}.\n"
+                    f"Contract value / creator fee basis: {money}.\n"
+                    "The final scope, dates, deliverables, approvals, and usage terms must match the approved Strategy Snapshot, creator brief, and any later written amendments approved by TASCK and the Brand."
                 )},
-                {"heading": "2. Term", "content": "This Agreement is effective until the contract is terminated or upon the Project's conclusion, whichever occurs first."},
-                {"heading": "3. Consideration", "content": (
-                    f"3.1 TTA shall pay you the sum of {money} (Naira only), payable within 7 days after invoicing directly to TTA.\n"
-                    "3.2 Direct project costs (materials, travel, external consultants, third-party services) are billed separately to project budget.\n"
-                    "3.3 TTA shall be entitled to a 10% agency fee on total fees, deducted at source.\n"
-                    "3.4 All fees are exclusive of VAT and other statutory taxes.\n"
-                    "3.5 Referral bonuses or incentives are separately agreed in writing.\n"
-                    "3.6 TTA administers all payments on behalf of the Brand."
+                {"heading": "3. Creator Responsibilities", "content": (
+                    "The Creator will contribute creative thinking, audience understanding, content direction, appearances, production input, and/or delivery support as agreed in the approved brief. The Creator must communicate availability, production requirements, usage limits, fee assumptions, and any restrictions that may affect delivery before work begins. The Creator will deliver work professionally, on time, and in a format suitable for Brand and TASCK review."
                 )},
-                {"heading": "4. Confidentiality & Non-Disclosure", "content": (
-                    "You shall keep all information related to TTA, the Brand, sponsors, vendors and partners strictly confidential, during and after termination of this Agreement."
+                {"heading": "4. TASCK Responsibilities", "content": (
+                    "TASCK will coordinate communication between the Brand and the Creator, issue or manage the approved brief, support production administration, track approvals, manage reporting, and administer payment in line with the agreed commercial terms. TASCK does not take over the Creator's creative voice; TASCK helps make the agreed project executable, documented, and accountable."
                 )},
-                {"heading": "5. Intellectual Property", "content": (
-                    "5.1 Each Party retains exclusive interest in IP developed before this Agreement or outside its scope.\n"
-                    "5.2 All materials, content, reports and deliverables produced within the Project scope are the sole property of the Brand."
+                {"heading": "5. Fees, Expenses, and Payment", "content": (
+                    f"The agreed creator fee or working budget is {money}. Unless a separate payment schedule is agreed, payment is processed through TASCK after the required invoice, tax details, delivery confirmation, and Brand approval are received. Any production expenses, travel, third-party costs, usage extensions, exclusivity, whitelisting, or additional deliverables must be approved in writing before they are incurred. All stated fees are exclusive of applicable taxes unless clearly stated otherwise."
                 )},
-                {"heading": "6. Representations & Warranties", "content": (
-                    "You are engaged as an independent creator (not employee, partner or agent of the Brand). You warrant capacity to execute this Agreement and agree to use best reasonable efforts. Assignment requires TTA's prior written consent."
+                {"heading": "6. Deliverables and Approval", "content": (
+                    "Deliverables must follow the approved creator brief and execution schedule. TASCK and the Brand will review submitted work against the approved scope, not against unrelated creative preferences introduced after delivery. Reasonable revision requests may be made where the work does not match the approved brief, technical requirements, legal requirements, or brand safety standards. Additional work outside scope requires written approval before execution."
                 )},
-                {"heading": "7. Indemnification", "content": "Each Party shall indemnify and hold the other harmless from claims arising from information provided for the purpose of fulfilling this Agreement."},
-                {"heading": "8. Governing Law", "content": "This Agreement is governed by the laws of the Federal Republic of Nigeria; disputes resolved by arbitration."},
-                {"heading": "9. Dispute Resolution", "content": (
-                    "Disputes shall be settled amicably where possible, failing which they shall be referred to arbitration under the Arbitration and Mediation Act 2023 by a single Arbitrator. The decision is binding; costs borne equally."
+                {"heading": "7. Usage Rights and Intellectual Property", "content": (
+                    "The Creator keeps ownership of pre-existing intellectual property, likeness rights, style, methods, and materials created outside this project. Once the agreed fee is paid, the Brand receives the usage rights expressly approved in the brief or contract for the project deliverables. Broader usage, paid media extension, whitelisting, exclusivity, territory expansion, or extended duration must be agreed separately in writing."
                 )},
-                {"heading": "10. Force Majeure", "content": (
-                    "Neither Party is liable for failure or delay caused by events reasonably beyond their control. If a Force Majeure event persists beyond 30 days, Parties shall take steps to mitigate loss; either Party may terminate where continuation becomes impossible."
+                {"heading": "8. Confidentiality and Conduct", "content": (
+                    "The Creator, Brand, and TASCK must keep confidential information private, including unreleased campaign plans, commercial terms, internal documents, account access, talent discussions, and performance data. All parties must act professionally, avoid misleading public statements, and flag brand safety, conflict, or availability concerns immediately."
                 )},
-                {"heading": "11. Notices & Communication", "content": "Notices shall be in writing, delivered via email to designated leads or to the addresses provided. Changes take effect immediately upon written notification."},
-                {"heading": "12. Termination", "content": (
-                    "Either Party may terminate this Agreement at any time within the Term by giving at least 14 days' written notice. Payment, reporting and other obligations subsisting at the date of termination survive until discharged."
+                {"heading": "9. Cancellation, Delay, and Change Control", "content": (
+                    "If the project is delayed, cancelled, or materially changed, TASCK will document the reason and confirm the effect on fees, timelines, usage, and deliverables. Work already completed, committed costs, booking commitments, and approved production costs remain payable where they cannot reasonably be recovered. Any new scope must be recorded as a written amendment before delivery continues."
                 )},
-                {"heading": "13. Entire Agreement", "content": "This Agreement constitutes the entire Agreement between the Parties. Modifications must be in writing and signed by both Parties."},
-                {"heading": "Signatures", "content": f"The Common Seal of {brand_name} is hereto affixed in the presence of:\n\n_____________________ Secretary / Chief of Staff\n\nSigned and sealed by the within-named creative: {creator_name}\n\n______________________"},
+                {"heading": "10. Reporting and Close-out", "content": (
+                    "After delivery, the Creator will provide reasonable supporting information needed for TASCK's final report, including live links, content files, posting dates, performance screenshots where available, and any delivery notes. TASCK will use this information to close the project accurately with the Brand."
+                )},
+                {"heading": "11. Governing Law and Dispute Resolution", "content": (
+                    "This Agreement is governed by the laws of the Federal Republic of Nigeria. The parties will first try to resolve any dispute through good-faith discussion. If unresolved, the dispute may be referred to arbitration in accordance with applicable Nigerian arbitration law."
+                )},
+                {"heading": "12. Signatures", "content": (
+                    f"Creator: {creator_name}\nName: ________________________________\nSignature: _____________________________\nDate: _________________________________\n\n"
+                    f"For {brand_name}\nName: ________________________________\nSignature: _____________________________\nDate: _________________________________\n\n"
+                    "For TASCK Creative Company Limited\nName: ________________________________\nSignature: _____________________________\nDate: _________________________________"
+                )},
             ]
-        # Default: brand_msa (Service Agreement)
         return [
-            {"heading": "Service Agreement", "content": f"This Service Agreement is dated {_now_iso()[:10]} between TASCK Creative Company Limited ('TASCK') and {brand_name} ('Brand'), for the project: {project_title}."},
-            {"heading": "Parties", "content": (
-                "Party 1 â€” TASCK Creative Company Limited, a registered company situated in Lagos, Nigeria.\n"
-                f"Party 2 â€” {brand_name}.\n"
-                "The parties may be individually or collectively referred to as 'You', 'Your', 'Us', 'Our' as the context requires."
+            {"heading": "Service Agreement", "content": (
+                f"This Service Agreement is dated {agreement_date} and is made between TASCK Creative Company Limited, trading as The TASCK Agency ('TASCK'), and {brand_name} ('Brand') for the project titled {project_title}. "
+                "It is written to be reviewed easily before approval and signature. It explains the project scope, responsibilities, commercial terms, approval process, delivery expectations, cancellation rules, and close-out requirements."
             )},
-            {"heading": "Whereas", "content": (
-                f"TASCK has the expertise and capacity within the scope of work incorporated in Clause 1 (the 'Services'). {brand_name} agrees to engage TASCK and TASCK agrees to provide the Services following the terms of this Agreement."
+            {"heading": "1. Parties", "content": (
+                "Party 1: TASCK Creative Company Limited, a registered company situated in Lagos, Nigeria.\n"
+                f"Party 2: {brand_name}.\n\n"
+                "TASCK and the Brand may be referred to individually as a Party and collectively as the Parties. The Parties agree to work together professionally, respond to project communications within reasonable timelines, and keep all approval decisions clear and documented."
             )},
-            {"heading": "1. Services", "content": (
-                f"Description of Services â€” TASCK shall deliver the {project_title} project, including strategy development, creator coordination, content production support, performance tracking, and reporting. Any other supporting services consequential to the Service provided are included."
+            {"heading": "2. Background and Purpose", "content": (
+                f"The Brand has engaged TASCK to support the planning and delivery of {project_title}. TASCK has the strategy, creator coordination, project management, production support, and reporting capability required to deliver the approved work. The purpose of this Agreement is to record the commercial and operational terms under which TASCK will provide those services."
             )},
-            {"heading": "2. Project Details", "content": "Project timeline and key milestones shall be confirmed in the approved Strategy Snapshot and execution schedule. Venue/channels: to be confirmed with the Brand."},
-            {"heading": "3. Payment", "content": (
-                f"The total fixed fee payable to TASCK shall be {money}. Payment is to be made per the schedule agreed in the approved budget â€” minimum first tranche within seventy-two (72) hours of contract execution to commence work; final tranche on delivery acceptance."
+            {"heading": "3. Scope of Services", "content": (
+                "TASCK will provide services that may include strategy development, creator recommendation and coordination, creative briefing, project planning, production support, content or activation oversight, performance tracking, stakeholder communication, reporting, and project close-out. The exact deliverables, dates, channels, and approval steps will follow the approved Strategy Snapshot, creator brief, deliverables schedule, and any later written amendments approved by both Parties."
             )},
-            {"heading": "4. Performance / Delivery", "content": (
-                "TASCK shall coordinate creators, production and reporting resources. The Brand shall provide timely funding, approvals and feedback so that delivery timelines are not stalled. All works produced under this Agreement are created as 'Work for Hire' and the deliverables become Brand property on full settlement. This Agreement constitutes the entire agreement and supersedes prior negotiations."
+            {"heading": "4. Brand Responsibilities", "content": (
+                "The Brand will provide accurate business information, timely approvals, access to required assets, brand guidelines, payment information, stakeholder availability, and feedback needed for TASCK to deliver the project. Delays in approval, funding, asset delivery, or stakeholder response may affect timelines and may require a revised delivery schedule."
             )},
-            {"heading": "5. Cancellations", "content": (
-                "In case of cancellation by the Brand, notice will be provided at least 72 hours before any scheduled milestone. TASCK must be notified of any inability to fulfil the Agreement at least 72 hours before any scheduled delivery. Where cancellation occurs after work has begun, the Brand shall reimburse TASCK for costs incurred and time committed up to the point of cancellation."
+            {"heading": "5. Commercial Terms and Payment", "content": (
+                f"The total fixed fee or approved working budget for this project is {money}. Payment will follow the approved budget and payment schedule. Unless otherwise agreed in writing, the first payment tranche is required before work begins, and any balance is due according to the agreed milestone or final delivery schedule. Work outside the approved scope, including additional creators, extra production days, usage extensions, paid media rights, venue costs, third-party services, rush delivery, or revised deliverables, must be approved in writing before TASCK proceeds."
             )},
-            {"heading": "6. Liability and Conduct", "content": "Neither Party shall be liable for incidents or claims not arising from their own gross negligence or wilful misconduct. Professional conduct is expected at all times."},
-            {"heading": "7. Force Majeure", "content": "Neither Party shall be liable for failure to perform due to unforeseen circumstances such as natural disasters, government restrictions, or other events beyond reasonable control."},
-            {"heading": "8. Acknowledgement", "content": "By signing below, both parties agree to the terms outlined in this Agreement."},
-            {"heading": "Signatures", "content": (
-                "TASCK Authorised Representative:\nName: ____________________________\nSignature: ____________________________\nDate: ____________________________\n\n"
-                f"{brand_name} Authorised Representative:\nName: ____________________________\nSignature: ____________________________\nDate: ____________________________"
+            {"heading": "6. Project Timeline and Approvals", "content": (
+                "The project timeline will be confirmed through the approved Strategy Snapshot, deliverables schedule, and execution plan. TASCK will submit key materials for review where approval is required. The Brand should provide consolidated feedback so the project can move efficiently. Any change in approval route, decision maker, launch date, budget, or legal requirement must be communicated to TASCK as soon as it is known."
+            )},
+            {"heading": "7. Performance, Reporting, and Acceptance", "content": (
+                "TASCK will coordinate delivery and provide a final report using the information available from the approved deliverables, creator outputs, campaign performance, and project records. The Brand will review the final report and provide feedback or acceptance within a reasonable period. Once accepted, the project may be closed in TASCK OS."
+            )},
+            {"heading": "8. Intellectual Property and Usage", "content": (
+                "Ownership and usage rights for project materials will follow the approved brief, creator contracts, paid usage terms, and any written rights schedule. TASCK does not grant rights beyond those actually secured from creators, production partners, or third parties. The Brand must not extend usage, paid media, territory, duration, exclusivity, or adaptation beyond the approved rights without written confirmation."
+            )},
+            {"heading": "9. Confidentiality", "content": (
+                "Each Party will keep confidential information private, including campaign plans, commercial terms, project documents, unpublished creative, contact information, account access, strategy materials, creator negotiations, and performance data. Confidential information may only be shared with people who need it to perform the project."
+            )},
+            {"heading": "10. Cancellation, Delay, and Scope Changes", "content": (
+                "If the Brand cancels, pauses, or materially changes the project after work has begun, TASCK will document the effect on schedule, cost, deliverables, third-party commitments, and creator obligations. The Brand remains responsible for approved work already completed, committed costs, cancellation charges, and reasonable time already spent. TASCK will not proceed with new or expanded work until the Parties approve the change in writing."
+            )},
+            {"heading": "11. Liability and Professional Conduct", "content": (
+                "Each Party is responsible for its own negligence, misconduct, breach of confidentiality, and failure to meet documented obligations. Neither Party is responsible for delay or failure caused by events beyond reasonable control, including platform outages, government restrictions, force majeure events, third-party failure, or delayed approvals outside that Party's control."
+            )},
+            {"heading": "12. Governing Law and Dispute Resolution", "content": (
+                "This Agreement is governed by the laws of the Federal Republic of Nigeria. The Parties will first attempt to resolve any dispute through good-faith discussion. If unresolved, the dispute may be referred to arbitration in accordance with applicable Nigerian arbitration law."
+            )},
+            {"heading": "13. Signatures", "content": (
+                "For TASCK Creative Company Limited\nName: ________________________________\nTitle: _________________________________\nSignature: _____________________________\nDate: _________________________________\n\n"
+                f"For {brand_name}\nName: ________________________________\nTitle: _________________________________\nSignature: _____________________________\nDate: _________________________________"
             )},
         ]
 
     @router.post("/contracts")
     async def create_contract(payload: ContractCreate):
         ctr_id = f"ctr-{uuid.uuid4().hex[:8]}"
-        # Mocked AI risk flagging â€” surface a couple of standard flags
+        # Mocked AI risk flagging - surface a couple of standard flags
         ai_flags = []
         if payload.template == "creator_principal":
             ai_flags.append({"clause": "Final edit approval", "severity": "informational", "note": "Standard for creator-principal contracts. Brand revision limited to two rounds before lock."})
         if payload.template == "four_party_grant":
-            ai_flags.append({"clause": "Editorial independence", "severity": "high", "note": "Grant contracts must ring-fence editorial independence â€” verify clause 4.1 reflects funder-distance posture."})
+            ai_flags.append({"clause": "Editorial independence", "severity": "high", "note": "Grant contracts must ring-fence editorial independence - verify clause 4.1 reflects funder-distance posture."})
 
         # Lookup brand & creator names for the template body so the contract starts brand-aware
         case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0}) or {}
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
         creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
-        brand_name = brand.get("company") or brand.get("name") or (payload.parties[1] if len(payload.parties) > 1 else "Brand")
-        creator_name = (creator or {}).get("name") or (payload.parties[1] if payload.template == "creator_principal" and len(payload.parties) > 1 else "Creator")
-        project_title = case.get("title") or "Project"
+        brand_name = _clean_document_text(brand.get("company") or brand.get("name") or (payload.parties[1] if len(payload.parties) > 1 else "Brand"), "Brand")
+        creator_name = _clean_document_text((creator or {}).get("name") or (payload.parties[1] if payload.template == "creator_principal" and len(payload.parties) > 1 else "Creator"), "Creator")
+        project_title = _clean_document_text(case.get("title") or "Project", "Project")
 
         sections = _build_contract_sections(payload.template, brand_name, creator_name, payload.value, project_title)
         title_map = {
-            "brand_msa": f"{brand_name} Ã— TASCK â€” Service Agreement",
-            "creator_principal": f"{creator_name} Ã— {brand_name} â€” Independent Creator Agreement",
-            "four_party_grant": f"{brand_name} Ã— TASCK â€” Four-Party Grant Agreement",
+            "brand_msa": f"{brand_name} x TASCK - Service Agreement",
+            "creator_principal": f"{creator_name} x {brand_name} - Independent Creator Agreement",
+            "four_party_grant": f"{brand_name} x TASCK - Four-Party Grant Agreement",
         }
         doc = {
             "id": ctr_id,
@@ -3707,7 +3775,7 @@ def make_v3_router(db):
         return {"ok": True, "signed_at": signed_at}
 
     # ------------------------------------------------------------------------
-    # DELIVERABLES (3-stage workflow: pending_upload â†’ pending_rm_review â†’ approved)
+    # DELIVERABLES (3-stage workflow: pending_upload -> pending_rm_review -> approved)
     # ------------------------------------------------------------------------
     @router.get("/deliverables")
     async def list_deliverables(business_case_id: Optional[str] = None):
@@ -3748,7 +3816,7 @@ def make_v3_router(db):
         return {"ok": True, "new_status": next_state}
 
     # ------------------------------------------------------------------------
-    # SCOPE CHANGE â€” pauses delivery until brand approves the amendment
+    # SCOPE CHANGE - pauses delivery until brand approves the amendment
     # ------------------------------------------------------------------------
     class ScopeChangePayload(BaseModel):
         title: str
@@ -3797,7 +3865,7 @@ def make_v3_router(db):
         business_case_id: str
         scored_creators: List[BrainstormScore] = Field(default_factory=list)
         planning_fields: Dict[str, Any] = Field(default_factory=dict)
-        # Template-aligned phase outputs (all optional â€” the page progressively fills them in)
+        # Template-aligned phase outputs (all optional - the page progressively fills them in)
         pre_work: Optional[Dict[str, Any]] = None
         phase_0_focus_group: Optional[Dict[str, Any]] = None
         phase_1_problem: Optional[Dict[str, Any]] = None
@@ -3833,20 +3901,20 @@ def make_v3_router(db):
             "business_case_id": payload.business_case_id,
             "status": "in_progress",
             "planning_fields": payload.planning_fields,
-            # Template-aligned phase scaffolding (60â€“90 min TTA Snapshot Brainstorm)
+            # Template-aligned phase scaffolding (60-90 min TTA Snapshot Brainstorm)
             "template_version": "tta_snapshot_v1",
             "duration_minutes": "60-90",
             "purpose": "Produce a defensible creator recommendation rooted in behavior, culture, and commercial logic.",
             "phases": [
                 {"phase": "pre_work", "label": "Pre-work (mandatory before session)", "status": "pending"},
-                {"phase": 0, "label": "Phase 0 â€” Focus Group Integration (when applicable)", "status": "pending"},
-                {"phase": 1, "label": "Phase 1 â€” Define the Problem (10â€“15 mins)", "status": "pending"},
-                {"phase": 2, "label": "Phase 2 â€” Define Creator Archetype (10 mins)", "status": "pending"},
-                {"phase": 3, "label": "Phase 3 â€” Creator Identification & Scoring (20â€“25 mins)", "status": "pending"},
-                {"phase": 4, "label": "Phase 4 â€” Interpretation Logic (15 mins)", "status": "pending"},
-                {"phase": 5, "label": "Phase 5 â€” Execution Reality Check (10â€“15 mins)", "status": "pending"},
-                {"phase": 6, "label": "Phase 6 â€” Commercial Snapshot (10 mins)", "status": "pending"},
-                {"phase": 7, "label": "Phase 7 â€” Final Recommendation (5 mins)", "status": "pending"},
+                {"phase": 0, "label": "Phase 0 - Focus Group Integration (when applicable)", "status": "pending"},
+                {"phase": 1, "label": "Phase 1 - Define the Problem (10-15 mins)", "status": "pending"},
+                {"phase": 2, "label": "Phase 2 - Define Creator Archetype (10 mins)", "status": "pending"},
+                {"phase": 3, "label": "Phase 3 - Creator Identification & Scoring (20-25 mins)", "status": "pending"},
+                {"phase": 4, "label": "Phase 4 - Interpretation Logic (15 mins)", "status": "pending"},
+                {"phase": 5, "label": "Phase 5 - Execution Reality Check (10-15 mins)", "status": "pending"},
+                {"phase": 6, "label": "Phase 6 - Commercial Snapshot (10 mins)", "status": "pending"},
+                {"phase": 7, "label": "Phase 7 - Final Recommendation (5 mins)", "status": "pending"},
             ],
             "pre_work": payload.pre_work or {
                 "client_brief_summary": {"objective": "", "target_audience": "", "constraints": ""},
@@ -3876,7 +3944,7 @@ def make_v3_router(db):
                 "voice_type": "",  # Authority / Peer / Entertainer / Niche Specialist
                 "audience_relationship": "",  # Trust / Reach / Conversion / Community
                 "format_strength": "",  # Short-form / Long-form / Live / Series
-                "creator_archetype_statement": "",  # We need a [voice type] creator with [audience relationship]â€¦
+                "creator_archetype_statement": "",  # We need a [voice type] creator with [audience relationship]...
             },
             "scored_creators": scored,
             "phase_4_interpretation": payload.phase_4_interpretation or {"per_creator": []},
@@ -4014,7 +4082,7 @@ def make_v3_router(db):
         return {"ok": True, "stage": "closed"}
 
     # ------------------------------------------------------------------------
-    # PDF EXPORTS â€” contracts, final reports, feedback
+    # PDF EXPORTS - contracts, final reports, feedback
     # ------------------------------------------------------------------------
     def _render_pdf(title: str, blocks: List[Dict[str, Any]]) -> bytes:
         """Render an ordered list of blocks into a PDF and return its bytes.
@@ -4059,13 +4127,13 @@ def make_v3_router(db):
             brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
             creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
             brand_name = brand.get("company") or brand.get("name") or "Brand"
-            creator_name = (creator or {}).get("name") or "Creator"
+            creator_name = _clean_document_text((creator or {}).get("name") or "Creator", "Creator")
             project_title = case.get("title") or "Project"
             sections = _build_contract_sections(ctr.get("template", "brand_msa"), brand_name, creator_name, ctr.get("value") or 0, project_title)
             title_map = {
-                "brand_msa": f"{brand_name} Ã— TASCK â€” Service Agreement",
-                "creator_principal": f"{creator_name} Ã— {brand_name} â€” Independent Creator Agreement",
-                "four_party_grant": f"{brand_name} Ã— TASCK â€” Four-Party Grant Agreement",
+                "brand_msa": f"{brand_name} x TASCK - Service Agreement",
+                "creator_principal": f"{creator_name} x {brand_name} - Independent Creator Agreement",
+                "four_party_grant": f"{brand_name} x TASCK - Four-Party Grant Agreement",
             }
             new_title = title_map.get(ctr.get("template"), ctr.get("title") or "Contract")
             await db.v3_contracts.update_one(
@@ -4074,8 +4142,8 @@ def make_v3_router(db):
             )
             ctr["sections"] = sections
             ctr["title"] = new_title
-        title = ctr.get("title") or "Contract"
-        blocks = ctr.get("sections") or []
+        title = _clean_document_text(ctr.get("title") or "Contract", "Contract")
+        blocks = [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_text(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])]
         pdf_bytes = _render_pdf(title, blocks)
         return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{contract_id}.pdf"'})
 
@@ -4095,7 +4163,7 @@ def make_v3_router(db):
             ctr["sections"] = sections
             ctr["title"] = ctr.get("title") or "Contract"
             await db.v3_contracts.update_one({"id": contract_id}, {"$set": {"sections": ctr["sections"], "title": ctr["title"], "updated_at": _now_iso()}})
-        docx_bytes = document_docx_bytes(ctr.get("title") or "Contract", ctr.get("sections") or [], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
+        docx_bytes = document_docx_bytes(_clean_document_text(ctr.get("title") or "Contract", "Contract"), [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_text(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
         return StreamingResponse(BytesIO(docx_bytes), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f'attachment; filename="{contract_id}-contract.docx"'})
 
     @router.get("/final-reports/{report_id}/pdf")
@@ -4103,8 +4171,15 @@ def make_v3_router(db):
         rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
         if not rep:
             raise HTTPException(404, "Final report not found")
-        title = rep.get("title") or "Final Report"
-        blocks = rep.get("sections") or []
+        title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
+        blocks = [
+            {
+                **block,
+                "heading": _clean_document_text(block.get("heading") or ""),
+                "content": _clean_document_text(block.get("content") or block.get("text") or ""),
+            }
+            for block in (rep.get("sections") or [])
+        ]
         pdf_bytes = _render_pdf(title, blocks)
         return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{report_id}.pdf"'})
 
@@ -4116,25 +4191,25 @@ def make_v3_router(db):
         fb = rep.get("feedback") or {}
         blocks: List[Dict[str, Any]] = []
         if fb.get("email_template"):
-            blocks.append({"heading": "Tab 1 â€” Email Template", "content": fb["email_template"]})
+            blocks.append({"heading": "Tab 1 - Email Template", "content": _clean_document_text(fb["email_template"])})
         for group_key, group_label in [("brand_partner", "Brand Partner Feedback"), ("creative_partner", "Creative Partner Feedback")]:
             block = fb.get(group_key) or {}
-            blocks.append({"heading": block.get("form_title", group_label), "content": (block.get("form_description") or "")})
-            header_lines = [f"Project name: {block.get('project_name', 'â€”')}", f"Date: {block.get('date', 'â€”')}"]
+            blocks.append({"heading": _clean_document_text(block.get("form_title", group_label), group_label), "content": _clean_document_text(block.get("form_description") or "")})
+            header_lines = [f"Project name: {_clean_document_text(block.get('project_name', '-'))}", f"Date: {_clean_document_text(block.get('date', '-'))}"]
             if "google_form_link" in block:
-                header_lines.append(f"Google form link: {block.get('google_form_link') or 'â€”'}")
+                header_lines.append(f"Google form link: {_clean_document_text(block.get('google_form_link') or '-')}")
             blocks.append({"content": "\n".join(header_lines)})
             for idx, q in enumerate(block.get("questions") or []):
-                blocks.append({"heading": f"{idx + 1}. {q.get('label', '')}", "content": f"{q.get('question', '')}\nRating: {q.get('rating') if q.get('rating') is not None else 'â€”'} / 10"})
-            blocks.append({"content": f"Optional comment: {block.get('optional_comment') or 'â€”'}"})
+                blocks.append({"heading": f"{idx + 1}. {_clean_document_text(q.get('label', ''))}", "content": f"{_clean_document_text(q.get('question', ''))}\nRating: {q.get('rating') if q.get('rating') is not None else '-'} / 10"})
+            blocks.append({"content": f"Optional comment: {_clean_document_text(block.get('optional_comment') or '-')}"})
         if fb.get("internal_use"):
-            blocks.append({"heading": "Internal Use (Not Shown to Client)", "content": "\n".join([f"â€¢ {line}" for line in fb["internal_use"]])})
-        title = f"Feedback â€” {(rep.get('title') or 'Final Report')}"
+            blocks.append({"heading": "Internal Use (Not Shown to Client)", "content": "\n".join([f"- {_clean_document_text(line)}" for line in fb["internal_use"]])})
+        title = f"Feedback - {_clean_document_text(rep.get('title') or 'Final Report', 'Final Report')}"
         pdf_bytes = _render_pdf(title, blocks)
         return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="feedback-{report_id}.pdf"'})
 
     # ------------------------------------------------------------------------
-    # SMTP â€” share contract / final report / feedback via real email
+    # SMTP - share contract / final report / feedback via real email
     # ------------------------------------------------------------------------
     def _smtp_send(to_email: str, subject: str, body: str, attachment_bytes: Optional[bytes] = None, attachment_name: Optional[str] = None, attachment_mime_type: str = "application/pdf") -> None:
         attachments = []
@@ -4172,7 +4247,7 @@ def make_v3_router(db):
             sections = _build_contract_sections(ctr.get("template", "brand_msa"), (brand.get("company") or brand.get("name") or "Brand"), ((creator or {}).get("name") or "Creator"), ctr.get("value") or 0, case.get("title") or "Project")
             await db.v3_contracts.update_one({"id": contract_id}, {"$set": {"sections": sections}})
             ctr["sections"] = sections
-        docx_bytes = document_docx_bytes(ctr.get("title") or "Contract", ctr.get("sections") or [], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
+        docx_bytes = document_docx_bytes(_clean_document_text(ctr.get("title") or "Contract", "Contract"), [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_text(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
         body = payload.custom_message or chr(10).join([
             f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},",
             "",
@@ -4197,10 +4272,19 @@ def make_v3_router(db):
         rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
         if not rep:
             raise HTTPException(404, "Final report not found")
-        pdf_bytes = _render_pdf(rep.get("title") or "Final Report", rep.get("sections") or [])
-        body = (payload.custom_message or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nPlease find attached the final report for our project: {rep.get('title', 'Final Report')}.\n\nWe look forward to hearing your thoughts.\n\nWarm regards,\nThe TASCK Agency")
+        title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
+        blocks = [
+            {
+                **block,
+                "heading": _clean_document_text(block.get("heading") or ""),
+                "content": _clean_document_text(block.get("content") or block.get("text") or ""),
+            }
+            for block in (rep.get("sections") or [])
+        ]
+        pdf_bytes = _render_pdf(title, blocks)
+        body = (payload.custom_message or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nPlease find attached the final report for our project: {title}.\n\nWe look forward to hearing your thoughts.\n\nWarm regards,\nThe TASCK Agency")
         try:
-            await asyncio.to_thread(_smtp_send, payload.to_email, f"Final Report: {rep.get('title', 'Project')}", body, pdf_bytes, f"final-report-{report_id}.pdf")
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"Final Report: {title}", body, pdf_bytes, f"final-report-{report_id}.pdf")
         except HTTPException:
             raise
         except Exception as exc:
@@ -4217,21 +4301,22 @@ def make_v3_router(db):
         fb = rep.get("feedback") or {}
         blocks: List[Dict[str, Any]] = []
         if fb.get("email_template"):
-            blocks.append({"heading": "Tab 1 â€” Email Template", "content": fb["email_template"]})
+            blocks.append({"heading": "Tab 1 - Email Template", "content": _clean_document_text(fb["email_template"])})
         for group_key, group_label in [("brand_partner", "Brand Partner Feedback"), ("creative_partner", "Creative Partner Feedback")]:
             block = fb.get(group_key) or {}
-            blocks.append({"heading": block.get("form_title", group_label), "content": (block.get("form_description") or "")})
-            header_lines = [f"Project name: {block.get('project_name', 'â€”')}", f"Date: {block.get('date', 'â€”')}"]
+            blocks.append({"heading": _clean_document_text(block.get("form_title", group_label), group_label), "content": _clean_document_text(block.get("form_description") or "")})
+            header_lines = [f"Project name: {_clean_document_text(block.get('project_name', '-'))}", f"Date: {_clean_document_text(block.get('date', '-'))}"]
             if "google_form_link" in block:
-                header_lines.append(f"Google form link: {block.get('google_form_link') or 'â€”'}")
+                header_lines.append(f"Google form link: {_clean_document_text(block.get('google_form_link') or '-')}")
             blocks.append({"content": "\n".join(header_lines)})
             for idx, q in enumerate(block.get("questions") or []):
-                blocks.append({"heading": f"{idx + 1}. {q.get('label', '')}", "content": f"{q.get('question', '')}\nRating: {q.get('rating') if q.get('rating') is not None else 'â€”'} / 10"})
-            blocks.append({"content": f"Optional comment: {block.get('optional_comment') or 'â€”'}"})
-        pdf_bytes = _render_pdf(f"Feedback â€” {(rep.get('title') or 'Final Report')}", blocks)
-        body = (payload.custom_message or fb.get("email_template") or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nThank you for partnering with TASCK on this project. Please find attached the feedback form. We appreciate your responses.\n\nWarm regards,\nThe TASCK Agency")
+                blocks.append({"heading": f"{idx + 1}. {_clean_document_text(q.get('label', ''))}", "content": f"{_clean_document_text(q.get('question', ''))}\nRating: {q.get('rating') if q.get('rating') is not None else '-'} / 10"})
+            blocks.append({"content": f"Optional comment: {_clean_document_text(block.get('optional_comment') or '-')}"})
+        title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
+        pdf_bytes = _render_pdf(f"Feedback - {title}", blocks)
+        body = (payload.custom_message or _clean_document_text(fb.get("email_template") or "") or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nThank you for partnering with TASCK on this project. Please find attached the feedback form. We appreciate your responses.\n\nWarm regards,\nThe TASCK Agency")
         try:
-            await asyncio.to_thread(_smtp_send, payload.to_email, f"Feedback request â€” {rep.get('title', 'Project')}", body, pdf_bytes, f"feedback-{report_id}.pdf")
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"Feedback request - {title}", body, pdf_bytes, f"feedback-{report_id}.pdf")
         except HTTPException:
             raise
         except Exception as exc:
@@ -4544,7 +4629,7 @@ def make_v3_router(db):
             "connect.status_updated_at": now,
             "connect.updated_at": now,
             "connect.promoted_at": now,
-            "connect.promote_reason": payload.reason or "Business Call â€” Connect promoted to Frame.",
+            "connect.promote_reason": payload.reason or "Business Call - Connect promoted to Frame.",
             "next_action": STAGE_NEXT_ACTIONS["frame"],
             "updated_at": now,
         }
@@ -4569,7 +4654,7 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0})
         contact = case.get("brand_contact_snapshot") or {}
         meeting = await create_meeting(MeetingCreate(
-            title=f"Business Call â€” Connect: {case.get('title', 'Business Case')}",
+            title=f"Business Call - Connect: {case.get('title', 'Business Case')}",
             meeting_type="business_call",
             stage="connect",
             entity_type="brand",
@@ -4615,7 +4700,7 @@ def make_v3_router(db):
         if case.get("brand_id"):
             await db.v3_brands.update_one(
                 {"id": case["brand_id"]},
-                {"$set": {"status": "deleted", "deleted_reason": payload.reason or "Business Call â€” Connect deleted.", "updated_at": now}},
+                {"$set": {"status": "deleted", "deleted_reason": payload.reason or "Business Call - Connect deleted.", "updated_at": now}},
             )
         return {"ok": True, "business_case_id": bc_id, "status": "deleted"}
 
@@ -4699,10 +4784,10 @@ def make_v3_router(db):
             raise HTTPException(400, "Brand email is required before sending reschedule email")
         email = await queue_email(
             to=to_email,
-            subject=f"Reschedule TASCK Business Call â€” Connect: {case.get('title', 'Business Case')}",
+            subject=f"Reschedule TASCK Business Call - Connect: {case.get('title', 'Business Case')}",
             body=(
                 f"Hello {payload.contact_name or contact.get('primary_contact') or 'there'},\n\n"
-                f"We need to reschedule the Business Call â€” Connect because: {payload.reason or 'some required context is still missing'}.\n\n"
+                f"We need to reschedule the Business Call - Connect because: {payload.reason or 'some required context is still missing'}.\n\n"
                 f"Proposed time: {payload.scheduled_for or 'To be confirmed'}\n"
                 f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}"
             ),
@@ -4773,7 +4858,7 @@ def make_v3_router(db):
             raise HTTPException(404, "Brief not found")
         creator = await db.v3_creators.find_one({"id": brief["creator_id"]}, {"_id": 0})
         creator_name = creator["name"] if creator else "Creator"
-        rate_low = (creator or {}).get("rate_card", "â‚¦30M").split("â€“")[0]
+        rate_low = (creator or {}).get("rate_card", "\u20a630M").split("-")[0]
         response = {
             "interest": "yes",
             "fee_expectation": f"{rate_low} all-in including direction, original concept, and assets.",
@@ -4798,7 +4883,7 @@ def make_v3_router(db):
         return {"ok": True, "response": response}
 
     # ------------------------------------------------------------------------
-    # CREATE Strategy Snapshot â€” templated from brief response when available
+    # CREATE Strategy Snapshot - templated from brief response when available
     # ------------------------------------------------------------------------
     class SnapshotCreate(BaseModel):
         business_case_id: str
@@ -4814,12 +4899,13 @@ def make_v3_router(db):
         creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
         brief = await db.v3_creative_briefs.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
         alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
+        project_title = _clean_document_text(case.get("title") or "Project", "Project")
         concept = payload.concept or (
             ((brief or {}).get("creator_response") or {}).get("proposed_concept")
-            or f"Strategy synthesis for {case['title']} â€” concept under refinement."
+            or f"Strategy synthesis for {project_title} - concept under refinement."
         )
         total = case.get("estimated_value") or 100_000_000
-        brand_name = (brand or {}).get("company") or (brand or {}).get("name") or "Brand"
+        brand_name = _clean_document_text((brand or {}).get("company") or (brand or {}).get("name") or "Brand", "Brand")
         marketing = case.get("connect", {}).get("marketing_intelligence") or (alignment or {}).get("marketing_intelligence") or {}
 
         def _value(value: Any, fallback: str = "") -> str:
@@ -4841,7 +4927,7 @@ def make_v3_router(db):
 
         def _money(value: Any) -> str:
             try:
-                return f"â‚¦{int(value):,}"
+                return f"\u20a6{int(value):,}"
             except Exception:
                 return _value(value, "TBC")
 
@@ -5011,8 +5097,8 @@ def make_v3_router(db):
             "shared_at": None,
             "approved_at": None,
             "approved_by": None,
-            "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' Ã— ' + creator['name'].upper() if creator else ''} Ã— TASCK",
-            "title": payload.title or f"{case['title']} â€” Strategy Snapshot v1",
+            "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' x ' + creator['name'].upper() if creator else ''} x TASCK",
+            "title": payload.title or f"{project_title} - Strategy Snapshot v1",
             "concept": concept,
             "template_name": "Copy of Updated Creative Strategy Template_.docx",
             "sections": sections,
@@ -5112,24 +5198,25 @@ def make_v3_router(db):
             base = (snapshot or {}).get("success_metrics") or [
                 {"kpi": "Reach", "target": "10M"},
                 {"kpi": "Engagement rate", "target": "7%"},
-                {"kpi": "Earned media value", "target": "â‚¦200M"},
+                {"kpi": "Earned media value", "target": "\u20a6200M"},
             ]
             kpis = [{"kpi": k["kpi"], "target": k["target"], "actual": k["target"], "variance": "+18%"} for k in base]
 
-        brand_name = (brand or {}).get("company") or (brand or {}).get("name") or "Brand"
-        creator_name = (creator or {}).get("name") or "Creator"
-        deliverable_titles = [d.get("title", "") for d in deliverables]
-        # Project Report template sections â€” strictly mirrors the uploaded .docx outline
+        brand_name = _clean_document_text((brand or {}).get("company") or (brand or {}).get("name") or "Brand", "Brand")
+        creator_name = _clean_document_text((creator or {}).get("name") or "Creator", "Creator")
+        project_title = _clean_document_text(case.get("title") or "Project", "Project")
+        deliverable_titles = [_clean_document_text(d.get("title", "")) for d in deliverables]
+        # Project Report template sections - strictly mirrors the uploaded .docx outline
         report_sections = [
             {"heading": "1. Title Page", "content": (
-                f"{case['title']} â€” Final Campaign Report\nBrand: {brand_name}\nCreator: {creator_name}\nPrepared by TASCK Creative Company Limited\nDate: {_now_iso()[:10]}"
+                f"{_clean_document_text(project_title, 'Project')} - Final Campaign Report\nBrand: {brand_name}\nCreator: {creator_name}\nPrepared by TASCK Creative Company Limited\nDate: {_now_iso()[:10]}"
             )},
             {"heading": "2. Executive Summary", "content": (
-                f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones with overall KPI performance summarised below. "
+                f"{project_title} delivered {len(approved)} of {len(deliverables)} contracted milestones with overall KPI performance summarised below. "
                 "Strategic objectives, creative execution and measurable outcomes are detailed in the following sections."
             )},
             {"heading": "3. Project Overview & Objectives", "content": (
-                f"Brand: {brand_name}\nProject Title: {case['title']}\nEngagement Track: {case.get('engagement_track', 'paid')}\nBudget Approved: â‚¦{int(case.get('estimated_value') or 0):,}\nObjective: {(snapshot or {}).get('concept') or 'Aligned with the approved Strategy Snapshot.'}"
+                f"Brand: {brand_name}\nProject Title: {_clean_document_text(project_title, 'Project')}\nEngagement Track: {case.get('engagement_track', 'paid')}\nBudget Approved: \u20a6{int(case.get('estimated_value') or 0):,}\nObjective: {(snapshot or {}).get('concept') or 'Aligned with the approved Strategy Snapshot.'}"
             )},
             {"heading": "4. Strategy Summary", "content": (
                 "This project followed the strategy approved in the Strategy Snapshot Studio. "
@@ -5139,10 +5226,10 @@ def make_v3_router(db):
                 ("Approved deliverables:\n- " + "\n- ".join(deliverable_titles)) if deliverable_titles else "No deliverables recorded against this Business Case."
             )},
             {"heading": "6. Performance / KPIs", "content": (
-                "\n".join([f"â€¢ {k.get('kpi')} â€” Target: {k.get('target')} | Actual: {k.get('actual')} | Variance: {k.get('variance')}" for k in kpis])
+                "\n".join([f"- {k.get('kpi')} - Target: {k.get('target')} | Actual: {k.get('actual')} | Variance: {k.get('variance')}" for k in kpis])
             )},
             {"heading": "7. Budget & Spend", "content": (
-                f"Approved Budget: â‚¦{int(case.get('estimated_value') or 0):,}\nActual Spend: To be reconciled against final invoices.\nAgency Fee (10%): Applied at source per the contract."
+                f"Approved Budget: \u20a6{int(case.get('estimated_value') or 0):,}\nActual Spend: To be reconciled against final invoices.\nAgency Fee (10%): Applied at source per the contract."
             )},
             {"heading": "8. Learnings", "content": (
                 "What worked well: pacing, creator activation, brand integration.\nWhat to refine: feedback loop with sponsors, scheduling buffers around production milestones."
@@ -5154,19 +5241,19 @@ def make_v3_router(db):
                 "By acknowledging this report below, the Brand confirms receipt and acceptance of all delivered work and the closure of the Project under the executed Service Agreement."
             )},
         ]
-        # Feedback Template â€” strictly follows the uploaded Feedback Template (email + brand partner + creative partner + internal use)
+        # Feedback Template - strictly follows the uploaded Feedback Template (email + brand partner + creative partner + internal use)
         feedback = {
             "email_template": (
                 f"Warm greetings.\n\n"
-                f"TTA sincerely appreciates the opportunity to partner with you in bringing this {case['title']} to life. "
+                f"TTA sincerely appreciates the opportunity to partner with you in bringing this {project_title} to life. "
                 "We hope your team enjoyed the experience as much as we did. As part of our commitment to continuous improvement, "
                 "we would appreciate your prompt feedback (insert feedback link).\n\n"
                 "We look forward to working together again soon."
             ),
             "brand_partner": {
-                "form_title": "TTA Project Feedback â€“ Brand Partner",
+                "form_title": "TTA Project Feedback - Brand Partner",
                 "form_description": "Shared within 48 hours of project completion.",
-                "project_name": case["title"],
+                "project_name": project_title,
                 "date": _now_iso()[:10],
                 "questions": [
                     {"key": "understanding_objective", "label": "Understanding of Your Objective", "question": "How well did TTA understand what you were trying to achieve with this project?", "rating": None},
@@ -5178,10 +5265,10 @@ def make_v3_router(db):
                 "optional_comment": "",
             },
             "creative_partner": {
-                "form_title": "TTA Project Feedback â€“ Creative Partner",
+                "form_title": "TTA Project Feedback - Creative Partner",
                 "form_description": "Shared after final delivery and payment confirmation.",
                 "google_form_link": "",
-                "project_name": case["title"],
+                "project_name": project_title,
                 "date": _now_iso()[:10],
                 "questions": [
                     {"key": "clarity_engagement", "label": "Clarity of Engagement", "question": "How clear was TTA in explaining the project, expectations, and your role?", "rating": None},
@@ -5213,10 +5300,10 @@ def make_v3_router(db):
             "business_case_id": bc_id,
             "status": "ready_for_brand",
             "generated_at": _now_iso(),
-            "brand_header": f"{brand_name.split(' ')[0].upper()}{' Ã— ' + creator_name.upper() if creator else ''} Ã— TASCK",
-            "title": f"{case['title']} â€” Final Campaign Report",
+            "brand_header": f"{brand_name.split(' ')[0].upper()}{' x ' + creator_name.upper() if creator else ''} x TASCK",
+            "title": f"{_clean_document_text(project_title, 'Project')} - Final Campaign Report",
             "summary": (
-                f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones."
+                f"{project_title} delivered {len(approved)} of {len(deliverables)} contracted milestones."
                 f" KPI performance compared against the Strategy Snapshot targets is summarised below, alongside the closure checklist."
             ),
             "kpis": kpis,
@@ -5274,7 +5361,7 @@ def make_v3_router(db):
         campaign_types: List[str] = Field(default_factory=lambda: ["brand ambassador program", "celebrity partnership", "celebrity endorsement deal", "brand partnership opportunity", "influencer campaign open application", "creator campaign"])
         recency: str = "past_year"
         result_limit: int = 10
-        # v3.3 Addendum â€” multi-source fan-out controls
+        # v3.3 Addendum - multi-source fan-out controls
         enabled_sources: Optional[List[str]] = None  # e.g. ["google_web", "google_news", "linkedin", "trade_press"]
         hot_ratio: float = 0.6  # fraction of the 16 calls that should use HOT (past-month) recency
         per_source_limit: int = 10  # results per SerpAPI call
@@ -5323,7 +5410,7 @@ def make_v3_router(db):
                 if (row.get("pipeline_state") or "") in (
                     "reviewing", "outreach_sent", "meeting_booked", "won"
                 ):
-                    # Once an RM has actioned a card, leave it alone â€” the gate
+                    # Once an RM has actioned a card, leave it alone - the gate
                     # only governs the unreviewed "new" queue.
                     kept.append(row)
                     continue
@@ -5337,7 +5424,7 @@ def make_v3_router(db):
             key=lambda item: (
                 # v3.3: prefer real-brand cards (partner_name set)
                 (item.get("partner_name") is None and item.get("brand_name") is None),
-                # Dedupe addendum Â§10: signal_strength desc
+                # Dedupe addendum section10: signal_strength desc
                 -int(item.get("signal_strength") or item.get("confidence_score") or 0),
                 # HOT before PIPELINE
                 0 if (item.get("freshness_bucket") or "") == "hot" else 1,
@@ -5356,7 +5443,7 @@ def make_v3_router(db):
         flips it to `dismissed_auto` if it would fail today's visibility gate.
 
         - Actioned rows (reviewing / outreach_sent / meeting_booked / won) are
-          left untouched â€” manual decisions always win.
+          left untouched - manual decisions always win.
         - `dry_run=true` returns what would change without writing.
         - Idempotent: safe to call repeatedly.
         """
@@ -5398,7 +5485,7 @@ def make_v3_router(db):
 
     @router.get("/opportunities/pipeline-counts")
     async def opportunity_pipeline_counts():
-        """v3.3 â€” counters bar at top of Tracker page."""
+        """v3.3 - counters bar at top of Tracker page."""
         states = ["new", "reviewing", "outreach_sent", "meeting_booked", "won", "dismissed", "dismissed_auto"]
         result: Dict[str, int] = {}
         for s in states:
@@ -5931,7 +6018,7 @@ Produce the opportunity card JSON.
             "dedupe_key": f"{_slug(brand_name)}::{_slug(campaign_name)}",
         }
 
-    # v3.3 Addendum â€” cost telemetry constants
+    # v3.3 Addendum - cost telemetry constants
     SERPAPI_USD_PER_CALL = 0.01      # SerpAPI Developer plan: $50 / 5000 = $0.01/call
     LLM_USD_PER_CALL = 0.003          # Claude Sonnet 4.5: avg 1500 input + 500 output tokens
 
@@ -5976,7 +6063,7 @@ Produce the opportunity card JSON.
             "error": None,
         }
         if prebuilt_scan_id:
-            # Async path â€” row already exists, just update with the running shape
+            # Async path - row already exists, just update with the running shape
             await db.v3_opportunity_scans.update_one({"id": scan_id}, {"$set": scan})
         else:
             await db.v3_opportunity_scans.insert_one({**scan})
@@ -6007,7 +6094,7 @@ Produce the opportunity card JSON.
         llm_configured = scan["extraction_method"] == "llm"
         first_attempt_plans = list(plans)
 
-        # ---- One attempt â€” runs the existing fan-out â†’ persist pipeline ----
+        # ---- One attempt - runs the existing fan-out -> persist pipeline ----
         async def _execute_attempt(attempt_plans: List[Dict[str, Any]], per_call_limit: int, attempt_num: int) -> int:
             """Execute one fan-out attempt. Returns the number of visible cards added.
             Mutates: diagnostics, all_seen_urls, existing_rows, candidates."""
@@ -6047,13 +6134,13 @@ Produce the opportunity card JSON.
                     )
                     return {"plan": plan, "raw": data, "error": data.get("error")}
                 except Exception as exc:
-                    logger.warning("[SerpAPI fan-out a%d] call failed: %s â€” %s", attempt_num, plan["source_key"], exc)
+                    logger.warning("[SerpAPI fan-out a%d] call failed: %s - %s", attempt_num, plan["source_key"], exc)
                     return {"plan": plan, "raw": {}, "error": str(exc)}
 
             fanout_results = await asyncio.gather(*[_serpapi_one(p) for p in attempt_plans])
             diagnostics["serpapi_calls_total"] += len(attempt_plans)
 
-            # Pool + tag â€” skip URLs already seen in any previous attempt
+            # Pool + tag - skip URLs already seen in any previous attempt
             all_items: List[Dict[str, Any]] = []
             for result in fanout_results:
                 plan = result["plan"]
@@ -6103,7 +6190,7 @@ Produce the opportunity card JSON.
                 survivors.append(item)
             diagnostics["pass_1_survivors"] += len(survivors)
 
-            # Cap LLM volume per attempt (round-robin across source Ã— freshness)
+            # Cap LLM volume per attempt (round-robin across source x freshness)
             MAX_LLM_CALLS = 40
             if len(survivors) > MAX_LLM_CALLS:
                 buckets: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
@@ -6122,7 +6209,7 @@ Produce the opportunity card JSON.
                             attempt_num, len(survivors) - len(balanced), MAX_LLM_CALLS)
                 survivors = balanced
 
-            # ---- Pass 2 â€” parallel LLM enrichment -----------------------------
+            # ---- Pass 2 - parallel LLM enrichment -----------------------------
             llm_concurrency = 6
             sem = asyncio.Semaphore(llm_concurrency)
 
@@ -6219,7 +6306,7 @@ Produce the opportunity card JSON.
                         candidate["pipeline_state"] = "dismissed_auto"
                         candidate["dismissal_reason"] = reason
                         attempt_dismissed += 1
-                        logger.info("[Tracker visibility gate a%d] dismiss %s â€” %s",
+                        logger.info("[Tracker visibility gate a%d] dismiss %s - %s",
                                     attempt_num, (candidate.get("partner_name") or "?")[:40], reason)
 
                 raw_batch.append(candidate)
@@ -6310,7 +6397,7 @@ Produce the opportunity card JSON.
             )
             return attempt_visible_added
 
-        # ---- Attempt 0 â€” user's initial plans ---------------------------------
+        # ---- Attempt 0 - user's initial plans ---------------------------------
         per_call_limit = max(1, min(int(payload.template.per_source_limit or 10), 20))
         await _execute_attempt(first_attempt_plans, per_call_limit, attempt_num=0)
 
@@ -6345,7 +6432,7 @@ Produce the opportunity card JSON.
             added = await _execute_attempt(topup_plans, override_limit, attempt_num=topup_num)
             if added == 0:
                 diagnostics["top_up_reason"] = "no_new_unique_results"
-                # Don't break â€” try the next strategy. Different broadening axes
+                # Don't break - try the next strategy. Different broadening axes
                 # can still surface fresh content even if one fails.
                 continue
         else:
@@ -6413,13 +6500,13 @@ Produce the opportunity card JSON.
           scan continues in the background. Poll `GET /opportunities/scans/{scan_id}`
           for completion. This avoids the 60s Kubernetes ingress timeout on slower
           full-fan-out runs.
-        - `?wait=true`: legacy synchronous mode â€” blocks until the scan completes
+        - `?wait=true`: legacy synchronous mode - blocks until the scan completes
           and returns the full {scan, candidates} payload. Used by pytest.
         """
         if wait:
             return await run_opportunity_scan(payload)
 
-        # Async mode â€” pre-create the scan row so the caller can poll immediately.
+        # Async mode - pre-create the scan row so the caller can poll immediately.
         api_key = os.getenv("SERPAPI_API_KEY")
         if not api_key:
             load_dotenv(Path(__file__).with_name(".env"))
@@ -6465,7 +6552,7 @@ Produce the opportunity card JSON.
                 )
 
         asyncio.create_task(_run_in_background())
-        # Return the queued shell â€” frontend polls /opportunities/scans/{scan_id}
+        # Return the queued shell - frontend polls /opportunities/scans/{scan_id}
         return {"scan": scan_row, "candidates": [], "async": True}
 
     @router.get("/opportunities/scans/{scan_id}")
@@ -6664,7 +6751,7 @@ Produce the opportunity card JSON.
                 "last_interaction": "just now",
                 "engagement_track_default": "paid",
                 "source": "serpapi_opportunity_scanner",
-                # v3.3 Family A â€” brand context fields
+                # v3.3 Family A - brand context fields
                 "key_marketing_focus": candidate.get("key_marketing_focus"),
                 "primary_target_audience": candidate.get("primary_target_audience"),
                 "key_marketing_channels": candidate.get("key_marketing_channels"),
@@ -6684,10 +6771,10 @@ Produce the opportunity card JSON.
                 "linkedin": contact_linkedin,
                 "is_primary": True,
                 "decision_seniority": "lead",
-                "connect_status": "Stranger",  # v3.3 default per spec Â§2
+                "connect_status": "Stranger",  # v3.3 default per spec section2
             })
         else:
-            # v3.3 â€” apply Family A fields to existing brand (only overwrite empty values)
+            # v3.3 - apply Family A fields to existing brand (only overwrite empty values)
             family_a_updates: Dict[str, Any] = {}
             for key in [
                 "key_marketing_focus", "primary_target_audience", "key_marketing_channels",
@@ -6717,7 +6804,7 @@ Produce the opportunity card JSON.
                     "connect_status": "Stranger",
                 })
             elif not existing_contact.get("connect_status"):
-                # v3.3 â€” ensure the primary contact carries a Stranger status
+                # v3.3 - ensure the primary contact carries a Stranger status
                 await db.v3_contacts.update_one(
                     {"id": existing_contact["id"]},
                     {"$set": {"connect_status": "Stranger"}},
@@ -6779,7 +6866,7 @@ Produce the opportunity card JSON.
                     "source_title": source_title,
                     "connect_status": "new_lead",
                     "stated_intent": candidate.get("why_this_matters") or candidate.get("pain_point") or "",
-                    # v3.3 â€” seed Frame Alignment Snapshot and pre-load outreach
+                    # v3.3 - seed Frame Alignment Snapshot and pre-load outreach
                     "outreach_angle": candidate.get("outreach_angle") or candidate.get("suggested_opportunity_angle") or "",
                     "suggested_outreach": candidate.get("outreach_draft") or "",
                     "intelligence": {
@@ -6878,12 +6965,12 @@ Produce the opportunity card JSON.
 
     @router.post("/opportunities/candidates/{candidate_id}/transition")
     async def transition_opportunity_candidate(candidate_id: str, payload: OpportunityTransitionPayload):
-        """v3.3 â€” move a candidate through the Tracker's internal pipeline."""
+        """v3.3 - move a candidate through the Tracker's internal pipeline."""
         candidate = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
         if not candidate:
             raise HTTPException(404, "Opportunity candidate not found")
         if candidate.get("status") in {"accepted", "rejected"}:
-            raise HTTPException(400, f"Candidate already {candidate.get('status')} â€” cannot transition.")
+            raise HTTPException(400, f"Candidate already {candidate.get('status')} - cannot transition.")
         ts = _now_iso()
         set_fields = {"pipeline_state": payload.to_state, "updated_at": ts}
         if payload.to_state == "outreach_sent":
@@ -7374,7 +7461,7 @@ Produce the opportunity card JSON.
         readiness += 10 if "audience" in lower or "consumer" in lower or "buyer" in lower else 0
         readiness += 10 if any(c.lower() in lower for c in ["instagram", "tiktok", "youtube", "x", "ooh", "tv", "radio", "events", "retail"]) else 0
         readiness += 10 if any(k.lower() in lower for k in ["kpi", "reach", "engagement", "lift", "conversion", "sales", "leads"]) else 0
-        readiness += 10 if any(b.lower() in lower for b in ["budget", "fee", "rate", "naira", "â‚¦", "$"]) else 0
+        readiness += 10 if any(b.lower() in lower for b in ["budget", "fee", "rate", "naira", "\u20a6", "$"]) else 0
         readiness += 10 if "decision" in lower or "approve" in lower or "authority" in lower else 0
         readiness += 15 if len(text) >= 400 else (10 if len(text) >= 200 else 0)
         readiness += 25 if len(text) >= 800 else 0
@@ -7387,13 +7474,13 @@ Produce the opportunity card JSON.
                 ("Target audience", ["audience", "consumer", "buyer"]),
                 ("Channels", ["instagram", "tiktok", "youtube", "channel", "events", "retail"]),
                 ("KPIs", ["kpi", "metric", "reach", "engagement", "conversion", "sales", "leads"]),
-                ("Budget", ["budget", "fee", "naira", "â‚¦", "$"]),
+                ("Budget", ["budget", "fee", "naira", "\u20a6", "$"]),
                 ("Timeline", ["timeline", "date", "launch", "deadline"]),
                 ("Decision maker", ["decision", "approve", "authority"]),
             ]
         elif meeting_type in {"creator_fit", "creator_briefing"}:
             required = [
-                ("Creator fee", ["fee", "rate", "budget", "naira", "â‚¦", "$"]),
+                ("Creator fee", ["fee", "rate", "budget", "naira", "\u20a6", "$"]),
                 ("Availability", ["available", "availability", "schedule", "timeline"]),
                 ("Deliverables", ["deliverable", "post", "video", "content"]),
                 ("Usage rights", ["usage", "rights", "license"]),
@@ -7416,7 +7503,7 @@ Produce the opportunity card JSON.
                 ("Marketing challenge", ["challenge", "problem", "objective", "goal"]),
                 ("Channels", ["instagram", "tiktok", "youtube", "x", "events", "retail", "channel"]),
                 ("KPIs", ["kpi", "metric", "reach", "engagement", "conversion", "sales", "leads"]),
-                ("Budget", ["budget", "fee", "naira", "â‚¦", "$"]),
+                ("Budget", ["budget", "fee", "naira", "\u20a6", "$"]),
                 ("Timeline", ["timeline", "date", "launch", "deadline"]),
                 ("Decision maker", ["decision", "approve", "authority"]),
             ]
@@ -7436,7 +7523,7 @@ Produce the opportunity card JSON.
         max_reschedules = int(m.get("max_reschedules") or 3)
         if meeting_type in {"connector", "business_call"}:
             accept_recommendation = "promote"
-            decline_recommendation = "delete"
+            decline_recommendation = "reschedule"
         elif meeting_type in {"creator_fit", "creator_briefing"}:
             accept_recommendation = "accept"
             decline_recommendation = "decline"
@@ -7451,7 +7538,7 @@ Produce the opportunity card JSON.
             ai_reasons = ["Transcript is empty, so TASCK cannot make a reliable decision."]
         elif reschedule_count >= max_reschedules:
             ai_recommendation = decline_recommendation
-            ai_reasons = ["Maximum reschedules reached; the next normal path is delete, decline, or reject."]
+            ai_reasons = ["Maximum reschedules reached; schedule a focused follow-up before deciding whether the opportunity can move forward."]
         elif risk_flags:
             ai_recommendation = decline_recommendation
             ai_reasons = [f"Risk detected: {item}." for item in risk_flags]
@@ -7476,8 +7563,6 @@ Produce the opportunity card JSON.
             ("business_call", "promote"): "Promote to Frame",
             ("connector", "reschedule"): "Reschedule Business Call",
             ("business_call", "reschedule"): "Reschedule Business Call",
-            ("connector", "delete"): "Delete Brand From Pipeline",
-            ("business_call", "delete"): "Delete Brand From Pipeline",
             ("qualification", "accept"): "Add to Creator Roster" if entity_type == "creator" else "Accept to CRM",
             ("qualification", "reschedule"): "Reschedule Creator Fit Call" if entity_type == "creator" else "Reschedule Qualification Call",
             ("qualification", "decline"): "Decline Creator",
@@ -7490,7 +7575,7 @@ Produce the opportunity card JSON.
             ("creator_briefing", "decline"): "Decline Creator for This Project",
         }.get((meeting_type, ai_recommendation), ai_recommendation.replace("_", " ").title())
         creator_intelligence = {
-            "fee_context": "Captured" if any(word in lower for word in ["fee", "rate", "budget", "naira", "â‚¦", "$"]) else "Missing",
+            "fee_context": "Captured" if any(word in lower for word in ["fee", "rate", "budget", "naira", "\u20a6", "$"]) else "Missing",
             "availability_context": "Captured" if any(word in lower for word in ["available", "availability", "schedule", "timeline"]) else "Missing",
             "rights_context": "Captured" if any(word in lower for word in ["usage", "rights", "license", "exclusive"]) else "Missing",
             "contact_context": "Captured" if any(word in lower for word in ["email", "phone", "whatsapp", "manager"]) else "Missing",
@@ -7527,10 +7612,10 @@ Produce the opportunity card JSON.
             "missingContext": missing,
             "followUpQuestions": next_questions,
             "ai_outputs": [
-                f"Key marketing focus â†’ {mi['key_marketing_focus']}",
-                f"Primary target audience â†’ {mi['primary_target_audience']}",
-                f"Channels â†’ {', '.join(mi['key_marketing_channels'])}",
-                f"KPIs â†’ {', '.join(k['kpi'] for k in mi['marketing_kpis'])}",
+                f"Key marketing focus -> {mi['key_marketing_focus']}",
+                f"Primary target audience -> {mi['primary_target_audience']}",
+                f"Channels -> {', '.join(mi['key_marketing_channels'])}",
+                f"KPIs -> {', '.join(k['kpi'] for k in mi['marketing_kpis'])}",
             ],
             "marketing_intelligence": mi,
             "generated_at": _now_iso(),
@@ -8349,7 +8434,7 @@ Produce the opportunity card JSON.
 
     @router.post("/admin/import-crm-workbook")
     async def import_crm_workbook_endpoint():
-        """Run the workbook importer. Idempotent â€” safe to call repeatedly."""
+        """Run the workbook importer. Idempotent - safe to call repeatedly."""
         from v3_workbook_import import import_crm_workbook
         result = await import_crm_workbook(db)
         if not result.get("success"):
@@ -8403,7 +8488,7 @@ Produce the opportunity card JSON.
         seed = get_v3_seed_data()
         for collection_name in seed.keys():
             await db[collection_name].delete_many({})
-        # v3.3 â€” also wipe Tracker collections so demo runs start clean
+        # v3.3 - also wipe Tracker collections so demo runs start clean
         tracker_collections = [
             "v3_opportunity_candidates",
             "v3_opportunity_scans",

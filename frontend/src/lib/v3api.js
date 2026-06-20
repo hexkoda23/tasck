@@ -54,6 +54,8 @@ export const v3AdvanceBusinessCase = (bcId, payload = { actor: 'rm' }) => v3.pos
 
 export const v3ContinueBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}/continue`).then(r => r.data);
 
+export const v3UpdateBusinessCaseValue = (bcId, payload) => v3.patch(`/business-cases/${bcId}/value`, payload).then(r => r.data);
+
 // -------- Frame stage --------
 export const v3GenerateAlignment = (bcId) => v3.post(`/business-cases/${bcId}/ai/alignment`).then(r => r.data);
 

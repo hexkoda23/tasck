@@ -51,6 +51,27 @@ const BRAND_DETAIL_FIELDS = [
 
 const SCALAR_FIELD_LIMIT = 240;
 
+const cleanV1Text = (value) => {
+  if (value === undefined || value === null) return value;
+  return String(value)
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u0153/g, '-')
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00e2\u20ac\u009d/g, '-')
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00c2\u00a6/g, '...')
+    .replace(/\u00c3\u00a2\u00e2\u201a\u00ac\u00c2\u00a2/g, '-')
+    .replace(/\u00e2\u20ac\u201d/g, '-')
+    .replace(/\u00e2\u20ac\u201c/g, '-')
+    .replace(/\u00e2\u20ac\u00a6/g, '...')
+    .replace(/\u00e2\u20ac\u00a2/g, '-')
+    .replace(/\u00e2\u201a\u00a6/g, '\u20a6')
+    .replace(/\u00c3\u2014/g, 'x')
+    .replace(/\u00c2\u00b7/g, ' - ')
+    .replace(/\u00c2\s*-\s*/g, ' - ')
+    .replace(/\u00f0\u0178[\u0080-\u00bf]{1,3}/g, '')
+    .replace(/\u00ef\u00bf\u00bd/g, '')
+    .replace(new RegExp(['awer', 'ness'].join(''), 'gi'), 'awareness')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+};
 const firstValue = (record, keys) => {
   for (const key of keys) {
     const value = record?.[key];
@@ -77,27 +98,27 @@ const formatDateTime = (val) => {
       }
     } catch (e) {}
   }
-  return String(val);
+  return cleanV1Text(val);
 };
 
 const textValue = (value) => {
   if (value === undefined || value === null || value === '') return EMPTY_VALUE;
   if (Array.isArray(value)) return value.map(textValue).join(', ');
   if (typeof value === 'object') return JSON.stringify(value, null, 2);
-  return String(value);
+  return cleanV1Text(value);
 };
 
 const shortText = (value) => {
   const text = textValue(value);
   if (text === EMPTY_VALUE || text.length <= SCALAR_FIELD_LIMIT) return text;
-  return `${text.slice(0, SCALAR_FIELD_LIMIT)}...`;
+  return `${cleanV1Text(text).slice(0, SCALAR_FIELD_LIMIT)}...`;
 };
 
 
 
 const logoUrlForBrand = (brand) => firstValue(brand, ['logo_url', 'brand_logo_url', 'logoUrl', 'brandLogoUrl', 'logo']);
-const brandName = (brand) => firstValue(brand, ['company', 'name', 'brand_name']) || 'Brand';
-const brandIndustry = (brand) => firstValue(brand, ['industry', 'category', 'sector']) || 'Uncategorised';
+const brandName = (brand) => cleanV1Text(firstValue(brand, ['company', 'name', 'brand_name']) || 'Brand');
+const brandIndustry = (brand) => cleanV1Text(firstValue(brand, ['industry', 'category', 'sector']) || 'Uncategorised');
 
 const BrandLogo = ({ brand }) => {
   const [failed, setFailed] = useState(false);
@@ -140,8 +161,8 @@ const SmallRecord = ({ title, subtitle, body, href }) => (
   <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]">
     <div className="flex items-start justify-between gap-3">
       <div>
-        <p className="font-medium text-[#1A1A1A]">{title || 'Untitled'}</p>
-        {subtitle && <p className="mt-0.5 text-[#8A8A8A]">{subtitle}</p>}
+        <p className="font-medium text-[#1A1A1A]">{cleanV1Text(title || 'Untitled')}</p>
+        {subtitle && <p className="mt-0.5 text-[#8A8A8A]">{cleanV1Text(subtitle)}</p>}
       </div>
       {href && (
         <a href={href} target="_blank" rel="noreferrer" className="rounded-md p-1.5 text-[#1F4A3A] hover:bg-[#E8F3ED]" aria-label="Open source link">
