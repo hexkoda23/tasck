@@ -58,6 +58,28 @@ const sortBrandsNewestFirst = (brandList = []) => {
   });
 };
 
+const businessCaseActivityTs = (businessCase) => {
+  const timestamps = [
+    businessCase?.updated_at,
+    businessCase?.updatedAt,
+    businessCase?.last_interaction_at,
+    businessCase?.lastInteractionAt,
+    businessCase?.created_at,
+    businessCase?.createdAt,
+  ].map((value) => {
+    const parsed = Date.parse(value || '');
+    return Number.isNaN(parsed) ? 0 : parsed;
+  });
+
+  const timeline = Array.isArray(businessCase?.timeline) ? businessCase.timeline : [];
+  timeline.forEach((item) => {
+    const parsed = Date.parse(item?.at || item?.updated_at || item?.created_at || '');
+    timestamps.push(Number.isNaN(parsed) ? 0 : parsed);
+  });
+
+  return Math.max(...timestamps, 0);
+};
+
 const V1AdminBusinessCases = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -88,8 +110,7 @@ const V1AdminBusinessCases = () => {
   const reload = () =>
     Promise.all([v3ListBusinessCases(), v3AdminOverview()]).then(([cs, ov]) => {
       const csList = Array.isArray(cs) ? cs : [];
-      // Sort newest-first on the client side as well
-      csList.sort((a, b) => Date.parse(b.created_at || '') - Date.parse(a.created_at || '') || 0);
+      csList.sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a) || String(b.id || '').localeCompare(String(a.id || '')));
       setCases(csList);
       setOverview(ov && typeof ov === 'object' && !Array.isArray(ov) ? ov : null);
       setError(null);

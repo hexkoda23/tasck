@@ -149,11 +149,23 @@ const SmallRecord = ({ title, subtitle, body, href }) => (
     {body && <p className="mt-2 whitespace-pre-wrap break-words leading-5 text-[#5C5C5C]">{shortText(body)}</p>}
   </div>
 );
+const emailCategory = (email) => {
+  const subject = String(email?.subject || '').toLowerCase();
+  const kind = String(email?.kind || '').toLowerCase();
+  if (subject.includes('alignment snapshot') || kind.includes('alignment')) return 'alignment_snapshot';
+  if (subject.includes('strategy snapshot') || kind.includes('strategy') || kind.includes('creative_snapshot')) return 'strategy_snapshot';
+  if (subject.includes('creative brief') || kind.includes('creative_brief') || kind.includes('brief')) return 'creative_brief';
+  return '';
+};
+
+const emailTimestamp = (email) => Date.parse(email?.sent_at || email?.queued_at || email?.created_at || email?.updated_at || '') || 0;
+
 const emailContentKey = (email) => {
+  const category = emailCategory(email);
+  if (category) return category;
   const subject = String(email?.subject || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const body = String(email?.body || '').replace(/\s+/g, ' ').trim().toLowerCase();
-  const isAlignment = subject.includes('alignment snapshot') || String(email?.kind || '').includes('alignment');
-  return isAlignment ? `alignment:${subject}:${body}` : `${email?.id || subject}:${body}`;
+  return `${email?.id || subject}:${body}`;
 };
 
 const dedupeEmails = (emails) => {
@@ -165,11 +177,11 @@ const dedupeEmails = (emails) => {
       seen.set(key, { ...email, duplicate_count: 1 });
       return;
     }
-    seen.set(key, { ...existing, duplicate_count: (existing.duplicate_count || 1) + 1 });
+    const keepEmail = emailTimestamp(email) >= emailTimestamp(existing) ? email : existing;
+    seen.set(key, { ...keepEmail, duplicate_count: (existing.duplicate_count || 1) + 1 });
   });
-  return Array.from(seen.values());
+  return Array.from(seen.values()).sort((a, b) => emailTimestamp(b) - emailTimestamp(a));
 };
-
 const formatDeliverableSchedule = (row) => {
   const scheduled = [row?.delivery_date, row?.delivery_time].filter(Boolean).join(' ') || row?.scheduled_for || '';
   return scheduled || 'Schedule not recorded';
