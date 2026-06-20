@@ -554,6 +554,18 @@ const creatorSpecialty = (creator) => cleanV1Text(
   || creator?.platform
   || 'Creator profile'
 );
+const creatorContact = (creator) => cleanV1Text(
+  creator?.email
+  || creator?.contact_email
+  || creator?.creator_email
+  || creator?.manager_email
+  || creator?.phone
+  || creator?.contact_phone
+  || creator?.instagram
+  || creator?.tiktok
+  || creator?.handle
+  || ''
+);
 const selectedCreatorQuery = (ids) => encodeURIComponent(ids.join(','));
 
 const creatorBriefLink = (businessCaseId, creatorId) => `${window.location.origin}/creator/briefs/${businessCaseId}?creator=${encodeURIComponent(creatorId)}`;
