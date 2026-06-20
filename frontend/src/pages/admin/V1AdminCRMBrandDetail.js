@@ -18,11 +18,13 @@ import {
 import {
   v3GetBrand,
   v3MoveBrandToBusinessCall,
+  v3MoveBrandToFrame,
   v3DeleteBrand,
   v3UpdateBrandDetails,
   v3ScrapeBrandDetails,
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
+import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
 import { toast } from 'sonner';
 
 const EMPTY_VALUE = 'Not captured yet';
@@ -187,6 +189,19 @@ const formatDeliverableSchedule = (row) => {
   return scheduled || 'Schedule not recorded';
 };
 
+const businessCaseActivityTs = (businessCase) => {
+  const baseDates = [businessCase?.updated_at, businessCase?.created_at, businessCase?.last_interaction_at];
+  const timelineDates = Array.isArray(businessCase?.timeline) ? businessCase.timeline.map((item) => item?.at) : [];
+  return Math.max(...[...baseDates, ...timelineDates].map((value) => {
+    const parsed = Date.parse(value || '');
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }), 0);
+};
+
+const activeCasesForBrand = (items = []) => [...items]
+  .filter((businessCase) => !['closed', 'archived'].includes(String(businessCase?.stage || '').toLowerCase()) && businessCase?.status !== 'deleted')
+  .sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a));
+
 
 const V1AdminCRMBrandDetail = () => {
   const { id } = useParams();
@@ -200,9 +215,13 @@ const V1AdminCRMBrandDetail = () => {
   const [scraping, setScraping] = useState(false);
   const [editingAbout, setEditingAbout] = useState(false);
   const [aboutDraft, setAboutDraft] = useState('');
+  const [editingMarketingBudget, setEditingMarketingBudget] = useState(false);
+  const [marketingBudgetDraft, setMarketingBudgetDraft] = useState('');
   const [editingLogo, setEditingLogo] = useState(false);
   const [logoDraft, setLogoDraft] = useState('');
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
+  const [projectChoiceOpen, setProjectChoiceOpen] = useState(false);
+  const [projectChoiceDismissed, setProjectChoiceDismissed] = useState(false);
 
   const reloadData = async () => {
     try {
@@ -254,6 +273,17 @@ const V1AdminCRMBrandDetail = () => {
     }
   };
 
+  const handleSaveMarketingBudget = async () => {
+    try {
+      await v3UpdateBrandDetails(id, { marketing_budget: marketingBudgetDraft });
+      toast.success('Marketing budget updated successfully.');
+      setEditingMarketingBudget(false);
+      await reloadData();
+    } catch (e) {
+      toast.error(e?.message || 'Failed to update marketing budget.');
+    }
+  };
+
   const handleDeleteBrand = async () => {
     setDeleting(true);
     try {
@@ -285,6 +315,8 @@ const V1AdminCRMBrandDetail = () => {
   const brand = bundle?.brand || null;
   const contacts = Array.isArray(bundle?.contacts) ? bundle.contacts : [];
   const businessCases = Array.isArray(bundle?.business_cases) ? bundle.business_cases : [];
+  const activeBusinessCases = activeCasesForBrand(businessCases);
+  const activeBusinessCase = activeBusinessCases[0] || null;
   const interactions = Array.isArray(bundle?.interactions) ? bundle.interactions : [];
   const opportunities = Array.isArray(bundle?.opportunities) ? bundle.opportunities : [];
   const emails = Array.isArray(bundle?.emails) ? bundle.emails : [];
@@ -292,39 +324,55 @@ const V1AdminCRMBrandDetail = () => {
   const deliverables = Array.isArray(bundle?.deliverables) ? bundle.deliverables : [];
   const account = bundle?.account || null;
 
-  const moveToCallPage = async () => {
+  useEffect(() => {
+    if (!loading && brand?.id && activeBusinessCase?.id && !projectChoiceDismissed) {
+      setProjectChoiceOpen(true);
+    }
+  }, [loading, brand?.id, activeBusinessCase?.id, projectChoiceDismissed]);
+
+  const openProjectDecision = () => {
+    if (activeBusinessCase?.id) {
+      setProjectChoiceOpen(true);
+      return true;
+    }
+    return false;
+  };
+
+  const continueExistingProject = () => {
+    if (!activeBusinessCase?.id) return;
+    setProjectChoiceOpen(false);
+    setProjectChoiceDismissed(true);
+    navigate(businessCasePhasePath(activeBusinessCase.id, activeBusinessCase));
+  };
+
+  const startBrandProject = async (target, forceNew = false) => {
     if (!brand?.id) return;
     setMoving(true);
     setNotice('');
     try {
-      const result = await v3MoveBrandToBusinessCall(brand.id);
+      const result = target === 'frame'
+        ? await v3MoveBrandToFrame(brand.id, { force_new: forceNew })
+        : await v3MoveBrandToBusinessCall(brand.id, { force_new: forceNew });
       const businessCaseId = result.business_case_id || result.business_case?.id;
       if (!businessCaseId) throw new Error('Business Case was not returned by the V3 workflow.');
-      navigate(adminRoute(`/business-cases/${businessCaseId}/connect`));
+      setProjectChoiceOpen(false);
+      setProjectChoiceDismissed(true);
+      navigate(adminRoute(target === 'frame' ? `/business-cases/${businessCaseId}/frame/transcripts` : `/business-cases/${businessCaseId}/connect`));
     } catch (error) {
-      setNotice(error?.response?.data?.detail || error?.message || 'Could not move this brand to the call page.');
+      setNotice(error?.response?.data?.detail || error?.message || 'Could not open this project flow.');
     } finally {
       setMoving(false);
     }
   };
 
+  const moveToCallPage = async () => {
+    if (openProjectDecision()) return;
+    await startBrandProject('connect', false);
+  };
+
   const moveToFramePage = async () => {
-    if (!brand?.id) return;
-    setMoving(true);
-    setNotice('');
-    try {
-      const result = await v3MoveBrandToBusinessCall(brand.id);
-      const businessCaseId = result.business_case_id || result.business_case?.id;
-      if (!businessCaseId) {
-        setNotice('Business Case was not returned by the V3 workflow.');
-        return;
-      }
-      navigate(adminRoute(`/business-cases/${businessCaseId}/frame/transcripts`));
-    } catch (error) {
-      setNotice(error?.response?.data?.detail || error?.message || 'Could not open the transcript workspace.');
-    } finally {
-      setMoving(false);
-    }
+    if (openProjectDecision()) return;
+    await startBrandProject('frame', false);
   };
 
   if (loading) {
@@ -344,6 +392,7 @@ const V1AdminCRMBrandDetail = () => {
 
 
   const aboutText = firstValue(brand, ['about', 'brand_about', 'description', 'company_description', 'notes']);
+  const marketingBudget = firstValue(brand, ['marketing_budget', 'budget', 'budget_range']);
   const website = firstValue(brand, ['website', 'url', 'brand_url']);
 
   return (
@@ -529,6 +578,43 @@ const V1AdminCRMBrandDetail = () => {
                 <p className="mt-1 whitespace-pre-wrap break-all text-[13px] leading-5 text-[#1A1A1A]">{textValue(logoUrlForBrand(brand))}</p>
               )}
             </div>
+            <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Marketing budget</p>
+                {!editingMarketingBudget && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMarketingBudgetDraft(marketingBudget || '');
+                      setEditingMarketingBudget(true);
+                    }}
+                    className="p-0.5 hover:bg-[#F4F2EC] rounded text-[#8A8A8A] hover:text-[#1F4A3A] transition-colors"
+                    data-testid="crm-edit-marketing-budget-btn"
+                    title="Edit marketing budget"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {editingMarketingBudget ? (
+                <div className="space-y-2 mt-1.5">
+                  <input
+                    type="text"
+                    value={marketingBudgetDraft}
+                    onChange={(e) => setMarketingBudgetDraft(e.target.value)}
+                    className="w-full text-[12px] border border-[#D7CBB8] rounded p-1.5 focus:outline-none focus:border-[#1F4A3A]"
+                    placeholder="e.g. ?5m monthly, ?20m campaign, or TBD"
+                    data-testid="crm-marketing-budget-input"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setEditingMarketingBudget(false)} className="px-2 py-0.5 text-[10px] rounded bg-[#F4F2EC] text-[#4F3E2F]">Cancel</button>
+                    <button onClick={handleSaveMarketingBudget} className="px-2 py-0.5 text-[10px] rounded bg-[#1F4A3A] text-white" data-testid="crm-save-marketing-budget-btn">Save</button>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-5 text-[#1A1A1A]">{textValue(marketingBudget)}</p>
+              )}
+            </div>
             <DetailRow label="Website / source URL" value={website} />
             <DetailRow label="Notes" value={brand.notes || brand.source_notes || brand.scrape_notes} />
           </div>
@@ -565,7 +651,7 @@ const V1AdminCRMBrandDetail = () => {
           {businessCases.length ? (
             <div className="grid gap-2">
               {businessCases.map((businessCase) => (
-                <button key={businessCase.id} type="button" onClick={() => navigate(adminRoute(`/business-cases/${businessCase.id}`))} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-left hover:border-[#1F4A3A]">
+                <button key={businessCase.id} type="button" onClick={() => navigate(businessCasePhasePath(businessCase.id, businessCase))} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-left hover:border-[#1F4A3A]">
                   <div className="flex items-center gap-2 text-[13px] font-medium text-[#1A1A1A]"><BriefcaseBusiness className="h-4 w-4 text-[#1F4A3A]" /> {businessCase.title || 'Business Case'}</div>
                   <p className="mt-1 text-[11px] text-[#8A8A8A]">Stage: {businessCase.stage_label || businessCase.stage || EMPTY_VALUE}</p>
                 </button>
@@ -618,6 +704,45 @@ const V1AdminCRMBrandDetail = () => {
         </InfoCard>
       </div>
 
+
+      {projectChoiceOpen && activeBusinessCase && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="brand-project-choice-modal">
+          <div className="v3-card w-full max-w-lg bg-white p-6 shadow-2xl">
+            <div className="mb-5">
+              <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">Active project found</p>
+              <h3 className="mt-1 text-[18px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                Continue or start a new project?
+              </h3>
+              <p className="mt-2 text-[13px] leading-6 text-[#6E6657]">
+                {brandName(brand)} already has an active Business Case. Continue opens the last worked phase. Start New creates a separate project for this brand.
+              </p>
+            </div>
+            <div className="rounded-[8px] border border-[#E8E4DB] bg-[#FAFAF7] p-3 text-[12px]">
+              <p className="font-semibold text-[#1A1A1A]">{activeBusinessCase.title || 'Business Case'}</p>
+              <p className="mt-1 text-[#6E6657]">Stage: {activeBusinessCase.stage || EMPTY_VALUE}</p>
+              <p className="mt-1 text-[#8A8A8A]">Updated: {formatDateTime(activeBusinessCase.updated_at || activeBusinessCase.created_at)}</p>
+            </div>
+            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+              <button type="button" onClick={continueExistingProject} className="v3-btn-primary justify-center" data-testid="brand-continue-project">
+                Continue
+              </button>
+              <button type="button" onClick={() => startBrandProject('connect', true)} disabled={moving} className="v3-btn-secondary justify-center" data-testid="brand-start-new-call">
+                Start new: move to call
+              </button>
+              <button type="button" onClick={() => startBrandProject('frame', true)} disabled={moving} className="v3-btn-secondary justify-center sm:col-span-2" style={{ borderColor: '#C49B5F', color: '#C49B5F' }} data-testid="brand-start-new-frame">
+                Start new: move to frame
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setProjectChoiceOpen(false); setProjectChoiceDismissed(true); }}
+              className="mt-4 w-full text-center text-[12px] text-[#8A8A8A] hover:text-[#1F4A3A]"
+            >
+              Stay on brand details
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Delete confirmation modal */}
       {deleteConfirmOpen && (

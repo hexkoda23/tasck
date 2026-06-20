@@ -8,9 +8,9 @@ import {
 
 const roleCards = [
   { id: 'staff', role: 'staff', title: 'TASCK Staff', description: 'Originate deals, manage pipelines, orchestrate the creative economy.', icon: Briefcase, path: '/staff' },
-  { id: 'brand', role: 'brand', title: 'Brand', description: 'Track campaigns, approve deliverables, measure ROI.', icon: Building2, path: '/brand' },
+  { id: 'brand', role: 'brand', title: 'Brand', description: 'Track campaigns, approve deliverables, measure ROI.', icon: Building2, path: '/brand/login', requiresLogin: true },
   { id: 'super_creative', role: 'super_creative', title: 'Super Creative', description: 'Create projects, fund opportunities, hire talent.', icon: Sparkles, path: '/super-creative' },
-  { id: 'creative', role: 'creative', title: 'Creative', description: 'Find gigs, complete tasks, get paid automatically.', icon: Palette, path: '/creative' },
+  { id: 'creative', role: 'creative', title: 'Creator', description: 'Review briefs, submit deliverables, and manage TASCK work.', icon: Palette, path: '/creator/login', requiresLogin: true },
   { id: 'admin', role: 'admin', title: 'Admin', description: 'Manage users, disputes, contracts, and platform settings.', icon: Shield, path: '/admin' }
 ];
 
@@ -22,6 +22,10 @@ const V1RoleSelector = () => {
   const handleRoleSelect = async (card) => {
     setLoading(card.id);
     try {
+      if (card.requiresLogin) {
+        navigate(card.path);
+        return;
+      }
       await login(card.role);
       navigate(card.path);
     } catch (error) {
@@ -44,7 +48,7 @@ const V1RoleSelector = () => {
 
         <div className="inline-flex items-center gap-2 mb-6 mt-6 px-3 py-1.5 rounded-full border border-[#E2E8F0] text-xs text-[#64748B]">
           <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse" />
-          TASCK OS v1 — Demo Mode
+          TASCK OS v1 â€” Demo Mode
         </div>
 
         <h2 className="text-2xl font-bold text-[#0F172A] mb-2 tracking-tight">Choose Your Portal</h2>

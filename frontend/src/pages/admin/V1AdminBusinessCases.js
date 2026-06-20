@@ -80,6 +80,32 @@ const businessCaseActivityTs = (businessCase) => {
   return Math.max(...timestamps, 0);
 };
 
+const isIntentionalNewProject = (businessCase) => {
+  if (businessCase?.connect?.project_start_mode === 'new_project' || businessCase?.project_start_mode === 'new_project') return true;
+  const timeline = Array.isArray(businessCase?.timeline) ? businessCase.timeline : [];
+  return timeline.some((item) => item?.force_new === true || item?.project_start_mode === 'new_project');
+};
+
+const dedupeBusinessCasesForV1 = (items = []) => {
+  const sorted = [...items].sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a) || String(b.id || '').localeCompare(String(a.id || '')));
+  const latestByBrand = new Map();
+  const explicitProjects = [];
+
+  sorted.forEach((businessCase) => {
+    const brandKey = businessCase?.brand_id || businessCase?.brand?.id || '';
+    if (!brandKey || isIntentionalNewProject(businessCase)) {
+      explicitProjects.push(businessCase);
+      return;
+    }
+    if (!latestByBrand.has(brandKey)) {
+      latestByBrand.set(brandKey, businessCase);
+    }
+  });
+
+  return [...latestByBrand.values(), ...explicitProjects]
+    .sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a) || String(b.id || '').localeCompare(String(a.id || '')));
+};
+
 const V1AdminBusinessCases = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -166,12 +192,13 @@ const V1AdminBusinessCases = () => {
   };
 
   const filtered = useMemo(
-    () =>
+    () => dedupeBusinessCasesForV1(
       (Array.isArray(cases) ? cases : []).filter(
         (c) =>
           (stage === 'all' || c.stage === stage) &&
           (track === 'all' || c.engagement_track === track)
-      ),
+      )
+    ),
     [cases, stage, track]
   );
   const byStage = overview?.by_stage || {};
@@ -242,7 +269,7 @@ const V1AdminBusinessCases = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={runBusinessOpportunityAgent} disabled={busy} className="v3-btn-secondary" data-testid="bc-ai-business-agent" title="Show AI-scraped business opportunities">
+          <button onClick={() => navigate(adminRoute('/crm/opportunities'))} className="v3-btn-secondary" data-testid="bc-ai-business-agent" title="Open Brand Opportunity Scanner">
             <Sparkles className="w-3.5 h-3.5" /> AI-generated business cases
           </button>
           <button onClick={openNew} className="v3-btn-primary" data-testid="bc-new">

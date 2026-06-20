@@ -24,8 +24,8 @@ export const v3GetBrand = (brandId) => v3.get(`/brands/${brandId}`).then(r => r.
 export const v3CreateBrand = (payload) => v3.post('/brands', payload).then(r => r.data);
 
 export const v3CreateBrandQualificationCandidate = (payload) => v3.post('/brands/qualification-candidates', payload).then(r => r.data);
-export const v3MoveBrandToBusinessCall = (brandId) => v3.post(`/brands/${brandId}/business-call`).then(r => r.data);
-export const v3MoveBrandToFrame = (brandId) => v3.post(`/brands/${brandId}/move-to-frame`).then(r => r.data);
+export const v3MoveBrandToBusinessCall = (brandId, payload = {}) => v3.post(`/brands/${brandId}/business-call`, payload).then(r => r.data);
+export const v3MoveBrandToFrame = (brandId, payload = {}) => v3.post(`/brands/${brandId}/move-to-frame`, payload).then(r => r.data);
 export const v3DeleteBrand = (brandId) => v3.delete(`/brands/${brandId}`).then(r => r.data);
 
 export const v3ScrapeBrandDetails = (brandId) => v3.post(`/brands/${brandId}/scrape`).then(r => r.data);
@@ -90,6 +90,10 @@ export const v3CreateBrainstorm = (payload) => v3.post('/brainstorm-rounds', pay
 export const v3UpdateBrainstorm = (roundId, payload) => v3.patch(`/brainstorm-rounds/${roundId}`, payload).then(r => r.data);
 export const v3ListBrainstorms = (bcId) => v3.get('/brainstorm-rounds', { params: { business_case_id: bcId } }).then(r => r.data);
 export const v3ContractPdfUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/pdf`;
+export const v3AlignmentDocxUrl = (snapshotId) => `${BACKEND_URL}/api/v3/alignment-snapshots/${snapshotId}/docx`;
+export const v3CreativeBriefDocxUrl = (briefId) => `${BACKEND_URL}/api/v3/creative-briefs/${briefId}/docx`;
+export const v3StrategySnapshotDocxUrl = (snapshotId) => `${BACKEND_URL}/api/v3/creative-snapshots/${snapshotId}/docx`;
+export const v3ContractDocxUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/docx`;
 export const v3FinalReportPdfUrl = (reportId) => `${BACKEND_URL}/api/v3/final-reports/${reportId}/pdf`;
 export const v3FeedbackPdfUrl = (reportId) => `${BACKEND_URL}/api/v3/final-reports/${reportId}/feedback/pdf`;
 export const v3SendContractEmail = (contractId, payload) => v3.post(`/contracts/${contractId}/send-email`, payload).then(r => r.data);
@@ -179,6 +183,7 @@ export const v3ListRelationshipManagers = () => v3.get('/relationship-managers')
 // -------- Admin Auth --------
 export const v3AdminLogin = (payload) => v3.post('/auth/admin-login', payload).then(r => r.data);
 export const v3BrandLogin = (payload) => v3.post('/auth/brand-login', payload).then(r => r.data);
+export const v3CreatorLogin = (payload) => v3.post('/auth/creator-login', payload).then(r => r.data);
 
 // -------- Admin utilities --------
 export const v3ApproveBrand = (brandId) => v3.post(`/brands/${brandId}/approve`).then(r => r.data);

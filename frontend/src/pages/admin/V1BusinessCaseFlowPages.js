@@ -36,11 +36,16 @@ import {
   v3UpdateBrainstorm,
   v3ListBrainstorms,
   v3ContractPdfUrl,
+  v3AlignmentDocxUrl,
+  v3CreativeBriefDocxUrl,
+  v3StrategySnapshotDocxUrl,
+  v3ContractDocxUrl,
   v3FinalReportPdfUrl,
   v3FeedbackPdfUrl,
   v3CreateBrief,
   v3CreateContract,
   v3UpdateContract,
+  v3SendContractEmail,
   v3UpdateFinalReport,
   v3MarkReportSent,
   v3MarkFeedbackSent,
@@ -64,6 +69,7 @@ import {
   v3RescheduleBusinessCaseConnect,
   v3RescheduleCreatorBriefing,
   v3SendAlignmentToBrand,
+  v3SendConnectMeetingEmail,
   v3SendConnectRescheduleEmail,
   v3SendStrategySnapshotToBrand,
   v3SignContract,
@@ -104,6 +110,51 @@ const useBusinessCaseBundle = () => {
 
 const getCase = (bundle) => bundle?.business_case || {};
 const getBrand = (bundle) => bundle?.brand || {};
+
+const valueFrom = (record, keys) => {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return '';
+};
+
+const humanStatus = (value) => String(value || 'needs_business_call')
+  .replace(/_/g, ' ')
+  .replace(/\b\w/g, (letter) => letter.toUpperCase());
+
+const formatDateTime = (value) => {
+  if (!value) return 'Not captured yet';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+};
+
+const latestTimestamp = (values) => values.reduce((latest, value) => {
+  const parsed = Date.parse(value || '');
+  return Number.isNaN(parsed) ? latest : Math.max(latest, parsed);
+}, 0);
+
+const connectStatusUpdatedAt = (bundle) => {
+  const bc = getCase(bundle);
+  const meetings = Array.isArray(bundle?.meetings) ? bundle.meetings : [];
+  const statusEvents = Array.isArray(bc.timeline)
+    ? bc.timeline.filter((item) => ['connect_status_changed', 'connect_analyzed_all', 'connect_promoted_to_frame', 'connect_rescheduled', 'business_call_scheduled'].includes(item?.event))
+    : [];
+  const time = Math.max(
+    latestTimestamp([bc.connect?.status_updated_at, bc.connect?.updated_at, bc.updated_at, bc.created_at]),
+    latestTimestamp(statusEvents.map((item) => item?.at)),
+    latestTimestamp(meetings.map((meeting) => meeting?.updated_at || meeting?.scheduled_for || meeting?.created_at))
+  );
+  return time ? new Date(time).toISOString() : '';
+};
 
 const STAGE_INDEX = { connect: 0, frame: 1, plan: 2, deliver: 3, reporting: 4, closed: 4 };
 const currentStageIndex = (stage) => STAGE_INDEX[stage] ?? 0;
@@ -474,14 +525,14 @@ const creatorName = (creator) => creator?.name || creator?.creator_name || creat
 
 const creatorSpecialty = (creator) => {
   const platforms = Array.isArray(creator?.platforms) ? creator.platforms.join(', ') : creator?.platforms;
-  return [creator?.genre, creator?.tier, platforms].filter(Boolean).join(' · ') || creator?.audience || 'Approved creator profile';
+  return [creator?.genre, creator?.tier, platforms].filter(Boolean).join(' Â· ') || creator?.audience || 'Approved creator profile';
 };
 
 const creatorContact = (creator) => creator?.email || creator?.manager_email || creator?.contact_email || '';
 
 const selectedCreatorQuery = (ids) => encodeURIComponent(ids.join(','));
 
-const creatorBriefLink = (businessCaseId, creatorId) => `${window.location.origin}/v3/creator/briefs/${businessCaseId}?creator=${encodeURIComponent(creatorId)}`;
+const creatorBriefLink = (businessCaseId, creatorId) => `${window.location.origin}/creator/briefs/${businessCaseId}?creator=${encodeURIComponent(creatorId)}`;
 
 const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
   const bc = getCase(bundle);
@@ -722,12 +773,84 @@ const snapshotPrintHtml = (snapshot) => {
 
 export const V3BusinessCaseConnect = () => {
   const navigate = useNavigate();
-  const { id, bundle } = useBusinessCaseBundle();
+  const { id, bundle, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const contact = bc.brand_contact_snapshot || {};
+  const connectStatus = bc.connect?.connect_status || 'needs_business_call';
+  const statusUpdatedAt = connectStatusUpdatedAt(bundle);
+  const about = valueFrom(brand, ['about', 'brand_about', 'description', 'company_description', 'notes']);
+  const marketingBudget = valueFrom(brand, ['marketing_budget', 'budget', 'budget_range']) || valueFrom(bc, ['marketing_budget', 'budget', 'estimated_value']);
+  const defaultEmail = contact.email || brand.email || '';
+  const defaultPurpose = 'Connect / Business Call to confirm the brand context, marketing priorities, timeline, budget, and the information TASCK needs before Frame.';
+  const [meetingForm, setMeetingForm] = useState({
+    scheduled_for: bc.connect?.scheduled_for || '',
+    meeting_link: bc.connect?.meeting_link || '',
+    purpose: bc.connect?.meeting_purpose || defaultPurpose,
+    contact_email: defaultEmail,
+  });
+  const [sendingMeetingEmail, setSendingMeetingEmail] = useState(false);
+  const [meetingPopup, setMeetingPopup] = useState(null);
+
+  useEffect(() => {
+    setMeetingForm((prev) => ({
+      scheduled_for: prev.scheduled_for || bc.connect?.scheduled_for || '',
+      meeting_link: prev.meeting_link || bc.connect?.meeting_link || '',
+      purpose: prev.purpose || bc.connect?.meeting_purpose || defaultPurpose,
+      contact_email: prev.contact_email || defaultEmail,
+    }));
+  }, [bc.id, bc.connect?.scheduled_for, bc.connect?.meeting_link, bc.connect?.meeting_purpose, defaultEmail]);
+
+  const updateMeetingForm = (field, value) => setMeetingForm((prev) => ({ ...prev, [field]: value }));
+
+  const resetMeetingForm = () => {
+    setMeetingForm({ scheduled_for: '', meeting_link: '', purpose: defaultPurpose, contact_email: defaultEmail });
+    setMeetingPopup({ tone: 'success', title: 'New meeting email ready', message: 'Add the next date, time, link and purpose below.' });
+  };
+
+  const sendMeetingEmail = async () => {
+    if (!meetingForm.contact_email?.trim()) {
+      setMeetingPopup({ tone: 'error', title: 'Brand email missing', message: 'Add the brand email before sending the meeting schedule.' });
+      return;
+    }
+    setSendingMeetingEmail(true);
+    setMeetingPopup({ tone: 'pending', title: 'Sending meeting email', message: `Sending to ${meetingForm.contact_email}...` });
+    try {
+      await v3SendConnectMeetingEmail(id, {
+        scheduled_for: meetingForm.scheduled_for,
+        meeting_link: meetingForm.meeting_link,
+        reason: meetingForm.purpose,
+        agenda: meetingForm.purpose,
+        contact_email: meetingForm.contact_email,
+        contact_name: contact.primary_contact || brand.primary_contact || '',
+      });
+      await reload();
+      setMeetingPopup({ tone: 'success', title: 'Sent to brand email', message: `Meeting schedule sent to ${meetingForm.contact_email}. The interaction has been stored on the brand record.` });
+    } catch (e) {
+      setMeetingPopup({ tone: 'error', title: 'Could not send meeting email', message: e?.response?.data?.detail || e?.message || 'The schedule email could not be sent.' });
+    } finally {
+      setSendingMeetingEmail(false);
+    }
+  };
+
   return (
     <FlowShell title="Connect / Business Call" subtitle="Business Call captures the brand conversation before Frame questions are sent for brand answers." nextAction="Schedule the call, send the welcome email, then analyze the transcript.">
+      {meetingPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" data-testid="connect-meeting-email-popup">
+          <div className="v3-card w-full max-w-sm bg-white p-5 text-center shadow-2xl">
+            <div className={`mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full ${meetingPopup.tone === 'error' ? 'bg-[#F5D9D2] text-[#B54A37]' : meetingPopup.tone === 'pending' ? 'bg-[#FBF4E4] text-[#7A5A1E]' : 'bg-[#DDE7E2] text-[#1F4A3A]'}`}>
+              {meetingPopup.tone === 'pending' ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mail className="h-5 w-5" />}
+            </div>
+            <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{meetingPopup.title}</h3>
+            <p className="mt-2 text-[12px] leading-5 text-[#6E6657]">{meetingPopup.message}</p>
+            {meetingPopup.tone !== 'pending' && (
+              <button type="button" onClick={() => setMeetingPopup(null)} className="v3-btn-primary mt-4 w-full justify-center text-[12px]">
+                Done
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4">
         <InfoCard title="Brand info">
           <div className="grid grid-cols-2 gap-3 text-[12px]">
@@ -737,18 +860,54 @@ export const V3BusinessCaseConnect = () => {
               ['Email', contact.email || brand.email || 'Missing'],
               ['Phone', contact.phone || brand.phone || 'Missing'],
               ['Website', contact.website || brand.website || 'Missing'],
-              ['Connect status', bc.connect?.connect_status || 'needs_business_call'],
+              ['Connect status', humanStatus(connectStatus)],
+              ['Status last updated', formatDateTime(statusUpdatedAt)],
+              ['Marketing budget', marketingBudget],
             ].map(([label, value]) => (
               <div key={label} className="rounded-lg border border-[#E8E4DB] p-3">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</p>
-                <p className="text-[#1A1A1A] break-words">{value || 'Pending'}</p>
+                <p className="text-[#1A1A1A] break-words">{value || 'Not captured yet'}</p>
               </div>
             ))}
           </div>
+          <div className="mt-3 rounded-lg border border-[#E8E4DB] bg-[#FAFAF7] p-3 text-[12px]">
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">About the company</p>
+            <p className="mt-1 whitespace-pre-wrap leading-5 text-[#1A1A1A]">{about || 'Not captured yet'}</p>
+          </div>
         </InfoCard>
         <InfoCard title="Next steps">
-          <div className="grid gap-2">
+          <div className="grid gap-3">
             <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/schedule`))} className="v3-btn-primary"><Plus className="w-3.5 h-3.5" /> Schedule meeting</button>
+            <div className="rounded-lg border border-[#E8E4DB] bg-[#FAFAF7] p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Send meeting schedule to brand</p>
+              <div className="mt-3 grid gap-2">
+                <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
+                  Brand email
+                  <input value={meetingForm.contact_email} onChange={(e) => updateMeetingForm('contact_email', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" placeholder="brand@example.com" />
+                </label>
+                <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
+                  Meeting date and time
+                  <input type="datetime-local" value={meetingForm.scheduled_for} onChange={(e) => updateMeetingForm('scheduled_for', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" />
+                </label>
+                <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
+                  Meeting link
+                  <input value={meetingForm.meeting_link} onChange={(e) => updateMeetingForm('meeting_link', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" placeholder="https://meet.google.com/..." />
+                </label>
+                <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
+                  Purpose of meeting
+                  <textarea rows={4} value={meetingForm.purpose} onChange={(e) => updateMeetingForm('purpose', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] leading-5 text-[#1A1A1A]" />
+                </label>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <button type="button" onClick={sendMeetingEmail} disabled={sendingMeetingEmail} className="v3-btn-primary justify-center text-[12px]" data-testid="connect-send-meeting-email">
+                  {sendingMeetingEmail ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  {sendingMeetingEmail ? 'Sending...' : 'Send to brand email'}
+                </button>
+                <button type="button" onClick={resetMeetingForm} className="v3-btn-secondary justify-center text-[12px]" data-testid="connect-add-meeting-email">
+                  <Plus className="h-3.5 w-3.5" /> Add another email
+                </button>
+              </div>
+            </div>
           </div>
         </InfoCard>
       </div>
@@ -975,7 +1134,7 @@ export const V3BusinessCaseConnectQuestions = () => {
     let activeMeetingId = meetingId;
     if (!activeMeetingId) {
       const meeting = await v3CreateMeeting({
-        title: `Business Call — Connect: ${bc.title}`,
+        title: `Business Call â€” Connect: ${bc.title}`,
         meeting_type: 'business_call',
         stage: 'connect',
         entity_type: 'brand',
@@ -1426,6 +1585,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
   const approveSnapshot = async () => {
     setNotice(null);
+    setSendPopup({ title: 'Approving', message: 'Approving the Alignment Snapshot and preparing the Brainstorming phase...', tone: 'pending' });
     try {
       await persistDraft();
       await v3ApproveAlignmentAs(id, 'admin', 'admin');
@@ -1437,8 +1597,10 @@ export const V3BusinessCaseFrameSnapshot = () => {
         });
       }
       await reload();
-      navigate(adminRoute(`/business-cases/${id}/plan/brainstorm`));
+      setSendPopup({ title: 'Opening next phase', message: 'Snapshot approved. Opening the Brainstorming page now.', tone: 'success' });
+      window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/plan/brainstorm`)), 450);
     } catch (e) {
+      setSendPopup(null);
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve the Alignment Snapshot. Generate it first.');
     }
   };
@@ -1479,7 +1641,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
       if (status === 'sent') {
         setSendPopup({
           title: 'Sent',
-          message: `Alignment Snapshot sent to ${deliveredRecipient}. Check the inbox and spam folder in Gmail.`,
+          message: `Alignment Snapshot sent to ${deliveredRecipient}. The editable Google Docs-compatible file is attached.`,
           tone: 'success',
         });
       } else {
@@ -1499,22 +1661,12 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   const downloadGoogleDoc = () => {
-    if (!activeSnapshot) {
+    if (!activeSnapshot?.id) {
       setNotice('Generate the Alignment Snapshot before downloading it.');
       return;
     }
-    const html = snapshotPrintHtml(activeSnapshot);
-    const blob = new Blob([html], { type: 'application/msword;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const title = (activeSnapshot.title || 'alignment-snapshot').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
-    link.href = url;
-    link.download = (title || 'alignment-snapshot') + '-google-docs.doc';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    setNotice('Google Docs-compatible document downloaded. Upload or open the .doc file in Google Docs to edit it.');
+    window.open(v3AlignmentDocxUrl(activeSnapshot.id), '_blank');
+    setNotice('Google Docs-compatible .docx document opened for download. Upload or open it in Google Docs to edit it.');
   };
 
   const shareWhatsApp = () => {
@@ -1977,7 +2129,7 @@ const BSSelect = ({ label, options, value, onChange }) => (
   <label className="block">
     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
     <select value={value || ''} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none">
-      <option value="">— select —</option>
+      <option value="">â€” select â€”</option>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
   </label>
@@ -2012,7 +2164,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
     try {
       const doc = await v3CreateBrainstorm({ business_case_id: id, scored_creators: [] });
       setRound(doc);
-      setNotice('Brainstorm round started. Fill in each phase as you work through the 60–90 minute session.');
+      setNotice('Brainstorm round started. Fill in each phase as you work through the 60â€“90 minute session.');
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not start brainstorm round.');
     }
@@ -2060,7 +2212,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
   if (!round) {
     return (
-      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60–90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60â€“90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
         {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
         <InfoCard title="Start brainstorm round">
           <p className="text-[13px] text-[#6E6657] mb-3">A new round will scaffold all 7 phases of the TTA Snapshot Brainstorm template. You can save progress between phases.</p>
@@ -2079,21 +2231,21 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const p7 = round.phase_7_recommendation || {};
 
   return (
-    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60–90 minute session — defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60â€“90 minute session â€” defensible creator recommendation rooted in behavior, culture, and commercial logic.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
       <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-[#E8E4DB] -mx-1 px-1 py-2 flex flex-wrap items-center gap-2">
-        <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}</button>
+        <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Savingâ€¦' : 'Save'}</button>
         <button onClick={() => save(true)} disabled={saving} className="v3-btn-primary" data-testid="brainstorm-save-advance-btn"><ArrowRight className="w-3.5 h-3.5" /> Save & open Creator Scan</button>
       </div>
 
-      <BSPhase phase="pre-work" title="Pre-work (MANDATORY — before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
+      <BSPhase phase="pre-work" title="Pre-work (MANDATORY â€” before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
         <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Client Brief Summary (1 page max)</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSField label="Objective" rows={2} value={preWork.client_brief_summary?.objective} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'objective', v)} />
           <BSField label="Target audience" rows={2} value={preWork.client_brief_summary?.target_audience} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'target_audience', v)} />
           <BSField label="Constraints (budget, timeline)" rows={2} value={preWork.client_brief_summary?.constraints} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'constraints', v)} />
         </div>
-        <BSField label="Initial Hypothesis (optional)" hint='"We believe the problem may be…"' value={preWork.initial_hypothesis} onChange={(v) => updateField('pre_work', 'initial_hypothesis', v)} />
+        <BSField label="Initial Hypothesis (optional)" hint='"We believe the problem may beâ€¦"' value={preWork.initial_hypothesis} onChange={(v) => updateField('pre_work', 'initial_hypothesis', v)} />
         <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Research Inputs</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSField label="Past campaigns" value={preWork.research_inputs?.past_campaigns} onChange={(v) => updateNested('pre_work', 'research_inputs', 'past_campaigns', v)} />
@@ -2102,26 +2254,26 @@ export const V3BusinessCasePlanBrainstorm = () => {
         </div>
       </BSPhase>
 
-      <BSPhase phase="0" title="Phase 0 — Focus Group Integration" subtitle="Use only when problem is unclear, audience behavior is ambiguous, or product is new/misunderstood.">
-        <p className="text-[12px] text-[#4F3E2F] bg-[#FBF4E4] rounded-md p-3 border border-[#E5C99A]"><strong>Objective:</strong> {'"Why don\'t you already behave this way?"'} — not {'"Do you like this?"'}</p>
+      <BSPhase phase="0" title="Phase 0 â€” Focus Group Integration" subtitle="Use only when problem is unclear, audience behavior is ambiguous, or product is new/misunderstood.">
+        <p className="text-[12px] text-[#4F3E2F] bg-[#FBF4E4] rounded-md p-3 border border-[#E5C99A]"><strong>Objective:</strong> {'"Why don\'t you already behave this way?"'} â€” not {'"Do you like this?"'}</p>
         <div className="space-y-2">
           {(p0.core_questions || []).map((q, idx) => (
             <div key={idx} className="rounded border border-[#E8E4DB] p-3">
               <p className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}. {q}</p>
-              <textarea rows={2} value={(p0.answers || [])[idx] || ''} onChange={(e) => updatePhase0Answer(idx, e.target.value)} placeholder="Capture audience response…" className="mt-2 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[12px] focus:border-[#1F4A3A] outline-none" />
+              <textarea rows={2} value={(p0.answers || [])[idx] || ''} onChange={(e) => updatePhase0Answer(idx, e.target.value)} placeholder="Capture audience responseâ€¦" className="mt-2 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[12px] focus:border-[#1F4A3A] outline-none" />
             </div>
           ))}
         </div>
       </BSPhase>
 
-      <BSPhase phase="1" title="Phase 1 — Define the Problem (10–15 mins)" subtitle="Remove ambiguity. Lock the problem before solving it. ALL questions must be answered.">
+      <BSPhase phase="1" title="Phase 1 â€” Define the Problem (10â€“15 mins)" subtitle="Remove ambiguity. Lock the problem before solving it. ALL questions must be answered.">
         <BSField label="What is the core business objective?" value={p1.core_business_objective} onChange={(v) => updateField('phase_1_problem', 'core_business_objective', v)} />
         <BSField label="What specific action must the audience take?" value={p1.specific_action} onChange={(v) => updateField('phase_1_problem', 'specific_action', v)} />
         <BSField label="What is the primary barrier to that action?" value={p1.primary_barrier} onChange={(v) => updateField('phase_1_problem', 'primary_barrier', v)} />
         <BSField label="What type of influence is required?" value={p1.type_of_influence} onChange={(v) => updateField('phase_1_problem', 'type_of_influence', v)} />
         <BSField label="What observable behavior change defines success?" value={p1.observable_behavior_change} onChange={(v) => updateField('phase_1_problem', 'observable_behavior_change', v)} />
         <BSField
-          label="🔒 PROJECT TRUTH (mandatory output — max 3 lines)"
+          label="ðŸ”’ PROJECT TRUTH (mandatory output â€” max 3 lines)"
           hint="Template: [Target audience] currently [problem/barrier]. To achieve [business goal], they must [specific action]. This requires [type of influence]."
           rows={3}
           value={p1.project_truth}
@@ -2129,14 +2281,14 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="2" title="Phase 2 — Define Creator Archetype (10 mins)" subtitle="Define the type of mind, not the person.">
+      <BSPhase phase="2" title="Phase 2 â€” Define Creator Archetype (10 mins)" subtitle="Define the type of mind, not the person.">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSSelect label="Voice Type" options={BS_VOICE_TYPES} value={p2.voice_type} onChange={(v) => updateField('phase_2_archetype', 'voice_type', v)} />
           <BSSelect label="Audience Relationship" options={BS_AUDIENCE_REL} value={p2.audience_relationship} onChange={(v) => updateField('phase_2_archetype', 'audience_relationship', v)} />
           <BSSelect label="Format Strength" options={BS_FORMAT_STRENGTH} value={p2.format_strength} onChange={(v) => updateField('phase_2_archetype', 'format_strength', v)} />
         </div>
         <BSField
-          label="🔒 CREATOR ARCHETYPE STATEMENT"
+          label="ðŸ”’ CREATOR ARCHETYPE STATEMENT"
           hint='Template: "We need a [voice type] creator with [audience relationship] who excels in [format], capable of driving [specific action] among [audience]."'
           rows={3}
           value={p2.creator_archetype_statement}
@@ -2144,13 +2296,13 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="3" title="Phase 3 — Creator Identification & Scoring (20–25 mins)" subtitle="Scoring criteria (1–5): Audience Match, Trust Signals, Conversion Behaviour, Content Fit, Commercial Reliability. Any creator scoring below 3 on Conversion Behaviour = ELIMINATED.">
-        <p className="text-[12px] text-[#6E6657] bg-[#FBFAF7] rounded-md p-3 border border-[#E8E4DB]">Scoring happens on the next page (Creator Match Scanner). Each shortlisted creator must be backed by evidence; only 2–3 creators max are carried forward.</p>
+      <BSPhase phase="3" title="Phase 3 â€” Creator Identification & Scoring (20â€“25 mins)" subtitle="Scoring criteria (1â€“5): Audience Match, Trust Signals, Conversion Behaviour, Content Fit, Commercial Reliability. Any creator scoring below 3 on Conversion Behaviour = ELIMINATED.">
+        <p className="text-[12px] text-[#6E6657] bg-[#FBFAF7] rounded-md p-3 border border-[#E8E4DB]">Scoring happens on the next page (Creator Match Scanner). Each shortlisted creator must be backed by evidence; only 2â€“3 creators max are carried forward.</p>
       </BSPhase>
 
-      <BSPhase phase="4" title="Phase 4 — Interpretation Logic (15 mins)" subtitle="Explain how each creator thinks, not what they will post.">
+      <BSPhase phase="4" title="Phase 4 â€” Interpretation Logic (15 mins)" subtitle="Explain how each creator thinks, not what they will post.">
         <BSField
-          label="🔒 INTERPRETATION SUMMARY (per creator — one paragraph each)"
+          label="ðŸ”’ INTERPRETATION SUMMARY (per creator â€” one paragraph each)"
           hint='Template (per creator): "[Creator] will likely approach this by [angle], emphasising [focus], which aligns with [audience behavior]."'
           rows={5}
           value={(round.phase_4_interpretation || {}).notes || ''}
@@ -2158,24 +2310,24 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="5" title="Phase 5 — Execution Reality Check (10–15 mins)" subtitle="Pressure-test feasibility.">
+      <BSPhase phase="5" title="Phase 5 â€” Execution Reality Check (10â€“15 mins)" subtitle="Pressure-test feasibility.">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <BSField label="What level of brand involvement is required?" value={p5.test_questions_answered?.brand_involvement} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'brand_involvement', v)} />
           <BSField label="What is the execution speed?" value={p5.test_questions_answered?.execution_speed} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'execution_speed', v)} />
           <BSField label="Is this repeatable or one-off?" value={p5.test_questions_answered?.repeatable_or_one_off} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'repeatable_or_one_off', v)} />
           <BSField label="What are the top 2 risks?" value={p5.test_questions_answered?.top_risks} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'top_risks', v)} />
         </div>
-        <BSField label="🔒 EXECUTION SNAPSHOT (per option — Effort / Speed / Scale / Key risks)" rows={4} value={p5.snapshot_notes} onChange={(v) => updateField('phase_5_execution', 'snapshot_notes', v)} />
+        <BSField label="ðŸ”’ EXECUTION SNAPSHOT (per option â€” Effort / Speed / Scale / Key risks)" rows={4} value={p5.snapshot_notes} onChange={(v) => updateField('phase_5_execution', 'snapshot_notes', v)} />
       </BSPhase>
 
-      <BSPhase phase="6" title="Phase 6 — Commercial Snapshot (10 mins)">
+      <BSPhase phase="6" title="Phase 6 â€” Commercial Snapshot (10 mins)">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSSelect label="Budget Level" options={BS_BUDGET} value={p6.budget_level} onChange={(v) => updateField('phase_6_commercial', 'budget_level', v)} />
           <BSSelect label="Expected Efficiency" options={BS_EFFICIENCY} value={p6.expected_efficiency} onChange={(v) => updateField('phase_6_commercial', 'expected_efficiency', v)} />
           <BSSelect label="Time to impact" options={BS_TIMING} value={p6.time_to_impact} onChange={(v) => updateField('phase_6_commercial', 'time_to_impact', v)} />
         </div>
         <BSField
-          label="🔒 COMMERCIAL POSITIONING STATEMENT"
+          label="ðŸ”’ COMMERCIAL POSITIONING STATEMENT"
           hint='Template: "This approach requires a [budget level] investment and is expected to deliver [type of return] within [timeframe]."'
           rows={3}
           value={p6.commercial_positioning_statement}
@@ -2183,11 +2335,11 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="7" title="Phase 7 — Final Recommendation (5 mins)" subtitle="Make a decision, not just present options.">
-        <BSField label="Selected option" hint="e.g., Option A — Creator X" value={p7.selected_option} onChange={(v) => updateField('phase_7_recommendation', 'selected_option', v)} rows={1} />
+      <BSPhase phase="7" title="Phase 7 â€” Final Recommendation (5 mins)" subtitle="Make a decision, not just present options.">
+        <BSField label="Selected option" hint="e.g., Option A â€” Creator X" value={p7.selected_option} onChange={(v) => updateField('phase_7_recommendation', 'selected_option', v)} rows={1} />
         <BSField
-          label="🔒 RECOMMENDATION RATIONALE"
-          hint={'Template:\n"Based on the objective of [goal], Option [X] offers the strongest balance between:\n  • Conversion potential\n  • Execution feasibility\n  • Commercial efficiency\nThis is driven by [key reason]."'}
+          label="ðŸ”’ RECOMMENDATION RATIONALE"
+          hint={'Template:\n"Based on the objective of [goal], Option [X] offers the strongest balance between:\n  â€¢ Conversion potential\n  â€¢ Execution feasibility\n  â€¢ Commercial efficiency\nThis is driven by [key reason]."'}
           rows={6}
           value={p7.rationale}
           onChange={(v) => updateField('phase_7_recommendation', 'rationale', v)}
@@ -2201,7 +2353,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
       </BSPhase>
 
       <InfoCard title="Strategy mapping">
-        <p className="text-[12px] text-[#6E6657] mb-3">After the session, the team does not rethink — they only clean language, format, and complete the Strategy template. Each phase produces a direct input block:</p>
+        <p className="text-[12px] text-[#6E6657] mb-3">After the session, the team does not rethink â€” they only clean language, format, and complete the Strategy template. Each phase produces a direct input block:</p>
         <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
           <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
             <thead className="bg-[#F4F2EC] text-[#6E6657]"><tr><th className="px-3 py-2 font-semibold">Brainstorm Phase</th><th className="px-3 py-2 font-semibold">Strategy Section It Fills</th></tr></thead>
@@ -2263,12 +2415,21 @@ export const V3BusinessCasePlanCreatorScan = () => {
   return (
     <FlowShell title="Creator Match Scanner" subtitle="Scan creators, manually choose creatives from the full V3 database, and prepare more than one creator for briefing." nextAction="Pick one or more creators, then generate editable briefs for each selected creator.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+      <InfoCard title="Matching criteria">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[12px] text-[#4F3E2F]">
+          <div className="rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3"><strong>Audience and market fit:</strong> The scan compares the brand audience, buyer behavior, target geography, and culture cues from the Alignment Snapshot against creator audience and category data.</div>
+          <div className="rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3"><strong>Category and cultural role:</strong> Fashion, clothing, beauty, lifestyle, music, art, sport, food, and tech projects are weighted toward creators whose work naturally sits in that world.</div>
+          <div className="rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3"><strong>Format strength:</strong> The scanner checks whether the creator is stronger for short-form video, visual storytelling, PR moments, live events, community trust, or conversion-led content.</div>
+          <div className="rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3"><strong>Commercial reliability:</strong> Contact availability, reliability, brand safety, fee clarity, and delivery readiness are included so the recommendation is useful, not just popular.</div>
+        </div>
+        <p className="mt-3 text-[12px] text-[#6E6657]">For clothing and fashion brands, the backend gives extra weight to musicians, artists, stylists, fashion creators, visual-culture voices, and creators with strong streetwear or lifestyle credibility.</p>
+      </InfoCard>
       <InfoCard title="Manual creator picker">
         <div className="flex flex-col gap-2 md:flex-row md:items-end">
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Creator database</span>
             <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="creator-manual-select">
-              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} — {creatorSpecialty(creator)}</option>)}
+              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} â€” {creatorSpecialty(creator)}</option>)}
             </select>
           </label>
           <button onClick={() => addCreator(manualCreatorId)} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
@@ -2330,6 +2491,7 @@ export const V3BusinessCasePlanBrief = () => {
   const [manualCreatorId, setManualCreatorId] = useState('');
   const [briefs, setBriefs] = useState({});
   const [sentBriefs, setSentBriefs] = useState({});
+  const [sendPopup, setSendPopup] = useState(null);
   const [notice, setNotice] = useState('');
   useEffect(() => {
     const ids = (new URLSearchParams(location.search).get('creators') || '').split(',').map((value) => value.trim()).filter(Boolean);
@@ -2383,6 +2545,7 @@ export const V3BusinessCasePlanBrief = () => {
   };
   const send = async (creator) => {
     setNotice(`Sending creative brief to ${creatorName(creator)}...`);
+    setSendPopup({ title: 'Sending', message: `Sending creative brief to ${creatorContact(creator) || creatorName(creator)}...`, tone: 'pending' });
     const brief = briefs[creator.id] || generateCreatorBriefDraft(bundle, creator, planningFields || {});
     try {
       const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, brief_text: brief, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
@@ -2391,13 +2554,18 @@ export const V3BusinessCasePlanBrief = () => {
       const recipient = doc?.email?.to || doc?.creator_contact_email || creatorContact(creator) || creatorName(creator);
       if (status === 'sent') {
         setNotice(`Creative brief sent to ${recipient} with creator portal login details.`);
+        setSendPopup({ title: 'Sent', message: `Creative brief sent to ${recipient}. The Google Docs-compatible brief is attached.`, tone: 'success' });
       } else if (status === 'delivery_failed') {
         setNotice(doc?.email?.delivery_error || doc?.email_error || `Creative brief was saved but email delivery failed for ${recipient}.`);
+        setSendPopup({ title: 'Email not delivered', message: doc?.email?.delivery_error || doc?.email_error || `Creative brief was saved but email delivery failed for ${recipient}.`, tone: 'warning' });
       } else {
         setNotice(`Creative brief saved and queued for ${recipient}.`);
+        setSendPopup({ title: 'Email queued', message: `Creative brief saved and queued for ${recipient}.`, tone: 'warning' });
       }
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || `Could not email ${creatorName(creator)} yet.`);
+      const message = e?.response?.data?.detail || e?.message || `Could not email ${creatorName(creator)} yet.`;
+      setNotice(message);
+      setSendPopup({ title: 'Email not sent', message, tone: 'warning' });
     }
   };
   const copyLink = (creator) => {
@@ -2408,17 +2576,23 @@ export const V3BusinessCasePlanBrief = () => {
     }
     navigator.clipboard.writeText(link).then(() => setNotice(`Creator brief link copied for ${creatorName(creator)}.`)).catch(() => setNotice(`Creator brief link: ${link}`));
   };
-  const downloadPdf = (creator) => {
+  const downloadGoogleDoc = (creator) => {
+    const savedBrief = sentBriefs[creator.id];
+    if (savedBrief?.id) {
+      window.open(v3CreativeBriefDocxUrl(savedBrief.id), '_blank');
+      setNotice('Creative brief Google Docs-compatible document opened for download.');
+      return;
+    }
     const title = `Creative Brief - ${creatorName(creator)}`;
     const printWindow = window.open('', '_blank', 'width=900,height=1100');
     if (!printWindow) {
-      setNotice('Allow pop-ups to download the creative brief as a PDF.');
+      setNotice('Allow pop-ups to download the creative brief as a Google Docs-compatible document.');
       return;
     }
     printWindow.document.write(briefPrintHtml(title, briefs[creator.id] || ''));
     printWindow.document.close();
     printWindow.focus();
-    setTimeout(() => printWindow.print(), 200);
+    setNotice('Unsaved draft opened in a printable Google Docs-compatible layout. Email/save the brief first to download the official .docx file.');
   };
   const shareWhatsApp = (creator) => {
     const text = `${getCase(bundle).title || 'Creative Brief'}\n${creatorBriefLink(id, creator.id)}`;
@@ -2432,7 +2606,7 @@ export const V3BusinessCasePlanBrief = () => {
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Add another creator</span>
             <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]">
-              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} — {creatorSpecialty(creator)}</option>)}
+              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} â€” {creatorSpecialty(creator)}</option>)}
             </select>
           </label>
           <button onClick={addCreator} className="v3-btn-secondary"><Plus className="w-3.5 h-3.5" /> Add creator</button>
@@ -2455,7 +2629,7 @@ export const V3BusinessCasePlanBrief = () => {
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button onClick={() => send(creator)} className="v3-btn-primary" data-testid={`brief-email-${creator.id}`}><Mail className="w-3.5 h-3.5" /> Email to creator</button>
                   <button onClick={() => copyLink(creator)} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
-                  <button onClick={() => downloadPdf(creator)} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download PDF</button>
+                  <button onClick={() => downloadGoogleDoc(creator)} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download Google Docs</button>
                   <button onClick={() => shareWhatsApp(creator)} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
                 </div>
               </div>
@@ -2463,6 +2637,20 @@ export const V3BusinessCasePlanBrief = () => {
           </div>
         )}
       </InfoCard>
+      {sendPopup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4" data-testid="brief-sent-popup">
+          <div className="w-full max-w-sm rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${sendPopup.tone === 'success' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : 'bg-[#FBF4E4] text-[#7A5A1E]'}`}>
+                {sendPopup.tone === 'success' ? <CheckCircle2 className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
+              </span>
+              <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{sendPopup.title}</h3>
+            </div>
+            <p className="text-[13px] leading-6 text-[#4F3E2F]">{sendPopup.message}</p>
+            <div className="mt-4 flex justify-end"><button type="button" onClick={() => setSendPopup(null)} className="v3-btn-primary">OK</button></div>
+          </div>
+        </div>
+      )}
       <InfoCard title="Next Plan page">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <p className="text-[13px] text-[#6E6657]">
@@ -2617,7 +2805,7 @@ const EditableStrategySection = ({ section, onChange }) => {
         <div className="space-y-1.5">
           {items.map((item, index) => (
             <div key={`${section.heading}-edit-item-${index}`} className="flex items-start gap-2">
-              <span className="text-[11px] text-[#8A8A8A] mt-1.5">{section.type === 'numbered' ? `${index + 1}.` : '•'}</span>
+              <span className="text-[11px] text-[#8A8A8A] mt-1.5">{section.type === 'numbered' ? `${index + 1}.` : 'â€¢'}</span>
               <textarea
                 value={typeof item === 'string' ? item : (item.text || item.title || JSON.stringify(item))}
                 onChange={(e) => updateItem(index, e.target.value)}
@@ -2707,19 +2895,29 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
       setSendPopup({ title: 'Email not sent', message: e?.response?.data?.detail || e?.message || 'Could not send Strategy Snapshot yet.', tone: 'warning' });
     }
   };
+  const downloadStrategyGoogleDoc = () => {
+    if (!snapshot?.id) {
+      setNotice('Generate the Strategy Snapshot before downloading it.');
+      return;
+    }
+    window.open(v3StrategySnapshotDocxUrl(snapshot.id), '_blank');
+    setNotice('Google Docs-compatible Strategy Snapshot opened for download.');
+  };
   const approve = async () => {
     setNotice('');
+    setSendPopup({ title: 'Approving', message: 'Approving Strategy Snapshot and preparing Delivery...', tone: 'pending' });
     try {
       await v3ApproveSnapshot(id, 'admin');
-      // Auto-advance to Delivery so admin doesn't need a separate "Waiting for brand approval" page.
       try {
         if (getCase(bundle).stage === 'plan') {
           await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Strategy Snapshot approved by admin.' });
         }
-      } catch (_err) { /* ignore — already advanced */ }
+      } catch (_err) { /* already advanced */ }
       await reload();
-      navigate(adminRoute(`/business-cases/${id}/delivery/summary`));
+      setSendPopup({ title: 'Opening next phase', message: 'Strategy Snapshot approved. Opening Delivery now.', tone: 'success' });
+      window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/delivery/summary`)), 450);
     } catch (e) {
+      setSendPopup(null);
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve Strategy Snapshot yet.');
     }
   };
@@ -2763,7 +2961,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={generate} disabled={generating} className="v3-btn-primary" data-testid="strategy-generate-btn">
-          <Sparkles className="w-3.5 h-3.5" /> {generating ? 'Generating…' : (snapshot ? 'Regenerate Strategy Snapshot' : 'Generate Strategy Snapshot')}
+          <Sparkles className="w-3.5 h-3.5" /> {generating ? 'Generatingâ€¦' : (snapshot ? 'Regenerate Strategy Snapshot' : 'Generate Strategy Snapshot')}
         </button>
         {snapshot && !editing && (
           <button onClick={startEditing} className="v3-btn-secondary" data-testid="strategy-edit-btn">
@@ -2773,7 +2971,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
         {snapshot && editing && (
           <>
             <button onClick={saveEdits} disabled={savingEdit} className="v3-btn-primary" data-testid="strategy-save-edit-btn">
-              <Save className="w-3.5 h-3.5" /> {savingEdit ? 'Saving…' : 'Save changes'}
+              <Save className="w-3.5 h-3.5" /> {savingEdit ? 'Savingâ€¦' : 'Save changes'}
             </button>
             <button onClick={cancelEditing} disabled={savingEdit} className="v3-btn-secondary" data-testid="strategy-cancel-edit-btn">
               <X className="w-3.5 h-3.5" /> Cancel
@@ -2783,6 +2981,11 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
         {snapshot && !editing && (
           <button onClick={sendToBrand} className="v3-btn-secondary" data-testid="strategy-send-btn">
             <Send className="w-3.5 h-3.5" /> Send to brand
+          </button>
+        )}
+        {snapshot && !editing && (
+          <button onClick={downloadStrategyGoogleDoc} className="v3-btn-secondary" data-testid="strategy-download-google-docs-btn">
+            <Download className="w-3.5 h-3.5" /> Download Google Docs
           </button>
         )}
         {snapshot && !editing && (
@@ -2813,7 +3016,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
         ) : editing ? (
           <div className="space-y-4 rounded-[8px] border border-[#1F4A3A]/30 bg-[#FBFAF7] p-4" data-testid="strategy-snapshot-editor">
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Editing — changes are not saved until you press Save</p>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Editing â€” changes are not saved until you press Save</p>
               <input
                 value={editedTitle}
                 onChange={(e) => setEditedTitle(e.target.value)}
@@ -2841,12 +3044,6 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
           </div>
         )}
       </InfoCard>
-      <InfoCard title="Next Plan page">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[13px] text-[#6E6657]">Open the Strategy Review page after the snapshot has been generated, sent, or approved.</p>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/waiting-brand`))} className="v3-btn-primary" data-testid="strategy-open-review-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Strategy Review</button>
-        </div>
-      </InfoCard>
     </FlowShell>
   );
 };
@@ -2859,7 +3056,7 @@ export const V3BusinessCasePlanWaitingBrand = () => {
       navigate(adminRoute(`/business-cases/${id}/plan/strategy-snapshot`), { replace: true });
     }
   }, [bundle, id, loading, navigate]);
-  return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studio…</div>;
+  return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studioâ€¦</div>;
 };
 
 export const V3BusinessCaseDeliverySummary = () => {
@@ -2871,7 +3068,7 @@ export const V3BusinessCaseDeliverySummary = () => {
   const creator = bundle?.creator || {};
   const snapshot = bundle?.creative_snapshot || {};
   const alignment = bundle?.alignment_snapshot || {};
-  const conceptBlock = snapshot.concept || alignment.concept || '—';
+  const conceptBlock = snapshot.concept || alignment.concept || 'â€”';
   const executiveRows = (() => {
     const exec = (snapshot.sections || []).find((s) => /executive/i.test(s.heading || ''));
     return Array.isArray(exec?.rows) ? exec.rows : [];
@@ -2882,27 +3079,27 @@ export const V3BusinessCaseDeliverySummary = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{bc.title}</div>
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Total value</span>{formatNairaV3(bc.estimated_value || 0)}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{bc.engagement_track || '—'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{bc.engagement_track || 'â€”'}</div>
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Stage</span>{bc.stage}</div>
         </div>
       </InfoCard>
       <InfoCard title="Brand details">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Company</span>{brand.company || brand.name || '—'}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Primary contact</span>{contact.primary_contact || brand.primary_contact || '—'}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{contact.email || brand.email || '—'}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{contact.phone || brand.phone || '—'}</div>
-          <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Website</span>{contact.website || brand.website || '—'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Company</span>{brand.company || brand.name || 'â€”'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Primary contact</span>{contact.primary_contact || brand.primary_contact || 'â€”'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{contact.email || brand.email || 'â€”'}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{contact.phone || brand.phone || 'â€”'}</div>
+          <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Website</span>{contact.website || brand.website || 'â€”'}</div>
         </div>
       </InfoCard>
       <InfoCard title="Creator details">
         {creator?.id ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
             <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Name</span>{creator.name}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{creator.email || '—'}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{creator.phone || '—'}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Platforms</span>{(creator.platforms || []).join(', ') || '—'}</div>
-            <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Niche / Content type</span>{creator.niche || creator.content_type || '—'}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{creator.email || 'â€”'}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{creator.phone || 'â€”'}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Platforms</span>{(creator.platforms || []).join(', ') || 'â€”'}</div>
+            <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Niche / Content type</span>{creator.niche || creator.content_type || 'â€”'}</div>
           </div>
         ) : (
           <p className="text-[13px] text-[#8A8A8A]">No primary creator linked to this Business Case yet.</p>
@@ -2936,20 +3133,20 @@ export const V3BusinessCaseDeliverySummary = () => {
 const buildFeedbackPreviewSections = (fb) => {
   if (!fb) return [];
   const sections = [];
-  if (fb.email_template) sections.push({ heading: 'Tab 1 — Email Template', content: fb.email_template });
+  if (fb.email_template) sections.push({ heading: 'Tab 1 â€” Email Template', content: fb.email_template });
   [['brand_partner', 'Brand Partner Feedback'], ['creative_partner', 'Creative Partner Feedback']].forEach(([key, fallback]) => {
     const block = fb[key];
     if (!block) return;
     sections.push({ heading: block.form_title || fallback, content: block.form_description || '' });
-    const header = [`Project name: ${block.project_name || '—'}`, `Date: ${block.date || '—'}`];
-    if (block.google_form_link !== undefined) header.push(`Google form link: ${block.google_form_link || '—'}`);
+    const header = [`Project name: ${block.project_name || 'â€”'}`, `Date: ${block.date || 'â€”'}`];
+    if (block.google_form_link !== undefined) header.push(`Google form link: ${block.google_form_link || 'â€”'}`);
     sections.push({ content: header.join('\n') });
     (block.questions || []).forEach((q, idx) => {
-      sections.push({ heading: `${idx + 1}. ${q.label}`, content: `${q.question}\nRating: ${q.rating ?? '—'} / 10` });
+      sections.push({ heading: `${idx + 1}. ${q.label}`, content: `${q.question}\nRating: ${q.rating ?? 'â€”'} / 10` });
     });
-    sections.push({ content: `Optional comment: ${block.optional_comment || '—'}` });
+    sections.push({ content: `Optional comment: ${block.optional_comment || 'â€”'}` });
   });
-  if ((fb.internal_use || []).length) sections.push({ heading: 'Internal Use (Not Shown to Client)', content: fb.internal_use.map((l) => `• ${l}`).join('\n') });
+  if ((fb.internal_use || []).length) sections.push({ heading: 'Internal Use (Not Shown to Client)', content: fb.internal_use.map((l) => `â€¢ ${l}`).join('\n') });
   return sections;
 };
 
@@ -2987,13 +3184,20 @@ const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
   );
 };
 
-const SHARE_OPTIONS = (label, brandEmail, creatorEmail, includeCreator = false) => [
-  { key: 'email_brand', icon: Mail, label: brandEmail ? `Send Alignment Snapshot to brand (${brandEmail})` : 'Send Alignment Snapshot to brand' },
-  ...(includeCreator ? [{ key: 'email_creator', icon: Mail, label: creatorEmail ? `Email to creator (${creatorEmail})` : 'Email to creator' }] : []),
-  { key: 'copy_link', icon: FileText, label: `Copy ${label} link` },
-  { key: 'download_pdf', icon: Download, label: `Download ${label} as PDF` },
-  { key: 'whatsapp', icon: MessageSquare, label: 'Share via WhatsApp' },
-];
+const SHARE_OPTIONS = (label, brandEmail, creatorEmail, includeCreator = false) => {
+  const normalized = String(label || '').toLowerCase();
+  const isContract = normalized === 'contract';
+  const brandLabel = isContract ? 'Send contract to brand' : `Send ${label} to brand`;
+  const creatorLabel = isContract ? 'Send contract to creator' : `Send ${label} to creator`;
+  const downloadLabel = isContract ? 'Download contract in Google Docs' : `Download ${label} as PDF`;
+  return [
+    { key: 'email_brand', icon: Mail, label: brandEmail ? `${brandLabel} (${brandEmail})` : brandLabel },
+    ...(includeCreator ? [{ key: 'email_creator', icon: Mail, label: creatorEmail ? `${creatorLabel} (${creatorEmail})` : creatorLabel }] : []),
+    { key: 'copy_link', icon: FileText, label: `Copy ${label} link` },
+    { key: isContract ? 'download_google_docs' : 'download_pdf', icon: Download, label: downloadLabel },
+    { key: 'whatsapp', icon: MessageSquare, label: 'Share via WhatsApp' },
+  ];
+};
 
 const ShareMenu = ({ open, onClose, options, onSelect }) => {
   if (!open) return null;
@@ -3034,7 +3238,7 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
     setEditing(false);
   };
   const openPreview = async () => {
-    // Legacy contracts may have empty sections — hit the PDF endpoint which backfills the doc, then refresh the list.
+    // Legacy contracts may have empty sections â€” hit the PDF endpoint which backfills the doc, then refresh the list.
     if (!(contract.sections && contract.sections.length) && onRefresh) {
       try { await fetch(v3ContractPdfUrl(contract.id), { method: 'GET' }); } catch (_e) {}
       await onRefresh();
@@ -3052,12 +3256,12 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
           ) : (
             <p className="text-[14px] font-semibold text-[#1A1A1A]">{contract.title || contract.template}</p>
           )}
-          <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {contract.status} · Template: {contract.template}{contract.signed_at ? ` · Signed at ${contract.signed_at}` : ''}</p>
+          <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {contract.status} Â· Template: {contract.template}{contract.signed_at ? ` Â· Signed at ${contract.signed_at}` : ''}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           {editing ? (
             <>
-              <button onClick={save} disabled={saving} className="v3-btn-primary text-[11px]"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}</button>
+              <button onClick={save} disabled={saving} className="v3-btn-primary text-[11px]"><Save className="w-3.5 h-3.5" /> {saving ? 'Savingâ€¦' : 'Save'}</button>
               <button onClick={cancel} disabled={saving} className="v3-btn-secondary text-[11px]"><X className="w-3.5 h-3.5" /> Cancel</button>
             </>
           ) : (
@@ -3135,24 +3339,42 @@ export const V3BusinessCaseContractStudio = () => {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not save contract.');
     }
   };
-  const handleShare = (contract, option) => {
+  const handleShare = async (contract, option) => {
     if (option.key === 'copy_link') {
       const link = `${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`)}#${contract.id}`;
       navigator.clipboard?.writeText(link);
       setNotice('Contract link copied to clipboard.');
       return;
     }
-    if (option.key === 'download_pdf') {
-      window.open(v3ContractPdfUrl(contract.id), '_blank');
-      setNotice('Contract PDF opened in a new tab.');
+    if (option.key === 'download_google_docs' || option.key === 'download_pdf') {
+      window.open(option.key === 'download_google_docs' ? v3ContractDocxUrl(contract.id) : v3ContractPdfUrl(contract.id), '_blank');
+      setNotice(option.key === 'download_google_docs' ? 'Contract Google Docs-compatible document opened in a new tab.' : 'Contract PDF opened in a new tab.');
       return;
     }
     if (option.key === 'whatsapp') {
-      const text = encodeURIComponent(`Contract ready for review: ${contract.title}\n${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`)}`);
+      const text = encodeURIComponent(`Contract ready for review: ${contract.title}
+${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`)}`);
       window.open(`https://wa.me/?text=${text}`, '_blank');
       return;
     }
-    setNotice(`${option.label} — queued. (Email send wiring pending — placeholder UX.)`);
+    if (option.key === 'email_brand' || option.key === 'email_creator') {
+      const toEmail = option.key === 'email_brand' ? brandEmail : creatorEmail;
+      const recipientName = option.key === 'email_brand' ? (brand.company || brand.name || 'Brand') : (bundle?.creator?.name || 'Creator');
+      if (!toEmail) {
+        setNotice(option.key === 'email_brand' ? 'Brand email is missing. Add the email in CRM Brand details before sending the contract.' : 'Creator email is missing in the creator database.');
+        return;
+      }
+      setNotice(`Sending contract to ${toEmail}...`);
+      try {
+        await v3SendContractEmail(contract.id, { to_email: toEmail, recipient_name: recipientName });
+        await refreshContracts();
+        setNotice(`Contract sent to ${toEmail} with an editable Google Docs-compatible document attached.`);
+      } catch (e) {
+        setNotice(e?.response?.data?.detail || e?.message || `Could not send contract to ${toEmail}.`);
+      }
+      return;
+    }
+    setNotice(`${option.label} is not available for this document yet.`);
   };
   const handleSign = async (contract) => {
     try {
@@ -3250,7 +3472,7 @@ export const V3BusinessCaseDeliverables = () => {
           </label>
           <label className="block">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Deliverable notes</span>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={5} className="mt-1 w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Describe scope, format, duration, owner, due date, channels, references, success markers…" data-testid="deliverable-notes-input" />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={5} className="mt-1 w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" placeholder="Describe scope, format, duration, owner, due date, channels, references, success markersâ€¦" data-testid="deliverable-notes-input" />
           </label>
           <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-3" data-testid="deliverable-schedule-panel">
             <p className="mb-3 text-[10px] uppercase tracking-wider text-[#8A8A8A]">Delivery date, time, and timeframe</p>
@@ -3329,7 +3551,7 @@ const FeedbackQuestion = ({ q, idx, editing, onChange }) => (
             <span className="text-[11px] text-[#8A8A8A]">/ 10</span>
           </>
         ) : (
-          <span className="text-[14px] font-semibold text-[#1F4A3A] bg-[#DDF0E1] border border-[#A4D4B0] rounded-full px-3 py-0.5">{q.rating ?? '—'}/10</span>
+          <span className="text-[14px] font-semibold text-[#1F4A3A] bg-[#DDF0E1] border border-[#A4D4B0] rounded-full px-3 py-0.5">{q.rating ?? 'â€”'}/10</span>
         )}
       </div>
     </div>
@@ -3348,20 +3570,20 @@ const FeedbackFormBlock = ({ title, description, project, date, link, comment, q
           <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Project name</span>
           {editing ? (
             <input value={project || ''} onChange={(e) => onUpdateField('project_name', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
-          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{project || '—'}</p>}
+          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{project || 'â€”'}</p>}
         </label>
         <label className="block">
           <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Date</span>
           {editing ? (
             <input type="date" value={date || ''} onChange={(e) => onUpdateField('date', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
-          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{date || '—'}</p>}
+          ) : <p className="mt-1 text-[12px] text-[#1A1A1A]">{date || 'â€”'}</p>}
         </label>
         {link !== undefined && (
           <label className="block">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Google form link</span>
             {editing ? (
-              <input value={link || ''} placeholder="https://forms.gle/…" onChange={(e) => onUpdateField('google_form_link', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
-            ) : <p className="mt-1 text-[12px] text-[#1A1A1A] truncate">{link || '—'}</p>}
+              <input value={link || ''} placeholder="https://forms.gle/â€¦" onChange={(e) => onUpdateField('google_form_link', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px]" />
+            ) : <p className="mt-1 text-[12px] text-[#1A1A1A] truncate">{link || 'â€”'}</p>}
           </label>
         )}
       </div>
@@ -3398,13 +3620,14 @@ export const V3BusinessCaseFinalReport = () => {
   const [draftFeedback, setDraftFeedback] = useState(null);
   const [shareReportOpen, setShareReportOpen] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [closePopup, setClosePopup] = useState(null);
   const [previewType, setPreviewType] = useState(null); // 'report' | 'feedback' | null
   const [shareFeedbackBrandOpen, setShareFeedbackBrandOpen] = useState(false);
   const [shareFeedbackCreatorOpen, setShareFeedbackCreatorOpen] = useState(false);
 
   const reportSent = Boolean(report?.report_sent_at);
   const feedbackSent = Boolean(report?.feedback_sent_at);
-  const canClose = Boolean(report) && reportSent && feedbackSent && bc.stage !== 'closed';
+  const canClose = bc.stage !== 'closed';
 
   const computeAverage = (questions) => {
     const ratings = (questions || []).map((q) => Number(q.rating)).filter((n) => Number.isFinite(n));
@@ -3482,7 +3705,7 @@ export const V3BusinessCaseFinalReport = () => {
       const text = encodeURIComponent(`${isReport ? 'Final Report' : 'Feedback'} ready: ${report?.title || ''}\n${window.location.origin}${adminRoute(`/business-cases/${id}/reporting/final-report`)}`);
       window.open(`https://wa.me/?text=${text}`, '_blank');
     } else {
-      setNotice(`${option.label} — queued. (Email send wiring pending — placeholder UX.)`);
+      setNotice(`${option.label} â€” queued. (Email send wiring pending â€” placeholder UX.)`);
     }
     // Mark sent on any email_brand/email_creator/copy_link/download/whatsapp action
     try {
@@ -3498,22 +3721,40 @@ export const V3BusinessCaseFinalReport = () => {
 
   const closeProject = async () => {
     if (!canClose) return;
-    if (!window.confirm('Close this Business Case? This cannot be undone.')) return;
     setClosing(true);
+    setClosePopup({ tone: 'pending', title: 'Closing project', message: 'Closing project...' });
     try {
       await v3CloseBusinessCase(id);
       await reload();
-      setNotice('Project closed. The Business Case is now in the Closed stage.');
+      setClosePopup({ tone: 'success', title: 'Project closed', message: 'Opening CRM Brands...' });
+      window.setTimeout(() => navigate(adminRoute('/crm-brands')), 700);
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not close the project.');
+      setClosePopup({ tone: 'error', title: 'Could not close project', message: e?.response?.data?.detail || e?.message || 'Could not close the project.' });
+    } finally {
+      setClosing(false);
     }
-    setClosing(false);
   };
 
   const feedback = report?.feedback;
 
   return (
-    <FlowShell title="Final Report Studio" subtitle="Generate, edit and share the final report and feedback. Close the project once both have been sent.">
+    <FlowShell title="Final Report Studio" subtitle="Generate, edit and share the final report and feedback. Close the project once the delivery wrap-up is complete.">
+      {closePopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" data-testid="close-project-popup">
+          <div className="v3-card w-full max-w-sm bg-white p-5 text-center shadow-2xl">
+            <div className={`mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full ${closePopup.tone === 'error' ? 'bg-[#F5D9D2] text-[#B54A37]' : closePopup.tone === 'pending' ? 'bg-[#FBF4E4] text-[#7A5A1E]' : 'bg-[#DDE7E2] text-[#1F4A3A]'}`}>
+              {closePopup.tone === 'pending' ? <Loader2 className="h-5 w-5 animate-spin" /> : <PackageCheck className="h-5 w-5" />}
+            </div>
+            <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{closePopup.title}</h3>
+            <p className="mt-2 text-[12px] leading-5 text-[#6E6657]">{closePopup.message}</p>
+            {closePopup.tone === 'error' && (
+              <button type="button" onClick={() => setClosePopup(null)} className="v3-btn-primary mt-4 w-full justify-center text-[12px]">
+                Close
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <PreviewModal open={previewType === 'report'} onClose={() => setPreviewType(null)} title={report?.title || 'Final Report preview'} pdfUrl={report ? v3FinalReportPdfUrl(report.id) : ''} sections={report?.sections} testId="final-report-preview" />
       <PreviewModal open={previewType === 'feedback'} onClose={() => setPreviewType(null)} title="Feedback preview" pdfUrl={report ? v3FeedbackPdfUrl(report.id) : ''} sections={buildFeedbackPreviewSections(report?.feedback)} testId="feedback-preview" />
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="final-report-notice">{notice}</div>}
@@ -3540,7 +3781,7 @@ export const V3BusinessCaseFinalReport = () => {
                 ) : (
                   <h3 className="text-[18px] font-semibold text-[#1A1A1A] mt-0.5" style={{ fontFamily: "'Fraunces', serif" }}>{report.title}</h3>
                 )}
-                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {report.status} · Generated {report.generated_at?.slice(0, 19)?.replace('T', ' ')}{reportSent ? ` · Sent ${report.report_sent_at?.slice(0, 19)?.replace('T', ' ')}` : ''}</p>
+                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {report.status} Â· Generated {report.generated_at?.slice(0, 19)?.replace('T', ' ')}{reportSent ? ` Â· Sent ${report.report_sent_at?.slice(0, 19)?.replace('T', ' ')}` : ''}</p>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 {editingReport ? (
@@ -3610,7 +3851,7 @@ export const V3BusinessCaseFinalReport = () => {
             <div className="px-6 py-6 space-y-6">
               {/* Email Template */}
               <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-5">
-                <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Tab 1 — Email Template</p>
+                <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Tab 1 â€” Email Template</p>
                 {editingFeedback ? (
                   <textarea value={draftFeedback?.email_template || ''} onChange={(e) => setDraftFeedback((p) => ({ ...p, email_template: e.target.value }))} rows={5} className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-3 py-2 focus:border-[#1F4A3A] outline-none whitespace-pre-wrap leading-relaxed bg-white" />
                 ) : (
@@ -3620,7 +3861,7 @@ export const V3BusinessCaseFinalReport = () => {
 
               {/* Brand Partner Feedback */}
               <FeedbackFormBlock
-                title={feedback?.brand_partner?.form_title || 'TTA Project Feedback – Brand Partner'}
+                title={feedback?.brand_partner?.form_title || 'TTA Project Feedback â€“ Brand Partner'}
                 description={feedback?.brand_partner?.form_description}
                 project={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.project_name}
                 date={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.date}
@@ -3635,7 +3876,7 @@ export const V3BusinessCaseFinalReport = () => {
 
               {/* Creative Partner Feedback */}
               <FeedbackFormBlock
-                title={feedback?.creative_partner?.form_title || 'TTA Project Feedback – Creative Partner'}
+                title={feedback?.creative_partner?.form_title || 'TTA Project Feedback â€“ Creative Partner'}
                 description={feedback?.creative_partner?.form_description}
                 project={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.project_name}
                 date={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.date}
@@ -3664,9 +3905,9 @@ export const V3BusinessCaseFinalReport = () => {
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-[14px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>Close the project</p>
-                <p className="text-[12px] text-[#6E6657] mt-1">{canClose ? 'Both the Final Report and Feedback have been sent. You can now close the project.' : 'Send both the Final Report and Feedback before closing the project.'}</p>
+                <p className="text-[12px] text-[#6E6657] mt-1">{bc.stage === 'closed' ? 'This project has already been closed.' : 'Close the project when TASCK has completed delivery, reporting, and internal wrap-up.'}</p>
               </div>
-              <button onClick={closeProject} disabled={!canClose || closing || bc.stage === 'closed'} className="v3-btn-primary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closing…' : 'Close Project')}</button>
+              <button onClick={closeProject} disabled={!canClose || closing || bc.stage === 'closed'} className="v3-btn-primary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closingâ€¦' : 'Close Project')}</button>
             </div>
           </div>
         </>
@@ -3675,5 +3916,3 @@ export const V3BusinessCaseFinalReport = () => {
     </FlowShell>
   );
 };
-
-

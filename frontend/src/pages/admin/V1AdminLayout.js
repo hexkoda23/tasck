@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Building2, BriefcaseBusiness, ChevronLeft, Home, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Building2, BriefcaseBusiness, ChevronLeft, Home, LogIn, LogOut, Moon, Search, Settings, Sun } from 'lucide-react';
 import Logo from '../../components/shared/Logo';
+import { useAuth } from '../../context/AuthContext';
 
 const navItems = [
   { path: '/admin', label: 'Overview', icon: Home, exact: true },
@@ -21,7 +22,17 @@ const navTestId = (label) => `v1-admin-nav-${label.toLowerCase().replace(/[^a-z0
 const V1AdminLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isAuthenticated, logout } = useAuth();
   const [darkMode, setDarkMode] = useState(false);
+
+  const handleSessionButton = () => {
+    if (isAuthenticated) {
+      logout();
+      navigate('/v1');
+      return;
+    }
+    navigate('/v1');
+  };
 
   return (
     <div className={`v3-shell ${darkMode ? 'v3-dark' : ''}`} data-testid="v1-admin-layout">
@@ -70,6 +81,10 @@ const V1AdminLayout = () => {
           <div className="flex-1" />
           <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg hover:bg-[#F4F2EC] transition-colors" data-testid="v1-admin-dark-mode-toggle" title={darkMode ? 'Light mode' : 'Dark mode'}>
             {darkMode ? <Sun className="w-4 h-4 text-[#C49B5F]" /> : <Moon className="w-4 h-4 text-[#8A8A8A]" />}
+          </button>
+          <button onClick={handleSessionButton} className="v3-btn-secondary text-[12px]" data-testid="v1-admin-session-btn">
+            {isAuthenticated ? <LogOut className="w-3.5 h-3.5" /> : <LogIn className="w-3.5 h-3.5" />}
+            {isAuthenticated ? 'Logout' : 'Login'}
           </button>
           <div className="w-7 h-7 rounded-full bg-[#DDE7E2] flex items-center justify-center text-[10px] font-bold text-[#1F4A3A]">TB</div>
         </div>

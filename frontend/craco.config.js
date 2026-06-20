@@ -83,6 +83,11 @@ if (config.enableVisualEdits && babelMetadataPlugin) {
 }
 
 webpackConfig.devServer = (devServerConfig) => {
+  devServerConfig.historyApiFallback = {
+    disableDotRule: true,
+    index: '/',
+  };
+
   // Apply visual edits dev server setup only if enabled
   if (config.enableVisualEdits && setupDevServer) {
     devServerConfig = setupDevServer(devServerConfig);
@@ -102,6 +107,11 @@ webpackConfig.devServer = (devServerConfig) => {
     if (config.enableHealthCheck && setupHealthEndpoints && healthPluginInstance) {
       setupHealthEndpoints(devServer, healthPluginInstance);
     }
+
+    devServer.app.get(/^\/(?!api\/).*/, (req, res, next) => {
+      if (req.path.includes('.')) return next();
+      res.sendFile(path.resolve(__dirname, 'public', 'index.html'));
+    });
 
     return middlewares;
   };

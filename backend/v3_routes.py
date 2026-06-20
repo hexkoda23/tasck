@@ -1,14 +1,14 @@
-"""TASCK OS v3 — Backend Routes
+"""TASCK OS v3 â€” Backend Routes
 All `/api/v3/*` endpoints powering the v3.2 spec architecture.
 
 Business Case primitive: every project is one document in `v3_business_cases`,
-spanning all four stages (Connect → Frame → Plan → Deliver) plus closure.
+spanning all four stages (Connect â†’ Frame â†’ Plan â†’ Deliver) plus closure.
 
 Stage advancement rules:
-  connect → frame  : Connect status must be `qualified_to_frame`
-  frame   → plan   : Alignment Snapshot approved; all scope flags resolved
-  plan    → deliver: Strategy Snapshot approved AND contract signed
-  deliver → closed : Closure checklist complete (final report + feedback)
+  connect â†’ frame  : Connect status must be `qualified_to_frame`
+  frame   â†’ plan   : Alignment Snapshot approved; all scope flags resolved
+  plan    â†’ deliver: Strategy Snapshot approved AND contract signed
+  deliver â†’ closed : Closure checklist complete (final report + feedback)
 """
 from fastapi import APIRouter, HTTPException, Header, Depends, Body
 from fastapi.responses import StreamingResponse
@@ -56,7 +56,7 @@ def _temporary_password() -> str:
 
 
 def _brand_created_at_key(brand: Dict[str, Any]) -> str:
-    # Pure chronological sort — most recently created brand first.
+    # Pure chronological sort â€” most recently created brand first.
     created_at = brand.get("created_at") or brand.get("updated_at") or brand.get("imported_at") or ""
     return created_at if isinstance(created_at, str) else ""
 
@@ -543,7 +543,7 @@ def _marketing_intelligence_from_case(case: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def make_v3_router(db):
-    """Factory — receives the motor DB handle and returns a FastAPI router."""
+    """Factory â€” receives the motor DB handle and returns a FastAPI router."""
     router = APIRouter(prefix="/api/v3", tags=["v3"])
 
     async def _relationship_manager(rm_id: Optional[str] = None) -> Dict[str, Any]:
@@ -897,6 +897,7 @@ def make_v3_router(db):
             "logo_url", "brand_logo_url", "website", "notes",
             "primary_contact", "role", "email", "phone", "hq",
             "industry", "company", "name", "brand_name",
+            "marketing_budget", "budget", "budget_range",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
         if not updates:
@@ -1017,7 +1018,7 @@ def make_v3_router(db):
         brand_id = f"brand-{uuid.uuid4().hex[:8]}"
         rm = await _relationship_manager(payload.rm_id)
         now = _now_iso()
-        brand_status = payload.status or "Lead — initial conversations"
+        brand_status = payload.status or "Lead â€” initial conversations"
         crm_accepted_at = payload.crm_accepted_at
         if brand_status == "crm_accepted" and not crm_accepted_at:
             crm_accepted_at = now
@@ -1343,6 +1344,118 @@ def make_v3_router(db):
             }},
         )
         return {"ok": True, "must_change_password": False}
+
+    class PortalLoginPayload(BaseModel):
+        email: str
+        password: str
+
+    def _portal_initials(name: str) -> str:
+        parts = [part for part in re.split(r"\s+", name or "") if part]
+        if len(parts) >= 2:
+            return f"{parts[0][0]}{parts[1][0]}".upper()
+        return (name[:2] or "BR").upper()
+
+    @router.post("/auth/brand-login")
+    async def login_brand_account(payload: PortalLoginPayload):
+        username = payload.email.strip().lower()
+        account = await db.v3_brand_accounts.find_one({"username": username}, {"_id": 0})
+        if not account:
+            brand_match = await db.v3_brands.find_one(
+                {"$or": [
+                    {"email": username},
+                    {"contact_email": username},
+                    {"primary_contact_email": username},
+                    {"brand_contact_snapshot.email": username},
+                ]},
+                {"_id": 0},
+            )
+            if brand_match:
+                account = await db.v3_brand_accounts.find_one({"brand_id": brand_match.get("id")}, {"_id": 0})
+        if not account or account.get("status") not in {None, "active"}:
+            raise HTTPException(401, "Invalid brand login details")
+        accepted_passwords = {account.get("password"), account.get("temporary_password")}
+        if payload.password not in accepted_passwords:
+            raise HTTPException(401, "Invalid brand login details")
+        brand = await db.v3_brands.find_one({"id": account.get("brand_id")}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand account is not linked to a CRM brand")
+        now = _now_iso()
+        await db.v3_brand_accounts.update_one({"id": account["id"]}, {"$set": {"last_login_at": now}})
+        company = brand.get("company") or brand.get("name") or "Brand"
+        contact = brand.get("primary_contact") or account.get("username") or "Brand user"
+        email = brand.get("email") or brand.get("contact_email") or account.get("username")
+        return {
+            "ok": True,
+            "token": f"v1-brand-{account['id']}",
+            "user": {
+                "id": account["id"],
+                "role": "brand",
+                "name": contact,
+                "email": email,
+                "brand_id": account.get("brand_id"),
+            },
+            "account": {
+                "brandId": account.get("brand_id"),
+                "brand_id": account.get("brand_id"),
+                "company": company,
+                "contact": contact,
+                "email": email,
+                "username": account.get("username"),
+                "initials": _portal_initials(contact or company),
+                "must_change_password": account.get("must_change_password", False),
+                "last_login_at": now,
+            },
+        }
+
+    @router.post("/auth/creator-login")
+    async def login_creator_account(payload: PortalLoginPayload):
+        username = payload.email.strip().lower()
+        account = await db.v3_creator_accounts.find_one({"username": username}, {"_id": 0})
+        if not account:
+            creator_match = await db.v3_creators.find_one(
+                {"$or": [
+                    {"email": username},
+                    {"manager_email": username},
+                    {"contact_email": username},
+                ]},
+                {"_id": 0},
+            )
+            if creator_match:
+                account = await db.v3_creator_accounts.find_one({"creator_id": creator_match.get("id")}, {"_id": 0})
+        if not account or account.get("status") not in {None, "active"}:
+            raise HTTPException(401, "Invalid creator login details")
+        accepted_passwords = {account.get("password"), account.get("temporary_password")}
+        if payload.password not in accepted_passwords:
+            raise HTTPException(401, "Invalid creator login details")
+        creator = await db.v3_creators.find_one({"id": account.get("creator_id")}, {"_id": 0})
+        if not creator:
+            raise HTTPException(404, "Creator account is not linked to a creator profile")
+        now = _now_iso()
+        await db.v3_creator_accounts.update_one({"id": account["id"]}, {"$set": {"last_login_at": now}})
+        name = creator.get("name") or creator.get("creator_name") or "Creator"
+        email = creator.get("email") or creator.get("manager_email") or creator.get("contact_email") or account.get("username")
+        initials = _portal_initials(name)
+        return {
+            "ok": True,
+            "token": f"v1-creator-{account['id']}",
+            "user": {
+                "id": account["id"],
+                "role": "creative",
+                "name": name,
+                "email": email,
+                "creator_id": account.get("creator_id"),
+            },
+            "account": {
+                "creatorId": account.get("creator_id"),
+                "creator_id": account.get("creator_id"),
+                "name": name,
+                "email": email,
+                "username": account.get("username"),
+                "initials": initials if initials != "BR" else "CR",
+                "must_change_password": account.get("must_change_password", False),
+                "last_login_at": now,
+            },
+        }
 
     @router.get("/email-outbox")
     async def list_email_outbox(brand_id: Optional[str] = None, business_case_id: Optional[str] = None):
@@ -1721,6 +1834,17 @@ def make_v3_router(db):
             str(mi.get("primary_target_audience", "")),
             " ".join(mi.get("key_marketing_channels", [])),
         ]).lower()
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        brand_context = " ".join([
+            str(case.get("title", "")),
+            str(brand.get("company", "") or brand.get("name", "")),
+            str(brand.get("category", "") or brand.get("industry", "") or brand.get("sector", "")),
+            str(brand.get("about", "") or brand.get("description", "")),
+            haystack,
+        ]).lower()
+        fashion_terms = {"fashion", "clothing", "apparel", "wear", "wears", "streetwear", "style", "styling", "boutique", "fabric", "beauty", "lifestyle"}
+        fashion_project = any(term in brand_context for term in fashion_terms)
+        fashion_creator_terms = {"musician", "music", "artist", "artiste", "singer", "rapper", "stylist", "fashion", "style", "streetwear", "model", "visual", "lifestyle", "culture"}
         matches = []
         for cr in creators:
             score = int(cr.get("fit_score", 70))
@@ -1738,6 +1862,12 @@ def make_v3_router(db):
             if any(ch.lower() in profile_text for ch in mi.get("key_marketing_channels", [])):
                 score += 5
                 reasons.append("Active channels line up with the requested marketing channels.")
+            if fashion_project and any(term in profile_text for term in fashion_creator_terms):
+                score += 12
+                reasons.append("Fashion/clothing brief: creator has music, artist, stylist, fashion, lifestyle, or visual-culture credibility.")
+            if fashion_project and not any(term in profile_text for term in fashion_creator_terms):
+                score -= 5
+                reasons.append("Admin should validate fashion/lifestyle credibility before shortlisting.")
             if cr.get("reliability", 0) >= 8:
                 score += 4
                 reasons.append("Reliability score is strong enough for brand-facing work.")
@@ -1874,8 +2004,11 @@ def make_v3_router(db):
         await db.v3_business_cases.insert_one({**doc})
         return doc
 
+    class BrandProjectStartPayload(BaseModel):
+        force_new: bool = False
+
     @router.post("/brands/{brand_id}/business-call")
-    async def move_brand_to_business_call(brand_id: str):
+    async def move_brand_to_business_call(brand_id: str, payload: BrandProjectStartPayload = BrandProjectStartPayload()):
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
@@ -1887,7 +2020,7 @@ def make_v3_router(db):
             },
             {"_id": 0},
         ).sort([("updated_at", -1), ("created_at", -1)]).to_list(1)
-        if existing_cases:
+        if existing_cases and not payload.force_new:
             existing = existing_cases[0]
             return {"ok": True, "business_case": existing, "business_case_id": existing["id"], "created": False}
         now = _now_iso()
@@ -1896,14 +2029,14 @@ def make_v3_router(db):
             "id": bc_id,
             "brand_id": brand_id,
             "creator_id": None,
-            "title": f"{brand.get('company') or brand.get('name') or 'Brand'} — Business Call Connect",
+            "title": f"{brand.get('company') or brand.get('name') or 'Brand'} â€” Business Call Connect",
             "stage": "connect",
             "engagement_track": brand.get("engagement_track_default") or "paid",
             "estimated_value": 0,
             "rm_id": brand.get("rm_id") or "admin",
             "created_at": now,
             "days_in_stage": 0,
-            "next_action": "Schedule Business Call — Connect.",
+            "next_action": "Schedule Business Call â€” Connect.",
             "health": "new",
             "scope_creep_locked": False,
             "brand_contact_snapshot": {
@@ -1915,6 +2048,7 @@ def make_v3_router(db):
             },
             "connect": {
                 "source": "crm_brand",
+                "project_start_mode": "new_project" if payload.force_new else "continue_or_create",
                 "connect_status": "needs_business_call",
                 "stated_intent": brand.get("notes") or brand.get("key_marketing_focus") or "",
                 "brand_snapshot": brand,
@@ -1925,7 +2059,7 @@ def make_v3_router(db):
             "plan": {},
             "deliver": {},
             "closure": {"final_report_checklist": DEFAULT_FINAL_REPORT_CHECKLIST},
-            "timeline": [{"at": now, "event": "brand_moved_to_business_call", "brand_id": brand_id}],
+            "timeline": [{"at": now, "event": "brand_moved_to_business_call", "brand_id": brand_id, "force_new": payload.force_new}],
             "updated_at": now,
         }
         await db.v3_business_cases.insert_one({**doc})
@@ -1936,7 +2070,7 @@ def make_v3_router(db):
         return {"ok": True, "business_case": doc, "business_case_id": bc_id, "created": True}
 
     @router.post("/brands/{brand_id}/move-to-frame")
-    async def move_brand_to_frame(brand_id: str):
+    async def move_brand_to_frame(brand_id: str, payload: BrandProjectStartPayload = BrandProjectStartPayload()):
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
@@ -1950,12 +2084,14 @@ def make_v3_router(db):
         ).sort([("updated_at", -1), ("created_at", -1)]).to_list(1)
         
         now = _now_iso()
-        if existing_cases:
+        if existing_cases and not payload.force_new:
             existing = existing_cases[0]
             bc_id = existing["id"]
             updates = {
                 "stage": "frame",
                 "connect.connect_status": "qualified_to_frame",
+                "connect.status_updated_at": now,
+                "connect.updated_at": now,
                 "connect.promoted_at": now,
                 "connect.promote_reason": "Directly moved to Frame from CRM Brand Detail.",
                 "next_action": STAGE_NEXT_ACTIONS["frame"],
@@ -1977,7 +2113,7 @@ def make_v3_router(db):
             "id": bc_id,
             "brand_id": brand_id,
             "creator_id": None,
-            "title": f"{brand.get('company') or brand.get('name') or 'Brand'} — Business Case Frame",
+            "title": f"{brand.get('company') or brand.get('name') or 'Brand'} â€” Business Case Frame",
             "stage": "frame",
             "engagement_track": brand.get("engagement_track_default") or "paid",
             "estimated_value": 0,
@@ -1996,6 +2132,7 @@ def make_v3_router(db):
             },
             "connect": {
                 "source": "crm_brand",
+                "project_start_mode": "new_project" if payload.force_new else "continue_or_create",
                 "connect_status": "qualified_to_frame",
                 "stated_intent": brand.get("notes") or brand.get("key_marketing_focus") or "",
                 "brand_snapshot": brand,
@@ -2100,7 +2237,7 @@ def make_v3_router(db):
         return updated
 
     # ------------------------------------------------------------------------
-    # AI ALIGNMENT SNAPSHOT — generate deterministic content from real Connect data
+    # AI ALIGNMENT SNAPSHOT â€” generate deterministic content from real Connect data
     # ------------------------------------------------------------------------
     @router.post("/business-cases/{bc_id}/ai/alignment")
     async def generate_alignment(bc_id: str):
@@ -2423,6 +2560,36 @@ def make_v3_router(db):
         )
         date_answer = _alignment_answer("date_of_connect", _usable_text(date_of_connect, _brand_confirmation("the Connect call date")))
 
+        source_excerpt = _usable_text(
+            mi.get("source_excerpt") or connect.get("source_excerpt") or connect.get("analysis_summary") or connect.get("transcript_summary"),
+            "",
+        )
+
+        def _detailed_alignment_answer(label: str, answer: str, confirmation_hint: str) -> str:
+            base = str(answer or "").strip()
+            missing = (not base) or base.startswith("Not captured clearly") or "Brand should confirm" in base
+            if missing:
+                return (
+                    f"This field was not captured clearly enough from the Connect transcript to treat it as final. "
+                    f"For {label}, TASCK needs the brand to confirm {confirmation_hint}. "
+                    "The brand should add the precise wording, correct any assumptions, and approve only when the statement matches the call and the organisation's current business reality."
+                )
+            evidence = f" The strongest transcript signal available for this field is: {source_excerpt}" if source_excerpt else ""
+            return (
+                f"From the Connect transcript, TASCK understands {label} as follows: {base}. "
+                "This should be treated as the working alignment position for the project, because it captures what the brand appeared to prioritise during the call and turns it into a usable planning input for TASCK. "
+                f"The brand should review the wording carefully, add nuance where needed, and correct anything that does not fully represent the call before approval.{evidence}"
+            )
+
+        about_answer = _detailed_alignment_answer("About The Organisation", about_answer, "what the organisation does, who it serves, and why the market should care")
+        core_focus_answer = _detailed_alignment_answer("the Core Focus Areas", core_focus_answer, "the business, communication, product, or cultural focus areas TASCK should build around")
+        customers_answer = _detailed_alignment_answer("the Key Customers/Beneficiaries", customers_answer, "the specific audience groups, beneficiaries, buyers, communities, or decision makers the work must influence")
+        goals_answer = _detailed_alignment_answer("the Key Goals or Metrics that are Tracked", goals_answer, "the measurable targets, commercial goals, engagement goals, and reporting metrics that define success")
+        success_answer = _detailed_alignment_answer("What Success Looks Like / Timeline", success_answer, "the success picture, timing, launch window, reporting period, and any hard deadlines")
+        focus_answer = _detailed_alignment_answer("Focus", focus_answer, "the channels, cultural territories, formats, and communication focus TASCK should prioritise")
+        priority_answer = _detailed_alignment_answer("Priority", priority_answer, "what matters most first and how urgent this work is for the brand")
+        date_answer = _detailed_alignment_answer("Date of connect", date_answer, "the correct date and session context for the Connect conversation")
+
         scope_flags = [
             {"text": "Brand review", "reason": "Brand must review, comment, or approve the Alignment Snapshot before admin approval."},
         ]
@@ -2552,7 +2719,7 @@ def make_v3_router(db):
         else:
             updates["frame.strategy_development_fee_invoice_id"] = None
             updates["frame.strategy_development_fee_paid"] = False
-            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement — TTA absorbs strategy cost."
+            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement â€” TTA absorbs strategy cost."
 
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_approved", "by": payload.approver}}})
         return {"ok": True, "approved_at": approved_at}
@@ -2675,7 +2842,15 @@ def make_v3_router(db):
                 ]
                 for row in section.get("rows", []) or []:
                     question, answer = _docx_question_row(row)
-                    rows.append("<w:tr>" + _docx_cell(question) + _docx_cell(answer) + "</w:tr>")
+                    newline = chr(10)
+                    comment_space = newline.join([
+                        str(answer or ""),
+                        "",
+                        "Brand comment / correction:",
+                        "",
+                        "Admin response / approval note:",
+                    ])
+                    rows.append("<w:tr>" + _docx_cell(question) + _docx_cell(comment_space) + "</w:tr>")
                 blocks.append(
                     '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>'
                     '<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
@@ -2723,7 +2898,85 @@ def make_v3_router(db):
                 "</Relationships>",
             )
             docx.writestr("word/document.xml", document_xml)
+
         return package.getvalue()
+
+    def document_docx_bytes(title: str, sections: List[Dict[str, Any]], meta: str = "") -> bytes:
+        blocks = [_docx_paragraph(title or "TASCK Document", bold=True)]
+        if meta:
+            blocks.append(_docx_paragraph(meta))
+        for section in sections or []:
+            blocks.append(_docx_paragraph(section.get("heading") or "Section", bold=True))
+            content = section.get("content") or section.get("text") or ""
+            if content:
+                for paragraph in str(content).split("\n"):
+                    blocks.append(_docx_paragraph(paragraph))
+            rows = section.get("rows") or []
+            if rows:
+                headers = section.get("columns") or []
+                if not headers and isinstance(rows[0], dict):
+                    headers = list(rows[0].keys())
+                table_rows = []
+                if headers:
+                    table_rows.append("<w:tr>" + "".join(_docx_cell(header, bold=True) for header in headers) + "</w:tr>")
+                for row in rows:
+                    values = row if isinstance(row, list) else [row.get(header, "") for header in headers]
+                    table_rows.append("<w:tr>" + "".join(_docx_cell(value) for value in values) + "</w:tr>")
+                blocks.append(
+                    '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>'
+                    '<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:left w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:right w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    "</w:tblBorders></w:tblPr>" + "".join(table_rows) + "</w:tbl>"
+                )
+            for item in section.get("items") or []:
+                blocks.append(_docx_paragraph(f"- {item}"))
+            blocks.append(_docx_paragraph(""))
+        document_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body>" + "".join(blocks)
+            + '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+            '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
+            "</w:body></w:document>"
+        )
+        package = BytesIO()
+        with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as docx:
+            docx.writestr(
+                "[Content_Types].xml",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                "</Types>",
+            )
+            docx.writestr(
+                "_rels/.rels",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+                "</Relationships>",
+            )
+            docx.writestr("word/document.xml", document_xml)
+        return package.getvalue()
+
+    @router.get("/alignment-snapshots/{snapshot_id}/docx")
+    async def alignment_snapshot_docx(snapshot_id: str):
+        snap = await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "Alignment Snapshot not found")
+        case = await db.v3_business_cases.find_one({"id": snap.get("business_case_id")}, {"_id": 0}) or {}
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        docx_bytes = alignment_snapshot_docx_bytes(case, brand, snap)
+        return StreamingResponse(
+            BytesIO(docx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{snapshot_id}-alignment-snapshot.docx"'},
+        )
 
     @router.post("/business-cases/{bc_id}/ai/alignment/send")
     async def send_alignment_to_brand(bc_id: str, payload: Optional[SendAlignmentPayload] = Body(None)):
@@ -2928,7 +3181,7 @@ def make_v3_router(db):
         return {"ok": True, "paid_at": paid_at}
 
     # ------------------------------------------------------------------------
-    # CREATIVE BRIEFS  (Plan flagship #2 — per-creator)
+    # CREATIVE BRIEFS  (Plan flagship #2 â€” per-creator)
     # ------------------------------------------------------------------------
     class CreativeBriefCreate(BaseModel):
         business_case_id: str
@@ -2995,7 +3248,7 @@ def make_v3_router(db):
             )
         creator_account = await ensure_creator_account(creator)
         app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
-        creator_portal_url = f"{app_base_url}/v3/creator"
+        creator_portal_url = f"{app_base_url}/creator"
         email = await queue_email(
             to=creator_email,
             subject=doc["subject"],
@@ -3014,7 +3267,14 @@ def make_v3_router(db):
             brand_id=case["brand_id"],
             business_case_id=payload.business_case_id,
             creator_id=payload.creator_id,
-            attachments=[{"type": "brief_text", "id": cb_id, "title": doc["subject"]}],
+            attachments=[{
+                "type": "google_docs_compatible_creative_brief",
+                "id": cb_id,
+                "title": doc["subject"],
+                "filename": f"{cb_id}-creative-brief.docx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "content": document_docx_bytes(doc["subject"], [{"heading": "Creative Brief", "content": payload.brief_text}], "Creator brief for review and response."),
+            }],
         )
         doc["email"] = email
         doc["email_status"] = email.get("status")
@@ -3055,6 +3315,22 @@ def make_v3_router(db):
             creator_id=brief["creator_id"],
         )
         return {"ok": True, "reminded_at": ts, "email": email}
+
+    @router.get("/creative-briefs/{brief_id}/docx")
+    async def creative_brief_docx(brief_id: str):
+        brief = await db.v3_creative_briefs.find_one({"id": brief_id}, {"_id": 0})
+        if not brief:
+            raise HTTPException(404, "Creative Brief not found")
+        docx_bytes = document_docx_bytes(
+            brief.get("subject") or "Creative Brief",
+            [{"heading": "Creative Brief", "content": brief.get("brief_text") or ""}],
+            "Google Docs-compatible creator brief. The creator may review, comment, and respond through TASCK OS.",
+        )
+        return StreamingResponse(
+            BytesIO(docx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{brief_id}-creative-brief.docx"'},
+        )
 
     @router.get("/creative-briefs")
     async def list_briefs(business_case_id: Optional[str] = None, creator_id: Optional[str] = None):
@@ -3099,6 +3375,22 @@ def make_v3_router(db):
         )
         return await db.v3_creative_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
 
+    @router.get("/creative-snapshots/{snapshot_id}/docx")
+    async def strategy_snapshot_docx(snapshot_id: str):
+        snap = await db.v3_creative_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "Strategy Snapshot not found")
+        docx_bytes = document_docx_bytes(
+            snap.get("title") or "Strategy Snapshot",
+            snap.get("sections") or [],
+            "Google Docs-compatible Strategy Snapshot for brand review, comments, or approval.",
+        )
+        return StreamingResponse(
+            BytesIO(docx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{snapshot_id}-strategy-snapshot.docx"'},
+        )
+
     @router.post("/business-cases/{bc_id}/creative-snapshot/send")
     async def send_strategy_snapshot_to_brand(bc_id: str):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -3119,18 +3411,28 @@ def make_v3_router(db):
         email = await queue_email(
             to=recipient,
             subject=f"Strategy Snapshot ready for review - {case['title']}",
-            body=(
-                f"Hello {brand.get('primary_contact', 'there')},\n\n"
-                f"The Strategy Snapshot for {case['title']} is ready in your TASCK brand portal.\n\n"
-                "Please review the strategy, add comments if anything does not align, or approve it so TASCK can move into Delivery.\n\n"
-                f"Brand portal: {(os.getenv('FRONTEND_URL') or os.getenv('PUBLIC_APP_URL') or os.getenv('APP_BASE_URL') or 'http://localhost:7159').rstrip('/')}/brand/approvals\n"
-                f"Username: {account.get('username', recipient)}\n"
-                f"Temporary password: {account.get('temporary_password') or 'Use your current TASCK password'}"
-            ),
+            body=chr(10).join([
+                f"Hello {brand.get('primary_contact', 'there')},",
+                "",
+                f"The Strategy Snapshot for {case['title']} is ready in your TASCK brand portal.",
+                "",
+                "Please log in to your existing TASCK brand page and review the strategy carefully. You can add comments if any section does not align with the campaign direction, or approve it straight away so TASCK can proceed into Delivery. The attached Google Docs-compatible copy is included for easier review, internal circulation, and comment capture.",
+                "",
+                f"Brand portal: {(os.getenv('FRONTEND_URL') or os.getenv('PUBLIC_APP_URL') or os.getenv('APP_BASE_URL') or 'http://localhost:7159').rstrip('/')}/brand/approvals",
+                "",
+                "This email does not include new login details. Please use the brand portal login already issued by TASCK.",
+            ]),
             kind="strategy_snapshot_review",
             brand_id=case["brand_id"],
             business_case_id=bc_id,
-            attachments=[{"type": "strategy_snapshot", "id": snap["id"], "title": snap.get("title")}],
+            attachments=[{
+                "type": "google_docs_compatible_strategy_snapshot",
+                "id": snap["id"],
+                "title": snap.get("title"),
+                "filename": f"{snap['id']}-strategy-snapshot.docx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "content": document_docx_bytes(snap.get("title") or "Strategy Snapshot", snap.get("sections") or [], "Strategy Snapshot for brand review, comments, or approval."),
+            }],
         )
         delivery_status = email.get("status") or "queued"
         snapshot_status = "sent_to_brand" if delivery_status == "sent" else delivery_status
@@ -3227,7 +3529,7 @@ def make_v3_router(db):
 
     def _build_contract_sections(template: str, brand_name: str, creator_name: str, value: float, project_title: str) -> List[Dict[str, Any]]:
         """Return ordered editable sections for the requested contract template."""
-        money = f"₦{int(value):,}" if value else "₦TBC"
+        money = f"â‚¦{int(value):,}" if value else "â‚¦TBC"
         if template == "creator_principal":
             return [
                 {"heading": "Executive Summary", "content": (
@@ -3241,9 +3543,9 @@ def make_v3_router(db):
                     f"This Independent Creator Agreement is made between {brand_name} ('Brand'), and {creator_name} ('You/Yours'), acting in coordination with TASCK Creative Company Limited (TTA)."
                 )},
                 {"heading": "1. Scope of Agreement", "content": (
-                    "1.1 Project Responsibilities — You shall be primarily responsible for the creation, leadership, coordination and delivery of the Project, including (where applicable) creative direction, stakeholder engagement, sponsor/vendor coordination, guest management, logistics, event setup, invoicing through TTA systems and reporting.\n"
-                    "1.2 Post-Project Responsibilities — Deliver a narrative and financial report summarising outcomes, learnings and expenditure in the format reasonably prescribed by TTA on behalf of the Brand.\n"
-                    "1.3 TTA's Role — TTA will formally engage and authorise you, grant access to internal resources (accounting, legal, music etc.), facilitate meetings, and act solely as a support function. TTA does not assume creative control."
+                    "1.1 Project Responsibilities â€” You shall be primarily responsible for the creation, leadership, coordination and delivery of the Project, including (where applicable) creative direction, stakeholder engagement, sponsor/vendor coordination, guest management, logistics, event setup, invoicing through TTA systems and reporting.\n"
+                    "1.2 Post-Project Responsibilities â€” Deliver a narrative and financial report summarising outcomes, learnings and expenditure in the format reasonably prescribed by TTA on behalf of the Brand.\n"
+                    "1.3 TTA's Role â€” TTA will formally engage and authorise you, grant access to internal resources (accounting, legal, music etc.), facilitate meetings, and act solely as a support function. TTA does not assume creative control."
                 )},
                 {"heading": "2. Term", "content": "This Agreement is effective until the contract is terminated or upon the Project's conclusion, whichever occurs first."},
                 {"heading": "3. Consideration", "content": (
@@ -3283,19 +3585,19 @@ def make_v3_router(db):
         return [
             {"heading": "Service Agreement", "content": f"This Service Agreement is dated {_now_iso()[:10]} between TASCK Creative Company Limited ('TASCK') and {brand_name} ('Brand'), for the project: {project_title}."},
             {"heading": "Parties", "content": (
-                "Party 1 — TASCK Creative Company Limited, a registered company situated in Lagos, Nigeria.\n"
-                f"Party 2 — {brand_name}.\n"
+                "Party 1 â€” TASCK Creative Company Limited, a registered company situated in Lagos, Nigeria.\n"
+                f"Party 2 â€” {brand_name}.\n"
                 "The parties may be individually or collectively referred to as 'You', 'Your', 'Us', 'Our' as the context requires."
             )},
             {"heading": "Whereas", "content": (
                 f"TASCK has the expertise and capacity within the scope of work incorporated in Clause 1 (the 'Services'). {brand_name} agrees to engage TASCK and TASCK agrees to provide the Services following the terms of this Agreement."
             )},
             {"heading": "1. Services", "content": (
-                f"Description of Services — TASCK shall deliver the {project_title} project, including strategy development, creator coordination, content production support, performance tracking, and reporting. Any other supporting services consequential to the Service provided are included."
+                f"Description of Services â€” TASCK shall deliver the {project_title} project, including strategy development, creator coordination, content production support, performance tracking, and reporting. Any other supporting services consequential to the Service provided are included."
             )},
             {"heading": "2. Project Details", "content": "Project timeline and key milestones shall be confirmed in the approved Strategy Snapshot and execution schedule. Venue/channels: to be confirmed with the Brand."},
             {"heading": "3. Payment", "content": (
-                f"The total fixed fee payable to TASCK shall be {money}. Payment is to be made per the schedule agreed in the approved budget — minimum first tranche within seventy-two (72) hours of contract execution to commence work; final tranche on delivery acceptance."
+                f"The total fixed fee payable to TASCK shall be {money}. Payment is to be made per the schedule agreed in the approved budget â€” minimum first tranche within seventy-two (72) hours of contract execution to commence work; final tranche on delivery acceptance."
             )},
             {"heading": "4. Performance / Delivery", "content": (
                 "TASCK shall coordinate creators, production and reporting resources. The Brand shall provide timely funding, approvals and feedback so that delivery timelines are not stalled. All works produced under this Agreement are created as 'Work for Hire' and the deliverables become Brand property on full settlement. This Agreement constitutes the entire agreement and supersedes prior negotiations."
@@ -3315,12 +3617,12 @@ def make_v3_router(db):
     @router.post("/contracts")
     async def create_contract(payload: ContractCreate):
         ctr_id = f"ctr-{uuid.uuid4().hex[:8]}"
-        # Mocked AI risk flagging — surface a couple of standard flags
+        # Mocked AI risk flagging â€” surface a couple of standard flags
         ai_flags = []
         if payload.template == "creator_principal":
             ai_flags.append({"clause": "Final edit approval", "severity": "informational", "note": "Standard for creator-principal contracts. Brand revision limited to two rounds before lock."})
         if payload.template == "four_party_grant":
-            ai_flags.append({"clause": "Editorial independence", "severity": "high", "note": "Grant contracts must ring-fence editorial independence — verify clause 4.1 reflects funder-distance posture."})
+            ai_flags.append({"clause": "Editorial independence", "severity": "high", "note": "Grant contracts must ring-fence editorial independence â€” verify clause 4.1 reflects funder-distance posture."})
 
         # Lookup brand & creator names for the template body so the contract starts brand-aware
         case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0}) or {}
@@ -3332,9 +3634,9 @@ def make_v3_router(db):
 
         sections = _build_contract_sections(payload.template, brand_name, creator_name, payload.value, project_title)
         title_map = {
-            "brand_msa": f"{brand_name} × TASCK — Service Agreement",
-            "creator_principal": f"{creator_name} × {brand_name} — Independent Creator Agreement",
-            "four_party_grant": f"{brand_name} × TASCK — Four-Party Grant Agreement",
+            "brand_msa": f"{brand_name} Ã— TASCK â€” Service Agreement",
+            "creator_principal": f"{creator_name} Ã— {brand_name} â€” Independent Creator Agreement",
+            "four_party_grant": f"{brand_name} Ã— TASCK â€” Four-Party Grant Agreement",
         }
         doc = {
             "id": ctr_id,
@@ -3389,7 +3691,7 @@ def make_v3_router(db):
         return {"ok": True, "signed_at": signed_at}
 
     # ------------------------------------------------------------------------
-    # DELIVERABLES (3-stage workflow: pending_upload → pending_rm_review → approved)
+    # DELIVERABLES (3-stage workflow: pending_upload â†’ pending_rm_review â†’ approved)
     # ------------------------------------------------------------------------
     @router.get("/deliverables")
     async def list_deliverables(business_case_id: Optional[str] = None):
@@ -3430,7 +3732,7 @@ def make_v3_router(db):
         return {"ok": True, "new_status": next_state}
 
     # ------------------------------------------------------------------------
-    # SCOPE CHANGE — pauses delivery until brand approves the amendment
+    # SCOPE CHANGE â€” pauses delivery until brand approves the amendment
     # ------------------------------------------------------------------------
     class ScopeChangePayload(BaseModel):
         title: str
@@ -3479,7 +3781,7 @@ def make_v3_router(db):
         business_case_id: str
         scored_creators: List[BrainstormScore] = Field(default_factory=list)
         planning_fields: Dict[str, Any] = Field(default_factory=dict)
-        # Template-aligned phase outputs (all optional — the page progressively fills them in)
+        # Template-aligned phase outputs (all optional â€” the page progressively fills them in)
         pre_work: Optional[Dict[str, Any]] = None
         phase_0_focus_group: Optional[Dict[str, Any]] = None
         phase_1_problem: Optional[Dict[str, Any]] = None
@@ -3515,20 +3817,20 @@ def make_v3_router(db):
             "business_case_id": payload.business_case_id,
             "status": "in_progress",
             "planning_fields": payload.planning_fields,
-            # Template-aligned phase scaffolding (60–90 min TTA Snapshot Brainstorm)
+            # Template-aligned phase scaffolding (60â€“90 min TTA Snapshot Brainstorm)
             "template_version": "tta_snapshot_v1",
             "duration_minutes": "60-90",
             "purpose": "Produce a defensible creator recommendation rooted in behavior, culture, and commercial logic.",
             "phases": [
                 {"phase": "pre_work", "label": "Pre-work (mandatory before session)", "status": "pending"},
-                {"phase": 0, "label": "Phase 0 — Focus Group Integration (when applicable)", "status": "pending"},
-                {"phase": 1, "label": "Phase 1 — Define the Problem (10–15 mins)", "status": "pending"},
-                {"phase": 2, "label": "Phase 2 — Define Creator Archetype (10 mins)", "status": "pending"},
-                {"phase": 3, "label": "Phase 3 — Creator Identification & Scoring (20–25 mins)", "status": "pending"},
-                {"phase": 4, "label": "Phase 4 — Interpretation Logic (15 mins)", "status": "pending"},
-                {"phase": 5, "label": "Phase 5 — Execution Reality Check (10–15 mins)", "status": "pending"},
-                {"phase": 6, "label": "Phase 6 — Commercial Snapshot (10 mins)", "status": "pending"},
-                {"phase": 7, "label": "Phase 7 — Final Recommendation (5 mins)", "status": "pending"},
+                {"phase": 0, "label": "Phase 0 â€” Focus Group Integration (when applicable)", "status": "pending"},
+                {"phase": 1, "label": "Phase 1 â€” Define the Problem (10â€“15 mins)", "status": "pending"},
+                {"phase": 2, "label": "Phase 2 â€” Define Creator Archetype (10 mins)", "status": "pending"},
+                {"phase": 3, "label": "Phase 3 â€” Creator Identification & Scoring (20â€“25 mins)", "status": "pending"},
+                {"phase": 4, "label": "Phase 4 â€” Interpretation Logic (15 mins)", "status": "pending"},
+                {"phase": 5, "label": "Phase 5 â€” Execution Reality Check (10â€“15 mins)", "status": "pending"},
+                {"phase": 6, "label": "Phase 6 â€” Commercial Snapshot (10 mins)", "status": "pending"},
+                {"phase": 7, "label": "Phase 7 â€” Final Recommendation (5 mins)", "status": "pending"},
             ],
             "pre_work": payload.pre_work or {
                 "client_brief_summary": {"objective": "", "target_audience": "", "constraints": ""},
@@ -3537,12 +3839,12 @@ def make_v3_router(db):
             },
             "phase_0_focus_group": payload.phase_0_focus_group or {
                 "use_when": "Use ONLY when: problem is unclear, audience behavior is ambiguous, product is new or misunderstood.",
-                "objective": "Why don't you already behave this way?",
+                "objective": "Why don't we already behave this way?",
                 "core_questions": [
-                    "When was the last time you did [target action]?",
-                    "What stopped you from doing it more often?",
-                    "What would make you trust a solution?",
-                    "Who do you currently listen to for this?",
+                    "When was the last time we did [target action]?",
+                    "What stopped us from doing it more often?",
+                    "What would make us trust a solution?",
+                    "Who do we currently listen to for this?",
                 ],
                 "answers": [],
             },
@@ -3558,7 +3860,7 @@ def make_v3_router(db):
                 "voice_type": "",  # Authority / Peer / Entertainer / Niche Specialist
                 "audience_relationship": "",  # Trust / Reach / Conversion / Community
                 "format_strength": "",  # Short-form / Long-form / Live / Series
-                "creator_archetype_statement": "",  # We need a [voice type] creator with [audience relationship]…
+                "creator_archetype_statement": "",  # We need a [voice type] creator with [audience relationship]â€¦
             },
             "scored_creators": scored,
             "phase_4_interpretation": payload.phase_4_interpretation or {"per_creator": []},
@@ -3696,7 +3998,7 @@ def make_v3_router(db):
         return {"ok": True, "stage": "closed"}
 
     # ------------------------------------------------------------------------
-    # PDF EXPORTS — contracts, final reports, feedback
+    # PDF EXPORTS â€” contracts, final reports, feedback
     # ------------------------------------------------------------------------
     def _render_pdf(title: str, blocks: List[Dict[str, Any]]) -> bytes:
         """Render an ordered list of blocks into a PDF and return its bytes.
@@ -3745,9 +4047,9 @@ def make_v3_router(db):
             project_title = case.get("title") or "Project"
             sections = _build_contract_sections(ctr.get("template", "brand_msa"), brand_name, creator_name, ctr.get("value") or 0, project_title)
             title_map = {
-                "brand_msa": f"{brand_name} × TASCK — Service Agreement",
-                "creator_principal": f"{creator_name} × {brand_name} — Independent Creator Agreement",
-                "four_party_grant": f"{brand_name} × TASCK — Four-Party Grant Agreement",
+                "brand_msa": f"{brand_name} Ã— TASCK â€” Service Agreement",
+                "creator_principal": f"{creator_name} Ã— {brand_name} â€” Independent Creator Agreement",
+                "four_party_grant": f"{brand_name} Ã— TASCK â€” Four-Party Grant Agreement",
             }
             new_title = title_map.get(ctr.get("template"), ctr.get("title") or "Contract")
             await db.v3_contracts.update_one(
@@ -3760,6 +4062,25 @@ def make_v3_router(db):
         blocks = ctr.get("sections") or []
         pdf_bytes = _render_pdf(title, blocks)
         return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{contract_id}.pdf"'})
+
+    @router.get("/contracts/{contract_id}/docx")
+    async def contract_docx(contract_id: str):
+        ctr = await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
+        if not ctr:
+            raise HTTPException(404, "Contract not found")
+        if not (ctr.get("sections") or []):
+            case = await db.v3_business_cases.find_one({"id": ctr.get("business_case_id")}, {"_id": 0}) or {}
+            brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+            creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            creator_name = (creator or {}).get("name") or "Creator"
+            project_title = case.get("title") or "Project"
+            sections = _build_contract_sections(ctr.get("template", "brand_msa"), brand_name, creator_name, ctr.get("value") or 0, project_title)
+            ctr["sections"] = sections
+            ctr["title"] = ctr.get("title") or "Contract"
+            await db.v3_contracts.update_one({"id": contract_id}, {"$set": {"sections": ctr["sections"], "title": ctr["title"], "updated_at": _now_iso()}})
+        docx_bytes = document_docx_bytes(ctr.get("title") or "Contract", ctr.get("sections") or [], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
+        return StreamingResponse(BytesIO(docx_bytes), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f'attachment; filename="{contract_id}-contract.docx"'})
 
     @router.get("/final-reports/{report_id}/pdf")
     async def final_report_pdf(report_id: str):
@@ -3779,32 +4100,32 @@ def make_v3_router(db):
         fb = rep.get("feedback") or {}
         blocks: List[Dict[str, Any]] = []
         if fb.get("email_template"):
-            blocks.append({"heading": "Tab 1 — Email Template", "content": fb["email_template"]})
+            blocks.append({"heading": "Tab 1 â€” Email Template", "content": fb["email_template"]})
         for group_key, group_label in [("brand_partner", "Brand Partner Feedback"), ("creative_partner", "Creative Partner Feedback")]:
             block = fb.get(group_key) or {}
             blocks.append({"heading": block.get("form_title", group_label), "content": (block.get("form_description") or "")})
-            header_lines = [f"Project name: {block.get('project_name', '—')}", f"Date: {block.get('date', '—')}"]
+            header_lines = [f"Project name: {block.get('project_name', 'â€”')}", f"Date: {block.get('date', 'â€”')}"]
             if "google_form_link" in block:
-                header_lines.append(f"Google form link: {block.get('google_form_link') or '—'}")
+                header_lines.append(f"Google form link: {block.get('google_form_link') or 'â€”'}")
             blocks.append({"content": "\n".join(header_lines)})
             for idx, q in enumerate(block.get("questions") or []):
-                blocks.append({"heading": f"{idx + 1}. {q.get('label', '')}", "content": f"{q.get('question', '')}\nRating: {q.get('rating') if q.get('rating') is not None else '—'} / 10"})
-            blocks.append({"content": f"Optional comment: {block.get('optional_comment') or '—'}"})
+                blocks.append({"heading": f"{idx + 1}. {q.get('label', '')}", "content": f"{q.get('question', '')}\nRating: {q.get('rating') if q.get('rating') is not None else 'â€”'} / 10"})
+            blocks.append({"content": f"Optional comment: {block.get('optional_comment') or 'â€”'}"})
         if fb.get("internal_use"):
-            blocks.append({"heading": "Internal Use (Not Shown to Client)", "content": "\n".join([f"• {line}" for line in fb["internal_use"]])})
-        title = f"Feedback — {(rep.get('title') or 'Final Report')}"
+            blocks.append({"heading": "Internal Use (Not Shown to Client)", "content": "\n".join([f"â€¢ {line}" for line in fb["internal_use"]])})
+        title = f"Feedback â€” {(rep.get('title') or 'Final Report')}"
         pdf_bytes = _render_pdf(title, blocks)
         return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="feedback-{report_id}.pdf"'})
 
     # ------------------------------------------------------------------------
-    # SMTP — share contract / final report / feedback via real email
+    # SMTP â€” share contract / final report / feedback via real email
     # ------------------------------------------------------------------------
-    def _smtp_send(to_email: str, subject: str, body: str, attachment_bytes: Optional[bytes] = None, attachment_name: Optional[str] = None) -> None:
+    def _smtp_send(to_email: str, subject: str, body: str, attachment_bytes: Optional[bytes] = None, attachment_name: Optional[str] = None, attachment_mime_type: str = "application/pdf") -> None:
         attachments = []
         if attachment_bytes and attachment_name:
             attachments.append({
                 "filename": attachment_name,
-                "mime_type": "application/pdf",
+                "mime_type": attachment_mime_type,
                 "content": attachment_bytes,
             })
         delivery = _deliver_email_now({
@@ -3835,10 +4156,19 @@ def make_v3_router(db):
             sections = _build_contract_sections(ctr.get("template", "brand_msa"), (brand.get("company") or brand.get("name") or "Brand"), ((creator or {}).get("name") or "Creator"), ctr.get("value") or 0, case.get("title") or "Project")
             await db.v3_contracts.update_one({"id": contract_id}, {"$set": {"sections": sections}})
             ctr["sections"] = sections
-        pdf_bytes = _render_pdf(ctr.get("title") or "Contract", ctr.get("sections") or [])
-        body = (payload.custom_message or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nPlease find attached the contract for our project: {ctr.get('title', 'Contract')}.\n\nLet us know if you have any questions or amendments.\n\nWarm regards,\nThe TASCK Agency")
+        docx_bytes = document_docx_bytes(ctr.get("title") or "Contract", ctr.get("sections") or [], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
+        body = payload.custom_message or chr(10).join([
+            f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},",
+            "",
+            f"TASCK has prepared the contract for our project: {ctr.get('title', 'Contract')}. Please review the attached Google Docs-compatible contract carefully, confirm that the commercial terms, parties, scope, deliverables, usage rights, timelines, approval responsibilities, payment obligations, and signature sections are accurate, then approve and sign the contract or send back requested corrections. This document is attached in an editable format so you can add comments, propose changes, or route it internally before returning it to TASCK.",
+            "",
+            "Once signed or approved, please send the completed version back to TASCK so the project can proceed without delay.",
+            "",
+            "Warm regards,",
+            "The TASCK Agency",
+        ])
         try:
-            await asyncio.to_thread(_smtp_send, payload.to_email, f"Contract: {ctr.get('title', 'Contract')}", body, pdf_bytes, f"{ctr.get('template','contract')}.pdf")
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"Contract: {ctr.get('title', 'Contract')}", body, docx_bytes, f"{ctr.get('template','contract')}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         except HTTPException:
             raise
         except Exception as exc:
@@ -3871,21 +4201,21 @@ def make_v3_router(db):
         fb = rep.get("feedback") or {}
         blocks: List[Dict[str, Any]] = []
         if fb.get("email_template"):
-            blocks.append({"heading": "Tab 1 — Email Template", "content": fb["email_template"]})
+            blocks.append({"heading": "Tab 1 â€” Email Template", "content": fb["email_template"]})
         for group_key, group_label in [("brand_partner", "Brand Partner Feedback"), ("creative_partner", "Creative Partner Feedback")]:
             block = fb.get(group_key) or {}
             blocks.append({"heading": block.get("form_title", group_label), "content": (block.get("form_description") or "")})
-            header_lines = [f"Project name: {block.get('project_name', '—')}", f"Date: {block.get('date', '—')}"]
+            header_lines = [f"Project name: {block.get('project_name', 'â€”')}", f"Date: {block.get('date', 'â€”')}"]
             if "google_form_link" in block:
-                header_lines.append(f"Google form link: {block.get('google_form_link') or '—'}")
+                header_lines.append(f"Google form link: {block.get('google_form_link') or 'â€”'}")
             blocks.append({"content": "\n".join(header_lines)})
             for idx, q in enumerate(block.get("questions") or []):
-                blocks.append({"heading": f"{idx + 1}. {q.get('label', '')}", "content": f"{q.get('question', '')}\nRating: {q.get('rating') if q.get('rating') is not None else '—'} / 10"})
-            blocks.append({"content": f"Optional comment: {block.get('optional_comment') or '—'}"})
-        pdf_bytes = _render_pdf(f"Feedback — {(rep.get('title') or 'Final Report')}", blocks)
+                blocks.append({"heading": f"{idx + 1}. {q.get('label', '')}", "content": f"{q.get('question', '')}\nRating: {q.get('rating') if q.get('rating') is not None else 'â€”'} / 10"})
+            blocks.append({"content": f"Optional comment: {block.get('optional_comment') or 'â€”'}"})
+        pdf_bytes = _render_pdf(f"Feedback â€” {(rep.get('title') or 'Final Report')}", blocks)
         body = (payload.custom_message or fb.get("email_template") or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nThank you for partnering with TASCK on this project. Please find attached the feedback form. We appreciate your responses.\n\nWarm regards,\nThe TASCK Agency")
         try:
-            await asyncio.to_thread(_smtp_send, payload.to_email, f"Feedback request — {rep.get('title', 'Project')}", body, pdf_bytes, f"feedback-{report_id}.pdf")
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"Feedback request â€” {rep.get('title', 'Project')}", body, pdf_bytes, f"feedback-{report_id}.pdf")
         except HTTPException:
             raise
         except Exception as exc:
@@ -4172,6 +4502,8 @@ def make_v3_router(db):
                 "connect.marketing_intelligence": mi,
                 "connect.alignment_tool_analysis": alignment_tool_result,
                 "connect.connect_status": "qualified_to_frame" if ai_recommendation == "promote" else "needs_business_call",
+                "connect.status_updated_at": now,
+                "connect.updated_at": now,
                 "connect.latest_meeting_date": ", ".join(meeting_dates) if meeting_dates else None,
                 "updated_at": now,
             }}
@@ -4193,8 +4525,10 @@ def make_v3_router(db):
         updates = {
             "stage": "frame",
             "connect.connect_status": "qualified_to_frame",
+            "connect.status_updated_at": now,
+            "connect.updated_at": now,
             "connect.promoted_at": now,
-            "connect.promote_reason": payload.reason or "Business Call — Connect promoted to Frame.",
+            "connect.promote_reason": payload.reason or "Business Call â€” Connect promoted to Frame.",
             "next_action": STAGE_NEXT_ACTIONS["frame"],
             "updated_at": now,
         }
@@ -4219,7 +4553,7 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0})
         contact = case.get("brand_contact_snapshot") or {}
         meeting = await create_meeting(MeetingCreate(
-            title=f"Business Call — Connect: {case.get('title', 'Business Case')}",
+            title=f"Business Call â€” Connect: {case.get('title', 'Business Case')}",
             meeting_type="business_call",
             stage="connect",
             entity_type="brand",
@@ -4265,7 +4599,7 @@ def make_v3_router(db):
         if case.get("brand_id"):
             await db.v3_brands.update_one(
                 {"id": case["brand_id"]},
-                {"$set": {"status": "deleted", "deleted_reason": payload.reason or "Business Call — Connect deleted.", "updated_at": now}},
+                {"$set": {"status": "deleted", "deleted_reason": payload.reason or "Business Call â€” Connect deleted.", "updated_at": now}},
             )
         return {"ok": True, "business_case_id": bc_id, "status": "deleted"}
 
@@ -4279,21 +4613,63 @@ def make_v3_router(db):
         to_email = payload.contact_email or contact.get("email") or (brand or {}).get("email")
         if not to_email:
             raise HTTPException(400, "Brand email is required before sending meeting email")
+        now = _now_iso()
+        brand_name = (brand or {}).get("company") or (brand or {}).get("name") or "your team"
+        contact_name = payload.contact_name or contact.get("primary_contact") or (brand or {}).get("primary_contact") or "there"
+        scheduled_for = payload.scheduled_for or "To be confirmed"
+        meeting_link = payload.meeting_link or "To be shared by TASCK"
+        purpose = payload.reason or payload.agenda or "Connect / Business Call to confirm the brand context, priorities, timeline, and information TASCK needs before Frame."
+        body = (
+            f"Hello {contact_name},\n\n"
+            f"TASCK has scheduled a Connect / Business Call with {brand_name}.\n\n"
+            f"Date and time: {scheduled_for}\n"
+            f"Meeting link: {meeting_link}\n"
+            f"Purpose of meeting: {purpose}\n\n"
+            "Please confirm that this date and time works for your team. If it does not, reply to this email with a better date and time so TASCK can reschedule the call.\n\n"
+            "Thank you,\nTASCK"
+        )
         email = await queue_email(
             to=to_email,
-            subject=f"TASCK Business Call — Connect: {case.get('title', 'Business Case')}",
-            body=(
-                f"Hello {payload.contact_name or contact.get('primary_contact') or 'there'},\n\n"
-                "Welcome to TASCK. Your Business Call — Connect is where we confirm marketing focus, audience, channels, KPIs, budget, timeline, and approval process.\n\n"
-                f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}\n"
-                "Brand portal: /v3/brand/login\n"
-                "Temporary login details will be issued by TASCK operations."
-            ),
-            kind="business_call_welcome_meeting",
+            subject=f"TASCK meeting scheduled - {case.get('title', 'Business Case')}",
+            body=body,
+            kind="business_call_meeting_schedule",
             brand_id=case.get("brand_id"),
             business_case_id=bc_id,
         )
-        return {"ok": True, "email": email}
+        interaction = {
+            "id": f"int-{uuid.uuid4().hex[:8]}",
+            "brand_id": case.get("brand_id"),
+            "business_case_id": bc_id,
+            "type": "meeting_email",
+            "title": f"Meeting email sent to {to_email}",
+            "author": "admin",
+            "date_iso": now,
+            "content": body,
+            "summary": f"Meeting scheduled for {scheduled_for}. Purpose: {purpose}",
+            "to": to_email,
+            "scheduled_for": scheduled_for,
+            "meeting_link": meeting_link,
+            "purpose": purpose,
+            "email_id": email.get("id") if isinstance(email, dict) else None,
+        }
+        await db.v3_interactions.insert_one({**interaction})
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {
+                    "connect.connect_status": "business_call_scheduled",
+                    "connect.status_updated_at": now,
+                    "connect.updated_at": now,
+                    "connect.scheduled_for": scheduled_for,
+                    "connect.meeting_link": meeting_link,
+                    "connect.meeting_purpose": purpose,
+                    "connect.last_meeting_email_sent_at": now,
+                    "updated_at": now,
+                },
+                "$push": {"timeline": {"at": now, "event": "connect_meeting_email_sent", "to": to_email, "interaction_id": interaction["id"]}},
+            },
+        )
+        return {"ok": True, "email": email, "interaction": interaction}
 
     @router.post("/business-cases/{bc_id}/connect/send-reschedule-email")
     async def send_connect_reschedule_email(bc_id: str, payload: ConnectActionPayload = ConnectActionPayload()):
@@ -4307,10 +4683,10 @@ def make_v3_router(db):
             raise HTTPException(400, "Brand email is required before sending reschedule email")
         email = await queue_email(
             to=to_email,
-            subject=f"Reschedule TASCK Business Call — Connect: {case.get('title', 'Business Case')}",
+            subject=f"Reschedule TASCK Business Call â€” Connect: {case.get('title', 'Business Case')}",
             body=(
                 f"Hello {payload.contact_name or contact.get('primary_contact') or 'there'},\n\n"
-                f"We need to reschedule the Business Call — Connect because: {payload.reason or 'some required context is still missing'}.\n\n"
+                f"We need to reschedule the Business Call â€” Connect because: {payload.reason or 'some required context is still missing'}.\n\n"
                 f"Proposed time: {payload.scheduled_for or 'To be confirmed'}\n"
                 f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}"
             ),
@@ -4381,7 +4757,7 @@ def make_v3_router(db):
             raise HTTPException(404, "Brief not found")
         creator = await db.v3_creators.find_one({"id": brief["creator_id"]}, {"_id": 0})
         creator_name = creator["name"] if creator else "Creator"
-        rate_low = (creator or {}).get("rate_card", "₦30M").split("–")[0]
+        rate_low = (creator or {}).get("rate_card", "â‚¦30M").split("â€“")[0]
         response = {
             "interest": "yes",
             "fee_expectation": f"{rate_low} all-in including direction, original concept, and assets.",
@@ -4406,7 +4782,7 @@ def make_v3_router(db):
         return {"ok": True, "response": response}
 
     # ------------------------------------------------------------------------
-    # CREATE Strategy Snapshot — templated from brief response when available
+    # CREATE Strategy Snapshot â€” templated from brief response when available
     # ------------------------------------------------------------------------
     class SnapshotCreate(BaseModel):
         business_case_id: str
@@ -4424,7 +4800,7 @@ def make_v3_router(db):
         alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
         concept = payload.concept or (
             ((brief or {}).get("creator_response") or {}).get("proposed_concept")
-            or f"Strategy synthesis for {case['title']} — concept under refinement."
+            or f"Strategy synthesis for {case['title']} â€” concept under refinement."
         )
         total = case.get("estimated_value") or 100_000_000
         brand_name = (brand or {}).get("company") or (brand or {}).get("name") or "Brand"
@@ -4449,7 +4825,7 @@ def make_v3_router(db):
 
         def _money(value: Any) -> str:
             try:
-                return f"₦{int(value):,}"
+                return f"â‚¦{int(value):,}"
             except Exception:
                 return _value(value, "TBC")
 
@@ -4619,8 +4995,8 @@ def make_v3_router(db):
             "shared_at": None,
             "approved_at": None,
             "approved_by": None,
-            "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' × ' + creator['name'].upper() if creator else ''} × TASCK",
-            "title": payload.title or f"{case['title']} — Strategy Snapshot v1",
+            "brand_header": f"{(brand or {}).get('company', 'BRAND').split(' ')[0].upper()}{' Ã— ' + creator['name'].upper() if creator else ''} Ã— TASCK",
+            "title": payload.title or f"{case['title']} â€” Strategy Snapshot v1",
             "concept": concept,
             "template_name": "Copy of Updated Creative Strategy Template_.docx",
             "sections": sections,
@@ -4720,24 +5096,24 @@ def make_v3_router(db):
             base = (snapshot or {}).get("success_metrics") or [
                 {"kpi": "Reach", "target": "10M"},
                 {"kpi": "Engagement rate", "target": "7%"},
-                {"kpi": "Earned media value", "target": "₦200M"},
+                {"kpi": "Earned media value", "target": "â‚¦200M"},
             ]
             kpis = [{"kpi": k["kpi"], "target": k["target"], "actual": k["target"], "variance": "+18%"} for k in base]
 
         brand_name = (brand or {}).get("company") or (brand or {}).get("name") or "Brand"
         creator_name = (creator or {}).get("name") or "Creator"
         deliverable_titles = [d.get("title", "") for d in deliverables]
-        # Project Report template sections — strictly mirrors the uploaded .docx outline
+        # Project Report template sections â€” strictly mirrors the uploaded .docx outline
         report_sections = [
             {"heading": "1. Title Page", "content": (
-                f"{case['title']} — Final Campaign Report\nBrand: {brand_name}\nCreator: {creator_name}\nPrepared by TASCK Creative Company Limited\nDate: {_now_iso()[:10]}"
+                f"{case['title']} â€” Final Campaign Report\nBrand: {brand_name}\nCreator: {creator_name}\nPrepared by TASCK Creative Company Limited\nDate: {_now_iso()[:10]}"
             )},
             {"heading": "2. Executive Summary", "content": (
                 f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones with overall KPI performance summarised below. "
                 "Strategic objectives, creative execution and measurable outcomes are detailed in the following sections."
             )},
             {"heading": "3. Project Overview & Objectives", "content": (
-                f"Brand: {brand_name}\nProject Title: {case['title']}\nEngagement Track: {case.get('engagement_track', 'paid')}\nBudget Approved: ₦{int(case.get('estimated_value') or 0):,}\nObjective: {(snapshot or {}).get('concept') or 'Aligned with the approved Strategy Snapshot.'}"
+                f"Brand: {brand_name}\nProject Title: {case['title']}\nEngagement Track: {case.get('engagement_track', 'paid')}\nBudget Approved: â‚¦{int(case.get('estimated_value') or 0):,}\nObjective: {(snapshot or {}).get('concept') or 'Aligned with the approved Strategy Snapshot.'}"
             )},
             {"heading": "4. Strategy Summary", "content": (
                 "This project followed the strategy approved in the Strategy Snapshot Studio. "
@@ -4747,10 +5123,10 @@ def make_v3_router(db):
                 ("Approved deliverables:\n- " + "\n- ".join(deliverable_titles)) if deliverable_titles else "No deliverables recorded against this Business Case."
             )},
             {"heading": "6. Performance / KPIs", "content": (
-                "\n".join([f"• {k.get('kpi')} — Target: {k.get('target')} | Actual: {k.get('actual')} | Variance: {k.get('variance')}" for k in kpis])
+                "\n".join([f"â€¢ {k.get('kpi')} â€” Target: {k.get('target')} | Actual: {k.get('actual')} | Variance: {k.get('variance')}" for k in kpis])
             )},
             {"heading": "7. Budget & Spend", "content": (
-                f"Approved Budget: ₦{int(case.get('estimated_value') or 0):,}\nActual Spend: To be reconciled against final invoices.\nAgency Fee (10%): Applied at source per the contract."
+                f"Approved Budget: â‚¦{int(case.get('estimated_value') or 0):,}\nActual Spend: To be reconciled against final invoices.\nAgency Fee (10%): Applied at source per the contract."
             )},
             {"heading": "8. Learnings", "content": (
                 "What worked well: pacing, creator activation, brand integration.\nWhat to refine: feedback loop with sponsors, scheduling buffers around production milestones."
@@ -4762,7 +5138,7 @@ def make_v3_router(db):
                 "By acknowledging this report below, the Brand confirms receipt and acceptance of all delivered work and the closure of the Project under the executed Service Agreement."
             )},
         ]
-        # Feedback Template — strictly follows the uploaded Feedback Template (email + brand partner + creative partner + internal use)
+        # Feedback Template â€” strictly follows the uploaded Feedback Template (email + brand partner + creative partner + internal use)
         feedback = {
             "email_template": (
                 f"Warm greetings.\n\n"
@@ -4772,7 +5148,7 @@ def make_v3_router(db):
                 "We look forward to working together again soon."
             ),
             "brand_partner": {
-                "form_title": "TTA Project Feedback – Brand Partner",
+                "form_title": "TTA Project Feedback â€“ Brand Partner",
                 "form_description": "Shared within 48 hours of project completion.",
                 "project_name": case["title"],
                 "date": _now_iso()[:10],
@@ -4786,7 +5162,7 @@ def make_v3_router(db):
                 "optional_comment": "",
             },
             "creative_partner": {
-                "form_title": "TTA Project Feedback – Creative Partner",
+                "form_title": "TTA Project Feedback â€“ Creative Partner",
                 "form_description": "Shared after final delivery and payment confirmation.",
                 "google_form_link": "",
                 "project_name": case["title"],
@@ -4821,8 +5197,8 @@ def make_v3_router(db):
             "business_case_id": bc_id,
             "status": "ready_for_brand",
             "generated_at": _now_iso(),
-            "brand_header": f"{brand_name.split(' ')[0].upper()}{' × ' + creator_name.upper() if creator else ''} × TASCK",
-            "title": f"{case['title']} — Final Campaign Report",
+            "brand_header": f"{brand_name.split(' ')[0].upper()}{' Ã— ' + creator_name.upper() if creator else ''} Ã— TASCK",
+            "title": f"{case['title']} â€” Final Campaign Report",
             "summary": (
                 f"{case['title']} delivered {len(approved)} of {len(deliverables)} contracted milestones."
                 f" KPI performance compared against the Strategy Snapshot targets is summarised below, alongside the closure checklist."
@@ -4882,7 +5258,7 @@ def make_v3_router(db):
         campaign_types: List[str] = Field(default_factory=lambda: ["brand ambassador program", "celebrity partnership", "celebrity endorsement deal", "brand partnership opportunity", "influencer campaign open application", "creator campaign"])
         recency: str = "past_year"
         result_limit: int = 10
-        # v3.3 Addendum — multi-source fan-out controls
+        # v3.3 Addendum â€” multi-source fan-out controls
         enabled_sources: Optional[List[str]] = None  # e.g. ["google_web", "google_news", "linkedin", "trade_press"]
         hot_ratio: float = 0.6  # fraction of the 16 calls that should use HOT (past-month) recency
         per_source_limit: int = 10  # results per SerpAPI call
@@ -4931,7 +5307,7 @@ def make_v3_router(db):
                 if (row.get("pipeline_state") or "") in (
                     "reviewing", "outreach_sent", "meeting_booked", "won"
                 ):
-                    # Once an RM has actioned a card, leave it alone — the gate
+                    # Once an RM has actioned a card, leave it alone â€” the gate
                     # only governs the unreviewed "new" queue.
                     kept.append(row)
                     continue
@@ -4945,7 +5321,7 @@ def make_v3_router(db):
             key=lambda item: (
                 # v3.3: prefer real-brand cards (partner_name set)
                 (item.get("partner_name") is None and item.get("brand_name") is None),
-                # Dedupe addendum §10: signal_strength desc
+                # Dedupe addendum Â§10: signal_strength desc
                 -int(item.get("signal_strength") or item.get("confidence_score") or 0),
                 # HOT before PIPELINE
                 0 if (item.get("freshness_bucket") or "") == "hot" else 1,
@@ -4964,7 +5340,7 @@ def make_v3_router(db):
         flips it to `dismissed_auto` if it would fail today's visibility gate.
 
         - Actioned rows (reviewing / outreach_sent / meeting_booked / won) are
-          left untouched — manual decisions always win.
+          left untouched â€” manual decisions always win.
         - `dry_run=true` returns what would change without writing.
         - Idempotent: safe to call repeatedly.
         """
@@ -5006,7 +5382,7 @@ def make_v3_router(db):
 
     @router.get("/opportunities/pipeline-counts")
     async def opportunity_pipeline_counts():
-        """v3.3 — counters bar at top of Tracker page."""
+        """v3.3 â€” counters bar at top of Tracker page."""
         states = ["new", "reviewing", "outreach_sent", "meeting_booked", "won", "dismissed", "dismissed_auto"]
         result: Dict[str, int] = {}
         for s in states:
@@ -5539,7 +5915,7 @@ Produce the opportunity card JSON.
             "dedupe_key": f"{_slug(brand_name)}::{_slug(campaign_name)}",
         }
 
-    # v3.3 Addendum — cost telemetry constants
+    # v3.3 Addendum â€” cost telemetry constants
     SERPAPI_USD_PER_CALL = 0.01      # SerpAPI Developer plan: $50 / 5000 = $0.01/call
     LLM_USD_PER_CALL = 0.003          # Claude Sonnet 4.5: avg 1500 input + 500 output tokens
 
@@ -5584,7 +5960,7 @@ Produce the opportunity card JSON.
             "error": None,
         }
         if prebuilt_scan_id:
-            # Async path — row already exists, just update with the running shape
+            # Async path â€” row already exists, just update with the running shape
             await db.v3_opportunity_scans.update_one({"id": scan_id}, {"$set": scan})
         else:
             await db.v3_opportunity_scans.insert_one({**scan})
@@ -5615,7 +5991,7 @@ Produce the opportunity card JSON.
         llm_configured = scan["extraction_method"] == "llm"
         first_attempt_plans = list(plans)
 
-        # ---- One attempt — runs the existing fan-out → persist pipeline ----
+        # ---- One attempt â€” runs the existing fan-out â†’ persist pipeline ----
         async def _execute_attempt(attempt_plans: List[Dict[str, Any]], per_call_limit: int, attempt_num: int) -> int:
             """Execute one fan-out attempt. Returns the number of visible cards added.
             Mutates: diagnostics, all_seen_urls, existing_rows, candidates."""
@@ -5655,13 +6031,13 @@ Produce the opportunity card JSON.
                     )
                     return {"plan": plan, "raw": data, "error": data.get("error")}
                 except Exception as exc:
-                    logger.warning("[SerpAPI fan-out a%d] call failed: %s — %s", attempt_num, plan["source_key"], exc)
+                    logger.warning("[SerpAPI fan-out a%d] call failed: %s â€” %s", attempt_num, plan["source_key"], exc)
                     return {"plan": plan, "raw": {}, "error": str(exc)}
 
             fanout_results = await asyncio.gather(*[_serpapi_one(p) for p in attempt_plans])
             diagnostics["serpapi_calls_total"] += len(attempt_plans)
 
-            # Pool + tag — skip URLs already seen in any previous attempt
+            # Pool + tag â€” skip URLs already seen in any previous attempt
             all_items: List[Dict[str, Any]] = []
             for result in fanout_results:
                 plan = result["plan"]
@@ -5711,7 +6087,7 @@ Produce the opportunity card JSON.
                 survivors.append(item)
             diagnostics["pass_1_survivors"] += len(survivors)
 
-            # Cap LLM volume per attempt (round-robin across source × freshness)
+            # Cap LLM volume per attempt (round-robin across source Ã— freshness)
             MAX_LLM_CALLS = 40
             if len(survivors) > MAX_LLM_CALLS:
                 buckets: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
@@ -5730,7 +6106,7 @@ Produce the opportunity card JSON.
                             attempt_num, len(survivors) - len(balanced), MAX_LLM_CALLS)
                 survivors = balanced
 
-            # ---- Pass 2 — parallel LLM enrichment -----------------------------
+            # ---- Pass 2 â€” parallel LLM enrichment -----------------------------
             llm_concurrency = 6
             sem = asyncio.Semaphore(llm_concurrency)
 
@@ -5827,7 +6203,7 @@ Produce the opportunity card JSON.
                         candidate["pipeline_state"] = "dismissed_auto"
                         candidate["dismissal_reason"] = reason
                         attempt_dismissed += 1
-                        logger.info("[Tracker visibility gate a%d] dismiss %s — %s",
+                        logger.info("[Tracker visibility gate a%d] dismiss %s â€” %s",
                                     attempt_num, (candidate.get("partner_name") or "?")[:40], reason)
 
                 raw_batch.append(candidate)
@@ -5918,7 +6294,7 @@ Produce the opportunity card JSON.
             )
             return attempt_visible_added
 
-        # ---- Attempt 0 — user's initial plans ---------------------------------
+        # ---- Attempt 0 â€” user's initial plans ---------------------------------
         per_call_limit = max(1, min(int(payload.template.per_source_limit or 10), 20))
         await _execute_attempt(first_attempt_plans, per_call_limit, attempt_num=0)
 
@@ -5953,7 +6329,7 @@ Produce the opportunity card JSON.
             added = await _execute_attempt(topup_plans, override_limit, attempt_num=topup_num)
             if added == 0:
                 diagnostics["top_up_reason"] = "no_new_unique_results"
-                # Don't break — try the next strategy. Different broadening axes
+                # Don't break â€” try the next strategy. Different broadening axes
                 # can still surface fresh content even if one fails.
                 continue
         else:
@@ -6021,13 +6397,13 @@ Produce the opportunity card JSON.
           scan continues in the background. Poll `GET /opportunities/scans/{scan_id}`
           for completion. This avoids the 60s Kubernetes ingress timeout on slower
           full-fan-out runs.
-        - `?wait=true`: legacy synchronous mode — blocks until the scan completes
+        - `?wait=true`: legacy synchronous mode â€” blocks until the scan completes
           and returns the full {scan, candidates} payload. Used by pytest.
         """
         if wait:
             return await run_opportunity_scan(payload)
 
-        # Async mode — pre-create the scan row so the caller can poll immediately.
+        # Async mode â€” pre-create the scan row so the caller can poll immediately.
         api_key = os.getenv("SERPAPI_API_KEY")
         if not api_key:
             load_dotenv(Path(__file__).with_name(".env"))
@@ -6073,7 +6449,7 @@ Produce the opportunity card JSON.
                 )
 
         asyncio.create_task(_run_in_background())
-        # Return the queued shell — frontend polls /opportunities/scans/{scan_id}
+        # Return the queued shell â€” frontend polls /opportunities/scans/{scan_id}
         return {"scan": scan_row, "candidates": [], "async": True}
 
     @router.get("/opportunities/scans/{scan_id}")
@@ -6272,7 +6648,7 @@ Produce the opportunity card JSON.
                 "last_interaction": "just now",
                 "engagement_track_default": "paid",
                 "source": "serpapi_opportunity_scanner",
-                # v3.3 Family A — brand context fields
+                # v3.3 Family A â€” brand context fields
                 "key_marketing_focus": candidate.get("key_marketing_focus"),
                 "primary_target_audience": candidate.get("primary_target_audience"),
                 "key_marketing_channels": candidate.get("key_marketing_channels"),
@@ -6292,10 +6668,10 @@ Produce the opportunity card JSON.
                 "linkedin": contact_linkedin,
                 "is_primary": True,
                 "decision_seniority": "lead",
-                "connect_status": "Stranger",  # v3.3 default per spec §2
+                "connect_status": "Stranger",  # v3.3 default per spec Â§2
             })
         else:
-            # v3.3 — apply Family A fields to existing brand (only overwrite empty values)
+            # v3.3 â€” apply Family A fields to existing brand (only overwrite empty values)
             family_a_updates: Dict[str, Any] = {}
             for key in [
                 "key_marketing_focus", "primary_target_audience", "key_marketing_channels",
@@ -6325,7 +6701,7 @@ Produce the opportunity card JSON.
                     "connect_status": "Stranger",
                 })
             elif not existing_contact.get("connect_status"):
-                # v3.3 — ensure the primary contact carries a Stranger status
+                # v3.3 â€” ensure the primary contact carries a Stranger status
                 await db.v3_contacts.update_one(
                     {"id": existing_contact["id"]},
                     {"$set": {"connect_status": "Stranger"}},
@@ -6387,7 +6763,7 @@ Produce the opportunity card JSON.
                     "source_title": source_title,
                     "connect_status": "new_lead",
                     "stated_intent": candidate.get("why_this_matters") or candidate.get("pain_point") or "",
-                    # v3.3 — seed Frame Alignment Snapshot and pre-load outreach
+                    # v3.3 â€” seed Frame Alignment Snapshot and pre-load outreach
                     "outreach_angle": candidate.get("outreach_angle") or candidate.get("suggested_opportunity_angle") or "",
                     "suggested_outreach": candidate.get("outreach_draft") or "",
                     "intelligence": {
@@ -6486,12 +6862,12 @@ Produce the opportunity card JSON.
 
     @router.post("/opportunities/candidates/{candidate_id}/transition")
     async def transition_opportunity_candidate(candidate_id: str, payload: OpportunityTransitionPayload):
-        """v3.3 — move a candidate through the Tracker's internal pipeline."""
+        """v3.3 â€” move a candidate through the Tracker's internal pipeline."""
         candidate = await db.v3_opportunity_candidates.find_one({"id": candidate_id}, {"_id": 0})
         if not candidate:
             raise HTTPException(404, "Opportunity candidate not found")
         if candidate.get("status") in {"accepted", "rejected"}:
-            raise HTTPException(400, f"Candidate already {candidate.get('status')} — cannot transition.")
+            raise HTTPException(400, f"Candidate already {candidate.get('status')} â€” cannot transition.")
         ts = _now_iso()
         set_fields = {"pipeline_state": payload.to_state, "updated_at": ts}
         if payload.to_state == "outreach_sent":
@@ -6874,6 +7250,8 @@ Produce the opportunity card JSON.
             connect_now = _now_iso()
             case_updates = {
                 "connect.connect_status": "business_call_scheduled" if payload.scheduled_for else "needs_business_call",
+                "connect.status_updated_at": connect_now,
+                "connect.updated_at": connect_now,
                 "connect.latest_meeting_id": mid,
                 "updated_at": connect_now,
             }
@@ -6980,7 +7358,7 @@ Produce the opportunity card JSON.
         readiness += 10 if "audience" in lower or "consumer" in lower or "buyer" in lower else 0
         readiness += 10 if any(c.lower() in lower for c in ["instagram", "tiktok", "youtube", "x", "ooh", "tv", "radio", "events", "retail"]) else 0
         readiness += 10 if any(k.lower() in lower for k in ["kpi", "reach", "engagement", "lift", "conversion", "sales", "leads"]) else 0
-        readiness += 10 if any(b.lower() in lower for b in ["budget", "fee", "rate", "naira", "₦", "$"]) else 0
+        readiness += 10 if any(b.lower() in lower for b in ["budget", "fee", "rate", "naira", "â‚¦", "$"]) else 0
         readiness += 10 if "decision" in lower or "approve" in lower or "authority" in lower else 0
         readiness += 15 if len(text) >= 400 else (10 if len(text) >= 200 else 0)
         readiness += 25 if len(text) >= 800 else 0
@@ -6993,13 +7371,13 @@ Produce the opportunity card JSON.
                 ("Target audience", ["audience", "consumer", "buyer"]),
                 ("Channels", ["instagram", "tiktok", "youtube", "channel", "events", "retail"]),
                 ("KPIs", ["kpi", "metric", "reach", "engagement", "conversion", "sales", "leads"]),
-                ("Budget", ["budget", "fee", "naira", "₦", "$"]),
+                ("Budget", ["budget", "fee", "naira", "â‚¦", "$"]),
                 ("Timeline", ["timeline", "date", "launch", "deadline"]),
                 ("Decision maker", ["decision", "approve", "authority"]),
             ]
         elif meeting_type in {"creator_fit", "creator_briefing"}:
             required = [
-                ("Creator fee", ["fee", "rate", "budget", "naira", "₦", "$"]),
+                ("Creator fee", ["fee", "rate", "budget", "naira", "â‚¦", "$"]),
                 ("Availability", ["available", "availability", "schedule", "timeline"]),
                 ("Deliverables", ["deliverable", "post", "video", "content"]),
                 ("Usage rights", ["usage", "rights", "license"]),
@@ -7022,7 +7400,7 @@ Produce the opportunity card JSON.
                 ("Marketing challenge", ["challenge", "problem", "objective", "goal"]),
                 ("Channels", ["instagram", "tiktok", "youtube", "x", "events", "retail", "channel"]),
                 ("KPIs", ["kpi", "metric", "reach", "engagement", "conversion", "sales", "leads"]),
-                ("Budget", ["budget", "fee", "naira", "₦", "$"]),
+                ("Budget", ["budget", "fee", "naira", "â‚¦", "$"]),
                 ("Timeline", ["timeline", "date", "launch", "deadline"]),
                 ("Decision maker", ["decision", "approve", "authority"]),
             ]
@@ -7096,7 +7474,7 @@ Produce the opportunity card JSON.
             ("creator_briefing", "decline"): "Decline Creator for This Project",
         }.get((meeting_type, ai_recommendation), ai_recommendation.replace("_", " ").title())
         creator_intelligence = {
-            "fee_context": "Captured" if any(word in lower for word in ["fee", "rate", "budget", "naira", "₦", "$"]) else "Missing",
+            "fee_context": "Captured" if any(word in lower for word in ["fee", "rate", "budget", "naira", "â‚¦", "$"]) else "Missing",
             "availability_context": "Captured" if any(word in lower for word in ["available", "availability", "schedule", "timeline"]) else "Missing",
             "rights_context": "Captured" if any(word in lower for word in ["usage", "rights", "license", "exclusive"]) else "Missing",
             "contact_context": "Captured" if any(word in lower for word in ["email", "phone", "whatsapp", "manager"]) else "Missing",
@@ -7133,10 +7511,10 @@ Produce the opportunity card JSON.
             "missingContext": missing,
             "followUpQuestions": next_questions,
             "ai_outputs": [
-                f"Key marketing focus → {mi['key_marketing_focus']}",
-                f"Primary target audience → {mi['primary_target_audience']}",
-                f"Channels → {', '.join(mi['key_marketing_channels'])}",
-                f"KPIs → {', '.join(k['kpi'] for k in mi['marketing_kpis'])}",
+                f"Key marketing focus â†’ {mi['key_marketing_focus']}",
+                f"Primary target audience â†’ {mi['primary_target_audience']}",
+                f"Channels â†’ {', '.join(mi['key_marketing_channels'])}",
+                f"KPIs â†’ {', '.join(k['kpi'] for k in mi['marketing_kpis'])}",
             ],
             "marketing_intelligence": mi,
             "generated_at": _now_iso(),
@@ -7166,6 +7544,8 @@ Produce the opportunity card JSON.
                         "connect.marketing_intelligence": mi,
                         "connect.stated_intent": mi.get("key_marketing_focus"),
                         "connect.connect_status": "in_discovery",
+                        "connect.status_updated_at": now,
+                        "connect.updated_at": now,
                         "connect.latest_meeting_id": meeting_id,
                         "updated_at": now,
                     },
@@ -7323,7 +7703,7 @@ Produce the opportunity card JSON.
                     body=(
                         f"Hello {creator.get('name') or 'there'},\n\n"
                         "Your TASCK creator profile has been approved.\n\n"
-                        "Creator Portal: /v3/creator\n"
+                        "Creator Portal: /creator\n"
                         "Temporary login details will be issued by TASCK operations.\n\n"
                         "You can review briefs, contracts, deliverables, final reports, and messages in the Creator Portal."
                     ),
@@ -7475,6 +7855,8 @@ Produce the opportunity card JSON.
                 "source": "business_call",
                 "source_meeting_id": meeting_id,
                 "connect_status": "qualified_to_frame",
+                "status_updated_at": now,
+                "updated_at": now,
                 "stated_intent": analysis.get("summary") or meeting.get("agenda") or "",
                 "transcript": meeting.get("transcript", ""),
                 "analysis": analysis,
@@ -7776,6 +8158,8 @@ Produce the opportunity card JSON.
                     "stage": "frame",
                     "connect.source": payload.source,
                     "connect.connect_status": "qualified_to_frame",
+                    "connect.status_updated_at": now,
+                    "connect.updated_at": now,
                     "connect.transcript": transcript,
                     "connect.analysis": analysis,
                     "connect.marketing_intelligence": marketing_intelligence,
@@ -7949,7 +8333,7 @@ Produce the opportunity card JSON.
 
     @router.post("/admin/import-crm-workbook")
     async def import_crm_workbook_endpoint():
-        """Run the workbook importer. Idempotent — safe to call repeatedly."""
+        """Run the workbook importer. Idempotent â€” safe to call repeatedly."""
         from v3_workbook_import import import_crm_workbook
         result = await import_crm_workbook(db)
         if not result.get("success"):
@@ -8003,7 +8387,7 @@ Produce the opportunity card JSON.
         seed = get_v3_seed_data()
         for collection_name in seed.keys():
             await db[collection_name].delete_many({})
-        # v3.3 — also wipe Tracker collections so demo runs start clean
+        # v3.3 â€” also wipe Tracker collections so demo runs start clean
         tracker_collections = [
             "v3_opportunity_candidates",
             "v3_opportunity_scans",
@@ -8112,5 +8496,3 @@ Produce the opportunity card JSON.
         }
 
     return router
-
-

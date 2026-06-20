@@ -22,6 +22,7 @@ import V2Placeholder from './pages/v2/V2Placeholder';
 // V3 Layout + Pages
 import V3Layout from './components/v3/V3Layout';
 import V1AdminLayout from './pages/admin/V1AdminLayout';
+import V1PortalLayout from './components/v1/V1PortalLayout';
 import V3RoleSelector from './pages/v3/V3RoleSelector';
 import V3Placeholder from './pages/v3/V3Placeholder';
 import V3AdminOverview from './pages/v3/admin/V3AdminOverview';
@@ -119,6 +120,7 @@ import V3BrandMessages from './pages/v3/brand/V3BrandMessages';
 import V3BrandSettings from './pages/v3/brand/V3BrandSettings';
 import V3BrandChangePassword from './pages/v3/brand/V3BrandChangePassword';
 import V3BrandLogin from './pages/v3/brand/V3BrandLogin';
+import V1BrandLogin from './pages/brand/V1BrandLogin';
 
 // V3 Creator Portal Pages
 import V3CreatorOverview from './pages/v3/creator/V3CreatorOverview';
@@ -129,6 +131,7 @@ import V3CreatorWallet from './pages/v3/creator/V3CreatorWallet';
 import V3CreatorProfile from './pages/v3/creator/V3CreatorProfile';
 import V3CreatorMessages from './pages/v3/creator/V3CreatorMessages';
 import V3CreatorSettings from './pages/v3/creator/V3CreatorSettings';
+import V1CreatorLogin from './pages/creative/V1CreatorLogin';
 
 // V1 Role Selector
 import V1RoleSelector from './pages/v1/V1RoleSelector';
@@ -290,10 +293,10 @@ function AppRoutes() {
         <Route path="settings" element={<SettingsPage />} />
       </Route>
 
-      <Route path="/brand/login" element={<V3BrandLogin />} />
+      <Route path="/brand/login" element={<V1BrandLogin />} />
 
       {/* Brand Portal */}
-      <Route path="/brand" element={<V3Layout portal="brand" />}>
+      <Route path="/brand" element={<V1PortalLayout portal="brand" />}>
         <Route index element={<V3BrandOverview />} />
         <Route path="projects" element={<V3BrandProjects />} />
         <Route path="projects/:id" element={<V3BrandProjectDetail />} />
@@ -305,6 +308,20 @@ function AppRoutes() {
         <Route path="change-password" element={<V3BrandChangePassword />} />
       </Route>
 
+      <Route path="/creator/login" element={<V1CreatorLogin />} />
+
+      {/* V1 Creator Portal */}
+      <Route path="/creator" element={<V1PortalLayout portal="creator" />}>
+        <Route index element={<V3CreatorOverview />} />
+        <Route path="briefs" element={<V3CreatorBriefs />} />
+        <Route path="briefs/:id" element={<V3CreatorBriefs />} />
+        <Route path="projects" element={<V3CreatorProjects />} />
+        <Route path="deliverables" element={<V3CreatorDeliverables />} />
+        <Route path="wallet" element={<V3CreatorWallet />} />
+        <Route path="profile" element={<V3CreatorProfile />} />
+        <Route path="messages" element={<V3CreatorMessages />} />
+        <Route path="settings" element={<V3CreatorSettings />} />
+      </Route>
       {/* Super Creative Portal */}
       <Route 
         path="/super-creative" 

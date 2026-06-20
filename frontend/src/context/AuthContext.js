@@ -47,6 +47,14 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const completeLogin = ({ user: userData, token: userToken }) => {
+    setUser(userData);
+    setToken(userToken);
+    localStorage.setItem('tasck_user', JSON.stringify(userData));
+    localStorage.setItem('tasck_token', userToken);
+    return userData;
+  };
+
   const logout = () => {
     setUser(null);
     setToken(null);
@@ -59,6 +67,7 @@ export const AuthProvider = ({ children }) => {
     token,
     loading,
     login,
+    completeLogin,
     logout,
     isAuthenticated: !!user
   };
