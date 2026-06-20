@@ -616,10 +616,23 @@ app.include_router(api_router)
 app.include_router(v3_router)
 
 # CORS
+_default_cors_origins = [
+    "http://localhost:7159",
+    "http://localhost:3000",
+    "https://thcodemo.space",
+    "https://www.thcodemo.space",
+    "https://tasck-live-demo-1.emergent.host",
+    "https://tasck-live-demo-1.preview.emergentagent.com",
+]
+_env_cors_origins = [origin.strip() for origin in os.environ.get('CORS_ORIGINS', '').split(',') if origin.strip()]
+allow_origins = list(dict.fromkeys(_env_cors_origins + _default_cors_origins))
+if '*' in _env_cors_origins:
+    allow_origins = ['*']
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=allow_origins,
+    allow_origin_regex=r"https://.*\.(?:emergent\.host|emergentagent\.com)$",
     allow_methods=["*"],
     allow_headers=["*"],
 )

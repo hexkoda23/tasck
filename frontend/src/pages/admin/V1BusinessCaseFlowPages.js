@@ -121,7 +121,10 @@ const valueFrom = (record, keys) => {
 };
 
 const humanStatus = (value) => String(value || 'needs_business_call')
-  .replace(/_/g, ' ')
+  .replace(/[_-]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .replace(/\b(crm|ai|kpi|cta|rm)\b/gi, (match) => match.toUpperCase())
   .replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 const formatDateTime = (value) => {
@@ -1945,7 +1948,7 @@ export const V3BusinessCaseFrameAdminReview = () => {
                 <div className="flex items-center gap-2 mb-2">
                   <MessageSquare className="w-4 h-4 text-[#C47A1A]" />
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
-                  {c.status && <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${c.status === 'open' ? 'bg-[#FDEBD0] text-[#C47A1A] border border-[#E8A33A]' : 'bg-[#E8F5ED] text-[#2E7D5B] border border-[#2E7D5B]'}`}>{c.status}</span>}
+                  {c.status && <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${c.status === 'open' ? 'bg-[#FDEBD0] text-[#C47A1A] border border-[#E8A33A]' : 'bg-[#E8F5ED] text-[#2E7D5B] border border-[#2E7D5B]'}`}>{humanStatus(c.status)}</span>}
                 </div>
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">
                   Re: <strong className="text-[#4F3E2F]">{c.quoted_text || 'Snapshot section'}</strong>
@@ -2701,12 +2704,11 @@ export const V3BusinessCasePlanBrief = () => {
       <InfoCard title="Next Plan page">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <p className="text-[13px] text-[#6E6657]">
-            {allBriefsSent ? 'All selected creator briefs have been sent. Open the Strategy Snapshot that will be prepared for the brand.' : 'Send every selected creator brief before opening the Strategy Snapshot page.'}
+            {allBriefsSent ? 'All selected creator briefs have been sent. Open the Strategy Snapshot that will be prepared for the brand.' : 'Open the Strategy Snapshot now, then send creator briefs when they are ready.'}
           </p>
           <button
             onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/strategy-snapshot`))}
-            disabled={!allBriefsSent}
-            className="v3-btn-primary disabled:cursor-not-allowed disabled:opacity-50"
+            className="v3-btn-primary"
             data-testid="brief-open-strategy-snapshot-btn"
           >
             <ArrowRight className="w-3.5 h-3.5" /> Open Strategy Snapshot
@@ -3111,9 +3113,9 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
         ) : (
           <div className="space-y-4 rounded-[8px] border border-[#E8E4DB] bg-[#FBFAF7] p-4" data-testid="strategy-snapshot-preview">
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Status: {snapshot.status || 'draft'}</p>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Status: {humanStatus(snapshot.status || 'draft')}</p>
               <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{snapshot.title || 'Strategy Snapshot'}</h3>
-              <p className="mt-1 text-[11px] text-[#8A8A8A]">Template: {snapshot.template_name || 'Copy of Updated Creative Strategy Template_.docx'}</p>
+              <p className="mt-1 text-[11px] text-[#8A8A8A]">Template: {cleanV1Text(snapshot.template_name || 'Copy of Updated Creative Strategy Template.docx').replace(/_/g, ' ')}</p>
             </div>
             {strategySectionsForPreview(snapshot).map((section, index) => (
               <StrategySectionPreview key={`${section.heading || 'strategy-section'}-${index}`} section={section} />
@@ -3193,8 +3195,8 @@ export const V3BusinessCaseDeliverySummary = () => {
             <p className="mt-1 text-[11px] text-[#6E6657]">Current value: {projectValue ? formatNairaV3(projectValue) : 'Not approved yet'}</p>
             {valueNotice && <p className="mt-1 text-[11px] text-[#1F4A3A]">{valueNotice}</p>}
           </div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{cleanV1Text(bc.engagement_track || '-')}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Stage</span>{cleanV1Text(bc.stage)}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{humanStatus(bc.engagement_track || '-')}</div>
+          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Stage</span>{humanStatus(bc.stage)}</div>
         </div>
       </InfoCard>
       <InfoCard title="Brand details">
@@ -3369,7 +3371,7 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
           ) : (
             <p className="text-[14px] font-semibold text-[#1A1A1A]">{cleanV1Text(contract.title || contract.template)}</p>
           )}
-          <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {cleanV1Text(contract.status)} | Template: {cleanV1Text(contract.template)}{contract.signed_at ? ` | Signed at ${contract.signed_at}` : ''}</p>
+          <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {humanStatus(contract.status)} | Template: {humanStatus(contract.template)}{contract.signed_at ? ` | Signed at ${contract.signed_at}` : ''}</p>
         </div>
         <div className="flex flex-wrap gap-2 items-center">
           {editing ? (
@@ -3626,7 +3628,7 @@ export const V3BusinessCaseDeliverables = () => {
                       <span className="rounded bg-[#F4F2EC] px-2 py-1">Timeframe: {row.delivery_timeframe || 'Not recorded'}</span>
                     </div>
                   </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657] uppercase tracking-wider">{row.status}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657] uppercase tracking-wider">{humanStatus(row.status)}</span>
                 </div>
               </div>
             ))}
@@ -3934,7 +3936,7 @@ export const V3BusinessCaseFinalReport = () => {
                 ) : (
                   <h3 className="text-[18px] font-semibold text-[#1A1A1A] mt-0.5" style={{ fontFamily: "'Fraunces', serif" }}>{cleanV1Text(report.title)}</h3>
                 )}
-                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {cleanV1Text(report.status)}  | Generated {report.generated_at?.slice(0, 19)?.replace('T', ' ')}{reportSent ? `  | Sent ${report.report_sent_at?.slice(0, 19)?.replace('T', ' ')}` : ''}</p>
+                <p className="text-[11px] text-[#8A8A8A] mt-1">Status: {humanStatus(report.status)}  | Generated {report.generated_at?.slice(0, 19)?.replace('T', ' ')}{reportSent ? `  | Sent ${report.report_sent_at?.slice(0, 19)?.replace('T', ' ')}` : ''}</p>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 {editingReport ? (

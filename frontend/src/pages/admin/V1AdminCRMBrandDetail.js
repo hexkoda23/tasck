@@ -108,6 +108,16 @@ const textValue = (value) => {
   return cleanV1Text(value);
 };
 
+const statusLabel = (value, fallback = EMPTY_VALUE) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  return cleanV1Text(value)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b(crm|ai|kpi|cta|rm)\b/gi, (match) => match.toUpperCase())
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+};
+
 const shortText = (value) => {
   const text = textValue(value);
   if (text === EMPTY_VALUE || text.length <= SCALAR_FIELD_LIMIT) return text;
@@ -484,8 +494,8 @@ const V1AdminCRMBrandDetail = () => {
               <h1 className="v3-heading mt-1 text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)}</h1>
               <p className="mt-1 text-[13px] text-[#6E6657]">{brandIndustry(brand)}</p>
               <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-                <span className="rounded bg-[#DDE7E2] px-2 py-1 text-[#1F4A3A]">{textValue(brand.status || 'CRM visible')}</span>
-                <span className="rounded bg-[#F4F2EC] px-2 py-1 text-[#4F3E2F]">Source: {textValue(brand.source || brand.lead_source || 'V3 CRM')}</span>
+                <span className="rounded bg-[#DDE7E2] px-2 py-1 text-[#1F4A3A]">{statusLabel(brand.status || 'CRM visible')}</span>
+                <span className="rounded bg-[#F4F2EC] px-2 py-1 text-[#4F3E2F]">Source: {statusLabel(brand.source || brand.lead_source || 'V3 CRM')}</span>
               </div>
             </div>
           </div>
@@ -513,6 +523,12 @@ const V1AdminCRMBrandDetail = () => {
             let displayVal = rawVal;
             if (['Created', 'Updated', 'CRM accepted at'].includes(label)) {
               displayVal = formatDateTime(rawVal);
+            }
+            if (label === 'CRM status') {
+              displayVal = statusLabel(rawVal, 'CRM Visible');
+            }
+            if (label === 'Source') {
+              displayVal = statusLabel(rawVal, 'V3 CRM');
             }
             
             return <DetailRow key={label} label={label} value={displayVal} />;
@@ -686,7 +702,7 @@ const V1AdminCRMBrandDetail = () => {
               <SmallRecord
                 key={item.id || index}
                 title={item.title || item.company || item.brand_name || `Source record ${index + 1}`}
-                subtitle={item.source || item.status || item.created_at}
+                subtitle={statusLabel(item.source, '') || statusLabel(item.status, '') || item.created_at}
                 body={item.summary || item.about || item.description || item.notes || item.reason}
                 href={item.url || item.website || item.source_url}
               />
@@ -714,7 +730,7 @@ const V1AdminCRMBrandDetail = () => {
               {businessCases.map((businessCase) => (
                 <button key={businessCase.id} type="button" onClick={() => navigate(businessCasePhasePath(businessCase.id, businessCase))} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-left hover:border-[#1F4A3A]">
                   <div className="flex items-center gap-2 text-[13px] font-medium text-[#1A1A1A]"><BriefcaseBusiness className="h-4 w-4 text-[#1F4A3A]" /> {businessCase.title || 'Business Case'}</div>
-                  <p className="mt-1 text-[11px] text-[#8A8A8A]">Stage: {businessCase.stage_label || businessCase.stage || EMPTY_VALUE}</p>
+                  <p className="mt-1 text-[11px] text-[#8A8A8A]">Stage: {businessCase.stage_label || statusLabel(businessCase.stage)}</p>
                 </button>
               ))}
             </div>
@@ -728,7 +744,7 @@ const V1AdminCRMBrandDetail = () => {
         <InfoCard title="Interactions">
           {interactions.length ? (
             <div className="grid gap-2">
-              {interactions.slice(0, 8).map((interaction, index) => <SmallRecord key={interaction.id || index} title={interaction.title || interaction.type || 'Interaction'} subtitle={[formatDateTime(interaction.date_iso || interaction.created_at), interaction.author].filter(Boolean).join(' | ')} body={interaction.content || interaction.summary || interaction.next_action} />)}
+              {interactions.slice(0, 8).map((interaction, index) => <SmallRecord key={interaction.id || index} title={interaction.title || statusLabel(interaction.type, 'Interaction')} subtitle={[formatDateTime(interaction.date_iso || interaction.created_at), interaction.author].filter(Boolean).join(' | ')} body={interaction.content || interaction.summary || interaction.next_action} />)}
             </div>
           ) : (
             <p className="text-[13px] text-[#8A8A8A]">No interactions recorded yet.</p>
@@ -740,7 +756,7 @@ const V1AdminCRMBrandDetail = () => {
             <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]">
               <div className="mb-2 flex items-center gap-2 font-semibold text-[#1A1A1A]"><User className="h-4 w-4 text-[#1F4A3A]" /> Brand portal account</div>
               <p className="text-[#5C5C5C]">Username: {account?.username || EMPTY_VALUE}</p>
-              <p className="text-[#5C5C5C]">Status: {account?.status || EMPTY_VALUE}</p>
+              <p className="text-[#5C5C5C]">Status: {statusLabel(account?.status)}</p>
             </div>
             <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]" data-testid="brand-deliverables-panel">
               <button type="button" onClick={() => setDeliverablesOpen((open) => !open)} className="flex w-full items-center justify-between gap-3 text-left" data-testid="brand-deliverables-toggle">
@@ -753,14 +769,14 @@ const V1AdminCRMBrandDetail = () => {
                     <SmallRecord
                       key={row.id}
                       title={row.title || 'Deliverable'}
-                      subtitle={[row.status, formatDeliverableSchedule(row), row.delivery_timeframe].filter(Boolean).join(' | ')}
+                      subtitle={[statusLabel(row.status, ''), formatDeliverableSchedule(row), row.delivery_timeframe].filter(Boolean).join(' | ')}
                       body={[row.notes, row.created_at ? `Added: ${formatDateTime(row.created_at)}` : ''].filter(Boolean).join('\n')}
                     />
                   )) : <p className="text-[13px] text-[#8A8A8A]">No deliverables have been added for this brand yet.</p>}
                 </div>
               )}
             </div>
-            {visibleEmails.slice(0, 4).map((email, index) => <SmallRecord key={email.id || index} title={email.subject || 'Queued email'} subtitle={[email.to, email.status, email.duplicate_count > 1 ? `${email.duplicate_count} duplicate sends collapsed` : ''].filter(Boolean).join(' | ')} body={email.body} />)}
+            {visibleEmails.slice(0, 4).map((email, index) => <SmallRecord key={email.id || index} title={email.subject || 'Queued email'} subtitle={[email.to, statusLabel(email.status, ''), email.duplicate_count > 1 ? `${email.duplicate_count} duplicate sends collapsed` : ''].filter(Boolean).join(' | ')} body={email.body} />)}
           </div>
         </InfoCard>
       </div>
@@ -780,7 +796,7 @@ const V1AdminCRMBrandDetail = () => {
             </div>
             <div className="rounded-[8px] border border-[#E8E4DB] bg-[#FAFAF7] p-3 text-[12px]">
               <p className="font-semibold text-[#1A1A1A]">{activeBusinessCase.title || 'Business Case'}</p>
-              <p className="mt-1 text-[#6E6657]">Stage: {activeBusinessCase.stage || EMPTY_VALUE}</p>
+              <p className="mt-1 text-[#6E6657]">Stage: {statusLabel(activeBusinessCase.stage)}</p>
               <p className="mt-1 text-[#8A8A8A]">Updated: {formatDateTime(activeBusinessCase.updated_at || activeBusinessCase.created_at)}</p>
             </div>
             <label className="mt-4 block text-[10px] uppercase tracking-wider text-[#8A8A8A]">

@@ -106,9 +106,16 @@ def _country_to_gl(country: str) -> str:
 
 
 def _fallback_creator_email(creator: Dict[str, Any]) -> str:
-    email = creator.get("email") or creator.get("manager_email")
+    email = (
+        creator.get("email")
+        or creator.get("contact_email")
+        or creator.get("creator_email")
+        or creator.get("manager_email")
+        or creator.get("business_email")
+        or creator.get("public_email")
+    )
     if email:
-        return email
+        return str(email).strip().lower()
     return f"{_slug(creator.get('name', 'creator'))}@creator.tasck.local"
 
 
@@ -3249,6 +3256,7 @@ def make_v3_router(db):
         if not creator:
             raise HTTPException(404, "Creator not found")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        project_title = _clean_document_text(case.get("title") or "Creative Brief", "Creative Brief")
         cb_id = f"cb-{uuid.uuid4().hex[:8]}"
         creator_email = _fallback_creator_email(creator)
         doc = {
