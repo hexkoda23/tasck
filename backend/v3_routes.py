@@ -88,7 +88,7 @@ def _brand_logo_from_source(source_url: str, raw_logo: Any = None) -> str:
             logo = f"https://{domain}{logo}"
         return logo[:500]
     if domain:
-        return f"https://logo.clearbit.com/{domain}"
+        return f"https://www.google.com/s2/favicons?sz=256&domain_url=https://{domain}"
     return ""
 
 def _country_to_gl(country: str) -> str:
@@ -954,20 +954,42 @@ def make_v3_router(db):
                             scraped_about = _re.sub(r'<[^>]+>', '', paragraphs[0]).strip()[:500]
 
                     # Extract the best available brand image/logo from the page before falling back to a domain logo service.
+                    from urllib.parse import urljoin
+
+                    def _attr(tag: str, name: str) -> str:
+                        match = _re.search(rf'\b{name}\s*=\s*["\']([^"\']+)', tag, _re.I)
+                        return match.group(1).strip() if match else ""
+
+                    def _add_logo(candidate: str, score: int = 0):
+                        candidate = str(candidate or "").strip()
+                        if not candidate or candidate.startswith("data:"):
+                            return
+                        lowered = candidate.lower()
+                        if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar"]):
+                            return
+                        logo_candidates.append((score, urljoin(url, candidate)))
+
                     logo_candidates = []
-                    for pattern in [
-                        r'<meta[^>]*(?:property|name)=["\']og:logo["\'][^>]*content=["\']([^"\'>]+)',
-                        r'<meta[^>]*(?:property|name)=["\']og:image["\'][^>]*content=["\']([^"\'>]+)',
-                        r'<meta[^>]*(?:property|name)=["\']twitter:image["\'][^>]*content=["\']([^"\'>]+)',
-                        r'<link[^>]*rel=["\'][^"\'>]*(?:apple-touch-icon|mask-icon|icon|shortcut icon)[^"\'>]*["\'][^>]*href=["\']([^"\'>]+)',
-                        r'<img[^>]*(?:class|id|alt|src)=["\'][^"\'>]*logo[^"\'>]*["\'][^>]*src=["\']([^"\'>]+)',
-                        r'<img[^>]*src=["\']([^"\'>]*logo[^"\'>]*)["\'][^>]*>',
-                        r'"logo"\s*:\s*"([^"\n]+)"',
-                    ]:
-                        logo_candidates.extend(match.strip() for match in _re.findall(pattern, html, _re.I | _re.S) if match and str(match).strip())
+                    for tag in _re.findall(r'<meta[^>]+>', html, _re.I | _re.S):
+                        meta_key = (_attr(tag, "property") or _attr(tag, "name")).lower()
+                        content = _attr(tag, "content")
+                        if meta_key in {"og:logo", "logo"}:
+                            _add_logo(content, 100)
+                        elif meta_key in {"og:image", "twitter:image", "twitter:image:src"}:
+                            _add_logo(content, 60)
+                    for tag in _re.findall(r'<link[^>]+>', html, _re.I | _re.S):
+                        rel = _attr(tag, "rel").lower()
+                        if any(key in rel for key in ["apple-touch-icon", "mask-icon", "shortcut icon", "icon"]):
+                            _add_logo(_attr(tag, "href"), 45 if "apple" in rel else 35)
+                    for tag in _re.findall(r'<img[^>]+>', html, _re.I | _re.S):
+                        haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), _attr(tag, "alt"), _attr(tag, "src")]).lower()
+                        if "logo" in haystack or _slug(brand_name).replace(".", "") in haystack.replace("-", "").replace("_", ""):
+                            _add_logo(_attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"), 90 if "logo" in haystack else 65)
+                    for match in _re.findall(r'"logo"\s*:\s*(?:"([^"\n]+)"|\{[^}]*"url"\s*:\s*"([^"\n]+)")', html, _re.I | _re.S):
+                        _add_logo(next((item for item in match if item), ""), 95)
                     if logo_candidates:
-                        from urllib.parse import urljoin
-                        scraped_logo = _brand_logo_from_source(url, urljoin(url, logo_candidates[0]))
+                        logo_candidates.sort(key=lambda item: item[0], reverse=True)
+                        scraped_logo = _brand_logo_from_source(url, logo_candidates[0][1])
             except Exception as e:
                 logger.warning(f"Scrape failed for {url}: {e}")
 
@@ -2738,6 +2760,11 @@ def make_v3_router(db):
             "frame.alignment_approved_by_party": payload.approver_party,
             "updated_at": _now_iso(),
         }
+        if payload.approver_party == "brand":
+            updates["stage"] = "plan"
+            updates["plan.brainstorm_status"] = "ready"
+            updates["next_action"] = "Open Brainstorming and continue the Plan phase."
+
         if case.get("engagement_track") == "grant":
             updates["frame.strategy_development_fee_invoice_id"] = None
             updates["frame.strategy_development_fee_paid"] = False
@@ -2751,7 +2778,7 @@ def make_v3_router(db):
             {"id": bc_id},
             {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_approved", "by": payload.approver, "party": payload.approver_party}}},
         )
-        return {"ok": True, "approved_at": approved_at, "fee_due_stage": updates.get("frame.strategy_development_fee_due_stage")}
+        return {"ok": True, "approved_at": approved_at, "stage": updates.get("stage", case.get("stage")), "next_action": updates.get("next_action"), "fee_due_stage": updates.get("frame.strategy_development_fee_due_stage")}
 
         # If paid engagement, generate the Strategy Development Fee invoice.
         updates: Dict[str, Any] = {

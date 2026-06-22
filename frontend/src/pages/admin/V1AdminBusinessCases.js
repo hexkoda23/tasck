@@ -11,7 +11,7 @@ import {
 } from '../../lib/v3data';
 import { candidateToBusinessOpportunity } from '../../lib/v3opportunityDemo';
 import V3Modal from '../../components/v3/V3Modal';
-import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search, Lock } from 'lucide-react';
+import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search, Lock, MessageSquare } from 'lucide-react';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
 
 const stageMeta = {
@@ -269,6 +269,9 @@ const V1AdminBusinessCases = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => navigate(adminRoute('/brand-communications'))} className="v3-btn-secondary" data-testid="bc-brand-comments" title="Open brand comments and messages">
+            <MessageSquare className="w-3.5 h-3.5" /> Brand comments
+          </button>
           <button onClick={() => navigate(adminRoute('/crm/opportunities'))} className="v3-btn-secondary" data-testid="bc-ai-business-agent" title="Open Brand Opportunity Scanner">
             <Sparkles className="w-3.5 h-3.5" /> AI-generated business cases
           </button>

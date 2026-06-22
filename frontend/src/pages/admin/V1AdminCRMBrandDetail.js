@@ -126,7 +126,12 @@ const shortText = (value) => {
 
 
 
-const logoUrlForBrand = (brand) => firstValue(brand, ['logo_url', 'brand_logo_url', 'logoUrl', 'brandLogoUrl', 'logo']);
+const logoUrlForBrand = (brand) => {
+  const direct = firstValue(brand, ['logo_url', 'brand_logo_url', 'logoUrl', 'brandLogoUrl', 'logo']);
+  if (direct) return direct;
+  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url']));
+  return domain ? 'https://www.google.com/s2/favicons?sz=256&domain_url=https://' + domain : '';
+};
 const brandName = (brand) => cleanV1Text(firstValue(brand, ['company', 'name', 'brand_name']) || 'Brand');
 const brandIndustry = (brand) => cleanV1Text(firstValue(brand, ['industry', 'category', 'sector']) || 'Uncategorised');
 
