@@ -1,4 +1,4 @@
-import {
+﻿import {
   buildMockBusinessCaseBundle,
   buildMockBusinessCases,
   formatNairaV3,
@@ -41,10 +41,14 @@ const canUseStorage = () => typeof window !== 'undefined' && !!window.localStora
 
 export const setBrandPortalSession = (account) => {
   if (!canUseStorage() || !account) return;
+  const brandId = account.brandId || account.brand_id || account.id;
   window.localStorage.setItem(BRAND_SESSION_KEY, JSON.stringify({
-    brandId: account.brandId,
+    brandId,
+    brand_id: brandId,
+    company: account.company || account.brand_name || account.name,
+    username: account.username || account.email,
     email: account.email,
-    contact: account.contact,
+    contact: account.contact || account.primary_contact || account.primaryContact,
     initials: account.initials,
     logged_in_at: new Date().toISOString(),
   }));
@@ -55,9 +59,23 @@ export const getBrandPortalSession = () => {
   if (!canUseStorage()) return fallback;
   try {
     const stored = JSON.parse(window.localStorage.getItem(BRAND_SESSION_KEY) || '{}');
-    if (!stored.email) return fallback;
+    if (!stored.email && !stored.brandId && !stored.brand_id) return fallback;
     const account = getBrandPortalAccountByEmail(stored.email);
-    return account ? { ...account, ...stored } : fallback;
+    if (account) return { ...account, ...stored };
+    const brandId = stored.brandId || stored.brand_id;
+    if (brandId) {
+      return {
+        brandId,
+        brand_id: brandId,
+        company: stored.company || 'Brand',
+        contact: stored.contact || 'Brand Representative',
+        email: stored.email || stored.username || '',
+        username: stored.username || stored.email || '',
+        initials: stored.initials || String(stored.company || 'BR').slice(0, 2).toUpperCase(),
+        logged_in_at: stored.logged_in_at,
+      };
+    }
+    return fallback;
   } catch (e) {
     return fallback;
   }
@@ -86,7 +104,19 @@ export const getBrandPortalAccountByEmail = (email) => {
   return null;
 };
 
-export const getBrandPortalBrand = () => getBrand(getBrandPortalSession().brandId);
+export const getBrandPortalBrand = () => {
+  const session = getBrandPortalSession();
+  const demoBrand = getBrand(session.brandId);
+  if (demoBrand) return demoBrand;
+  return {
+    id: session.brandId || session.brand_id,
+    company: session.company || 'Brand',
+    primaryContact: session.contact || 'Brand Representative',
+    primary_contact: session.contact || 'Brand Representative',
+    email: session.email || session.username || '',
+    logo: '',
+  };
+};
 
 export const isPendingApprovalStatus = (status) => ['sent', 'sent_to_brand', 'under_review', 'pending_brand_review'].includes(status);
 
@@ -583,3 +613,4 @@ export const vaultDocsForBrand = (brandId = getBrandPortalSession().brandId) =>
       }));
     return [...docs, ...approvedDeliverables];
   });
+

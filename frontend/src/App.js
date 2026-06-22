@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -121,6 +121,15 @@ import V3BrandSettings from './pages/v3/brand/V3BrandSettings';
 import V3BrandChangePassword from './pages/v3/brand/V3BrandChangePassword';
 import V3BrandLogin from './pages/v3/brand/V3BrandLogin';
 import V1BrandLogin from './pages/brand/V1BrandLogin';
+import V1BrandOverview from './pages/brand/V1BrandOverview';
+import V1BrandProjects, { V1BrandProjectDetail } from './pages/brand/V1BrandProjects';
+import {
+  V1BrandAlignmentSnapshot,
+  V1BrandStrategySnapshot,
+  V1BrandContracts,
+  V1BrandReportsFeedback,
+} from './pages/brand/V1BrandDocuments';
+import V1BrandMessages from './pages/brand/V1BrandMessages';
 
 // V3 Creator Portal Pages
 import V3CreatorOverview from './pages/v3/creator/V3CreatorOverview';
@@ -138,6 +147,7 @@ import V1RoleSelector from './pages/v1/V1RoleSelector';
 import V1AdminCRM from './pages/admin/V1AdminCRM';
 import V1AdminCRMBrandDetail from './pages/admin/V1AdminCRMBrandDetail';
 import V1AdminBrandCallRedirect from './pages/admin/V1AdminBrandCallRedirect';
+import V1AdminBrandCommunications from './pages/admin/V1AdminBrandCommunications';
 import FeedbackAdmin from './pages/FeedbackAdmin';
 
 // Pages
@@ -295,15 +305,19 @@ function AppRoutes() {
 
       <Route path="/brand/login" element={<V1BrandLogin />} />
 
-      {/* Brand Portal */}
+      {/* V1 Brand Portal */}
       <Route path="/brand" element={<V1PortalLayout portal="brand" />}>
-        <Route index element={<V3BrandOverview />} />
-        <Route path="projects" element={<V3BrandProjects />} />
-        <Route path="projects/:id" element={<V3BrandProjectDetail />} />
-        <Route path="approvals" element={<V3BrandApprovals />} />
-        <Route path="documents" element={<V3BrandDocuments />} />
-        <Route path="invoices" element={<V3BrandInvoices />} />
-        <Route path="messages" element={<V3BrandMessages />} />
+        <Route index element={<V1BrandOverview />} />
+        <Route path="projects" element={<V1BrandProjects />} />
+        <Route path="projects/:id" element={<V1BrandProjectDetail />} />
+        <Route path="alignment-snapshot" element={<V1BrandAlignmentSnapshot />} />
+        <Route path="strategy-snapshot" element={<V1BrandStrategySnapshot />} />
+        <Route path="contracts" element={<V1BrandContracts />} />
+        <Route path="reports-feedback" element={<V1BrandReportsFeedback />} />
+        <Route path="approvals" element={<V1BrandAlignmentSnapshot />} />
+        <Route path="documents" element={<V1BrandStrategySnapshot />} />
+        <Route path="invoices" element={<V1BrandContracts />} />
+        <Route path="messages" element={<V1BrandMessages />} />
         <Route path="settings" element={<V3BrandSettings />} />
         <Route path="change-password" element={<V3BrandChangePassword />} />
       </Route>
@@ -435,6 +449,9 @@ function AppRoutes() {
         <Route path="settings" element={<V3AdminSettings />} />
         <Route path="tasks" element={<V3AdminTasks />} />
         <Route path="users" element={<V3AdminUsers />} />
+        <Route path="brand-communications" element={<V1AdminBrandCommunications />} />
+        <Route path="brand-review" element={<V1AdminBrandCommunications />} />
+        <Route path="brand-messages" element={<V1AdminBrandCommunications />} />
       </Route>
 
       {/* V3 Brand Inreach (public form) */}
@@ -506,6 +523,9 @@ function AppRoutes() {
         <Route path="settings" element={<V3AdminSettings />} />
         <Route path="tasks" element={<V3AdminTasks />} />
         <Route path="users" element={<V3AdminUsers />} />
+        <Route path="brand-communications" element={<V1AdminBrandCommunications />} />
+        <Route path="brand-review" element={<V1AdminBrandCommunications />} />
+        <Route path="brand-messages" element={<V1AdminBrandCommunications />} />
       </Route>
 
       <Route path="/v3/brand/login" element={<V3BrandLogin />} />
@@ -564,6 +584,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

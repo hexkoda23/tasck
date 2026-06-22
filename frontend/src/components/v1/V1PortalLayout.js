@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Logo from '../shared/Logo';
 import { useAuth } from '../../context/AuthContext';
@@ -31,9 +31,10 @@ const portalConfig = {
     items: [
       { path: '/brand', label: 'Overview', icon: LayoutDashboard, exact: true },
       { path: '/brand/projects', label: 'Projects', icon: FolderOpen },
-      { path: '/brand/approvals', label: 'Approvals', icon: CheckSquare },
-      { path: '/brand/documents', label: 'Documents', icon: FileCheck },
-      { path: '/brand/invoices', label: 'Invoices', icon: Receipt },
+      { path: '/brand/alignment-snapshot', label: 'Alignment Snapshot', icon: FileCheck },
+      { path: '/brand/strategy-snapshot', label: 'Strategy Snapshot', icon: Briefcase },
+      { path: '/brand/contracts', label: 'Contracts', icon: FileCheck },
+      { path: '/brand/reports-feedback', label: 'Reports & Feedback', icon: Upload },
       { path: '/brand/messages', label: 'Messages', icon: MessageSquare },
       { path: '/brand/settings', label: 'Settings', icon: Settings },
     ],
