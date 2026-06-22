@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from io import BytesIO
 from pathlib import Path
 from dotenv import load_dotenv
@@ -43,6 +44,29 @@ logger = logging.getLogger("tasck.v3")
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _format_email_datetime(value: Optional[str]) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "To be confirmed"
+
+    try:
+        if len(raw) == 10 and raw[4] == "-" and raw[7] == "-":
+            parsed_date = datetime.fromisoformat(raw)
+            return parsed_date.strftime("%A, %d %B %Y")
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+
+    if parsed.tzinfo is None:
+        return parsed.strftime("%A, %d %B %Y at %I:%M %p")
+
+    try:
+        app_timezone = ZoneInfo(os.getenv("APP_TIMEZONE", "Africa/Lagos"))
+    except ZoneInfoNotFoundError:
+        app_timezone = timezone.utc
+    return parsed.astimezone(app_timezone).strftime("%A, %d %B %Y at %I:%M %p")
 
 
 def _slug(value: str) -> str:
@@ -667,11 +691,14 @@ def make_v3_router(db):
         message["Message-ID"] = make_msgid(domain=domain or None)
         if reply_to:
             message["Reply-To"] = reply_to
-        organization = os.getenv("SMTP_ORGANIZATION", "TASCK").strip()
+        organization = os.getenv("SMTP_ORGANIZATION", "").strip()
         if organization:
             message["Organization"] = organization
-        message["X-Mailer"] = "TASCK"
-        message["X-Entity-Ref-ID"] = str(email.get("id") or uuid.uuid4().hex)
+        x_mailer = os.getenv("SMTP_X_MAILER", "").strip()
+        if x_mailer:
+            message["X-Mailer"] = x_mailer
+        if email.get("id"):
+            message["X-Entity-Ref-ID"] = str(email.get("id"))
         if _smtp_flag("SMTP_MARK_AUTOMATED", False):
             message["X-Auto-Response-Suppress"] = "All"
             message["Auto-Submitted"] = "auto-generated"
@@ -4807,21 +4834,22 @@ def make_v3_router(db):
         now = _now_iso()
         brand_name = (brand or {}).get("company") or (brand or {}).get("name") or "your team"
         contact_name = payload.contact_name or contact.get("primary_contact") or (brand or {}).get("primary_contact") or "there"
-        scheduled_for = payload.scheduled_for or "To be confirmed"
+        scheduled_for_raw = payload.scheduled_for or ""
+        scheduled_for = _format_email_datetime(scheduled_for_raw)
         meeting_link = payload.meeting_link or "To be shared by TASCK"
-        purpose = payload.reason or payload.agenda or "Connect / Business Call to confirm the brand context, priorities, timeline, and information TASCK needs before Frame."
+        purpose = payload.reason or payload.agenda or "Connect call to confirm the brand context, priorities, timeline, and information needed before the Frame phase."
         body = (
             f"Hello {contact_name},\n\n"
-            f"TASCK has scheduled a Connect / Business Call with {brand_name}.\n\n"
+            f"We have scheduled a TASCK meeting with {brand_name}.\n\n"
             f"Date and time: {scheduled_for}\n"
             f"Meeting link: {meeting_link}\n"
-            f"Purpose of meeting: {purpose}\n\n"
-            "Please confirm that this date and time works for your team. If it does not, reply to this email with a better date and time so TASCK can reschedule the call.\n\n"
-            "Thank you,\nTASCK"
+            f"Purpose: {purpose}\n\n"
+            "Please reply to confirm this works for your team. If the time does not work, send us another date and time and we will reschedule.\n\n"
+            "Best regards,\nTASCK"
         )
         email = await queue_email(
             to=to_email,
-            subject=f"TASCK Connect meeting: {case.get('title', 'Business Case')}",
+            subject=f"Meeting details for {brand_name}: {case.get('title', 'Business Case')}",
             body=body,
             kind="business_call_meeting_schedule",
             brand_id=case.get("brand_id"),
@@ -4838,7 +4866,8 @@ def make_v3_router(db):
             "content": body,
             "summary": f"Meeting scheduled for {scheduled_for}. Purpose: {purpose}",
             "to": to_email,
-            "scheduled_for": scheduled_for,
+            "scheduled_for": scheduled_for_raw or scheduled_for,
+            "scheduled_for_display": scheduled_for,
             "meeting_link": meeting_link,
             "purpose": purpose,
             "email_id": email.get("id") if isinstance(email, dict) else None,
@@ -4851,7 +4880,8 @@ def make_v3_router(db):
                     "connect.connect_status": "business_call_scheduled",
                     "connect.status_updated_at": now,
                     "connect.updated_at": now,
-                    "connect.scheduled_for": scheduled_for,
+                    "connect.scheduled_for": scheduled_for_raw or scheduled_for,
+                    "connect.scheduled_for_display": scheduled_for,
                     "connect.meeting_link": meeting_link,
                     "connect.meeting_purpose": purpose,
                     "connect.last_meeting_email_sent_at": now,
@@ -7492,9 +7522,11 @@ Produce the opportunity card JSON.
                 subject=f"TASCK meeting: {doc['title']}",
                 body=(
                     f"Hello {payload.contact_name or 'there'},\n\n"
-                    f"TASCK has scheduled your meeting for {payload.scheduled_for}.\n"
+                    f"We have scheduled your TASCK meeting.\n\n"
+                    f"Date and time: {_format_email_datetime(payload.scheduled_for)}\n"
                     f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}\n\n"
-                    f"Purpose: {payload.agenda or doc['title']}"
+                    f"Purpose: {payload.agenda or doc['title']}\n\n"
+                    "Please reply to confirm this works for you."
                 ),
                 kind=kind,
                 brand_id=payload.brand_id,
