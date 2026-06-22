@@ -128,9 +128,7 @@ const shortText = (value) => {
 
 const logoUrlForBrand = (brand) => {
   const direct = firstValue(brand, ['logo_url', 'brand_logo_url', 'logoUrl', 'brandLogoUrl', 'logo']);
-  if (direct) return direct;
-  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
-  return domain ? 'https://logo.clearbit.com/' + domain : '';
+  return direct || '';
 };
 const brandName = (brand) => cleanV1Text(firstValue(brand, ['company', 'name', 'brand_name']) || 'Brand');
 const brandIndustry = (brand) => cleanV1Text(firstValue(brand, ['industry', 'category', 'sector']) || 'Uncategorised');
@@ -150,10 +148,14 @@ const logoCandidatesForBrand = (brand) => {
   const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
   return [
     direct,
-    domain ? 'https://logo.clearbit.com/' + domain : '',
-    domain ? 'https://www.google.com/s2/favicons?sz=256&domain_url=https://' + domain : '',
-    domain ? 'https://icons.duckduckgo.com/ip3/' + domain + '.ico' : '',
-  ].filter(Boolean).filter((value, index, array) => array.indexOf(value) === index);
+    domain ? 'https://' + domain + '/logo.svg' : '',
+    domain ? 'https://' + domain + '/logo.png' : '',
+    domain ? 'https://' + domain + '/assets/logo.svg' : '',
+    domain ? 'https://' + domain + '/assets/logo.png' : '',
+  ]
+    .filter(Boolean)
+    .filter((value) => !/(vite\.svg|react\.svg|placeholder|blank|sprite)/i.test(value))
+    .filter((value, index, array) => array.indexOf(value) === index);
 };
 
 const BrandLogo = ({ brand }) => {
@@ -161,7 +163,10 @@ const BrandLogo = ({ brand }) => {
   const logoCandidates = logoCandidatesForBrand(brand);
   const logoCandidateKey = logoCandidates.join('|');
   const logoUrl = logoCandidates[candidateIndex] || '';
-  const initials = brandName(brand).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'BR';
+  const cleanBrandName = brandName(brand);
+  const initials = cleanBrandName.length <= 3
+    ? cleanBrandName.toUpperCase()
+    : cleanBrandName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'BR';
 
   useEffect(() => {
     setCandidateIndex(0);
@@ -303,6 +308,10 @@ const V1AdminCRMBrandDetail = () => {
   const [marketingBudgetDraft, setMarketingBudgetDraft] = useState('');
   const [editingLogo, setEditingLogo] = useState(false);
   const [logoDraft, setLogoDraft] = useState('');
+  const [editingWebsite, setEditingWebsite] = useState(false);
+  const [websiteDraft, setWebsiteDraft] = useState('');
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [notesDraft, setNotesDraft] = useState('');
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
   const [projectChoiceOpen, setProjectChoiceOpen] = useState(false);
   const [projectChoiceDismissed, setProjectChoiceDismissed] = useState(false);
@@ -338,7 +347,7 @@ const V1AdminCRMBrandDetail = () => {
 
   const handleSaveAbout = async () => {
     try {
-      await v3UpdateBrandDetails(id, { about: aboutDraft });
+      await v3UpdateBrandDetails(id, { about: aboutDraft, brand_about: aboutDraft });
       toast.success('About section updated successfully.');
       setEditingAbout(false);
       await reloadData();
@@ -349,7 +358,7 @@ const V1AdminCRMBrandDetail = () => {
 
   const handleSaveLogo = async () => {
     try {
-      await v3UpdateBrandDetails(id, { logo_url: logoDraft });
+      await v3UpdateBrandDetails(id, { logo_url: logoDraft, brand_logo_url: logoDraft });
       toast.success('Logo updated successfully.');
       setEditingLogo(false);
       await reloadData();
@@ -366,6 +375,28 @@ const V1AdminCRMBrandDetail = () => {
       await reloadData();
     } catch (e) {
       toast.error(e?.message || 'Failed to update marketing budget.');
+    }
+  };
+
+  const handleSaveWebsite = async () => {
+    try {
+      await v3UpdateBrandDetails(id, { website: websiteDraft, source_url: websiteDraft });
+      toast.success('Website / source URL updated successfully.');
+      setEditingWebsite(false);
+      await reloadData();
+    } catch (e) {
+      toast.error(e?.message || 'Failed to update website / source URL.');
+    }
+  };
+
+  const handleSaveNotes = async () => {
+    try {
+      await v3UpdateBrandDetails(id, { notes: notesDraft });
+      toast.success('Notes updated successfully.');
+      setEditingNotes(false);
+      await reloadData();
+    } catch (e) {
+      toast.error(e?.message || 'Failed to update notes.');
     }
   };
 
@@ -490,6 +521,7 @@ const V1AdminCRMBrandDetail = () => {
   const aboutText = firstValue(brand, ['about', 'brand_about', 'description', 'company_description', 'notes']);
   const marketingBudget = firstValue(brand, ['marketing_budget', 'budget', 'budget_range']);
   const website = firstValue(brand, ['website', 'url', 'brand_url', 'source_url']);
+  const notes = firstValue(brand, ['notes', 'source_notes', 'scrape_notes']);
 
   return (
     <div className="space-y-5" data-testid="v1-brand-detail">
@@ -713,8 +745,80 @@ const V1AdminCRMBrandDetail = () => {
                 <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-5 text-[#1A1A1A]">{textValue(marketingBudget)}</p>
               )}
             </div>
-            <DetailRow label="Website / source URL" value={website} />
-            <DetailRow label="Notes" value={brand.notes || brand.source_notes || brand.scrape_notes} />
+            <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Website / source URL</p>
+                {!editingWebsite && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWebsiteDraft(website || '');
+                      setEditingWebsite(true);
+                    }}
+                    className="p-0.5 hover:bg-[#F4F2EC] rounded text-[#8A8A8A] hover:text-[#1F4A3A] transition-colors"
+                    data-testid="crm-edit-website-btn"
+                    title="Edit website / source URL"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {editingWebsite ? (
+                <div className="space-y-2 mt-1.5">
+                  <input
+                    type="url"
+                    value={websiteDraft}
+                    onChange={(e) => setWebsiteDraft(e.target.value)}
+                    className="w-full text-[12px] border border-[#D7CBB8] rounded p-1.5 focus:outline-none focus:border-[#1F4A3A]"
+                    placeholder="https://brand-website.com"
+                    data-testid="crm-website-input"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setEditingWebsite(false)} className="px-2 py-0.5 text-[10px] rounded bg-[#F4F2EC] text-[#4F3E2F]">Cancel</button>
+                    <button onClick={handleSaveWebsite} className="px-2 py-0.5 text-[10px] rounded bg-[#1F4A3A] text-white" data-testid="crm-save-website-btn">Save</button>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-1 whitespace-pre-wrap break-all text-[13px] leading-5 text-[#1A1A1A]">{textValue(website)}</p>
+              )}
+            </div>
+            <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">
+              <div className="flex justify-between items-center">
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Notes</p>
+                {!editingNotes && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotesDraft(notes || '');
+                      setEditingNotes(true);
+                    }}
+                    className="p-0.5 hover:bg-[#F4F2EC] rounded text-[#8A8A8A] hover:text-[#1F4A3A] transition-colors"
+                    data-testid="crm-edit-notes-btn"
+                    title="Edit notes"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {editingNotes ? (
+                <div className="space-y-2 mt-1.5">
+                  <textarea
+                    value={notesDraft}
+                    onChange={(e) => setNotesDraft(e.target.value)}
+                    rows={4}
+                    className="w-full text-[12px] border border-[#D7CBB8] rounded p-1.5 focus:outline-none focus:border-[#1F4A3A]"
+                    placeholder="Add admin notes for this brand..."
+                    data-testid="crm-notes-input"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => setEditingNotes(false)} className="px-2 py-0.5 text-[10px] rounded bg-[#F4F2EC] text-[#4F3E2F]">Cancel</button>
+                    <button onClick={handleSaveNotes} className="px-2 py-0.5 text-[10px] rounded bg-[#1F4A3A] text-white" data-testid="crm-save-notes-btn">Save</button>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-5 text-[#1A1A1A]">{textValue(notes)}</p>
+              )}
+            </div>
           </div>
         </div>
         {opportunities.length > 0 && (

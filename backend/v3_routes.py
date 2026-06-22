@@ -142,15 +142,16 @@ def _compact_text(value: Any, limit: int = 900) -> str:
 def _brand_logo_from_source(source_url: str, raw_logo: Any = None) -> str:
     logo = str(raw_logo or "").strip()
     domain = _domain_from_url(source_url)
-    if logo:
-        if logo.startswith("//"):
-            logo = f"https:{logo}"
-        elif logo.startswith("/") and domain:
-            logo = f"https://{domain}{logo}"
-        return logo[:500]
-    if domain:
-        return f"https://logo.clearbit.com/{domain}"
-    return ""
+    if not logo:
+        return ""
+    lowered = logo.lower()
+    if any(blocked in lowered for blocked in ["vite.svg", "react.svg", "placeholder", "sprite", "blank", "favicon"]):
+        return ""
+    if logo.startswith("//"):
+        logo = f"https:{logo}"
+    elif logo.startswith("/") and domain:
+        logo = f"https://{domain}{logo}"
+    return logo[:500]
 
 def _country_to_gl(country: str) -> str:
     value = (country or "Nigeria").strip().lower()
@@ -1043,12 +1044,20 @@ def make_v3_router(db):
                         match = _re.search(rf'\b{name}\s*=\s*["\']([^"\']+)', tag, _re.I)
                         return match.group(1).strip() if match else ""
 
+                    manifest_url = ""
+                    manifest_logo_candidates = []
+                    script_urls = []
                     for tag in _re.findall(r'<link[^>]+>', html, _re.I | _re.S):
                         rel = _attr(tag, "rel").lower()
                         href = _attr(tag, "href")
                         if "canonical" in rel and href:
                             final_url = urljoin(final_url, href).rstrip("/")
-                            break
+                        if "manifest" in rel and href:
+                            manifest_url = urljoin(final_url, href)
+                    for tag in _re.findall(r'<script[^>]+>', html, _re.I | _re.S):
+                        src = _attr(tag, "src")
+                        if src:
+                            script_urls.append(urljoin(final_url, src))
 
                     og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
                     meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
@@ -1063,13 +1072,41 @@ def make_v3_router(db):
                             if len(clean_paragraph) >= 80:
                                 scraped_about = html_module.unescape(clean_paragraph)[:700]
                                 break
+                    if manifest_url:
+                        manifest_resp = await client.get(manifest_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                        if manifest_resp.status_code < 400:
+                            manifest_data = manifest_resp.json()
+                            manifest_description = str(manifest_data.get("description") or "").strip()
+                            if manifest_description and not scraped_about:
+                                scraped_about = html_module.unescape(manifest_description)[:700]
+                            for manifest_icon in manifest_data.get("icons") or []:
+                                if isinstance(manifest_icon, dict):
+                                    manifest_src = manifest_icon.get("src")
+                                else:
+                                    manifest_src = manifest_icon
+                                if manifest_src:
+                                    manifest_logo_candidates.append(urljoin(manifest_url, str(manifest_src)))
+                    if not scraped_about:
+                        for script_url in script_urls[:3]:
+                            script_resp = await client.get(script_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            if script_resp.status_code >= 400:
+                                continue
+                            script_text = script_resp.text
+                            phrases = []
+                            for match in _re.findall(r'"([^"\\]*(?:brand|fashion|clothing|style|styling|wear|drops|lookbook|challenge|trend)[^"\\]*)"', script_text, _re.I):
+                                clean_phrase = html_module.unescape(" ".join(match.split()))
+                                if 45 <= len(clean_phrase) <= 240 and not clean_phrase.lower().startswith(("http", "class", "text-")):
+                                    phrases.append(clean_phrase)
+                            if phrases:
+                                scraped_about = max(phrases, key=len)[:700]
+                                break
 
                     def _add_logo(candidate: str, score: int = 0):
                         candidate = str(candidate or "").strip()
                         if not candidate or candidate.startswith("data:"):
                             return
                         lowered = candidate.lower()
-                        if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar", "blank"]):
+                        if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar", "blank", "vite.svg", "react.svg"]):
                             return
                         logo_candidates.append((score, urljoin(final_url, candidate)))
 
@@ -1085,6 +1122,8 @@ def make_v3_router(db):
                         rel = _attr(tag, "rel").lower()
                         if any(key in rel for key in ["apple-touch-icon", "mask-icon", "shortcut icon", "icon"]):
                             _add_logo(_attr(tag, "href"), 55 if "apple" in rel else 45)
+                    for manifest_icon_url in manifest_logo_candidates:
+                        _add_logo(manifest_icon_url, 58)
                     for tag in _re.findall(r'<img[^>]+>', html, _re.I | _re.S):
                         haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), _attr(tag, "alt"), _attr(tag, "src"), _attr(tag, "data-src")]).lower()
                         if "logo" in haystack or _slug(brand_name).replace(".", "") in haystack.replace("-", "").replace("_", ""):
@@ -1109,10 +1148,10 @@ def make_v3_router(db):
             except (httpx.HTTPError, ValueError) as exc:
                 logger.warning("Scrape failed for %s: %s", url, exc)
 
-        if not scraped_about and final_url:
-            scraped_about = f"Public website found at {final_url}. Add a fuller About description after reviewing the brand source."
+        if not scraped_about:
+            scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
         if not scraped_logo:
-            scraped_logo = _brand_logo_from_source(final_url or website)
+            scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
         if not scraped_budget:
             scraped_budget = "No public marketing budget found. Confirm during Connect call."
 
