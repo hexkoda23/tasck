@@ -1,11 +1,10 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Logo from '../shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 import { getBrandPortalBrand, getBrandPortalSession } from '../../lib/v3brandPortal';
 import {
   Briefcase,
-  CheckSquare,
   FileCheck,
   FolderOpen,
   LayoutDashboard,
@@ -14,7 +13,6 @@ import {
   MessageSquare,
   Moon,
   Palette,
-  Receipt,
   Search,
   Settings,
   Sun,
