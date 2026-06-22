@@ -463,7 +463,6 @@ const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, bra
       });
     }
     await v3UploadMeetingTranscript(meetingId, { transcript: session.content.trim() });
-    await v3AnalyzeMeetingTranscript(meetingId, {});
     savedSessions.push({ ...session, meetingId });
   }
   return savedSessions;

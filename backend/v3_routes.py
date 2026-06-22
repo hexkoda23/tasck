@@ -672,10 +672,12 @@ def make_v3_router(db):
             message["Organization"] = organization
         message["X-Mailer"] = "TASCK"
         message["X-Entity-Ref-ID"] = str(email.get("id") or uuid.uuid4().hex)
-        message["X-Auto-Response-Suppress"] = "All"
-        message["Auto-Submitted"] = "auto-generated"
-        feedback_id = str(email.get("kind") or "transactional").replace(" ", "_")[:40]
-        message["Feedback-ID"] = f"{feedback_id}:tasck:transactional"
+        if _smtp_flag("SMTP_MARK_AUTOMATED", False):
+            message["X-Auto-Response-Suppress"] = "All"
+            message["Auto-Submitted"] = "auto-generated"
+        if _smtp_flag("SMTP_ENABLE_FEEDBACK_ID", False):
+            feedback_id = str(email.get("kind") or "transactional").replace(" ", "_")[:40]
+            message["Feedback-ID"] = f"{feedback_id}:tasck:transactional"
         if _smtp_flag("SMTP_ENABLE_LIST_HEADERS", False):
             if domain:
                 message["List-ID"] = f"TASCK transactional <transactional.{domain}>"
@@ -1119,10 +1121,10 @@ def make_v3_router(db):
 
         welcome = await queue_email(
             to=username,
-            subject="Welcome to TASCK - Brand portal access",
+            subject=f"TASCK brand portal access for {payload.company}",
             body=(
                 f"Hello {payload.primary_contact},\n\n"
-                f"Welcome to TASCK. Your brand portal account for {payload.company} has been created successfully.\n\n"
+                f"Your TASCK brand portal account for {payload.company} has been created successfully.\n\n"
                 "You can use the login details below to access your brand portal, review project updates, respond to TASCK documents, and approve items that require your attention.\n\n"
                 f"Portal username: {username}\n"
                 f"Temporary password: {temp_password}\n\n"
@@ -1303,10 +1305,10 @@ def make_v3_router(db):
         await db.v3_brand_accounts.insert_one({**account_doc})
         welcome = await queue_email(
             to=username,
-            subject="Welcome to TASCK - Brand portal access",
+            subject=f"TASCK brand portal access for {brand.get('company') or brand.get('name') or 'your brand'}",
             body=(
                 f"Hello {brand.get('primary_contact') or 'Marketing Team'},\n\n"
-                f"Welcome to TASCK. Your brand portal account for {brand.get('company')} has been created successfully.\n\n"
+                f"Your TASCK brand portal account for {brand.get('company')} has been created successfully.\n\n"
                 "You can use the login details below to access your brand portal, review project updates, respond to TASCK documents, and approve items that require your attention.\n\n"
                 f"Portal username: {username}\n"
                 f"Temporary password: {temp_password}\n\n"
@@ -4587,10 +4589,10 @@ def make_v3_router(db):
             try:
                 alignment_timeout_seconds = max(
                     3.0,
-                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "18")),
+                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "10")),
                 )
             except ValueError:
-                alignment_timeout_seconds = 18.0
+                alignment_timeout_seconds = 10.0
             try:
                 alignment_tool_result = await asyncio.wait_for(
                     _call_alignment_analysis_tool(combined_text, brand, case),
@@ -4819,7 +4821,7 @@ def make_v3_router(db):
         )
         email = await queue_email(
             to=to_email,
-            subject=f"TASCK meeting scheduled - {case.get('title', 'Business Case')}",
+            subject=f"TASCK Connect meeting: {case.get('title', 'Business Case')}",
             body=body,
             kind="business_call_meeting_schedule",
             brand_id=case.get("brand_id"),
@@ -7487,10 +7489,10 @@ Produce the opportunity card JSON.
             }.get(payload.meeting_type, "meeting_invite")
             await queue_email(
                 to=payload.contact_email,
-                subject=f"TASCK {doc['title']}",
+                subject=f"TASCK meeting: {doc['title']}",
                 body=(
                     f"Hello {payload.contact_name or 'there'},\n\n"
-                    f"Your TASCK meeting is scheduled for {payload.scheduled_for}.\n"
+                    f"TASCK has scheduled your meeting for {payload.scheduled_for}.\n"
                     f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}\n\n"
                     f"Purpose: {payload.agenda or doc['title']}"
                 ),
@@ -7888,7 +7890,7 @@ Produce the opportunity card JSON.
             if creator:
                 await queue_email(
                     to=_fallback_creator_email(creator),
-                    subject="Welcome to TASCK Creator Portal",
+                    subject="Your TASCK creator portal access",
                     body=(
                         f"Hello {creator.get('name') or 'there'},\n\n"
                         "Your TASCK creator profile has been approved.\n\n"
