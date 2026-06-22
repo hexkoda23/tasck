@@ -20,6 +20,8 @@ const normaliseBrand = (b) => ({
   primaryContact: b.primary_contact || b.primaryContact,
   role: b.role,
   logoUrl: b.logo_url || b.logoUrl || b.brand_logo_url || b.brandLogoUrl || b.logo || '',
+  website: b.website || b.url || b.brand_url || b.source_url || '',
+  sourceUrl: b.source_url || '',
   about: b.about || b.brand_about || b.description || b.company_description || b.notes || '',
   createdAt: b.created_at || b.createdAt || null,
   lastInteraction: b.last_interaction || b.lastInteraction,
@@ -38,17 +40,44 @@ const brandInitials = (name = '') => {
   return parts.slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'BR';
 };
 
+const domainFromWebsite = (website = '') => {
+  const raw = String(website || '').trim();
+  if (!raw) return '';
+  try {
+    return new URL(raw.startsWith('http') ? raw : 'https://' + raw).hostname.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
+};
+
+const logoCandidatesForBrand = (brand) => {
+  const domain = domainFromWebsite(brand.website || brand.sourceUrl);
+  return [
+    brand.logoUrl,
+    domain ? 'https://logo.clearbit.com/' + domain : '',
+    domain ? 'https://www.google.com/s2/favicons?sz=256&domain_url=https://' + domain : '',
+    domain ? 'https://icons.duckduckgo.com/ip3/' + domain + '.ico' : '',
+  ].filter(Boolean).filter((value, index, array) => array.indexOf(value) === index);
+};
+
 const BrandLogo = ({ brand }) => {
-  const [failed, setFailed] = useState(false);
-  const showLogo = Boolean(brand.logoUrl && !failed);
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const logoCandidates = logoCandidatesForBrand(brand);
+  const logoCandidateKey = logoCandidates.join('|');
+  const logoUrl = logoCandidates[candidateIndex] || '';
+
+  useEffect(() => {
+    setCandidateIndex(0);
+  }, [brand.id, logoCandidateKey]);
+
   return (
     <div className="w-12 h-12 rounded-lg border border-[#E8E4DB] bg-white flex items-center justify-center flex-shrink-0 overflow-hidden">
-      {showLogo ? (
+      {logoUrl ? (
         <img
-          src={brand.logoUrl}
+          src={logoUrl}
           alt={`${brand.company} logo`}
           className="h-full w-full object-contain p-1.5"
-          onError={() => setFailed(true)}
+          onError={() => setCandidateIndex((current) => current + 1)}
         />
       ) : (
         <span

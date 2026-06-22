@@ -86,8 +86,45 @@ def _brand_created_at_key(brand: Dict[str, Any]) -> str:
 
 
 def _domain_from_url(value: str) -> str:
-    match = re.search(r"https?://([^/]+)", value or "")
-    return match.group(1).replace("www.", "") if match else ""
+    raw = str(value or "").strip()
+    match = re.search(r"https?://([^/]+)", raw)
+    if match:
+        return match.group(1).replace("www.", "")
+    if "/" not in raw and "." in raw and " " not in raw:
+        return raw.replace("www.", "")
+    return ""
+
+
+_PUBLIC_EMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "outlook.com", "hotmail.com", "live.com",
+    "icloud.com", "me.com", "aol.com", "proton.me", "protonmail.com", "zoho.com",
+}
+
+
+def _normalise_website_url(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "@" in raw and not raw.startswith(("http://", "https://")):
+        raw = raw.rsplit("@", 1)[-1]
+    if raw.startswith(("http://", "https://")):
+        return raw.rstrip("/")
+    if "." in raw and " " not in raw:
+        return f"https://{raw.strip('/')}"
+    return ""
+
+
+def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "") -> str:
+    direct = _normalise_website_url(website)
+    if direct:
+        return direct
+    source = _normalise_website_url(source_url)
+    if source:
+        return source
+    email_domain = str(email or "").strip().lower().rsplit("@", 1)[-1] if "@" in str(email or "") else ""
+    if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS and "." in email_domain:
+        return f"https://{email_domain}"
+    return ""
 
 
 def _compact_text(value: Any, limit: int = 900) -> str:
@@ -112,7 +149,7 @@ def _brand_logo_from_source(source_url: str, raw_logo: Any = None) -> str:
             logo = f"https://{domain}{logo}"
         return logo[:500]
     if domain:
-        return f"https://www.google.com/s2/favicons?sz=256&domain_url=https://{domain}"
+        return f"https://logo.clearbit.com/{domain}"
     return ""
 
 def _country_to_gl(country: str) -> str:
@@ -675,7 +712,7 @@ def make_v3_router(db):
         footer = html.escape(
             os.getenv(
                 "SMTP_EMAIL_FOOTER",
-                f"This transactional email was sent by TASCK. Reply to {from_email} if you need help.",
+                f"TASCK sent this message because an account or project action was created for this email address. Reply to {from_email} for help.",
             )
         )
         return (
@@ -697,7 +734,7 @@ def make_v3_router(db):
         x_mailer = os.getenv("SMTP_X_MAILER", "").strip()
         if x_mailer:
             message["X-Mailer"] = x_mailer
-        if email.get("id"):
+        if _smtp_flag("SMTP_ENABLE_ENTITY_REF_ID", False) and email.get("id"):
             message["X-Entity-Ref-ID"] = str(email.get("id"))
         if _smtp_flag("SMTP_MARK_AUTOMATED", False):
             message["X-Auto-Response-Suppress"] = "All"
@@ -715,6 +752,10 @@ def make_v3_router(db):
                 message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
             elif unsubscribe_email:
                 message["List-Unsubscribe"] = f"<mailto:{unsubscribe_email}>"
+
+    def _email_uses_plain_text_only(kind: str) -> bool:
+        access_kinds = {"brand_welcome", "creator_welcome"}
+        return kind in access_kinds and not _smtp_flag("SMTP_SEND_ACCESS_HTML", False)
 
     def _send_smtp_message(
         message: EmailMessage,
@@ -765,10 +806,14 @@ def make_v3_router(db):
         message["From"] = formataddr((from_name, from_email))
         message["To"] = to_email
         message["Subject"] = str(email.get("subject") or "")
+        if username and _email_domain(from_email) != _email_domain(username):
+            message["Sender"] = username
         _add_transactional_headers(message, email, from_email, reply_to)
         plain_body = str(email.get("body") or "")
         message.set_content(plain_body)
-        message.add_alternative(_smtp_transactional_html(plain_body, reply_to or from_email), subtype="html")
+        kind = str(email.get("kind") or "")
+        if _smtp_flag("SMTP_SEND_HTML_ALTERNATIVE", False) and not _email_uses_plain_text_only(kind):
+            message.add_alternative(_smtp_transactional_html(plain_body, reply_to or from_email), subtype="html")
         for attachment in email.get("attachments") or []:
             content = attachment.get("content")
             if content is None or content == "":
@@ -935,7 +980,7 @@ def make_v3_router(db):
             raise HTTPException(404, "Brand not found")
         allowed = {
             "about", "brand_about", "description", "company_description",
-            "logo_url", "brand_logo_url", "website", "notes",
+            "logo_url", "brand_logo_url", "website", "source_url", "source", "lead_source", "scrape_source", "notes",
             "primary_contact", "role", "email", "phone", "hq",
             "industry", "company", "name", "brand_name",
             "marketing_budget", "budget", "budget_range",
@@ -950,54 +995,83 @@ def make_v3_router(db):
 
     @router.post("/brands/{brand_id}/scrape")
     async def scrape_brand_details(brand_id: str):
-        """Scrape the web for brand details (about text and logo)."""
+        """Scrape the web for source-grounded brand details."""
+        import html as html_module
         import httpx
         import re as _re
+        from urllib.parse import urljoin
 
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
 
-        website = brand.get("website") or brand.get("url") or brand.get("brand_url") or ""
+        source_url = brand.get("source_url") or brand.get("source") or brand.get("lead_source") or brand.get("scrape_source") or ""
+        website = _website_from_brand_inputs(website=brand.get("website") or brand.get("url") or brand.get("brand_url"), email=brand.get("email"), source_url=source_url)
         brand_name = brand.get("company") or brand.get("name") or brand.get("brand_name") or "Brand"
         scraped_about = ""
         scraped_logo = ""
+        scraped_budget = ""
+        final_url = website
+
+        if not website and os.getenv("SERPAPI_API_KEY", "").strip():
+            try:
+                params = {"engine": "google", "q": f"{brand_name} official website logo", "api_key": os.getenv("SERPAPI_API_KEY", "").strip(), "num": 5}
+                search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
+                search_response.raise_for_status()
+                search_data = search_response.json()
+                blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com"}
+                for result in search_data.get("organic_results") or []:
+                    link = str(result.get("link") or "")
+                    domain = _domain_from_url(link)
+                    if domain and not any(domain.endswith(blocked) for blocked in blocked_domains):
+                        website = _normalise_website_url(link)
+                        final_url = website
+                        break
+            except requests.RequestException as exc:
+                logger.warning("Brand website search failed for %s: %s", brand_name, exc)
 
         if website:
             url = website if website.startswith("http") else f"https://{website}"
             try:
                 async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-                    resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0)"})
+                    resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                    resp.raise_for_status()
+                    final_url = str(resp.url).rstrip("/")
                     html = resp.text
-
-                    # Extract meta description
-                    og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
-                    meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
-                    if og_desc:
-                        scraped_about = og_desc.group(1).strip()
-                    elif meta_desc:
-                        scraped_about = meta_desc.group(1).strip()
-                    else:
-                        # Try first <p> with substantial text
-                        paragraphs = _re.findall(r'<p[^>]*>([^<]{80,})</p>', html, _re.I | _re.S)
-                        if paragraphs:
-                            scraped_about = _re.sub(r'<[^>]+>', '', paragraphs[0]).strip()[:500]
-
-                    # Extract the best available brand image/logo from the page before falling back to a domain logo service.
-                    from urllib.parse import urljoin
 
                     def _attr(tag: str, name: str) -> str:
                         match = _re.search(rf'\b{name}\s*=\s*["\']([^"\']+)', tag, _re.I)
                         return match.group(1).strip() if match else ""
+
+                    for tag in _re.findall(r'<link[^>]+>', html, _re.I | _re.S):
+                        rel = _attr(tag, "rel").lower()
+                        href = _attr(tag, "href")
+                        if "canonical" in rel and href:
+                            final_url = urljoin(final_url, href).rstrip("/")
+                            break
+
+                    og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                    meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                    if og_desc:
+                        scraped_about = html_module.unescape(og_desc.group(1)).strip()
+                    elif meta_desc:
+                        scraped_about = html_module.unescape(meta_desc.group(1)).strip()
+                    else:
+                        paragraphs = _re.findall(r'<p[^>]*>(.*?)</p>', html, _re.I | _re.S)
+                        for paragraph in paragraphs:
+                            clean_paragraph = " ".join(_re.sub(r'<[^>]+>', ' ', paragraph).split())
+                            if len(clean_paragraph) >= 80:
+                                scraped_about = html_module.unescape(clean_paragraph)[:700]
+                                break
 
                     def _add_logo(candidate: str, score: int = 0):
                         candidate = str(candidate or "").strip()
                         if not candidate or candidate.startswith("data:"):
                             return
                         lowered = candidate.lower()
-                        if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar"]):
+                        if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar", "blank"]):
                             return
-                        logo_candidates.append((score, urljoin(url, candidate)))
+                        logo_candidates.append((score, urljoin(final_url, candidate)))
 
                     logo_candidates = []
                     for tag in _re.findall(r'<meta[^>]+>', html, _re.I | _re.S):
@@ -1006,35 +1080,54 @@ def make_v3_router(db):
                         if meta_key in {"og:logo", "logo"}:
                             _add_logo(content, 100)
                         elif meta_key in {"og:image", "twitter:image", "twitter:image:src"}:
-                            _add_logo(content, 60)
+                            _add_logo(content, 62)
                     for tag in _re.findall(r'<link[^>]+>', html, _re.I | _re.S):
                         rel = _attr(tag, "rel").lower()
                         if any(key in rel for key in ["apple-touch-icon", "mask-icon", "shortcut icon", "icon"]):
-                            _add_logo(_attr(tag, "href"), 45 if "apple" in rel else 35)
+                            _add_logo(_attr(tag, "href"), 55 if "apple" in rel else 45)
                     for tag in _re.findall(r'<img[^>]+>', html, _re.I | _re.S):
-                        haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), _attr(tag, "alt"), _attr(tag, "src")]).lower()
+                        haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), _attr(tag, "alt"), _attr(tag, "src"), _attr(tag, "data-src")]).lower()
                         if "logo" in haystack or _slug(brand_name).replace(".", "") in haystack.replace("-", "").replace("_", ""):
-                            _add_logo(_attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"), 90 if "logo" in haystack else 65)
+                            _add_logo(_attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"), 92 if "logo" in haystack else 68)
                     for match in _re.findall(r'"logo"\s*:\s*(?:"([^"\n]+)"|\{[^}]*"url"\s*:\s*"([^"\n]+)")', html, _re.I | _re.S):
-                        _add_logo(next((item for item in match if item), ""), 95)
+                        _add_logo(next((item for item in match if item), ""), 96)
                     if logo_candidates:
                         logo_candidates.sort(key=lambda item: item[0], reverse=True)
-                        scraped_logo = _brand_logo_from_source(url, logo_candidates[0][1])
-            except Exception as e:
-                logger.warning(f"Scrape failed for {url}: {e}")
+                        scraped_logo = _brand_logo_from_source(final_url, logo_candidates[0][1])
 
-        # If we got nothing from actual scrape, return a nice fallback based on brand name
-        if not scraped_about:
-            scraped_about = f"{brand_name} is a leading organization focused on delivering high-quality products and services in their industry. Scraped website details highlight their focus on innovation, customer service, and market expansion."
+                    page_text = html_module.unescape(_re.sub(r'<[^>]+>', ' ', html))
+                    page_text = " ".join(page_text.split())
+                    budget_patterns = [
+                        r'(?:marketing|campaign|media|advertising)\s+(?:budget|spend)[^.\n]{0,100}(?:₦|NGN|N|USD|\$|£)?\s?[\d,.]+\s?(?:k|m|bn|million|billion|thousand)?',
+                        r'(?:₦|NGN|N|USD|\$|£)\s?[\d,.]+\s?(?:k|m|bn|million|billion|thousand)?[^.\n]{0,100}(?:marketing|campaign|media|advertising|budget|spend)',
+                    ]
+                    for pattern in budget_patterns:
+                        match = _re.search(pattern, page_text, _re.I)
+                        if match:
+                            scraped_budget = " ".join(match.group(0).split())[:180]
+                            break
+            except (httpx.HTTPError, ValueError) as exc:
+                logger.warning("Scrape failed for %s: %s", url, exc)
+
+        if not scraped_about and final_url:
+            scraped_about = f"Public website found at {final_url}. Add a fuller About description after reviewing the brand source."
         if not scraped_logo:
-            scraped_logo = _brand_logo_from_source(website)
+            scraped_logo = _brand_logo_from_source(final_url or website)
+        if not scraped_budget:
+            scraped_budget = "No public marketing budget found. Confirm during Connect call."
 
-        # Persist scraped results to brand
         updates = {"updated_at": _now_iso()}
+        if final_url:
+            updates["website"] = final_url
+            updates["source_url"] = final_url
         if scraped_about:
             updates["about"] = scraped_about
+            updates["brand_about"] = scraped_about
         if scraped_logo:
             updates["logo_url"] = scraped_logo
+            updates["brand_logo_url"] = scraped_logo
+        if scraped_budget:
+            updates["marketing_budget"] = scraped_budget
         if len(updates) > 1:
             await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
 
@@ -1042,11 +1135,13 @@ def make_v3_router(db):
             "ok": True,
             "about": scraped_about,
             "logo_url": scraped_logo,
+            "brand_logo_url": scraped_logo,
+            "marketing_budget": scraped_budget,
             "brand_name": brand_name,
-            "website": website,
+            "website": final_url,
+            "source_url": final_url,
             "scraped": True,
         }
-
     class BrandCreate(BaseModel):
         company: str
         industry: str
@@ -1068,6 +1163,9 @@ def make_v3_router(db):
         brand_about: Optional[str] = None
         logo_url: Optional[str] = None
         brand_logo_url: Optional[str] = None
+        source: Optional[str] = None
+        source_url: Optional[str] = None
+        lead_source: Optional[str] = None
 
     @router.post("/brands")
     async def create_brand(payload: BrandCreate):
@@ -1079,12 +1177,16 @@ def make_v3_router(db):
         if brand_status == "crm_accepted" and not crm_accepted_at:
             crm_accepted_at = now
         about_text = _compact_text(payload.about or payload.brand_about)
-        logo_url = payload.logo_url or payload.brand_logo_url or ""
+        source_url = payload.source_url or ""
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
+        logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,
             "company": payload.company,
             "industry": payload.industry,
-            "website": payload.website or "",
+            "website": website,
+            "source_url": source_url or website,
+            "source": payload.source or payload.lead_source or "v3_crm",
             "about": about_text,
             "brand_about": about_text,
             "logo_url": logo_url,
@@ -1146,18 +1248,21 @@ def make_v3_router(db):
         }
         await db.v3_brand_accounts.insert_one({**account_doc})
 
+        app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
+        brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{app_base_url}/brand").rstrip("/")
         welcome = await queue_email(
             to=username,
-            subject=f"TASCK brand portal access for {payload.company}",
+            subject="Your TASCK brand access",
             body=(
                 f"Hello {payload.primary_contact},\n\n"
-                f"Your TASCK brand portal account for {payload.company} has been created successfully.\n\n"
-                "You can use the login details below to access your brand portal, review project updates, respond to TASCK documents, and approve items that require your attention.\n\n"
-                f"Portal username: {username}\n"
-                f"Temporary password: {temp_password}\n\n"
-                "For security, please change this temporary password after your first login. If you did not expect this account or need help signing in, please reply to this email and the TASCK team will assist you.\n\n"
-                "Warm regards,\n"
-                "The TASCK Team"
+                "Welcome to TASCK.\n\n"
+                f"We have prepared brand portal access for {payload.company} so your team can review project documents, respond to approval requests, and keep communication with TASCK in one place.\n\n"
+                f"Brand portal: {brand_portal_url}\n"
+                f"Email: {username}\n"
+                f"Access code: {temp_password}\n\n"
+                "For security, please sign in and change this access code before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
+                "Regards,\n"
+                "TASCK"
             ),
             kind="brand_welcome",
             brand_id=brand_id,
@@ -1250,12 +1355,16 @@ def make_v3_router(db):
         brand_id = f"brand-{uuid.uuid4().hex[:8]}"
         rm = await _relationship_manager(payload.rm_id)
         about_text = _compact_text(payload.about or payload.brand_about)
-        logo_url = payload.logo_url or payload.brand_logo_url or ""
+        source_url = payload.source_url or ""
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
+        logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,
             "company": payload.company,
             "industry": payload.industry,
-            "website": payload.website or "",
+            "website": website,
+            "source_url": source_url or website,
+            "source": payload.source or payload.lead_source or "v3_crm",
             "about": about_text,
             "brand_about": about_text,
             "logo_url": logo_url,
@@ -1330,18 +1439,22 @@ def make_v3_router(db):
             "password_changed_at": None,
         }
         await db.v3_brand_accounts.insert_one({**account_doc})
+        company_name = brand.get("company") or brand.get("name") or "your brand"
+        app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
+        brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{app_base_url}/brand").rstrip("/")
         welcome = await queue_email(
             to=username,
-            subject=f"TASCK brand portal access for {brand.get('company') or brand.get('name') or 'your brand'}",
+            subject="Your TASCK brand access",
             body=(
                 f"Hello {brand.get('primary_contact') or 'Marketing Team'},\n\n"
-                f"Your TASCK brand portal account for {brand.get('company')} has been created successfully.\n\n"
-                "You can use the login details below to access your brand portal, review project updates, respond to TASCK documents, and approve items that require your attention.\n\n"
-                f"Portal username: {username}\n"
-                f"Temporary password: {temp_password}\n\n"
-                "For security, please change this temporary password after your first login. If you did not expect this account or need help signing in, please reply to this email and the TASCK team will assist you.\n\n"
-                "Warm regards,\n"
-                "The TASCK Team"
+                "Welcome to TASCK.\n\n"
+                f"We have prepared brand portal access for {company_name} so your team can review project documents, respond to approval requests, and keep communication with TASCK in one place.\n\n"
+                f"Brand portal: {brand_portal_url}\n"
+                f"Email: {username}\n"
+                f"Access code: {temp_password}\n\n"
+                "For security, please sign in and change this access code before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
+                "Regards,\n"
+                "TASCK"
             ),
             kind="brand_welcome",
             brand_id=brand["id"],
@@ -3148,7 +3261,7 @@ def make_v3_router(db):
                 f"Business Case: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
-                f"Temporary password: {password}\n\n"
+                f"Access code: {password}\n\n"
                 "Please log in, review each field against the Connect call, add comments where anything does not align, and approve the Alignment Snapshot when it is accurate. "
                 "TASCK admin will review brand comments or approval before moving into Brainstorming.\n\n"
                 f"Alignment fields to review:\n{question_text}\n\n"
@@ -3162,7 +3275,7 @@ def make_v3_router(db):
                 f"Business Case: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
-                f"Temporary password: {password}\n\n"
+                f"Access code: {password}\n\n"
                 "You can approve it or add line-level comments for the admin team. A Google Docs-compatible copy is attached."
             )
         document_docx = alignment_snapshot_docx_bytes(case, brand, snap)
@@ -3374,7 +3487,7 @@ def make_v3_router(db):
                 f"Business Case: {project_title}\n"
                 f"Creator Portal: {creator_portal_url}\n"
                 f"Username: {creator_account.get('username', creator_email)}\n"
-                f"Temporary password: {creator_account.get('temporary_password') or 'Use your current TASCK password'}\n\n"
+                f"Access code: {creator_account.get('temporary_password') or 'Use your current TASCK access code'}\n\n"
                 "Please log in, review the brief, and respond with your interest, fee expectation, conditions, and availability.\n\n"
                 "Creative Brief:\n"
                 f"{payload.brief_text}"

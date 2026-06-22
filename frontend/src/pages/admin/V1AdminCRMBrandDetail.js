@@ -129,8 +129,8 @@ const shortText = (value) => {
 const logoUrlForBrand = (brand) => {
   const direct = firstValue(brand, ['logo_url', 'brand_logo_url', 'logoUrl', 'brandLogoUrl', 'logo']);
   if (direct) return direct;
-  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url']));
-  return domain ? 'https://www.google.com/s2/favicons?sz=256&domain_url=https://' + domain : '';
+  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
+  return domain ? 'https://logo.clearbit.com/' + domain : '';
 };
 const brandName = (brand) => cleanV1Text(firstValue(brand, ['company', 'name', 'brand_name']) || 'Brand');
 const brandIndustry = (brand) => cleanV1Text(firstValue(brand, ['industry', 'category', 'sector']) || 'Uncategorised');
@@ -147,7 +147,7 @@ const domainFromWebsite = (website = '') => {
 
 const logoCandidatesForBrand = (brand) => {
   const direct = logoUrlForBrand(brand);
-  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url']));
+  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
   return [
     direct,
     domain ? 'https://logo.clearbit.com/' + domain : '',
@@ -489,7 +489,7 @@ const V1AdminCRMBrandDetail = () => {
 
   const aboutText = firstValue(brand, ['about', 'brand_about', 'description', 'company_description', 'notes']);
   const marketingBudget = firstValue(brand, ['marketing_budget', 'budget', 'budget_range']);
-  const website = firstValue(brand, ['website', 'url', 'brand_url']);
+  const website = firstValue(brand, ['website', 'url', 'brand_url', 'source_url']);
 
   return (
     <div className="space-y-5" data-testid="v1-brand-detail">
@@ -518,10 +518,6 @@ const V1AdminCRMBrandDetail = () => {
               <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">CRM Brand</p>
               <h1 className="v3-heading mt-1 text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)}</h1>
               <p className="mt-1 text-[13px] text-[#6E6657]">{brandIndustry(brand)}</p>
-              <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-                <span className="rounded bg-[#DDE7E2] px-2 py-1 text-[#1F4A3A]">{statusLabel(brand.status || 'CRM visible')}</span>
-                <span className="rounded bg-[#F4F2EC] px-2 py-1 text-[#4F3E2F]">Source: {statusLabel(brand.source || brand.lead_source || 'V3 CRM')}</span>
-              </div>
             </div>
           </div>
           <div className="flex flex-col gap-2 shrink-0 min-w-[200px]">
