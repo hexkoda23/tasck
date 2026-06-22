@@ -177,7 +177,7 @@ export const businessCasePhasePath = (id, bc = {}) => {
   if (stage === 'deliver') return adminRoute(`/business-cases/${id}/delivery/summary`);
   if (stage === 'plan') {
     const plan = bc.plan || {};
-    if (!plan.brainstorm_round_id && !plan.brainstorm_status) return adminRoute(`/business-cases/${id}/plan/brainstorm`);
+    if (!plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/plan/brainstorm`);
     if (!Array.isArray(plan.selected_creator_ids) || plan.selected_creator_ids.length === 0) return adminRoute(`/business-cases/${id}/plan/creator-scan`);
     if (!plan.creative_brief_id) return adminRoute(`/business-cases/${id}/plan/brief`);
     if (!plan.creator_briefing_status) return adminRoute(`/business-cases/${id}/plan/creator-briefing-call`);
@@ -928,7 +928,7 @@ export const V3BusinessCaseConnect = () => {
         </InfoCard>
         <InfoCard title="Next steps">
           <div className="grid gap-3">
-            <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/schedule`))} className="v3-btn-primary"><Plus className="w-3.5 h-3.5" /> Schedule meeting</button>
+            <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/schedule`))} className="v3-btn-primary"><Plus className="w-3.5 h-3.5" /> Add Transcript</button>
             <div className="rounded-lg border border-[#E8E4DB] bg-[#FAFAF7] p-3">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Send meeting schedule to brand</p>
               <div className="mt-3 grid gap-2">
@@ -2943,6 +2943,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   const [generating, setGenerating] = useState(false);
   const [sendPopup, setSendPopup] = useState(null);
   const snapshot = bundle?.creative_snapshot || null;
+  const brandComments = Array.isArray(snapshot?.brand_comments) ? snapshot.brand_comments : [];
 
   const generate = async () => {
     setNotice('');
@@ -3123,6 +3124,22 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
           </div>
         )}
       </InfoCard>
+      {brandComments.length > 0 && !editing && (
+        <InfoCard title={`Brand Comments (${brandComments.length})`}>
+          <div className="space-y-3" data-testid="strategy-brand-comments">
+            {brandComments.map((comment, index) => (
+              <div key={comment.id || index} className="rounded-[8px] border border-[#E8E4DB] bg-[#FBFAF7] p-3">
+                <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">
+                  {comment.author || "Brand"} - {formatDate(comment.created_at)}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">
+                  {cleanV1Text(comment.comment || comment.content || comment)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </InfoCard>
+      )}
     </FlowShell>
   );
 };
@@ -3744,7 +3761,6 @@ export const V3BusinessCaseFinalReport = () => {
 
   const reportSent = Boolean(report?.report_sent_at);
   const feedbackSent = Boolean(report?.feedback_sent_at);
-  const canClose = bc.stage !== 'closed';
 
   const computeAverage = (questions) => {
     const ratings = (questions || []).map((q) => Number(q.rating)).filter((n) => Number.isFinite(n));
@@ -3868,7 +3884,6 @@ export const V3BusinessCaseFinalReport = () => {
   };
 
   const closeProject = async () => {
-    if (!canClose) return;
     setClosing(true);
     setClosePopup({ tone: 'pending', title: 'Closing project', message: 'Closing project...' });
     try {
@@ -4060,9 +4075,9 @@ export const V3BusinessCaseFinalReport = () => {
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-[14px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>Close the project</p>
-                <p className="text-[12px] text-[#6E6657] mt-1">{bc.stage === 'closed' ? 'This project has already been closed.' : 'Close the project when TASCK has completed delivery, reporting, and internal wrap-up.'}</p>
+                <p className="text-[12px] text-[#6E6657] mt-1">{bc.stage === 'closed' ? 'This project has already been closed. Click Project closed to return to CRM Brands.' : 'Close the project when TASCK has completed delivery, reporting, and internal wrap-up. Admin will return to CRM Brands after closing.'}</p>
               </div>
-              <button onClick={closeProject} disabled={!canClose || closing || bc.stage === 'closed'} className="v3-btn-primary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closing...' : 'Close Project')}</button>
+              <button onClick={closeProject} disabled={closing} className="v3-btn-primary disabled:opacity-40 disabled:cursor-not-allowed" data-testid="close-project-btn"><PackageCheck className="w-3.5 h-3.5" /> {bc.stage === 'closed' ? 'Project closed' : (closing ? 'Closing...' : 'Close Project')}</button>
             </div>
           </div>
         </>

@@ -3488,8 +3488,16 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
+        project_title = _clean_document_text(case.get("title") or snap.get("title") or "Strategy Snapshot", "Strategy Snapshot")
+        contact_snapshot = case.get("brand_contact_snapshot") or {}
         account = await ensure_brand_account(brand)
-        recipient = brand.get("email") or account.get("username") or ""
+        recipient = (
+            brand.get("email")
+            or brand.get("contact_email")
+            or contact_snapshot.get("email")
+            or account.get("username")
+            or ""
+        )
         if not recipient:
             raise HTTPException(400, "Brand email is required before sending the Strategy Snapshot.")
 
@@ -3592,12 +3600,24 @@ def make_v3_router(db):
             raise HTTPException(404, "No Strategy Snapshot to approve.")
         approved_at = _now_iso()
         await db.v3_creative_snapshots.update_one({"id": snap["id"]}, {"$set": {"status": "approved", "approved_at": approved_at, "approved_by": payload.approver, "approved_by_party": payload.approver_party}})
+        business_case_updates = {
+            "plan.creative_snapshot_approved_at": approved_at,
+            "plan.creative_snapshot_status": "approved",
+            "plan.creative_snapshot_approved_by_party": payload.approver_party,
+            "updated_at": _now_iso(),
+        }
+        if payload.approver_party == "brand":
+            business_case_updates.update({
+                "stage": "deliver",
+                "next_action": STAGE_NEXT_ACTIONS["deliver"],
+                "deliver.strategy_snapshot_approved_by_brand_at": approved_at,
+            })
         await db.v3_business_cases.update_one(
             {"id": bc_id},
-            {"$set": {"plan.creative_snapshot_approved_at": approved_at, "plan.creative_snapshot_status": "approved", "updated_at": _now_iso()},
-             "$push": {"timeline": {"at": _now_iso(), "event": "strategy_snapshot_approved", "by": payload.approver}}},
+            {"$set": business_case_updates,
+             "$push": {"timeline": {"at": _now_iso(), "event": "strategy_snapshot_approved", "by": payload.approver, "party": payload.approver_party}}},
         )
-        return {"ok": True, "approved_at": approved_at}
+        return {"ok": True, "approved_at": approved_at, "stage": business_case_updates.get("stage"), "next_action": business_case_updates.get("next_action")}
 
     # ------------------------------------------------------------------------
     # CONTRACTS

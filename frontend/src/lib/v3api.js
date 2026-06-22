@@ -3,8 +3,9 @@
 
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
-const V3 = BACKEND_URL ? `${BACKEND_URL}/api/v3` : '/api/v3';
+const DEFAULT_BACKEND_URL = 'https://tasck-live-demo-1.emergent.host';
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/, '');
+const V3 = `${BACKEND_URL}/api/v3`;
 
 const v3 = axios.create({ baseURL: V3, headers: { 'Content-Type': 'application/json' } });
 
@@ -85,7 +86,7 @@ export const v3SimulateBriefResponse = (briefId) => v3.post(`/creative-briefs/${
 export const v3SendBriefReminder = (briefId) => v3.post(`/creative-briefs/${briefId}/remind`).then(r => r.data);
 export const v3ListSnapshots = (bcId) => v3.get('/creative-snapshots', { params: { business_case_id: bcId } }).then(r => r.data);
 export const v3CreateSnapshot = (payload) => v3.post('/creative-snapshots', payload).then(r => r.data);
-export const v3ApproveSnapshot = (bcId, approver) => v3.post(`/business-cases/${bcId}/creative-snapshot/approve`, { approver }).then(r => r.data);
+export const v3ApproveSnapshot = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/creative-snapshot/approve`, { approver, approver_party }).then(r => r.data);
 export const v3UpdateStrategySnapshot = (snapshotId, payload) => v3.patch(`/creative-snapshots/${snapshotId}`, payload).then(r => r.data);
 export const v3SendStrategySnapshotToBrand = (bcId) => v3.post(`/business-cases/${bcId}/creative-snapshot/send`).then(r => r.data);
 export const v3AddStrategySnapshotComment = (snapshotId, payload) => v3.post(`/creative-snapshots/${snapshotId}/comments`, payload).then(r => r.data);
