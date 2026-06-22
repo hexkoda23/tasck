@@ -215,6 +215,26 @@ const SmallRecord = ({ title, subtitle, body, href }) => (
     {body && <p className="mt-2 whitespace-pre-wrap break-words leading-5 text-[#5C5C5C]">{shortText(body)}</p>}
   </div>
 );
+
+const CollapsibleEmailRecord = ({ title, subtitle, body }) => {
+  const [open, setOpen] = useState(false);
+  const content = textValue(body);
+
+  return (
+    <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]" data-testid="brand-email-record">
+      <button type="button" onClick={() => setOpen((current) => !current)} className="flex w-full items-start justify-between gap-3 text-left" data-testid="brand-email-toggle">
+        <span>
+          <span className="block font-medium text-[#1A1A1A]">{cleanV1Text(title || 'Queued email')}</span>
+          {subtitle && <span className="mt-0.5 block text-[#8A8A8A]">{cleanV1Text(subtitle)}</span>}
+        </span>
+        <ChevronDown className={`mt-0.5 h-4 w-4 shrink-0 text-[#8A8A8A] transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && content !== EMPTY_VALUE && (
+        <p className="mt-3 whitespace-pre-wrap break-words border-t border-[#F1ECDF] pt-3 leading-5 text-[#5C5C5C]">{content}</p>
+      )}
+    </div>
+  );
+};
 const emailCategory = (email) => {
   const subject = String(email?.subject || '').toLowerCase();
   const kind = String(email?.kind || '').toLowerCase();
@@ -781,7 +801,7 @@ const V1AdminCRMBrandDetail = () => {
                 </div>
               )}
             </div>
-            {visibleEmails.slice(0, 4).map((email, index) => <SmallRecord key={email.id || index} title={email.subject || 'Queued email'} subtitle={[email.to, statusLabel(email.status, ''), email.duplicate_count > 1 ? `${email.duplicate_count} duplicate sends collapsed` : ''].filter(Boolean).join(' | ')} body={email.body} />)}
+            {visibleEmails.slice(0, 4).map((email, index) => <CollapsibleEmailRecord key={email.id || index} title={email.subject || 'Queued email'} subtitle={[email.to, statusLabel(email.status, ''), email.duplicate_count > 1 ? `${email.duplicate_count} duplicate sends collapsed` : ''].filter(Boolean).join(' | ')} body={email.body} />)}
           </div>
         </InfoCard>
       </div>
