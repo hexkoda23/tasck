@@ -440,36 +440,25 @@ async def _call_alignment_analysis_tool(
     combined_text: str,
     brand: Dict[str, Any],
     case: Dict[str, Any],
+    raise_on_failure: bool = False,
 ) -> Optional[Dict[str, Any]]:
     if not (combined_text or "").strip():
         return None
 
     system_prompt = _alignment_tool_system_prompt()
     user_message = _alignment_tool_user_message(brand, case, combined_text)
-    emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY")
     custom_key = os.getenv("ALIGNMENT_ANALYZER_LLM_API_KEY") or os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
     custom_base = (os.getenv("ALIGNMENT_ANALYZER_LLM_BASE_URL") or os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
     openai_key = os.getenv("OPENAI_API_KEY")
 
-    try:
-        if emergent_key:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-            provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
-            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.0-flash"
-            chat = LlmChat(
-                api_key=emergent_key,
-                session_id=f"alignment-analyzer-{uuid.uuid4()}",
-                system_message=system_prompt,
-            ).with_model(provider, model)
-            response = await chat.send_message(UserMessage(text=user_message))
-            parsed = _parse_json_object(_response_to_text(response))
-            return _normalise_alignment_tool_result({**parsed, "analysis_source": f"emergent:{provider}/{model}"})
-
-        def _call_http_model() -> Optional[Dict[str, Any]]:
-            if anthropic_key:
-                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "claude-sonnet-4-20250514"
+    # Anthropic takes priority when configured — the Combined AI Transcript Analysis
+    # is contractually bound to use the Anthropic-managed model.
+    if anthropic_key:
+        try:
+            def _call_anthropic() -> Dict[str, Any]:
+                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "claude-sonnet-4-5"
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -491,6 +480,29 @@ async def _call_alignment_analysis_tool(
                 text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
                 return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"anthropic:{model}"})
 
+            return await asyncio.to_thread(_call_anthropic)
+        except Exception as exc:
+            logger.warning("Anthropic alignment analysis failed for business case %s: %s", case.get("id"), exc)
+            if raise_on_failure:
+                raise HTTPException(502, f"Anthropic transcript analysis failed: {exc}")
+            return None
+
+    try:
+        if emergent_key:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+
+            provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
+            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.0-flash"
+            chat = LlmChat(
+                api_key=emergent_key,
+                session_id=f"alignment-analyzer-{uuid.uuid4()}",
+                system_message=system_prompt,
+            ).with_model(provider, model)
+            response = await chat.send_message(UserMessage(text=user_message))
+            parsed = _parse_json_object(_response_to_text(response))
+            return _normalise_alignment_tool_result({**parsed, "analysis_source": f"emergent:{provider}/{model}"})
+
+        def _call_http_model() -> Optional[Dict[str, Any]]:
             if custom_key and custom_base:
                 model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "gpt-4o-mini"
                 response = requests.post(
@@ -4764,25 +4776,36 @@ def make_v3_router(db):
         mi = _extract_marketing_intelligence(combined_text)
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
         alignment_tool_result = None
+        anthropic_configured = bool(os.getenv("ANTHROPIC_API_KEY"))
         if combined_text:
             try:
                 alignment_timeout_seconds = max(
                     3.0,
-                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "10")),
+                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "30")),
                 )
             except ValueError:
-                alignment_timeout_seconds = 10.0
+                alignment_timeout_seconds = 30.0
             try:
                 alignment_tool_result = await asyncio.wait_for(
-                    _call_alignment_analysis_tool(combined_text, brand, case),
+                    _call_alignment_analysis_tool(combined_text, brand, case, raise_on_failure=anthropic_configured),
                     timeout=alignment_timeout_seconds,
                 )
+            except HTTPException:
+                # Bubble up the explicit Anthropic failure so the UI shows a clear error.
+                raise
             except asyncio.TimeoutError:
+                if anthropic_configured:
+                    raise HTTPException(504, f"Anthropic transcript analysis timed out after {alignment_timeout_seconds:.0f}s. Please try again or shorten the transcripts.")
                 logger.warning(
                     "Alignment analysis tool timed out for business case %s after %.1fs; using deterministic fallback.",
                     bc_id,
                     alignment_timeout_seconds,
                 )
+
+        # When the Anthropic key is configured the contract requires that the displayed
+        # results come from a successful authenticated call — never the deterministic fallback.
+        if combined_text and anthropic_configured and not alignment_tool_result:
+            raise HTTPException(502, "Anthropic transcript analysis did not return a usable response. The Combined AI Transcript Analysis requires a valid Anthropic API call — please retry, and contact an admin if the issue persists.")
         if alignment_tool_result:
             mi = {
                 **mi,
