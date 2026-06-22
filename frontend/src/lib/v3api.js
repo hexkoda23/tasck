@@ -17,6 +17,20 @@ v3.interceptors.response.use((response) => {
   return response;
 });
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const v3PostWithNetworkRetry = async (path, payload = undefined, retries = 1) => {
+  try {
+    return await v3.post(path, payload);
+  } catch (error) {
+    if (retries <= 0 || error?.response) {
+      throw error;
+    }
+    await sleep(700);
+    return v3PostWithNetworkRetry(path, payload, retries - 1);
+  }
+};
+
 // -------- Brands / Contacts / Creators --------
 export const v3GetBrands = (params) => v3.get('/brands', { params }).then(r => r.data);
 
@@ -159,7 +173,7 @@ export const v3CreateMeeting = (payload) => v3.post('/meetings', payload).then(r
 export const v3SaveMeetingContact = (meetingId, payload) => v3.patch(`/meetings/${meetingId}/contact`, payload).then(r => r.data);
 export const v3UploadMeetingTranscript = (meetingId, payload) => v3.post(`/meetings/${meetingId}/transcript`, payload).then(r => r.data);
 export const v3AnalyzeMeetingTranscript = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/analyze`, payload).then(r => r.data);
-export const v3AnalyzeAllTranscripts = (bcId) => v3.post(`/business-cases/${bcId}/connect/analyze-all`).then(r => r.data);
+export const v3AnalyzeAllTranscripts = (bcId) => v3PostWithNetworkRetry(`/business-cases/${bcId}/connect/analyze-all`).then(r => r.data);
 
 export const v3GenerateAlignmentFromTranscripts = (brandId, transcripts = []) => v3.post(`/brands/${brandId}/frame-transcripts`, {
   actor: 'admin',

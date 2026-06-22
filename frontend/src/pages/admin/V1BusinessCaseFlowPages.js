@@ -3756,7 +3756,6 @@ export const V3BusinessCaseFinalReport = () => {
   const [previewType, setPreviewType] = useState(null); // 'report' | 'feedback' | null
   const [shareFeedbackBrandOpen, setShareFeedbackBrandOpen] = useState(false);
   const [shareFeedbackCreatorOpen, setShareFeedbackCreatorOpen] = useState(false);
-  const [autoGenerating, setAutoGenerating] = useState(false);
   const autoReportRequest = useRef('');
 
   const reportSent = Boolean(report?.report_sent_at);
@@ -3773,8 +3772,6 @@ export const V3BusinessCaseFinalReport = () => {
     const generateOnOpen = async () => {
       if (report?.id || autoReportRequest.current === id) return;
       autoReportRequest.current = id;
-      setAutoGenerating(true);
-      setNotice('Generating the final report and feedback automatically...');
       try {
         await v3GenerateFinalReport(id, {});
         if (!cancelled) {
@@ -3786,8 +3783,6 @@ export const V3BusinessCaseFinalReport = () => {
           autoReportRequest.current = '';
           setNotice(e?.response?.data?.detail || e?.message || 'Could not generate final report automatically.');
         }
-      } finally {
-        if (!cancelled) setAutoGenerating(false);
       }
     };
     generateOnOpen();
@@ -3928,7 +3923,6 @@ export const V3BusinessCaseFinalReport = () => {
             <h3 className="mt-1 text-[17px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>Final report and feedback</h3>
             <p className="mt-1 text-[12px] leading-5 text-[#6E6657]">This page prepares the final report and feedback automatically from the real business case, strategy, contracts, and deliverables.</p>
           </div>
-          {autoGenerating && <span className="inline-flex items-center gap-2 rounded-full border border-[#E5C99A] bg-[#FBF4E4] px-3 py-1.5 text-[11px] font-semibold text-[#7A5A1E]"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating...</span>}
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-1 text-[11px]">
           <span className={'inline-flex items-center gap-1 px-2.5 py-1 rounded-full border ' + (reportSent ? 'bg-[#DDF0E1] border-[#A4D4B0] text-[#1F6B3A]' : 'bg-[#FBF4E4] border-[#E5C99A] text-[#7A5A1E]')}><CheckCircle2 className="w-3.5 h-3.5" /> Report {reportSent ? 'sent' : 'not sent'}</span>

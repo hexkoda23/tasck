@@ -4572,7 +4572,26 @@ def make_v3_router(db):
         # Alignment Snapshot fields; keep deterministic extraction as the fallback.
         mi = _extract_marketing_intelligence(combined_text)
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
-        alignment_tool_result = await _call_alignment_analysis_tool(combined_text, brand, case)
+        alignment_tool_result = None
+        if combined_text:
+            try:
+                alignment_timeout_seconds = max(
+                    3.0,
+                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "18")),
+                )
+            except ValueError:
+                alignment_timeout_seconds = 18.0
+            try:
+                alignment_tool_result = await asyncio.wait_for(
+                    _call_alignment_analysis_tool(combined_text, brand, case),
+                    timeout=alignment_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Alignment analysis tool timed out for business case %s after %.1fs; using deterministic fallback.",
+                    bc_id,
+                    alignment_timeout_seconds,
+                )
         if alignment_tool_result:
             mi = {
                 **mi,
