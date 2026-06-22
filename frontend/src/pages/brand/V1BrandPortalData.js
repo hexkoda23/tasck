@@ -21,7 +21,7 @@ export const bundleCase = (bundle) => bundle?.business_case || bundle?.businessC
 export const activityTime = (item) => { const bc = bundleCase(item); return Math.max(...[bc.updated_at, bc.last_interaction_at, bc.created_at, item?.updated_at, item?.created_at].map((v) => { const p = Date.parse(v || ''); return Number.isNaN(p) ? 0 : p; }), 0); };
 export const projectValue = (bc) => { const value = bc?.estimated_value || bc?.value || bc?.total_value || bc?.budget; return value ? formatNairaV3(Number(value)) : 'Value pending'; };
 export const projectProgress = (stage) => Math.round(((stageIndex(stage) + 1) / stageOrder.length) * 100);
-export const projectSummary = (bundle) => { const bc = bundleCase(bundle); return cleanPortalText(bc.next_action || bc.summary || bc.connect?.stated_intent || bc.description || 'TASCK is progressing this project with your team.'); };
+export const projectSummary = (bundle) => { const bc = bundleCase(bundle); if (bc.stage === 'closed') return cleanPortalText('This project has been closed by TASCK. The final report, feedback, contracts, and approved documents remain available in this brand portal.'); return cleanPortalText(bc.next_action || bc.summary || bc.connect?.stated_intent || bc.description || 'TASCK is progressing this project with your team.'); };
 
 export const useV1BrandPortalData = () => {
   const session = useMemo(() => getBrandPortalSession(), []);

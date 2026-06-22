@@ -674,17 +674,18 @@ def make_v3_router(db):
         message["X-Entity-Ref-ID"] = str(email.get("id") or uuid.uuid4().hex)
         message["X-Auto-Response-Suppress"] = "All"
         message["Auto-Submitted"] = "auto-generated"
-        if domain:
-            message["List-ID"] = f"TASCK transactional <transactional.{domain}>"
         feedback_id = str(email.get("kind") or "transactional").replace(" ", "_")[:40]
         message["Feedback-ID"] = f"{feedback_id}:tasck:transactional"
-        unsubscribe_url = os.getenv("SMTP_UNSUBSCRIBE_URL", "").strip()
-        unsubscribe_email = os.getenv("SMTP_UNSUBSCRIBE_EMAIL", "").strip()
-        if unsubscribe_url:
-            message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
-            message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-        elif unsubscribe_email:
-            message["List-Unsubscribe"] = f"<mailto:{unsubscribe_email}>"
+        if _smtp_flag("SMTP_ENABLE_LIST_HEADERS", False):
+            if domain:
+                message["List-ID"] = f"TASCK transactional <transactional.{domain}>"
+            unsubscribe_url = os.getenv("SMTP_UNSUBSCRIBE_URL", "").strip()
+            unsubscribe_email = os.getenv("SMTP_UNSUBSCRIBE_EMAIL", "").strip()
+            if unsubscribe_url:
+                message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+                message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+            elif unsubscribe_email:
+                message["List-Unsubscribe"] = f"<mailto:{unsubscribe_email}>"
 
     def _send_smtp_message(
         message: EmailMessage,
@@ -4373,9 +4374,18 @@ def make_v3_router(db):
             blocks.append({"content": f"Optional comment: {_clean_document_text(block.get('optional_comment') or '-')}"})
         title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
         pdf_bytes = _render_pdf(f"Feedback - {title}", blocks)
-        body = (payload.custom_message or _clean_document_text(fb.get("email_template") or "") or f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},\n\nThank you for partnering with TASCK on this project. Please find attached the feedback form. We appreciate your responses.\n\nWarm regards,\nThe TASCK Agency")
+        body = payload.custom_message or chr(10).join([
+            f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},",
+            "",
+            f"TASCK has shared the project report response document for {title}. Please review the attached document, add your project feedback or comments, and send the completed response back to TASCK from your brand portal or by replying to this email.",
+            "",
+            "This is a direct project update connected to your TASCK brand workspace and the completed project records.",
+            "",
+            "Warm regards,",
+            "The TASCK Agency",
+        ])
         try:
-            await asyncio.to_thread(_smtp_send, payload.to_email, f"Feedback request - {title}", body, pdf_bytes, f"feedback-{report_id}.pdf")
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"TASCK Project Report Response: {title}", body, pdf_bytes, f"feedback-{report_id}.pdf")
         except HTTPException:
             raise
         except Exception as exc:

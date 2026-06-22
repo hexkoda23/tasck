@@ -1,4 +1,4 @@
-﻿import React, { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { ArrowRight, BriefcaseBusiness, CheckCircle2, Clock3, FileText, MessageSquare, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { BrandIdentityCard, ErrorState, LoadingState, ProjectStageRail, brandName, bundleCase, documentGroupsFromBundles, projectProgress, projectSummary, projectValue, stageLabel, useV1BrandPortalData } from './V1BrandPortalData';
@@ -10,7 +10,7 @@ const V1BrandOverview = () => {
   const { loading, error, brand, session, bundles } = useV1BrandPortalData();
   const groups = useMemo(() => documentGroupsFromBundles(bundles), [bundles]);
   const activeBundles = bundles.filter((bundle) => bundleCase(bundle).stage !== 'closed');
-  const currentBundle = activeBundles[0] || bundles[0];
+  const currentBundle = bundles[0];
   const currentCase = bundleCase(currentBundle);
   const docs = [...groups.alignment, ...groups.strategy, ...groups.contracts, ...groups.reports];
   const pendingDocs = docs.filter((doc) => /review|sent|pending/i.test(doc.snapshot?.status || ''));
