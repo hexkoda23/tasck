@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
+import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import {
   ArrowLeft,
   ArrowRight,
@@ -477,6 +478,7 @@ const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel =
   const promoteButtonLabel = result.decision === 'promote' ? 'Promote to Frame' : promoteLabel;
   return (
     <div className="mt-5 rounded-[8px] border border-[#D7CBB8] bg-[#FAF7F1] p-5 space-y-4" data-testid="connect-analysis-results">
+      <AnalyzerSourceBanner source={result.analysis_source} model={result.analysis_model} />
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E8E4DB] pb-3">
         <div>
           <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">AI Recommendation</span>
@@ -1784,6 +1786,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
           </div>
         ) : (
           <div className="space-y-4" data-testid="alignment-snapshot-editor">
+            <AnalyzerSourceBanner source={activeSnapshot?.analysis_source} model={activeSnapshot?.analysis_model} />
             {activeSnapshot?.readiness && (
               <div
                 className="rounded-[8px] border border-[#D7CBB8] bg-white p-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center"

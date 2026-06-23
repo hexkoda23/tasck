@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import AnalyzerSourceBanner from '../../../../components/v3/AnalyzerSourceBanner';
 import {
   ArrowLeft,
   ArrowRight,
@@ -706,8 +707,11 @@ export const V3BusinessCaseConnectAnalysis = () => {
   const bc = getCase(bundle);
   const analysis = location.state?.connectAnalysis || bc.connect?.analysis || {};
   const recommendation = analysis.recommendation || {};
+  const analysisSource = recommendation.analysis_source || analysis.analysis_source;
+  const analysisModel = recommendation.analysis_model || analysis.analysis_model;
   return (
     <FlowShell title="Connect AI Result" subtitle="Review extracted marketing intelligence, reasons, missing context, risk flags, and the promote/reschedule/delete recommendation." nextAction={recommendation.label || 'Analyze a transcript to unlock the decision.'}>
+      <AnalyzerSourceBanner source={analysisSource} model={analysisModel} className="mb-3" />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <InfoCard title="Recommendation">
           <p className="text-xl font-semibold text-[#1A1A1A]">{recommendation.label || 'Pending analysis'}</p>
