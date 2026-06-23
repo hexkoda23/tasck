@@ -85,31 +85,76 @@ def _brand_created_at_key(brand: Dict[str, Any]) -> str:
     return created_at if isinstance(created_at, str) else ""
 
 
+# Logo URL substrings that mark a stored value as a generic marketplace /
+# social asset (e.g. App Store badge). Defined up here so the canonical
+# logo helper can use it before the full scraper helpers load.
+_BAD_LOGO_URL_HINTS = (
+    "apps.apple.com/assets/",
+    "itunes.apple.com/",
+    "play.google.com/intl/",
+    "play.google.com/static/",
+    "googleusercontent.com/play-",
+    "static.xx.fbcdn.net/rsrc.php",
+    "static.licdn.com/",
+    "abs.twimg.com/",
+    "abs-0.twimg.com/",
+    "scontent.cdninstagram.com/static",
+)
+
+
+def _looks_like_bad_logo_url(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    if not text.startswith(("http://", "https://", "data:")):
+        return True
+    return any(fragment in text for fragment in _BAD_LOGO_URL_HINTS)
+
+
 def _canonical_brand_logo(brand: Dict[str, Any]) -> str:
     """Pick the brand logo from any of the historic field names so list and
-    detail responses always agree on a single canonical value."""
+    detail responses always agree on a single canonical value.
+
+    Values that point at marketplace/social generic assets are skipped so a
+    legacy brand record carrying ``apps.apple.com/assets/app-store.png``
+    surfaces as having no logo (which lets the frontend fall through to
+    clearbit and finally to initials).
+    """
     if not isinstance(brand, dict):
         return ""
     for key in ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url"):
         value = brand.get(key)
-        if value and isinstance(value, str) and value.strip().lower().startswith(("http://", "https://", "data:")):
-            return value.strip()
+        if not value or not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text.lower().startswith(("http://", "https://", "data:")):
+            continue
+        if _looks_like_bad_logo_url(text):
+            continue
+        return text
     return ""
 
 
 def _normalise_brand_payload(brand: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Ensure every brand record returned by the API has the canonical
-    ``logo_url`` and ``brand_logo_url`` fields populated, regardless of which
-    legacy field stores the actual value in Mongo."""
+    """Ensure every brand record returned by the API exposes a single
+    canonical ``logo_url`` / ``brand_logo_url``. Legacy fields that store
+    generic marketplace assets are also stripped so the frontend never sees
+    e.g. ``apps.apple.com/assets/app-store.png`` and can fall through to
+    its clearbit / initials chain."""
     if not isinstance(brand, dict):
         return brand
+    brand = {**brand}
     logo = _canonical_brand_logo(brand)
     if logo:
-        brand = {**brand}
-        brand.setdefault("logo_url", logo)
-        brand.setdefault("brand_logo_url", logo)
         brand["logo_url"] = logo
         brand["brand_logo_url"] = logo
+    else:
+        # Strip every historic field that holds a bad-looking asset so the
+        # frontend defensive filter never has to think about it.
+        for key in ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url"):
+            value = brand.get(key)
+            if value and _looks_like_bad_logo_url(value):
+                brand[key] = ""
     return brand
 
 

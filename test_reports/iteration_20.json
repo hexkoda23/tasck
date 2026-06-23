@@ -1,0 +1,37 @@
+{
+  "summary": "Backend regression for we.yan brand-logo normalisation fix verified end-to-end. The /api/v3 list, detail, and scrape endpoints now strip the legacy 'apps.apple.com/assets/app-store.png' value, promote clean legacy 'logo' fields, and re-scraping a we.yan brand pinned to https://www.weyan.app/ returns the official NavLogo.svg with apps.apple.com correctly demoted to supporting_links and warnings. All 28 existing brand scraper regression tests pass; 4 new integration tests pass against the live backend (32/32 total).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_brand_logo_normalisation.py",
+    "/app/backend/tests/test_brand_scraper_identity.py",
+    "/app/backend/tests/test_brand_scraper_candidates.py",
+    "/app/test_reports/pytest/brand_logo_normalisation.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "v3_routes.py is ~9947 lines — should be split into smaller, focused modules (brands, contacts, scraping, opportunities, etc.) per the >700 line guideline. Not blocking for this fix.",
+    "_canonical_brand_logo / _normalise_brand_payload are correctly placed and centralised. The list, detail, and scrape responses all share normalisation — good DRY.",
+    "BrandCreate.create_brand calls _brand_logo_from_source when no explicit logo is given; the scrape route saves logo_url and brand_logo_url back to mongo, so detail re-read returns the clean value. Verified via live curl.",
+    "Optional improvement: PATCH /brands/{id} accepts logo_url / brand_logo_url but does not run through _normalise_brand_payload before saving. If a frontend admin somehow saves a bad URL via PATCH it would re-pollute the DB. The READ path strips it, so user impact is none, but consider running PATCH input through _is_bad_logo_url before persisting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_brand_logo_normalisation.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "not tested (backend-only scope)"
+  },
+  "seed_data_creation": "Each test creates its own brand with prefix 'BugTest <case> <hex>' via POST /api/v3/brands, sometimes pollutes logo_url via direct mongo update, and deletes the brand + linked contacts/accounts/email-outbox in teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_brand_logo_normalisation.py uses live MongoDB via motor + backend .env. It hits POST /api/v3/brands/{id}/scrape against the real SerpAPI (~5s latency). If SERPAPI_API_KEY is removed the scrape test may fail with target_type='website' but still pass source_type==official_website. The we.yan SerpAPI discovery currently returns 5 supporting_links and ~12 'Ignored ... apps.apple.com' style warnings.",
+  "rca of the issue": "ROOT CAUSE: legacy brand records had logo_url='https://apps.apple.com/assets/app-store.png' stored from a previous scraper run. The new fix introduces (a) _looks_like_bad_logo_url checking _BAD_LOGO_URL_HINTS (which includes 'apps.apple.com/assets/'), (b) _canonical_brand_logo skipping bad-looking values, (c) _normalise_brand_payload zeroing out every historic logo field when no clean value exists, and (d) the scrape route saving back a clean logo via the marketplace-reject path. All three read paths (list, detail, scrape response) call _normalise_brand_payload, so the bad value never reaches the UI and the BrandLogo component can fall through to clearbit and finally initials."
+}

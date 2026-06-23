@@ -88,6 +88,40 @@ def test_no_usable_target_returns_none():
     assert out["target_type"] == "none"
 
 
+def test_canonical_brand_logo_skips_bad_app_store_asset():
+    """A legacy record storing the App Store badge as the brand logo must
+    surface as having no logo so the frontend can fall through to clearbit."""
+    assert v3_routes._canonical_brand_logo({"logo_url": "https://apps.apple.com/assets/app-store.png"}) == ""
+
+
+def test_canonical_brand_logo_skips_google_play_badge():
+    assert v3_routes._canonical_brand_logo({"logo_url": "https://play.google.com/intl/en_us/badges/static/en_badge_web_generic.png"}) == ""
+
+
+def test_canonical_brand_logo_returns_first_clean_value():
+    """If the canonical field is bad but a legacy field has a good logo,
+    surface the good one."""
+    logo = v3_routes._canonical_brand_logo({
+        "logo_url": "https://apps.apple.com/assets/app-store.png",
+        "logo": "https://www.weyan.app/logos/NavLogo.svg",
+    })
+    assert logo == "https://www.weyan.app/logos/NavLogo.svg"
+
+
+def test_normalise_brand_payload_strips_bad_legacy_logos():
+    out = v3_routes._normalise_brand_payload({
+        "id": "x",
+        "company": "we.yan",
+        "website": "https://www.weyan.app",
+        "logo_url": "https://apps.apple.com/assets/app-store.png",
+        "brand_logo_url": "https://apps.apple.com/assets/app-store.png",
+    })
+    assert out["logo_url"] == ""
+    assert out["brand_logo_url"] == ""
+    # Website is preserved so the frontend can build a clearbit fallback.
+    assert out["website"] == "https://www.weyan.app"
+
+
 def test_canonical_brand_logo_picks_first_present_field():
     """Backwards compat — historic brand records had ``logo``, not ``logo_url``."""
     assert v3_routes._canonical_brand_logo({"logo_url": "https://a.example/b.png"}) == "https://a.example/b.png"
