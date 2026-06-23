@@ -1754,10 +1754,15 @@ def make_v3_router(db):
         updates = {k: v for k, v in body.items() if k in allowed}
         if not updates:
             raise HTTPException(400, "No valid fields to update")
+        # Defence-in-depth: reject bad logo URLs at the input layer so a
+        # stale UI form can never re-pollute the DB with apps.apple.com/...
+        for logo_key in ("logo_url", "brand_logo_url"):
+            if logo_key in updates and updates[logo_key] and _looks_like_bad_logo_url(updates[logo_key]):
+                raise HTTPException(400, f"Refusing to save {logo_key}={updates[logo_key]!r} — it points at a generic marketplace/social asset, not the brand's own logo.")
         updates["updated_at"] = _now_iso()
         await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
         updated = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
-        return {"ok": True, "brand": updated}
+        return {"ok": True, "brand": _normalise_brand_payload(updated)}
 
     class BrandFollowUpDraftPayload(BaseModel):
         instructions: Optional[str] = None
