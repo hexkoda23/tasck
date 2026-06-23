@@ -272,3 +272,60 @@ Three-stage dedupe layer in `v3_tracker_dedupe.py` — additive, does **not** ch
 - Wire Brand + Creator portals to `/api/v3/*` (still on `v3data.js` fallback)
 - Mobile responsiveness pass
 - WhatsApp integration
+
+### V1 Alignment Snapshot Overhaul + AI Assist Upgrade (Feb 2026)
+
+**P0 — V1 Transcript Analysis & Alignment Snapshot rebuilt around 8 readiness fields:**
+- `ALIGNMENT_SNAPSHOT_FIELD_SPECS` replaced (in `v3_routes.py`). Old organisation/focus-area/priority/date_of_connect fields REMOVED. New keys (in order):
+  1. `key_marketing_focus`
+  2. `primary_target_audience`
+  3. `key_marketing_channels` (array of strings)
+  4. `kpis` (array of `{kpi, target, evidence}` objects)
+  5. `budget_range`
+  6. `timeline`
+  7. `approval_process_decision_maker`
+  8. `current_marketing_challenge`
+- New `_alignment_tool_system_prompt()` forces strict JSON output with `captured_fields`, `missing_fields`, `confidence` (0-100), and `evidence_notes`.
+- New shared `_analyze_transcript_bundle(transcripts, brand, business_case)` powers both single and multi-transcript flows so analyze-all and meeting analyze produce the same shape.
+- Provider priority: `ANTHROPIC_API_KEY` → `ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY`/`EMERGENT_LLM_KEY` → `CUSTOM_OPENAI_COMPATIBLE_*` → `OPENAI_API_KEY` → honest fallback. Default timeout 60s (env: `ALIGNMENT_ANALYZER_TIMEOUT_SECONDS`). Default model `claude-sonnet-4-5` (env: `ALIGNMENT_ANALYZER_MODEL`).
+- `_extract_marketing_intelligence()` no longer invents Instagram/TikTok/YouTube/PR/KPIs/audience/budget/timeline. Missing fields surface as `"Needs confirmation: ..."`.
+- `generate_alignment_questions_for_v1()` writes a 3-column table (Alignment field / Brand response / Status), preserves readiness counts, captured/missing keys, evidence notes, and emits the new client-facing meta string: *"Based on our call, this is what we understand. Are we aligned?"*
+- Frontend (`V1BusinessCaseFlowPages.js`): `alignmentQuestionDefaults` replaced with the 8 new fields. `AlignmentQuestionEditor` shows per-row "Captured" / "Needs confirmation" badges. New top-of-snapshot readiness summary card (e.g. "5 of 8 fields captured (62%)").
+- Verified: 8/8 pytest backend tests PASS at 100% (iteration_19.json). Anthropic returns `analysis_source="anthropic"`, model `claude-sonnet-4-5`, with all 8 fields populated for rich transcripts and "Needs confirmation" markers for thin transcripts.
+
+**P1 — Missed UI fixes shipped in the same session:**
+- New endpoint `POST /api/v3/brands/{brand_id}/ai/follow-up-draft` (`v3_routes.py`) — Claude-backed Draft Follow-Up. Returns `{subject, draft, talking_points[], analysis_source, analysis_model}`. Honest fallback if no LLM key.
+- `V3AdminBrandDetail.js` AI Assist now calls `v3DraftBrandFollowUp` (new in `v3api.js`). Shows live "Drafting…" state, draft source/model line, and a safe deterministic fallback when Anthropic is unavailable.
+- `V3AdminMeetings.js` Qualification Accept feedback popup now exposes `acceptFeedback.brand_id` / `acceptFeedback.creator_id` and offers a context-sensitive **"Open Brand in CRM"** (`/v3/admin/crm-brands/{brand_id}`) or **"Open Creator in Roster"** button instead of the generic CRM list link. Duplicate-click guard already in place — no more silent failures.
+
+**Files touched this iteration:**
+- `/app/backend/v3_routes.py` (huge — alignment specs, prompts, bundle analyzer, analyze-all, analyze meeting, generate alignment questions, new follow-up draft endpoint).
+- `/app/backend/.env` — added `ALIGNMENT_ANALYZER_TIMEOUT_SECONDS=60`, `ALIGNMENT_ANALYZER_MODEL=claude-sonnet-4-5`.
+- `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js` — new 8-field defaults, status badges, readiness summary card.
+- `/app/frontend/src/pages/v3/admin/V3AdminBrandDetail.js` — Anthropic-backed Draft Follow-Up.
+- `/app/frontend/src/pages/v3/admin/V3AdminMeetings.js` — brand-aware Accept feedback popup.
+- `/app/frontend/src/lib/v3api.js` — `v3DraftBrandFollowUp` export.
+- `/app/backend/tests/test_v33_alignment_overhaul.py` (NEW — 8 tests covering the new flow).
+
+### Section 14 — Agent Audit (Feb 2026)
+| System | File / Location | Power source | Status |
+|---|---|---|---|
+| V1 Transcript analyzer | `v3_routes.py` `_analyze_transcript_bundle`, `_call_alignment_analysis_tool` | Anthropic Claude (primary) + Emergent / OpenAI fallback | ✅ Working, 100% test coverage. |
+| Combined Connect transcript analyzer | `v3_routes.py` `analyze_all_connect_transcripts` | Uses shared bundle | ✅ Working. |
+| Alignment Snapshot generator | `v3_routes.py` `generate_alignment_questions_for_v1` | Uses bundle output (no invention) | ✅ Working. |
+| Full Alignment generator (V3 Studio) | `v3_routes.py` `/api/v3/business-cases/{id}/ai/alignment` | Deterministic + Emergent enrichment | 🟡 Functional but still partially deterministic. Could be migrated to the new bundle once the V3 Studio templates are reviewed. |
+| Opportunity Scanner | `v3_routes.py` `/opportunities/scans` + `v3_tracker_v33.py` | SerpAPI + Emergent LLM (Pass 2) | ✅ Working (Tracker v3.3). |
+| Grant/opportunity frontend | `V1AdminBusinessCases.js` | Pulls scanner results | ✅ Working (read-only). |
+| Creator web search | `v3_routes.py` `/creators/search-web` | SerpAPI | ✅ Working when `SERPAPI_API_KEY` set. |
+| Creator match scanner | `v3_routes.py` `/business-cases/{id}/ai/creator-matches` | Deterministic CRM scan + LLM enrichment | 🟡 Functional. Roadmap: migrate to Claude tool-use for richer matches. |
+| Creative Brief generator | `v3_routes.py` `/creative-briefs` | Deterministic templates | 🟡 Functional. Backlog: convert to Claude-powered output. |
+| Creative Snapshot generator | `v3_routes.py` `/creative-snapshots` (Strategy Snapshot Studio) | Deterministic + manual edit | ✅ Working (manual studio). |
+| Final report generator | `v3_routes.py` `/final-report/generate` | Deterministic + template | ✅ Working. |
+| Brand scraper | `v3_routes.py` `/brands/{brand_id}/scrape` | Requests + SerpAPI fallback | ✅ Working when API keys set. |
+| Brand AI Follow-Up Draft (NEW) | `v3_routes.py` `/brands/{id}/ai/follow-up-draft` | Anthropic Claude (primary) | ✅ Working. |
+
+**Next priorities:**
+- P2 Refactor `v3_routes.py` (now ~9400 lines) into routers (`alignment_router`, `meetings_router`, `brands_router`, `business_cases_router`).
+- P2 Wire Strategy Draft persistence (`POST /api/v3/business-cases/{id}/plan/save-strategy-draft`).
+- P2 Migrate `creative-briefs` and `creative-snapshots` generators to Claude.
+- P2 Mobile responsiveness pass.
