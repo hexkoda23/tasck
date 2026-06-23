@@ -332,17 +332,24 @@ const V1AdminCRMBrandDetail = () => {
     try {
       const res = await v3ScrapeBrandDetails(id);
       if (res.ok) {
-        const warnings = res.enrichment_target?.warnings || [];
-        const target = res.enrichment_target?.target_type;
+        const warnings = [
+          ...(res.warnings || []),
+          ...(res.enrichment_target?.warnings || []),
+        ];
+        const dedupedWarnings = Array.from(new Set(warnings));
+        const sourceType = res.enrichment_target?.source_type || 'website';
         const summaryParts = [];
-        if (res.website) summaryParts.push(`website ${res.website}`);
+        if (res.website) summaryParts.push(`source ${res.website}`);
         if (res.logo_url) summaryParts.push('logo found');
-        const summary = summaryParts.length ? ` (${summaryParts.join(' · ')})` : '';
-        if (warnings.length) {
-          toast(`Scrape warning: ${warnings[0]}`, { icon: '⚠️', duration: 6000 });
-          warnings.slice(1).forEach((w) => toast(w, { icon: '⚠️', duration: 6000 }));
+        if (Array.isArray(res.supporting_links) && res.supporting_links.length) {
+          summaryParts.push(`${res.supporting_links.length} supporting link(s) kept`);
         }
-        toast.success(`Scraped via ${target || 'website'}${summary}`);
+        const summary = summaryParts.length ? ` (${summaryParts.join(' · ')})` : '';
+        if (dedupedWarnings.length) {
+          toast(`Scrape warning: ${dedupedWarnings[0]}`, { icon: '⚠️', duration: 6000 });
+          dedupedWarnings.slice(1, 4).forEach((w) => toast(w, { icon: '⚠️', duration: 6000 }));
+        }
+        toast.success(`Scraped via ${sourceType}${summary}`);
         await reloadData();
       } else {
         toast.error('Scraping returned no results.');

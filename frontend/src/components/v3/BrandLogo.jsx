@@ -18,6 +18,16 @@ import React, { useEffect, useState } from 'react';
  */
 const SIZE_PRESETS = { sm: 40, md: 56, lg: 80, xl: 96 };
 
+const BAD_LOGO_FRAGMENTS = [
+  'apps.apple.com/assets',
+  'play.google.com/intl/',
+  'play.google.com/static/',
+  'static.xx.fbcdn.net/rsrc.php',
+  'static.licdn.com/',
+  'abs.twimg.com/',
+  'abs-0.twimg.com/',
+];
+
 const directLogoUrl = (brand) => {
   if (!brand) return '';
   const candidates = [
@@ -32,6 +42,10 @@ const directLogoUrl = (brand) => {
   ];
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim().length > 0) {
+      const lower = c.trim().toLowerCase();
+      if (BAD_LOGO_FRAGMENTS.some((fragment) => lower.includes(fragment))) {
+        continue;
+      }
       return c.trim();
     }
   }

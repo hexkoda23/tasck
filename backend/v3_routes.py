@@ -113,6 +113,187 @@ def _normalise_brand_payload(brand: Optional[Dict[str, Any]]) -> Optional[Dict[s
     return brand
 
 
+# Marketplace / app store / social / directory domains that are never
+# allowed as a brand's primary website. These can be saved as supporting
+# links but must never overwrite ``website``, ``logo_url``, or ``about``.
+_MARKETPLACE_REJECT_DOMAINS = {
+    "apps.apple.com", "itunes.apple.com",
+    "play.google.com", "play.google.com.ng", "market.android.com",
+    "instagram.com", "facebook.com", "x.com", "twitter.com",
+    "tiktok.com", "linkedin.com", "snapchat.com", "youtube.com", "youtu.be",
+    "crunchbase.com", "producthunt.com", "indeed.com", "glassdoor.com",
+    "yelp.com", "google.com", "bing.com", "duckduckgo.com",
+    "wikipedia.org", "wikidata.org", "amazon.com", "amazon.co.uk",
+    "etsy.com", "ebay.com", "alibaba.com", "jiji.ng", "konga.com",
+    "github.com", "medium.com", "substack.com", "wordpress.com",
+    "wix.com", "godaddy.com", "namecheap.com",
+}
+
+
+# Logo URLs from these CDN/asset paths are generic store/social icons and
+# must be rejected as a brand logo even if scraping picked them up.
+_LOGO_REJECT_URL_FRAGMENTS = (
+    "apps.apple.com/assets/",
+    "itunes.apple.com/",
+    "play.google.com/intl/",
+    "play.google.com/static/",
+    "googleusercontent.com/play-",
+    "static.xx.fbcdn.net/rsrc.php",
+    "static.licdn.com/",
+    "abs.twimg.com/",
+    "abs-0.twimg.com/",
+    "scontent.cdninstagram.com/static",
+)
+_LOGO_REJECT_ALT_HINTS = (
+    "app store", "app-store", "download on the app store",
+    "google play", "get it on google play", "google-play",
+    "appstore-badge", "googleplay-badge", "download badge",
+    "instagram icon", "facebook icon", "twitter icon",
+)
+
+
+def _is_marketplace_domain(domain: str) -> bool:
+    if not domain:
+        return False
+    domain = domain.lower().lstrip("www.")
+    return any(domain == reject or domain.endswith("." + reject) or domain == reject for reject in _MARKETPLACE_REJECT_DOMAINS)
+
+
+def _is_bad_logo_url(candidate: str, official_domain: str = "", alt_hint: str = "") -> bool:
+    """True when the candidate logo URL is a generic marketplace/social
+    asset that must not be saved as the brand logo.
+    """
+    if not candidate or candidate.startswith("data:"):
+        return True
+    lowered = candidate.lower()
+    if any(fragment in lowered for fragment in _LOGO_REJECT_URL_FRAGMENTS):
+        return True
+    alt = (alt_hint or "").lower()
+    if any(hint in alt for hint in _LOGO_REJECT_ALT_HINTS):
+        return True
+    # If the logo URL is from a marketplace domain but the official site is
+    # somewhere else, reject the logo. (When the official source itself is
+    # the App Store as a last resort, we accept it.)
+    logo_domain = _domain_from_url(candidate)
+    if official_domain and logo_domain and _is_marketplace_domain(logo_domain):
+        official = (official_domain or "").lstrip("www.")
+        if not _is_marketplace_domain(official):
+            return True
+    return False
+
+
+def _score_brand_candidate(url: str, brand_name: str, declared_website: str = "") -> Dict[str, Any]:
+    """Score a candidate URL for being the brand's official website.
+
+    Returns ``{url, domain, source_type, score, reason}``. Higher is better.
+    """
+    candidate = _normalise_website_url(url)
+    domain = _domain_from_url(candidate)
+    declared_domain = _domain_from_url(declared_website)
+    brand_token = _normalise_brand_token(brand_name)
+    domain_root = (domain or "").split(".")[0].lstrip("www.")
+    domain_token = _normalise_brand_token(domain_root)
+
+    if not candidate or not domain:
+        return {"url": url, "domain": domain, "source_type": "invalid", "score": 0, "reason": "Empty or unparseable URL."}
+
+    # Pinned explicit website.
+    if declared_domain and domain == declared_domain:
+        return {"url": candidate, "domain": domain, "source_type": "official_website", "score": 100, "reason": "Matches the explicit website provided by admin."}
+
+    if _is_marketplace_domain(domain):
+        return {"url": candidate, "domain": domain, "source_type": "marketplace", "score": 5, "reason": f"Rejected as primary source because {domain} is a marketplace/social/directory page."}
+
+    score = 30
+    reasons: List[str] = ["SerpAPI organic result."]
+    if brand_token and domain_token and (domain_token in brand_token or brand_token in domain_token):
+        score += 50
+        reasons.append("Domain name matches brand name.")
+    if brand_token and brand_token in candidate.lower().replace(".", "").replace("-", ""):
+        score += 5
+    if domain.endswith((".app", ".io", ".co", ".com", ".ng", ".io.app")):
+        score += 5
+    return {"url": candidate, "domain": domain, "source_type": "candidate_website", "score": score, "reason": " ".join(reasons)}
+
+
+async def discover_brand_sources_with_serpapi(brand: Dict[str, Any]) -> Dict[str, Any]:
+    """Always run SerpAPI (when configured) and return scored candidates +
+    the selected primary source + rejected supporting links.
+
+    ``brand`` should already contain at least ``company`` and optionally
+    ``website``, ``email``, ``industry``, ``hq``.
+    """
+    brand_name = str(brand.get("company") or brand.get("name") or brand.get("brand_name") or "").strip()
+    declared_website = _normalise_website_url(brand.get("website") or brand.get("url") or brand.get("brand_url") or "")
+    declared_domain = _domain_from_url(declared_website)
+    industry = str(brand.get("industry") or brand.get("category") or "").strip()
+    hq = str(brand.get("hq") or "").strip()
+    api_key = os.getenv("SERPAPI_API_KEY", "").strip()
+    candidates: List[Dict[str, Any]] = []
+
+    if declared_website:
+        candidates.append({
+            "url": declared_website,
+            "domain": declared_domain,
+            "source_type": "official_website",
+            "score": 100,
+            "reason": "Explicit website provided by admin.",
+        })
+
+    if api_key and brand_name:
+        queries: List[str] = [f"{brand_name} official website"]
+        if industry:
+            queries.append(f"{brand_name} {industry} official website")
+        if declared_domain:
+            queries.append(f"site:{declared_domain}")
+            queries.append(f"{brand_name} {declared_domain}")
+        if hq:
+            queries.append(f"{brand_name} {hq} official site")
+        seen_urls = {c["url"] for c in candidates}
+        for query in queries[:4]:
+            try:
+                params = {"engine": "google", "q": query, "api_key": api_key, "num": 5}
+                resp = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
+                resp.raise_for_status()
+                data = resp.json()
+                for result in data.get("organic_results") or []:
+                    link = str(result.get("link") or "")
+                    if not link or link in seen_urls:
+                        continue
+                    scored = _score_brand_candidate(link, brand_name, declared_website)
+                    if scored["score"] <= 0:
+                        continue
+                    candidates.append(scored)
+                    seen_urls.add(link)
+            except requests.RequestException as exc:
+                logger.warning("SerpAPI discovery failed for %s (query=%r): %s", brand_name, query, exc)
+
+    candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
+    accepted: List[Dict[str, Any]] = [c for c in candidates if c.get("source_type") != "marketplace" and c.get("score", 0) > 5]
+    rejected: List[Dict[str, Any]] = [c for c in candidates if c.get("source_type") == "marketplace" or c.get("score", 0) <= 5]
+    selected = accepted[0] if accepted else None
+
+    warnings: List[str] = []
+    if selected and rejected:
+        marketplace_rejects = [c for c in rejected if c.get("source_type") == "marketplace"]
+        if marketplace_rejects and selected.get("source_type") in ("official_website", "candidate_website"):
+            for c in marketplace_rejects:
+                warnings.append(f"Ignored {c['domain']} as primary source because official website {selected['domain']} exists.")
+    if not selected and rejected:
+        # As an absolute last resort, accept the highest-scored marketplace.
+        rejected.sort(key=lambda item: item.get("score", 0), reverse=True)
+        selected = rejected[0]
+        warnings.append(f"No official website found via SerpAPI. Using fallback source {selected['domain']}.")
+
+    return {
+        "selected": selected,
+        "accepted_candidates": accepted[:5],
+        "rejected_candidates": rejected[:5],
+        "warnings": warnings,
+        "brand_name": brand_name,
+    }
+
+
 def _domain_from_url(value: str) -> str:
     raw = str(value or "").strip()
     match = re.search(r"https?://([^/]+)", raw)
@@ -1681,7 +1862,15 @@ def make_v3_router(db):
 
     @router.post("/brands/{brand_id}/scrape")
     async def scrape_brand_details(brand_id: str):
-        """Scrape the web for source-grounded brand details."""
+        """Scrape the web for source-grounded brand details.
+
+        Discovery always goes through SerpAPI when ``SERPAPI_API_KEY`` is
+        configured. The official brand website is pinned as the highest-
+        priority candidate; App Store / Google Play / social / directory
+        pages are rejected as primary sources and only kept as supporting
+        links. Marketing budget is NEVER extracted from page body text —
+        admin/Transcript Analysis owns that field.
+        """
         import html as html_module
         import httpx
         import re as _re
@@ -1694,38 +1883,33 @@ def make_v3_router(db):
         source_url = brand.get("source_url") or brand.get("source") or brand.get("lead_source") or brand.get("scrape_source") or ""
         brand_name = brand.get("company") or brand.get("name") or brand.get("brand_name") or "Brand"
 
-        # Resolve the safest enrichment target — explicit website > matching
-        # email domain > brand-name search. Mismatched contact email domains
-        # (e.g. chioma@tasck.com on a Pepsi brand) are dropped here so we
-        # never enrich the wrong company.
+        # ---- Step 1: identity resolution (blocks tasck.com etc) ----
         enrichment_target = resolve_brand_enrichment_target({**brand, "source_url": source_url})
 
+        # ---- Step 2: SerpAPI candidate discovery ----
+        discovery = await discover_brand_sources_with_serpapi(brand)
+        warnings: List[str] = list(enrichment_target.get("warnings") or [])
+        warnings.extend(discovery.get("warnings") or [])
+
+        # Pick the best selected source. Explicit website wins, then SerpAPI
+        # top candidate, then fall back to identity-resolved target.
         website = ""
-        if enrichment_target["target_type"] in ("website", "email_domain"):
+        selected_source_type = "none"
+        if discovery.get("selected"):
+            website = discovery["selected"]["url"]
+            selected_source_type = discovery["selected"].get("source_type", "candidate_website")
+        elif enrichment_target["target_type"] in ("website", "email_domain"):
             website = _normalise_website_url(enrichment_target["target_value"])
+            selected_source_type = "official_website" if enrichment_target["target_type"] == "website" else "email_domain"
+
         scraped_about = ""
         scraped_logo = ""
-        scraped_budget = ""
         final_url = website
-
-        # Brand-name search path — used when there is no usable website yet.
-        if not website and os.getenv("SERPAPI_API_KEY", "").strip() and enrichment_target["target_type"] in ("brand_name", "none"):
-            try:
-                params = {"engine": "google", "q": f"{brand_name} official website logo", "api_key": os.getenv("SERPAPI_API_KEY", "").strip(), "num": 5}
-                search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
-                search_response.raise_for_status()
-                search_data = search_response.json()
-                blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com"}
-                blocked_domains.update(_AGENCY_BLOCKED_DOMAINS)
-                for result in search_data.get("organic_results") or []:
-                    link = str(result.get("link") or "")
-                    domain = _domain_from_url(link)
-                    if domain and not any(domain.endswith(blocked) for blocked in blocked_domains):
-                        website = _normalise_website_url(link)
-                        final_url = website
-                        break
-            except requests.RequestException as exc:
-                logger.warning("Brand website search failed for %s: %s", brand_name, exc)
+        selected_domain = _domain_from_url(website)
+        # Marketing budget is intentionally NOT scraped from body text — the
+        # previous behaviour produced garbage like "n, and are willing to pay
+        # you real cash!". Budget can only be set by admin or transcript
+        # analysis, so we preserve whatever is already on the brand.
 
         if website:
             url = website if website.startswith("http") else f"https://{website}"
@@ -1734,6 +1918,7 @@ def make_v3_router(db):
                     resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
                     resp.raise_for_status()
                     final_url = str(resp.url).rstrip("/")
+                    selected_domain = _domain_from_url(final_url)
                     html = resp.text
 
                     def _attr(tag: str, name: str) -> str:
@@ -1755,12 +1940,16 @@ def make_v3_router(db):
                         if src:
                             script_urls.append(urljoin(final_url, src))
 
+                    # ---- About: only structured/meta sources from official site ----
                     og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
                     meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                    jsonld_desc = _re.search(r'"description"\s*:\s*"([^"\\]{40,800})"', html)
                     if og_desc:
                         scraped_about = html_module.unescape(og_desc.group(1)).strip()
                     elif meta_desc:
                         scraped_about = html_module.unescape(meta_desc.group(1)).strip()
+                    elif jsonld_desc:
+                        scraped_about = html_module.unescape(jsonld_desc.group(1)).strip()
                     else:
                         paragraphs = _re.findall(r'<p[^>]*>(.*?)</p>', html, _re.I | _re.S)
                         for paragraph in paragraphs:
@@ -1768,107 +1957,103 @@ def make_v3_router(db):
                             if len(clean_paragraph) >= 80:
                                 scraped_about = html_module.unescape(clean_paragraph)[:700]
                                 break
-                    if manifest_url:
-                        manifest_resp = await client.get(manifest_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
-                        if manifest_resp.status_code < 400:
-                            manifest_data = manifest_resp.json()
-                            manifest_description = str(manifest_data.get("description") or "").strip()
-                            if manifest_description and not scraped_about:
-                                scraped_about = html_module.unescape(manifest_description)[:700]
-                            for manifest_icon in manifest_data.get("icons") or []:
-                                if isinstance(manifest_icon, dict):
-                                    manifest_src = manifest_icon.get("src")
-                                else:
-                                    manifest_src = manifest_icon
-                                if manifest_src:
-                                    manifest_logo_candidates.append(urljoin(manifest_url, str(manifest_src)))
-                    if not scraped_about:
-                        for script_url in script_urls[:3]:
-                            script_resp = await client.get(script_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
-                            if script_resp.status_code >= 400:
-                                continue
-                            script_text = script_resp.text
-                            phrases = []
-                            for match in _re.findall(r'"([^"\\]*(?:brand|fashion|clothing|style|styling|wear|drops|lookbook|challenge|trend)[^"\\]*)"', script_text, _re.I):
-                                clean_phrase = html_module.unescape(" ".join(match.split()))
-                                if 45 <= len(clean_phrase) <= 240 and not clean_phrase.lower().startswith(("http", "class", "text-")):
-                                    phrases.append(clean_phrase)
-                            if phrases:
-                                scraped_about = max(phrases, key=len)[:700]
-                                break
 
-                    def _add_logo(candidate: str, score: int = 0):
+                    # ---- Manifest icons/description ----
+                    if manifest_url:
+                        try:
+                            manifest_resp = await client.get(manifest_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            if manifest_resp.status_code < 400:
+                                manifest_data = manifest_resp.json()
+                                manifest_description = str(manifest_data.get("description") or "").strip()
+                                if manifest_description and not scraped_about:
+                                    scraped_about = html_module.unescape(manifest_description)[:700]
+                                for manifest_icon in manifest_data.get("icons") or []:
+                                    manifest_src = manifest_icon.get("src") if isinstance(manifest_icon, dict) else manifest_icon
+                                    if manifest_src:
+                                        manifest_logo_candidates.append(urljoin(manifest_url, str(manifest_src)))
+                        except (httpx.HTTPError, ValueError):
+                            pass
+
+                    # ---- Logo extraction with bad-asset filter ----
+                    logo_candidates: List[Tuple[int, str, str]] = []  # (score, url, alt_hint)
+
+                    def _add_logo(candidate: str, score: int, alt_hint: str = ""):
                         candidate = str(candidate or "").strip()
                         if not candidate or candidate.startswith("data:"):
                             return
-                        lowered = candidate.lower()
-                        if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar", "blank", "vite.svg", "react.svg"]):
+                        full = urljoin(final_url, candidate)
+                        if _is_bad_logo_url(full, selected_domain, alt_hint):
+                            warnings.append(f"Rejected logo candidate {full} (generic marketplace/social/badge asset).")
                             return
-                        logo_candidates.append((score, urljoin(final_url, candidate)))
+                        if any(blocked in full.lower() for blocked in ["sprite", "placeholder", "tracking", "pixel", "blank", "vite.svg", "react.svg"]):
+                            return
+                        logo_candidates.append((score, full, alt_hint))
 
-                    logo_candidates = []
                     for tag in _re.findall(r'<meta[^>]+>', html, _re.I | _re.S):
                         meta_key = (_attr(tag, "property") or _attr(tag, "name")).lower()
                         content = _attr(tag, "content")
                         if meta_key in {"og:logo", "logo"}:
-                            _add_logo(content, 100)
+                            _add_logo(content, 100, "meta logo")
                         elif meta_key in {"og:image", "twitter:image", "twitter:image:src"}:
-                            _add_logo(content, 62)
+                            _add_logo(content, 62, "og image")
                     for tag in _re.findall(r'<link[^>]+>', html, _re.I | _re.S):
                         rel = _attr(tag, "rel").lower()
                         if any(key in rel for key in ["apple-touch-icon", "mask-icon", "shortcut icon", "icon"]):
-                            _add_logo(_attr(tag, "href"), 55 if "apple" in rel else 45)
+                            _add_logo(_attr(tag, "href"), 55 if "apple" in rel else 45, "favicon")
                     for manifest_icon_url in manifest_logo_candidates:
-                        _add_logo(manifest_icon_url, 58)
+                        _add_logo(manifest_icon_url, 58, "manifest icon")
                     for tag in _re.findall(r'<img[^>]+>', html, _re.I | _re.S):
-                        haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), _attr(tag, "alt"), _attr(tag, "src"), _attr(tag, "data-src")]).lower()
+                        alt_value = _attr(tag, "alt")
+                        haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), alt_value, _attr(tag, "src"), _attr(tag, "data-src")]).lower()
                         if "logo" in haystack or _slug(brand_name).replace(".", "") in haystack.replace("-", "").replace("_", ""):
-                            _add_logo(_attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"), 92 if "logo" in haystack else 68)
+                            _add_logo(
+                                _attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"),
+                                92 if "logo" in haystack else 68,
+                                alt_value,
+                            )
                     for match in _re.findall(r'"logo"\s*:\s*(?:"([^"\n]+)"|\{[^}]*"url"\s*:\s*"([^"\n]+)")', html, _re.I | _re.S):
-                        _add_logo(next((item for item in match if item), ""), 96)
+                        _add_logo(next((item for item in match if item), ""), 96, "json-ld logo")
                     if logo_candidates:
                         logo_candidates.sort(key=lambda item: item[0], reverse=True)
                         scraped_logo = _brand_logo_from_source(final_url, logo_candidates[0][1])
-
-                    page_text = html_module.unescape(_re.sub(r'<[^>]+>', ' ', html))
-                    page_text = " ".join(page_text.split())
-                    budget_patterns = [
-                        r'(?:marketing|campaign|media|advertising)\s+(?:budget|spend)[^.\n]{0,100}(?:₦|NGN|N|USD|\$|£)?\s?[\d,.]+\s?(?:k|m|bn|million|billion|thousand)?',
-                        r'(?:₦|NGN|N|USD|\$|£)\s?[\d,.]+\s?(?:k|m|bn|million|billion|thousand)?[^.\n]{0,100}(?:marketing|campaign|media|advertising|budget|spend)',
-                    ]
-                    for pattern in budget_patterns:
-                        match = _re.search(pattern, page_text, _re.I)
-                        if match:
-                            scraped_budget = " ".join(match.group(0).split())[:180]
-                            break
+                        if _is_bad_logo_url(scraped_logo, selected_domain):
+                            warnings.append(f"Dropped final logo {scraped_logo} after bad-asset re-check.")
+                            scraped_logo = ""
             except (httpx.HTTPError, ValueError) as exc:
                 logger.warning("Scrape failed for %s: %s", url, exc)
 
+        # ---- Preserve existing data on weak/empty scrape results ----
+        existing_about = str(brand.get("about") or brand.get("brand_about") or "")
+        existing_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
         if not scraped_about:
-            scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
+            scraped_about = existing_about
         if not scraped_logo:
-            scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
-        if not scraped_budget:
-            scraped_budget = "No public marketing budget found. Confirm during Connect call."
+            scraped_logo = existing_logo
+        if scraped_logo and _is_bad_logo_url(scraped_logo, selected_domain):
+            warnings.append(f"Dropped saved logo {scraped_logo} (bad/generic marketplace asset).")
+            scraped_logo = ""
 
-        # Belt-and-braces safety check: if the final scraped URL ended up on
-        # an agency-blocked domain (e.g. tasck.com sneaked through), drop the
-        # scraped fields so we never overwrite the brand record with the
-        # wrong company's content.
+        # ---- Belt-and-braces: never overwrite with agency-blocked domain ----
         final_domain = _domain_from_url(final_url) if final_url else ""
         if final_domain in _AGENCY_BLOCKED_DOMAINS:
-            enrichment_target.setdefault("warnings", []).append(
+            warnings.append(
                 f"Discarded scrape from {final_domain} because it matches the agency block list, not the brand {brand_name}."
             )
-            scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
-            scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
+            scraped_about = existing_about
+            scraped_logo = existing_logo if not _is_bad_logo_url(existing_logo, "") else ""
             final_url = brand.get("website") or ""
+            selected_source_type = "skipped_agency_block"
 
+        # Don't overwrite a high-confidence existing website with a low-
+        # confidence marketplace fallback.
+        if existing_about and selected_source_type == "marketplace" and not enrichment_target.get("target_value"):
+            scraped_about = existing_about
+
+        # ---- Persist canonical fields ----
         updates = {"updated_at": _now_iso()}
-        # Only update the website on the brand record when we actually
-        # resolved it from a high/medium-confidence target (never overwrite
-        # with an agency-blocked domain).
-        if final_url and _domain_from_url(final_url) not in _AGENCY_BLOCKED_DOMAINS:
+        # Don't save marketplace fallbacks as ``website`` — they live in
+        # ``supporting_links`` instead.
+        if final_url and selected_source_type not in ("marketplace", "skipped_agency_block") and _domain_from_url(final_url) not in _AGENCY_BLOCKED_DOMAINS:
             updates["website"] = final_url
             updates["source_url"] = final_url
         if scraped_about:
@@ -1877,8 +2062,11 @@ def make_v3_router(db):
         if scraped_logo:
             updates["logo_url"] = scraped_logo
             updates["brand_logo_url"] = scraped_logo
-        if scraped_budget:
-            updates["marketing_budget"] = scraped_budget
+        supporting_links = [c["url"] for c in (discovery.get("rejected_candidates") or []) if c.get("url")][:5]
+        if supporting_links:
+            updates["supporting_links"] = supporting_links
+        # Marketing budget is owned by admin/transcript analysis — never
+        # overwrite from a scrape.
         if len(updates) > 1:
             await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
 
@@ -1889,12 +2077,22 @@ def make_v3_router(db):
             "about": scraped_about,
             "logo_url": scraped_logo,
             "brand_logo_url": scraped_logo,
-            "marketing_budget": scraped_budget,
+            "marketing_budget": brand.get("marketing_budget") or "Not captured yet",
             "brand_name": brand_name,
-            "website": final_url,
-            "source_url": final_url,
+            "website": final_url if selected_source_type not in ("marketplace", "skipped_agency_block") else "",
+            "source_url": final_url if selected_source_type not in ("marketplace", "skipped_agency_block") else "",
             "scraped": True,
-            "enrichment_target": enrichment_target,
+            "enrichment_target": {
+                **enrichment_target,
+                "selected_url": final_url,
+                "selected_domain": _domain_from_url(final_url) if final_url else "",
+                "source_type": selected_source_type,
+                "score": (discovery.get("selected") or {}).get("score"),
+            },
+            "accepted_candidates": discovery.get("accepted_candidates") or [],
+            "rejected_candidates": discovery.get("rejected_candidates") or [],
+            "supporting_links": supporting_links,
+            "warnings": warnings,
         }
     class BrandCreate(BaseModel):
         company: str
