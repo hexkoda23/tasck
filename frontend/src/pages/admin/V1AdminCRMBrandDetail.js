@@ -332,7 +332,17 @@ const V1AdminCRMBrandDetail = () => {
     try {
       const res = await v3ScrapeBrandDetails(id);
       if (res.ok) {
-        toast.success('Brand details scraped already');
+        const warnings = res.enrichment_target?.warnings || [];
+        const target = res.enrichment_target?.target_type;
+        const summaryParts = [];
+        if (res.website) summaryParts.push(`website ${res.website}`);
+        if (res.logo_url) summaryParts.push('logo found');
+        const summary = summaryParts.length ? ` (${summaryParts.join(' · ')})` : '';
+        if (warnings.length) {
+          toast(`Scrape warning: ${warnings[0]}`, { icon: '⚠️', duration: 6000 });
+          warnings.slice(1).forEach((w) => toast(w, { icon: '⚠️', duration: 6000 }));
+        }
+        toast.success(`Scraped via ${target || 'website'}${summary}`);
         await reloadData();
       } else {
         toast.error('Scraping returned no results.');

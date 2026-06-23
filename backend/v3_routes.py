@@ -85,6 +85,34 @@ def _brand_created_at_key(brand: Dict[str, Any]) -> str:
     return created_at if isinstance(created_at, str) else ""
 
 
+def _canonical_brand_logo(brand: Dict[str, Any]) -> str:
+    """Pick the brand logo from any of the historic field names so list and
+    detail responses always agree on a single canonical value."""
+    if not isinstance(brand, dict):
+        return ""
+    for key in ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url"):
+        value = brand.get(key)
+        if value and isinstance(value, str) and value.strip().lower().startswith(("http://", "https://", "data:")):
+            return value.strip()
+    return ""
+
+
+def _normalise_brand_payload(brand: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Ensure every brand record returned by the API has the canonical
+    ``logo_url`` and ``brand_logo_url`` fields populated, regardless of which
+    legacy field stores the actual value in Mongo."""
+    if not isinstance(brand, dict):
+        return brand
+    logo = _canonical_brand_logo(brand)
+    if logo:
+        brand = {**brand}
+        brand.setdefault("logo_url", logo)
+        brand.setdefault("brand_logo_url", logo)
+        brand["logo_url"] = logo
+        brand["brand_logo_url"] = logo
+    return brand
+
+
 def _domain_from_url(value: str) -> str:
     raw = str(value or "").strip()
     match = re.search(r"https?://([^/]+)", raw)
@@ -114,7 +142,12 @@ def _normalise_website_url(value: Any) -> str:
     return ""
 
 
-def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "") -> str:
+def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "", brand_name: Any = "") -> str:
+    """Resolve a website URL for a brand without blindly using mismatched email domains.
+
+    Priority: explicit website > explicit source url > email domain only when
+    it clearly matches the brand name (and is not in the agency block list).
+    """
     direct = _normalise_website_url(website)
     if direct:
         return direct
@@ -123,8 +156,117 @@ def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url
         return source
     email_domain = str(email or "").strip().lower().rsplit("@", 1)[-1] if "@" in str(email or "") else ""
     if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS and "." in email_domain:
+        if email_domain in _AGENCY_BLOCKED_DOMAINS:
+            return ""
+        if brand_name and not _email_domain_matches_brand(email_domain, str(brand_name)):
+            return ""
         return f"https://{email_domain}"
     return ""
+
+
+# Agency / internal domains that must NEVER be treated as a client brand's
+# website or identity, even if they appear in a contact email. These can still
+# be saved as raw contact emails but are skipped for scrape/enrichment.
+_AGENCY_BLOCKED_DOMAINS = {
+    "tasck.com",
+    "thetasck.com",
+    "thcodemo.space",
+    "emergent.host",
+    "emergentagent.com",
+    "preview.emergentagent.com",
+}
+
+
+_BRAND_NAME_NOISE_TOKENS = {
+    "ltd", "limited", "inc", "incorporated", "co", "company", "corp", "corporation",
+    "group", "global", "intl", "international", "nigeria", "ng", "africa", "plc",
+    "holdings", "the", "and", "&",
+}
+
+
+def _normalise_brand_token(value: Any) -> str:
+    text = str(value or "").lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    tokens = [t for t in text.split() if t and t not in _BRAND_NAME_NOISE_TOKENS]
+    return "".join(tokens)
+
+
+def _email_domain_matches_brand(email_domain: str, brand_name: str) -> bool:
+    """True when the email domain root clearly refers to the brand.
+
+    Example: brand 'Pepsi' + domain 'pepsi.com' -> True
+             brand 'Pepsi' + domain 'tasck.com' -> False
+    """
+    domain_root = (email_domain or "").split(".")[0].lower()
+    domain_token = _normalise_brand_token(domain_root)
+    brand_token = _normalise_brand_token(brand_name)
+    if not domain_token or not brand_token:
+        return False
+    return domain_token in brand_token or brand_token in domain_token
+
+
+def resolve_brand_enrichment_target(brand: Dict[str, Any]) -> Dict[str, Any]:
+    """Pick the safest target for brand scrape/enrichment.
+
+    Returns: {target_type, target_value, confidence, warnings}
+
+    target_type is one of:
+      - "website"      explicit website on the brand record (highest confidence)
+      - "email_domain" contact email domain that matches the brand name
+      - "brand_name"   fall back to searching by the brand name (medium confidence)
+      - "none"         no usable target (skip scrape)
+    """
+    warnings: List[str] = []
+    raw_website = brand.get("website") or brand.get("url") or brand.get("brand_url") or brand.get("source_url") or ""
+    brand_name = str(brand.get("company") or brand.get("name") or brand.get("brand_name") or "").strip()
+    email = str(brand.get("email") or brand.get("primary_email") or "").strip().lower()
+    email_domain = email.rsplit("@", 1)[-1] if "@" in email else ""
+
+    explicit_website = _normalise_website_url(raw_website)
+
+    # Case A — explicit website wins, always.
+    if explicit_website:
+        if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS:
+            website_domain = _domain_from_url(explicit_website)
+            if email_domain != website_domain:
+                warnings.append(f"Ignored contact email domain {email_domain} because explicit website {website_domain} exists.")
+        return {
+            "target_type": "website",
+            "target_value": explicit_website,
+            "confidence": "high",
+            "warnings": warnings,
+        }
+
+    # Case C — email domain that clearly matches the brand name (and not on
+    # the agency block list) is usable.
+    if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS:
+        if email_domain in _AGENCY_BLOCKED_DOMAINS:
+            warnings.append(f"Ignored contact email domain {email_domain} because it is on the agency block list.")
+        elif brand_name and _email_domain_matches_brand(email_domain, brand_name):
+            return {
+                "target_type": "email_domain",
+                "target_value": f"https://{email_domain}",
+                "confidence": "high",
+                "warnings": warnings,
+            }
+        elif brand_name:
+            warnings.append(f"Ignored contact email domain {email_domain} because it does not match brand name {brand_name}.")
+
+    # Case B — fall back to the brand name search.
+    if brand_name:
+        return {
+            "target_type": "brand_name",
+            "target_value": brand_name,
+            "confidence": "medium",
+            "warnings": warnings,
+        }
+
+    return {
+        "target_type": "none",
+        "target_value": "",
+        "confidence": "low",
+        "warnings": warnings + ["No usable brand identity (no website, no brand name, no matching email domain)."],
+    }
 
 
 def _compact_text(value: Any, limit: int = 900) -> str:
@@ -1308,13 +1450,14 @@ def make_v3_router(db):
 
         brands = await db.v3_brands.find(query, {"_id": 0}).to_list(1000)
         brands = sorted(brands, key=_brand_created_at_key, reverse=True)
-        return [await _with_relationship_manager(brand) for brand in brands]
+        return [_normalise_brand_payload(await _with_relationship_manager(brand)) for brand in brands]
 
     @router.get("/brands/{brand_id}")
     async def get_brand(brand_id: str):
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
+        brand = _normalise_brand_payload(brand)
         contacts = await db.v3_contacts.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         cases = await db.v3_business_cases.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         interactions = await db.v3_interactions.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
@@ -1549,20 +1692,31 @@ def make_v3_router(db):
             raise HTTPException(404, "Brand not found")
 
         source_url = brand.get("source_url") or brand.get("source") or brand.get("lead_source") or brand.get("scrape_source") or ""
-        website = _website_from_brand_inputs(website=brand.get("website") or brand.get("url") or brand.get("brand_url"), email=brand.get("email"), source_url=source_url)
         brand_name = brand.get("company") or brand.get("name") or brand.get("brand_name") or "Brand"
+
+        # Resolve the safest enrichment target — explicit website > matching
+        # email domain > brand-name search. Mismatched contact email domains
+        # (e.g. chioma@tasck.com on a Pepsi brand) are dropped here so we
+        # never enrich the wrong company.
+        enrichment_target = resolve_brand_enrichment_target({**brand, "source_url": source_url})
+
+        website = ""
+        if enrichment_target["target_type"] in ("website", "email_domain"):
+            website = _normalise_website_url(enrichment_target["target_value"])
         scraped_about = ""
         scraped_logo = ""
         scraped_budget = ""
         final_url = website
 
-        if not website and os.getenv("SERPAPI_API_KEY", "").strip():
+        # Brand-name search path — used when there is no usable website yet.
+        if not website and os.getenv("SERPAPI_API_KEY", "").strip() and enrichment_target["target_type"] in ("brand_name", "none"):
             try:
                 params = {"engine": "google", "q": f"{brand_name} official website logo", "api_key": os.getenv("SERPAPI_API_KEY", "").strip(), "num": 5}
                 search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
                 search_response.raise_for_status()
                 search_data = search_response.json()
                 blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com"}
+                blocked_domains.update(_AGENCY_BLOCKED_DOMAINS)
                 for result in search_data.get("organic_results") or []:
                     link = str(result.get("link") or "")
                     domain = _domain_from_url(link)
@@ -1697,8 +1851,24 @@ def make_v3_router(db):
         if not scraped_budget:
             scraped_budget = "No public marketing budget found. Confirm during Connect call."
 
+        # Belt-and-braces safety check: if the final scraped URL ended up on
+        # an agency-blocked domain (e.g. tasck.com sneaked through), drop the
+        # scraped fields so we never overwrite the brand record with the
+        # wrong company's content.
+        final_domain = _domain_from_url(final_url) if final_url else ""
+        if final_domain in _AGENCY_BLOCKED_DOMAINS:
+            enrichment_target.setdefault("warnings", []).append(
+                f"Discarded scrape from {final_domain} because it matches the agency block list, not the brand {brand_name}."
+            )
+            scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
+            scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
+            final_url = brand.get("website") or ""
+
         updates = {"updated_at": _now_iso()}
-        if final_url:
+        # Only update the website on the brand record when we actually
+        # resolved it from a high/medium-confidence target (never overwrite
+        # with an agency-blocked domain).
+        if final_url and _domain_from_url(final_url) not in _AGENCY_BLOCKED_DOMAINS:
             updates["website"] = final_url
             updates["source_url"] = final_url
         if scraped_about:
@@ -1714,6 +1884,8 @@ def make_v3_router(db):
 
         return {
             "ok": True,
+            "brand_id": brand_id,
+            "name": brand_name,
             "about": scraped_about,
             "logo_url": scraped_logo,
             "brand_logo_url": scraped_logo,
@@ -1722,6 +1894,7 @@ def make_v3_router(db):
             "website": final_url,
             "source_url": final_url,
             "scraped": True,
+            "enrichment_target": enrichment_target,
         }
     class BrandCreate(BaseModel):
         company: str
@@ -1759,7 +1932,7 @@ def make_v3_router(db):
             crm_accepted_at = now
         about_text = _compact_text(payload.about or payload.brand_about)
         source_url = payload.source_url or ""
-        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url, brand_name=payload.company)
         logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,
@@ -1937,7 +2110,7 @@ def make_v3_router(db):
         rm = await _relationship_manager(payload.rm_id)
         about_text = _compact_text(payload.about or payload.brand_about)
         source_url = payload.source_url or ""
-        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url, brand_name=payload.company)
         logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,

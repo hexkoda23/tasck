@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
 import { v3GetBrand, v3CreateInteraction, v3MoveBrandToBusinessCall, v3MoveBrandToFrame, v3ListRelationshipManagers, v3DeleteBrand, v3DraftBrandFollowUp } from '../../../lib/v3api';
+import BrandLogo from '../../../components/v3/BrandLogo';
 import {
   ChevronLeft,
   Mail,
@@ -287,14 +288,17 @@ const V3AdminBrandDetail = () => {
         <div className="flex gap-8">
           {/* Left sidebar */}
           <div className="w-[280px] flex-shrink-0 space-y-5">
-            <div>
-              <h1
-                className="text-xl font-semibold text-[#1A1A1A]"
-                style={{ fontFamily: "'Fraunces', serif" }}
-              >
-                {brand.company}
-              </h1>
-              <p className="text-[12px] text-[#8A8A8A] mt-1">{brand.industry || 'Uncategorised'}</p>
+            <div className="flex items-start gap-3">
+              <BrandLogo brand={brand} size="lg" testId="brand-detail-logo" />
+              <div className="min-w-0 flex-1">
+                <h1
+                  className="text-xl font-semibold text-[#1A1A1A] truncate"
+                  style={{ fontFamily: "'Fraunces', serif" }}
+                >
+                  {brand.company}
+                </h1>
+                <p className="text-[12px] text-[#8A8A8A] mt-1">{brand.industry || 'Uncategorised'}</p>
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <div
