@@ -312,15 +312,43 @@ def _required_missing_fields(text: str, required: List[Tuple[str, List[str]]]) -
 
 
 ALIGNMENT_SNAPSHOT_FIELD_SPECS = [
-    ("About The Organisation", "about_the_organisation"),
-    ("What are the Core Focus Areas", "core_focus_areas"),
-    ("Who are The Key Customers/Beneficiaries", "key_customers_beneficiaries"),
-    ("Key Goals or Metrics that are Tracked", "key_goals_metrics"),
-    ("What Success Looks Like / Timeline", "success_timeline"),
-    ("Focus", "focus"),
-    ("Priority", "priority"),
-    ("Date of connect", "date_of_connect"),
+    ("Key marketing focus", "key_marketing_focus"),
+    ("Primary target audience", "primary_target_audience"),
+    ("Key marketing channels", "key_marketing_channels"),
+    ("KPIs", "kpis"),
+    ("Budget range", "budget_range"),
+    ("Timeline", "timeline"),
+    ("Approval process / decision maker", "approval_process_decision_maker"),
+    ("Current marketing challenge", "current_marketing_challenge"),
 ]
+
+# Field keys that must be normalised to arrays/lists.
+ALIGNMENT_LIST_FIELD_KEYS = {"key_marketing_channels", "kpis"}
+
+# Human readable hints used when fallback marks a field as needing confirmation.
+ALIGNMENT_FIELD_CONFIRMATION_HINTS = {
+    "key_marketing_focus": "key marketing focus",
+    "primary_target_audience": "primary target audience",
+    "key_marketing_channels": "approved marketing channels",
+    "kpis": "KPIs or measurement targets",
+    "budget_range": "budget range",
+    "timeline": "timeline",
+    "approval_process_decision_maker": "approval process or decision maker",
+    "current_marketing_challenge": "current marketing challenge",
+}
+
+
+def _needs_confirmation_text(field_key: str) -> str:
+    hint = ALIGNMENT_FIELD_CONFIRMATION_HINTS.get(field_key, field_key.replace("_", " "))
+    return f"Needs confirmation: the transcript did not clearly state the {hint}."
+
+
+def _needs_confirmation_kpi() -> Dict[str, str]:
+    return {
+        "kpi": "Needs confirmation",
+        "target": "Needs confirmation",
+        "evidence": "The transcript did not clearly state the KPI or measurement target.",
+    }
 
 
 def _parse_json_object(text: str) -> Dict[str, Any]:
@@ -346,119 +374,287 @@ def _response_to_text(response: Any) -> str:
 
 
 def _field_captured(value: Any) -> bool:
+    """A field is captured only when it has real content that is not a needs-confirmation marker."""
+    if isinstance(value, list):
+        if not value:
+            return False
+        # For arrays (channels) the field is captured if at least one real
+        # entry exists that is not a "needs confirmation" placeholder. KPI
+        # arrays carry dicts so each entry has to be inspected.
+        for entry in value:
+            if isinstance(entry, dict):
+                kpi = str(entry.get("kpi") or "").strip().lower()
+                if kpi and "needs confirmation" not in kpi and "not captured" not in kpi:
+                    return True
+            else:
+                text = str(entry or "").strip().lower()
+                if text and "needs confirmation" not in text and "not captured" not in text:
+                    return True
+        return False
     text = str(value or "").strip().lower()
     if not text:
         return False
     unavailable_markers = (
+        "needs confirmation",
         "not captured",
         "not provided",
         "not mentioned",
         "unclear",
         "unknown",
-        "brand should confirm",
-        "admin review",
     )
     return not any(marker in text for marker in unavailable_markers)
+
+
+def _normalise_channel_list(value: Any) -> List[str]:
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        # Split comma-separated strings into a list.
+        items = [part.strip() for part in re.split(r"[,;\n]+", value) if part.strip()]
+    elif value in (None, ""):
+        items = []
+    else:
+        items = [str(value)]
+    cleaned: List[str] = []
+    for item in items:
+        text = str(item or "").strip()
+        if text:
+            cleaned.append(text[:160])
+    if not cleaned:
+        return [_needs_confirmation_text("key_marketing_channels")]
+    return cleaned[:10]
+
+
+def _normalise_kpi_list(value: Any) -> List[Dict[str, str]]:
+    if isinstance(value, list):
+        raw_items = value
+    elif isinstance(value, dict):
+        raw_items = [value]
+    elif isinstance(value, str) and value.strip():
+        raw_items = [value.strip()]
+    else:
+        raw_items = []
+
+    cleaned: List[Dict[str, str]] = []
+    for entry in raw_items:
+        if isinstance(entry, dict):
+            kpi = str(entry.get("kpi") or entry.get("name") or entry.get("metric") or "").strip()
+            target = str(entry.get("target") or entry.get("goal") or entry.get("value") or "").strip()
+            evidence = str(entry.get("evidence") or entry.get("source") or entry.get("note") or "").strip()
+            if not kpi:
+                continue
+            cleaned.append({
+                "kpi": kpi[:160],
+                "target": (target or "Needs confirmation")[:240],
+                "evidence": (evidence or "")[:300],
+            })
+        else:
+            text = str(entry or "").strip()
+            if not text:
+                continue
+            cleaned.append({
+                "kpi": text[:160],
+                "target": "Needs confirmation",
+                "evidence": "",
+            })
+    if not cleaned:
+        return [_needs_confirmation_kpi()]
+    return cleaned[:8]
 
 
 def _normalise_alignment_tool_result(card: Dict[str, Any]) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
     for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
-        value = str(card.get(key) or "").strip()
-        fields[key] = value[:1400] if value else f"This detail needs brand confirmation before approval. Please confirm {label.lower()}."
+        raw_value = card.get(key)
+        if key == "key_marketing_channels":
+            fields[key] = _normalise_channel_list(raw_value)
+        elif key == "kpis":
+            fields[key] = _normalise_kpi_list(raw_value)
+        else:
+            text = str(raw_value or "").strip()
+            if not text:
+                fields[key] = _needs_confirmation_text(key)
+            else:
+                fields[key] = text[:1400]
+
+    captured_keys: List[str] = []
+    missing_keys: List[str] = []
+    for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
+        if _field_captured(fields.get(key)):
+            captured_keys.append(key)
+        else:
+            missing_keys.append(key)
+
+    # Prefer model-reported captured/missing when they look valid, otherwise
+    # fall back to the deterministic check above.
+    reported_captured = card.get("captured_fields")
+    if isinstance(reported_captured, list) and reported_captured:
+        reported_captured = [str(k).strip() for k in reported_captured if str(k).strip()]
+        captured_keys = [k for k in reported_captured if k in {key for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}]
+        if captured_keys:
+            missing_keys = [key for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS if key not in captured_keys]
 
     try:
-        confidence = int(float(card.get("confidence", 0)))
+        raw_confidence = float(card.get("confidence", 0))
+        if raw_confidence > 1:
+            confidence = int(round(max(0.0, min(raw_confidence, 100.0))))
+        else:
+            confidence = int(round(max(0.0, min(raw_confidence, 1.0)) * 100))
     except (TypeError, ValueError):
         confidence = 0
-    captured = [label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS if _field_captured(fields.get(key))]
-    missing = [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS if label not in captured]
     if not confidence:
-        confidence = int(round((len(captured) / len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)) * 100))
+        confidence = int(round((len(captured_keys) / len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)) * 100))
 
     evidence_notes = card.get("evidence_notes")
     if not isinstance(evidence_notes, list):
         evidence_notes = [str(evidence_notes)] if evidence_notes else []
 
+    label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
     return {
         **fields,
         "confidence": max(0, min(confidence, 100)),
-        "captured_fields": captured,
-        "missing_fields": missing,
-        "evidence_notes": [str(item)[:300] for item in evidence_notes if str(item).strip()][:8],
+        "captured_fields": captured_keys,
+        "missing_fields": missing_keys,
+        "captured_field_labels": [label_for_key[k] for k in captured_keys],
+        "missing_field_labels": [label_for_key[k] for k in missing_keys],
+        "evidence_notes": [str(item)[:400] for item in evidence_notes if str(item).strip()][:12],
         "analysis_source": str(card.get("analysis_source") or "llm_alignment_tool"),
+        "analysis_model": str(card.get("analysis_model") or ""),
         "generated_at": _now_iso(),
     }
 
 
 def _alignment_tool_system_prompt() -> str:
     return """
-You are TASCK's Connect-to-Frame Alignment Snapshot analyst.
+You are TASCK's Business Call to Alignment Snapshot analyst.
 
-Read the CRM context and every Connect transcript. Extract only what is supported by the evidence. Do not invent facts, numbers, dates, audiences, priorities, or goals. If a field is unclear, say exactly what the brand should confirm. Produce polished Nigerian business English suitable for sending to a brand for review.
+Your job is to read one or multiple business-call transcripts and produce a clean Alignment Snapshot readiness checklist that TASCK can send back to the brand for confirmation.
 
-Return JSON only, no markdown, with exactly these keys:
+Return ONLY valid JSON. No markdown. No explanation outside JSON.
+
+Required JSON keys:
 {
-  "about_the_organisation": "string",
-  "core_focus_areas": "string",
-  "key_customers_beneficiaries": "string",
-  "key_goals_metrics": "string",
-  "success_timeline": "string",
-  "focus": "string",
-  "priority": "string",
-  "date_of_connect": "string",
-  "confidence": integer 0-100,
-  "evidence_notes": ["short evidence note"]
+  "key_marketing_focus": "",
+  "primary_target_audience": "",
+  "key_marketing_channels": [],
+  "kpis": [],
+  "budget_range": "",
+  "timeline": "",
+  "approval_process_decision_maker": "",
+  "current_marketing_challenge": "",
+  "confidence": 0,
+  "captured_fields": [],
+  "missing_fields": [],
+  "evidence_notes": []
 }
 
-Confidence should reflect how many of the eight fields are clearly supported. Never use 100 unless all eight fields are explicit and risk-free.
+Rules:
+- Use only information found in the transcript, CRM context, or business case context.
+- Do not invent answers.
+- If something is unclear, write: "Needs confirmation: ..." and explain what is missing.
+- If multiple transcripts are provided, merge them into one final understanding.
+- If transcripts conflict, mention the conflict in evidence_notes.
+- Write the answers in a polished client-facing style, as if TASCK is saying:
+  "Based on our call, this is what we understand..."
+- key_marketing_channels should be an array of channels explicitly mentioned or strongly implied.
+- kpis should be an array of KPI objects, for example:
+  [{"kpi": "Lead conversion", "target": "Needs confirmation", "evidence": "Client mentioned wanting more qualified leads"}]
+- captured_fields should contain field keys that were clearly answered.
+- missing_fields should contain field keys that still need confirmation.
+- Use these exact field keys when filling captured_fields and missing_fields: key_marketing_focus, primary_target_audience, key_marketing_channels, kpis, budget_range, timeline, approval_process_decision_maker, current_marketing_challenge.
+- confidence is an integer 0-100 reflecting how many of the eight fields are clearly supported. Never use 100 unless every field is explicit and risk-free.
 """.strip()
 
 
-def _alignment_tool_user_message(brand: Dict[str, Any], case: Dict[str, Any], combined_text: str) -> str:
+def _alignment_tool_user_message(brand: Dict[str, Any], case: Dict[str, Any], transcript_blocks: List[Dict[str, Any]]) -> str:
+    transcript_count = len(transcript_blocks)
+    blocks: List[str] = []
+    for index, block in enumerate(transcript_blocks):
+        title = str(block.get("title") or block.get("session_label") or f"Session {index + 1}").strip()
+        date = str(block.get("date") or block.get("call_date") or block.get("scheduled_for") or "Date not captured").strip()
+        source = str(block.get("source") or block.get("meeting_type") or "business_call").strip()
+        text = str(block.get("content") or block.get("transcript") or "").strip()
+        if not text:
+            continue
+        blocks.append(f"--- Transcript {index + 1}: {title} | Date: {date} | Source: {source} ---\n{text}")
+    combined = "\n\n".join(blocks) if blocks else "(No transcript content available.)"
+    merge_instruction = (
+        "Merge the transcripts into one final Alignment Snapshot readiness checklist. If anything conflicts between them, mention it in evidence_notes."
+        if transcript_count > 1
+        else "Use this single transcript as the source of truth."
+    )
     return f"""
 CRM BRAND CONTEXT
 - Brand name: {brand.get("company") or brand.get("name") or case.get("brand_name") or ""}
 - Category/industry: {brand.get("category") or brand.get("industry") or brand.get("sector") or ""}
 - Website: {brand.get("website") or ""}
 - Stored about: {brand.get("about") or brand.get("brand_about") or brand.get("description") or ""}
-- Contact: {brand.get("primary_contact") or brand.get("contact_name") or ""} {brand.get("email") or ""}
+- Primary contact: {brand.get("primary_contact") or brand.get("contact_name") or ""} {brand.get("email") or ""}
 
 BUSINESS CASE CONTEXT
 - Title: {case.get("title") or ""}
 - Stage: {case.get("stage") or ""}
 - Estimated value: {case.get("estimated_value") or ""}
+- Engagement track: {case.get("engagement_track") or ""}
 
-CONNECT TRANSCRIPTS
-{combined_text}
+TRANSCRIPTS ({transcript_count} total)
+{combined}
 
-Extract the eight Alignment Snapshot fields from the transcripts and CRM context. If the transcripts contradict CRM context, prefer the transcript and mention the uncertainty in evidence_notes.
+{merge_instruction}
+Do not invent missing information. For any field not clearly stated, return "Needs confirmation: ..." with a short explanation of what is missing.
 """.strip()
 
 
+def _normalise_transcript_blocks(blocks: List[Any]) -> List[Dict[str, Any]]:
+    """Accept a list of strings or dicts and return normalised dicts."""
+    result: List[Dict[str, Any]] = []
+    for entry in blocks or []:
+        if isinstance(entry, dict):
+            text = str(entry.get("content") or entry.get("transcript") or "").strip()
+            if not text:
+                continue
+            result.append({
+                "title": entry.get("title") or entry.get("session_label") or "",
+                "date": entry.get("date") or entry.get("call_date") or entry.get("scheduled_for") or "",
+                "source": entry.get("source") or entry.get("meeting_type") or "business_call",
+                "content": text,
+            })
+        else:
+            text = str(entry or "").strip()
+            if text:
+                result.append({"title": "", "date": "", "source": "business_call", "content": text})
+    return result
+
+
 async def _call_alignment_analysis_tool(
-    combined_text: str,
+    transcript_blocks: List[Dict[str, Any]],
     brand: Dict[str, Any],
     case: Dict[str, Any],
     raise_on_failure: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    if not (combined_text or "").strip():
+    blocks = _normalise_transcript_blocks(transcript_blocks)
+    if not blocks:
         return None
 
     system_prompt = _alignment_tool_system_prompt()
-    user_message = _alignment_tool_user_message(brand, case, combined_text)
+    user_message = _alignment_tool_user_message(brand, case, blocks)
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY")
-    custom_key = os.getenv("ALIGNMENT_ANALYZER_LLM_API_KEY") or os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
-    custom_base = (os.getenv("ALIGNMENT_ANALYZER_LLM_BASE_URL") or os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
+    emergent_key = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY") or os.getenv("EMERGENT_LLM_KEY")
+    custom_key = os.getenv("CUSTOM_OPENAI_COMPATIBLE_KEY") or os.getenv("ALIGNMENT_ANALYZER_LLM_API_KEY") or os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
+    custom_base = (os.getenv("CUSTOM_OPENAI_COMPATIBLE_BASE_URL") or os.getenv("ALIGNMENT_ANALYZER_LLM_BASE_URL") or os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
     openai_key = os.getenv("OPENAI_API_KEY")
 
-    # Anthropic takes priority when configured — the Combined AI Transcript Analysis
-    # is contractually bound to use the Anthropic-managed model.
+    try:
+        timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "60")))
+    except (TypeError, ValueError):
+        timeout_seconds = 60.0
+
+    # Anthropic is the preferred provider when configured — the Combined AI
+    # Transcript Analysis is contractually bound to use Claude.
     if anthropic_key:
         try:
             def _call_anthropic() -> Dict[str, Any]:
-                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "claude-sonnet-4-5"
+                model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "claude-sonnet-4-20250514"
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -468,17 +664,18 @@ async def _call_alignment_analysis_tool(
                     },
                     json={
                         "model": model,
-                        "max_tokens": 1200,
+                        "max_tokens": 1600,
                         "temperature": 0.1,
                         "system": system_prompt,
                         "messages": [{"role": "user", "content": user_message}],
                     },
-                    timeout=45,
+                    timeout=timeout_seconds,
                 )
                 response.raise_for_status()
                 data = response.json()
                 text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
-                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"anthropic:{model}"})
+                logger.info("Alignment analysis: provider=anthropic model=%s case=%s", model, case.get("id"))
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": "anthropic", "analysis_model": model})
 
             return await asyncio.to_thread(_call_anthropic)
         except Exception as exc:
@@ -491,8 +688,8 @@ async def _call_alignment_analysis_tool(
         if emergent_key:
             from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-            provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
-            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.0-flash"
+            provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "anthropic"
+            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "claude-sonnet-4-20250514"
             chat = LlmChat(
                 api_key=emergent_key,
                 session_id=f"alignment-analyzer-{uuid.uuid4()}",
@@ -500,7 +697,8 @@ async def _call_alignment_analysis_tool(
             ).with_model(provider, model)
             response = await chat.send_message(UserMessage(text=user_message))
             parsed = _parse_json_object(_response_to_text(response))
-            return _normalise_alignment_tool_result({**parsed, "analysis_source": f"emergent:{provider}/{model}"})
+            logger.info("Alignment analysis: provider=emergent model=%s case=%s", model, case.get("id"))
+            return _normalise_alignment_tool_result({**parsed, "analysis_source": "emergent", "analysis_model": model})
 
         def _call_http_model() -> Optional[Dict[str, Any]]:
             if custom_key and custom_base:
@@ -511,17 +709,18 @@ async def _call_alignment_analysis_tool(
                     json={
                         "model": model,
                         "temperature": 0.1,
-                        "max_tokens": 1200,
+                        "max_tokens": 1600,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
                         ],
                     },
-                    timeout=45,
+                    timeout=timeout_seconds,
                 )
                 response.raise_for_status()
                 text = response.json()["choices"][0]["message"]["content"]
-                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"custom:{model}"})
+                logger.info("Alignment analysis: provider=custom model=%s case=%s", model, case.get("id"))
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": "custom_openai_compatible", "analysis_model": model})
 
             if openai_key:
                 model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "gpt-4o-mini"
@@ -531,17 +730,18 @@ async def _call_alignment_analysis_tool(
                     json={
                         "model": model,
                         "temperature": 0.1,
-                        "max_tokens": 1200,
+                        "max_tokens": 1600,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
                         ],
                     },
-                    timeout=45,
+                    timeout=timeout_seconds,
                 )
                 response.raise_for_status()
                 text = response.json()["choices"][0]["message"]["content"]
-                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"openai:{model}"})
+                logger.info("Alignment analysis: provider=openai model=%s case=%s", model, case.get("id"))
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": "openai", "analysis_model": model})
 
             return None
 
@@ -550,16 +750,151 @@ async def _call_alignment_analysis_tool(
         logger.warning("Alignment analysis tool failed for business case %s: %s", case.get("id"), exc)
         return None
 
-def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
-    """Deterministic transcript extraction used by the transcript analysis layer.
 
-    The production version can swap this for an LLM/transcription provider while
-    keeping the same response contract.
+def _alignment_fallback_result() -> Dict[str, Any]:
+    """Honest fallback used when no LLM is configured or the transcript is empty.
+    Every field is marked as needing confirmation; nothing is invented."""
+    card = {key: "" for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
+    card["confidence"] = 0
+    card["captured_fields"] = []
+    card["missing_fields"] = [key for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS]
+    card["evidence_notes"] = ["No LLM-backed transcript analysis was available. All fields need brand confirmation."]
+    card["analysis_source"] = "honest_fallback"
+    card["analysis_model"] = ""
+    return _normalise_alignment_tool_result(card)
+
+
+def _alignment_snapshot_fields_from_card(card: Dict[str, Any]) -> List[Dict[str, Any]]:
+    captured = set(card.get("captured_fields") or [])
+    fields: List[Dict[str, Any]] = []
+    for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
+        value = card.get(key)
+        if key == "key_marketing_channels" and isinstance(value, list):
+            answer = ", ".join(str(v) for v in value if v)
+        elif key == "kpis" and isinstance(value, list):
+            parts = []
+            for item in value:
+                if isinstance(item, dict):
+                    kpi = item.get("kpi") or "Metric"
+                    target = item.get("target") or ""
+                    evidence = item.get("evidence") or ""
+                    fragment = kpi if not target else f"{kpi}: {target}"
+                    if evidence:
+                        fragment = f"{fragment} (evidence: {evidence})"
+                    parts.append(fragment)
+                else:
+                    parts.append(str(item))
+            answer = "; ".join(parts)
+        else:
+            answer = str(value or "")
+        fields.append({
+            "question": label,
+            "key": key,
+            "answer": answer,
+            "value": value,
+            "status": "captured" if key in captured else "needs_confirmation",
+        })
+    return fields
+
+
+async def _analyze_transcript_bundle(
+    transcripts: List[Any],
+    brand: Optional[Dict[str, Any]] = None,
+    business_case: Optional[Dict[str, Any]] = None,
+    raise_on_anthropic_failure: bool = False,
+) -> Dict[str, Any]:
+    """Shared analyzer for one or many transcripts.
+
+    Returns a normalised payload containing marketing_intelligence,
+    alignment_snapshot_fields, readiness, analysis_source, and analysis_model.
+    """
+    brand = brand or {}
+    business_case = business_case or {}
+    blocks = _normalise_transcript_blocks(transcripts)
+
+    card: Optional[Dict[str, Any]] = None
+    anthropic_configured = bool(os.getenv("ANTHROPIC_API_KEY"))
+
+    if blocks:
+        try:
+            timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "60")))
+        except (TypeError, ValueError):
+            timeout_seconds = 60.0
+        try:
+            card = await asyncio.wait_for(
+                _call_alignment_analysis_tool(
+                    blocks,
+                    brand,
+                    business_case,
+                    raise_on_failure=raise_on_anthropic_failure and anthropic_configured,
+                ),
+                timeout=timeout_seconds + 5,
+            )
+        except HTTPException:
+            raise
+        except asyncio.TimeoutError:
+            if raise_on_anthropic_failure and anthropic_configured:
+                raise HTTPException(504, f"Anthropic transcript analysis timed out after {timeout_seconds:.0f}s.")
+            logger.warning("Alignment analysis timed out after %.1fs for case %s", timeout_seconds, business_case.get("id"))
+
+    if not card:
+        card = _alignment_fallback_result()
+
+    captured_count = len(card.get("captured_fields") or [])
+    total_count = len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)
+    missing_count = max(0, total_count - captured_count)
+    percentage = int(round((captured_count / total_count) * 100)) if total_count else 0
+
+    label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
+    marketing_intelligence = {
+        "key_marketing_focus": card.get("key_marketing_focus"),
+        "primary_target_audience": card.get("primary_target_audience"),
+        "key_marketing_channels": card.get("key_marketing_channels"),
+        "kpis": card.get("kpis"),
+        "budget_range": card.get("budget_range"),
+        "timeline": card.get("timeline"),
+        "approval_process_decision_maker": card.get("approval_process_decision_maker"),
+        "current_marketing_challenge": card.get("current_marketing_challenge"),
+        "confidence": card.get("confidence"),
+        "captured_fields": card.get("captured_fields") or [],
+        "missing_fields": card.get("missing_fields") or [],
+        "evidence_notes": card.get("evidence_notes") or [],
+        "captured_field_labels": [label_for_key[k] for k in (card.get("captured_fields") or []) if k in label_for_key],
+        "missing_field_labels": [label_for_key[k] for k in (card.get("missing_fields") or []) if k in label_for_key],
+        "generated_at": card.get("generated_at") or _now_iso(),
+    }
+
+    return {
+        "marketing_intelligence": marketing_intelligence,
+        "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(card),
+        "readiness": {
+            "captured_count": captured_count,
+            "missing_count": missing_count,
+            "total_count": total_count,
+            "percentage": percentage,
+        },
+        "analysis_source": card.get("analysis_source") or "honest_fallback",
+        "analysis_model": card.get("analysis_model") or "",
+        "transcript_count": len(blocks),
+        "evidence_notes": card.get("evidence_notes") or [],
+        "captured_fields": card.get("captured_fields") or [],
+        "missing_fields": card.get("missing_fields") or [],
+        "confidence": card.get("confidence", 0),
+        "card": card,
+    }
+
+
+def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
+    """Honest deterministic extraction used only as a last-resort fallback.
+
+    This must never invent channels, KPIs, audience, budget, or timeline. If a
+    field is not explicitly stated in the transcript, the corresponding value
+    will be a "Needs confirmation" marker so the brand can confirm later.
     """
     text = (content or "").strip()
     lower = text.lower()
 
-    def _after_any(labels: List[str], fallback: str) -> str:
+    def _after_any(labels: List[str]) -> str:
         for label in labels:
             marker = label.lower()
             pos = lower.find(marker)
@@ -573,42 +908,42 @@ def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
                 value = chunk[:stop].strip(" .;-")
                 if value:
                     return value[:260]
-        return fallback
+        return ""
 
-    focus = _after_any(
-        ["key marketing focus", "marketing focus", "focus", "objective", "goal"],
-        "Clarify the brand problem, campaign ambition, and cultural role from the discovery call.",
-    )
-    audience = _after_any(
-        ["primary target audience", "target audience", "audience", "consumer"],
-        "Primary customer segment mentioned by the brand; admin review required.",
-    )
+    focus = _after_any(["key marketing focus", "marketing focus", "main objective", "primary goal"])
+    audience = _after_any(["primary target audience", "target audience", "audience is", "we are targeting"])
+    challenge = _after_any(["current marketing challenge", "marketing challenge", "main challenge", "biggest problem"])
+    timeline = _after_any(["timeline", "launch date", "go-live", "deadline"])
+    budget = _after_any(["budget range", "budget is", "budget", "marketing budget"])
+    decision_maker = _after_any(["decision maker", "approval process", "approver", "sign-off"])
 
-    channel_candidates = []
-    for channel in ["Instagram", "TikTok", "YouTube", "X", "Twitter", "OOH", "Events", "Radio", "TV", "Influencers", "Retail", "PR"]:
+    explicit_channels: List[str] = []
+    for channel in ["Instagram", "TikTok", "YouTube", "X", "Twitter", "OOH", "Events", "Radio", "TV", "Influencers", "Retail", "PR", "LinkedIn", "Facebook"]:
         if channel.lower() in lower:
-            channel_candidates.append("X" if channel == "Twitter" else channel)
-    if not channel_candidates:
-        channel_candidates = ["Instagram", "TikTok", "YouTube", "PR"]
+            explicit_channels.append("X" if channel == "Twitter" else channel)
 
-    kpis = []
-    for name in ["Reach", "Engagement rate", "UGC posts", "Sales lift", "App installs", "Earned media value", "Lead conversion"]:
+    explicit_kpis: List[Dict[str, str]] = []
+    for name in ["Reach", "Engagement rate", "UGC posts", "Sales lift", "App installs", "Earned media value", "Lead conversion", "Impressions", "Click-through rate", "Conversions"]:
         if name.lower() in lower:
-            kpis.append({"kpi": name, "target": "Target mentioned in transcript; admin to confirm exact number."})
-    if not kpis:
-        kpis = [
-            {"kpi": "Reach", "target": "AI-inferred from campaign ambition; confirm with brand."},
-            {"kpi": "Engagement rate", "target": "AI-inferred; confirm channel benchmark."},
-            {"kpi": "Conversion signal", "target": "Define the business outcome before Plan."},
-        ]
+            explicit_kpis.append({
+                "kpi": name,
+                "target": "Needs confirmation",
+                "evidence": f"The transcript mentioned {name} but did not state a specific target.",
+            })
 
     return {
-        "key_marketing_focus": focus,
-        "primary_target_audience": audience,
-        "key_marketing_channels": channel_candidates[:6],
-        "marketing_kpis": kpis[:5],
+        "key_marketing_focus": focus or _needs_confirmation_text("key_marketing_focus"),
+        "primary_target_audience": audience or _needs_confirmation_text("primary_target_audience"),
+        "key_marketing_channels": explicit_channels if explicit_channels else [_needs_confirmation_text("key_marketing_channels")],
+        "kpis": explicit_kpis if explicit_kpis else [_needs_confirmation_kpi()],
+        "budget_range": budget or _needs_confirmation_text("budget_range"),
+        "timeline": timeline or _needs_confirmation_text("timeline"),
+        "approval_process_decision_maker": decision_maker or _needs_confirmation_text("approval_process_decision_maker"),
+        "current_marketing_challenge": challenge or _needs_confirmation_text("current_marketing_challenge"),
+        # Legacy keys preserved for parts of the codebase that still read them.
+        "marketing_kpis": explicit_kpis if explicit_kpis else [_needs_confirmation_kpi()],
         "source_excerpt": text[:420],
-        "extraction_confidence": 0.82 if text else 0.35,
+        "extraction_confidence": 0.5 if text else 0.0,
         "generated_at": _now_iso(),
     }
 
@@ -619,11 +954,16 @@ def _marketing_intelligence_from_case(case: Dict[str, Any]) -> Dict[str, Any]:
     if mi:
         return mi
     return {
-        "key_marketing_focus": connect.get("key_marketing_focus") or connect.get("stated_intent") or "Admin review required.",
-        "primary_target_audience": connect.get("primary_target_audience") or "Admin review required.",
-        "key_marketing_channels": connect.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"],
-        "marketing_kpis": connect.get("marketing_kpis") or [{"kpi": "Reach", "target": "Confirm with brand."}],
-        "extraction_confidence": 0.45,
+        "key_marketing_focus": connect.get("key_marketing_focus") or _needs_confirmation_text("key_marketing_focus"),
+        "primary_target_audience": connect.get("primary_target_audience") or _needs_confirmation_text("primary_target_audience"),
+        "key_marketing_channels": connect.get("key_marketing_channels") or [_needs_confirmation_text("key_marketing_channels")],
+        "kpis": connect.get("kpis") or connect.get("marketing_kpis") or [_needs_confirmation_kpi()],
+        "marketing_kpis": connect.get("marketing_kpis") or [_needs_confirmation_kpi()],
+        "budget_range": connect.get("budget_range") or connect.get("budget") or _needs_confirmation_text("budget_range"),
+        "timeline": connect.get("timeline") or connect.get("campaign_timeline") or _needs_confirmation_text("timeline"),
+        "approval_process_decision_maker": connect.get("approval_process_decision_maker") or connect.get("decision_maker") or _needs_confirmation_text("approval_process_decision_maker"),
+        "current_marketing_challenge": connect.get("current_marketing_challenge") or connect.get("marketing_challenge") or _needs_confirmation_text("current_marketing_challenge"),
+        "extraction_confidence": 0.0,
     }
 
 
@@ -1005,6 +1345,152 @@ def make_v3_router(db):
         await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
         updated = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         return {"ok": True, "brand": updated}
+
+    class BrandFollowUpDraftPayload(BaseModel):
+        instructions: Optional[str] = None
+        context: Optional[str] = None
+
+    @router.post("/brands/{brand_id}/ai/follow-up-draft")
+    async def draft_brand_follow_up(brand_id: str, payload: BrandFollowUpDraftPayload = BrandFollowUpDraftPayload()):
+        """Generate a Claude-powered follow-up draft for a CRM brand contact.
+
+        Uses the same Anthropic priority chain as the Alignment Snapshot
+        analyzer. Returns a JSON payload with a draft, subject line and key
+        talking points. Honest fallback is provided if no LLM is configured.
+        """
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+
+        # Pull the latest interaction and any active business case for context.
+        latest_interactions = await db.v3_interactions.find({"brand_id": brand_id}, {"_id": 0}).sort("date_iso", -1).to_list(3)
+        active_case = await db.v3_business_cases.find_one(
+            {"brand_id": brand_id, "status": {"$ne": "deleted"}},
+            {"_id": 0},
+            sort=[("updated_at", -1)],
+        ) or {}
+
+        contact_name = brand.get("primary_contact") or brand.get("contact_name") or "there"
+        company = brand.get("company") or brand.get("name") or "the brand"
+
+        interactions_summary = "\n".join([
+            f"- {(it.get('date_iso') or '')[:10]} · {it.get('type')}: {it.get('title')}"
+            for it in latest_interactions
+        ]) or "No prior CRM interactions logged."
+        case_summary = (
+            f"Active business case: {active_case.get('title')} (stage: {active_case.get('stage_label') or active_case.get('stage')})"
+            if active_case else "No active business case yet."
+        )
+
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        emergent_key = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY") or os.getenv("EMERGENT_LLM_KEY")
+        system_prompt = (
+            "You are TASCK's CRM relationship manager assistant. Draft a polished, concise "
+            "follow-up email for a brand contact based on the CRM context and the latest "
+            "interaction. Return ONLY JSON with keys: subject (string), draft (string with \\n\\n "
+            "paragraph breaks), talking_points (array of strings). The draft must address the "
+            "contact by name, reference the most recent interaction, suggest a clear next step, "
+            "and stay under 180 words. Do not invent budgets, dates, or commitments."
+        )
+        user_message = (
+            f"BRAND CONTEXT\n- Company: {company}\n- Industry: {brand.get('industry') or brand.get('category') or 'unknown'}\n"
+            f"- Primary contact: {contact_name}\n- Email: {brand.get('email') or 'unknown'}\n"
+            f"- Stored about: {brand.get('about') or brand.get('description') or 'no notes'}\n\n"
+            f"BUSINESS CASE\n{case_summary}\n\n"
+            f"RECENT INTERACTIONS\n{interactions_summary}\n\n"
+            f"ADMIN INSTRUCTIONS\n{payload.instructions or 'Default polite re-engagement to confirm priority, timeline and decision maker.'}\n\n"
+            f"ADDITIONAL CONTEXT\n{payload.context or 'None.'}"
+        )
+
+        try:
+            timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "60")))
+        except (TypeError, ValueError):
+            timeout_seconds = 60.0
+
+        analysis_source = "honest_fallback"
+        analysis_model = ""
+        parsed: Optional[Dict[str, Any]] = None
+
+        if anthropic_key:
+            try:
+                def _call_anthropic() -> Dict[str, Any]:
+                    model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
+                    response = requests.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": anthropic_key,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": model,
+                            "max_tokens": 900,
+                            "temperature": 0.4,
+                            "system": system_prompt,
+                            "messages": [{"role": "user", "content": user_message}],
+                        },
+                        timeout=timeout_seconds,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+                    return {**_parse_json_object(text), "_model": model}
+
+                parsed = await asyncio.to_thread(_call_anthropic)
+                analysis_source = "anthropic"
+                analysis_model = parsed.get("_model") or "claude-sonnet-4-5"
+            except Exception as exc:
+                logger.warning("Anthropic follow-up draft failed for brand %s: %s", brand_id, exc)
+                parsed = None
+
+        if parsed is None and emergent_key:
+            try:
+                from emergentintegrations.llm.chat import LlmChat, UserMessage
+                provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or "anthropic"
+                model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or "claude-sonnet-4-5"
+                chat = LlmChat(
+                    api_key=emergent_key,
+                    session_id=f"brand-followup-{uuid.uuid4()}",
+                    system_message=system_prompt,
+                ).with_model(provider, model)
+                response = await chat.send_message(UserMessage(text=user_message))
+                parsed = _parse_json_object(_response_to_text(response))
+                analysis_source = "emergent"
+                analysis_model = model
+            except Exception as exc:
+                logger.warning("Emergent follow-up draft failed for brand %s: %s", brand_id, exc)
+                parsed = None
+
+        if parsed is None:
+            # Honest deterministic fallback. No invented commitments.
+            draft_lines = [
+                f"Hi {contact_name},",
+                f"I am following up from TASCK on our work with {company}.",
+                f"{case_summary}",
+                "It would help us to confirm your current priority, timeline and the right decision maker before we recommend the next step.",
+                "Would a short call this week work for you?",
+                "Best,\nTASCK Team",
+            ]
+            parsed = {
+                "subject": f"Following up with {company}",
+                "draft": "\n\n".join(draft_lines),
+                "talking_points": [
+                    "Confirm current priority",
+                    "Confirm working timeline",
+                    "Confirm decision maker for next step",
+                ],
+            }
+
+        return {
+            "ok": True,
+            "brand_id": brand_id,
+            "subject": str(parsed.get("subject") or f"Following up with {company}")[:180],
+            "draft": str(parsed.get("draft") or "").strip(),
+            "talking_points": [str(t) for t in (parsed.get("talking_points") or [])][:6],
+            "analysis_source": analysis_source,
+            "analysis_model": analysis_model,
+            "generated_at": _now_iso(),
+        }
 
     @router.post("/brands/{brand_id}/scrape")
     async def scrape_brand_details(brand_id: str):
@@ -2710,164 +3196,109 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
         connect = case.get("connect", {}) or {}
         brand_company = brand.get("company") or brand.get("name") or case.get("brand_name") or case.get("title") or "Brand"
-        brand_industry = brand.get("industry") or brand.get("sector") or brand.get("category") or "consumer culture"
-        project_title = case.get("title") or f"{brand_company} Relationship Opportunity"
         mi = _marketing_intelligence_from_case(case)
-        alignment_fields = connect.get("alignment_tool_analysis") or mi.get("alignment_snapshot_fields") or {}
+        alignment_card = connect.get("alignment_tool_analysis") or {}
 
-        def _usable_text(value: Any, fallback: str) -> str:
-            text = str(value or "").strip()
-            if not text or text.lower() in {"admin review required.", "admin review required", "confirm with brand.", "pending admin review."}:
-                return fallback
-            return text
+        def _channels_to_text(channels: Any) -> str:
+            if isinstance(channels, list):
+                cleaned = [str(c).strip() for c in channels if str(c).strip()]
+                return ", ".join(cleaned) if cleaned else _needs_confirmation_text("key_marketing_channels")
+            text = str(channels or "").strip()
+            return text if text else _needs_confirmation_text("key_marketing_channels")
 
-        def _money(value: Any) -> str:
-            try:
-                amount = int(float(value or 0))
-            except (TypeError, ValueError):
-                amount = 0
-            if amount <= 0:
-                return "NGN 75,000,000 - NGN 120,000,000 directional working range"
-            return f"NGN {amount:,} directional working range"
+        def _kpis_to_text(kpis: Any) -> str:
+            if not isinstance(kpis, list) or not kpis:
+                return _needs_confirmation_kpi()["evidence"]
+            lines: List[str] = []
+            for item in kpis:
+                if isinstance(item, dict):
+                    kpi = str(item.get("kpi") or "Metric").strip()
+                    target = str(item.get("target") or "").strip()
+                    evidence = str(item.get("evidence") or "").strip()
+                    parts = [kpi]
+                    if target:
+                        parts.append(f"target: {target}")
+                    if evidence:
+                        parts.append(f"evidence: {evidence}")
+                    lines.append(" — ".join(parts))
+                else:
+                    lines.append(str(item))
+            return "\n".join(lines)
 
-        has_call_context = bool(
-            mi.get("source_excerpt")
-            or connect.get("analysis")
-            or connect.get("transcript")
-            or connect.get("latest_meeting_id")
-            or connect.get("latest_business_call_id")
-        )
-        focus = _usable_text(
-            mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"),
-            f"Turn {brand_company}'s {brand_industry} advantage into a sharper creator-led narrative that improves qualified consideration and conversion.",
-        )
-        audience = _usable_text(
-            mi.get("primary_target_audience") or connect.get("primary_target_audience"),
-            f"Urban Nigerian consumers and professional decision-makers who already engage with {brand_industry} content but need stronger proof, relevance, and trust cues before action.",
-        )
-        challenge = _usable_text(
-            connect.get("marketing_challenge") or connect.get("current_marketing_challenge") or connect.get("observed_challenge"),
-            f"{brand_company} has an opportunity to move from broad awareness into clearer behavior change by matching the right creator voices to the right purchase or adoption moments.",
-        )
-        timeline = _usable_text(
-            connect.get("timeline") or connect.get("campaign_timeline"),
-            "6-8 weeks from snapshot approval to launch readiness, with reporting after the first campaign cycle.",
-        )
-        decision_maker = _usable_text(
-            connect.get("decision_maker") or brand.get("primary_contact") or brand.get("contact_name"),
-            "Brand lead plus finance or senior marketing approver to confirm during Plan.",
-        )
-        channels = mi.get("key_marketing_channels") or connect.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"]
-        channels = [str(channel) for channel in channels if str(channel).strip()][:6] or ["Instagram", "TikTok", "YouTube", "PR"]
-        kpis = mi.get("marketing_kpis") or connect.get("marketing_kpis") or [
-            {"kpi": "Qualified reach", "target": "1.5M-3M relevant impressions across selected creator channels."},
-            {"kpi": "Engagement quality", "target": "Above benchmark saves, comments, profile visits, and story interactions."},
-            {"kpi": "Conversion signal", "target": "Track leads, inquiries, sales lift, sign-ups, or booked consultations based on brand objective."},
-        ]
-        if not isinstance(kpis, list) or not kpis:
-            kpis = [{"kpi": "Qualified reach", "target": "Confirm target with brand."}]
-        budget_range = _money(case.get("estimated_value") or connect.get("budget") or connect.get("budget_range"))
-        date_of_connect = _usable_text(
-            connect.get("date_of_connect")
-            or connect.get("connected_at")
-            or connect.get("promoted_at")
-            or connect.get("latest_meeting_date")
-            or connect.get("created_at")
-            or case.get("created_at"),
-            "Brand to confirm the Connect call date.",
-        )
-        priority = _usable_text(
-            connect.get("priority") or connect.get("business_priority") or mi.get("priority"),
-            "Brand to confirm priority level and sequence.",
-        )
-        kpi_summary = "; ".join([
-            (
-                f"{item.get('kpi', item.get('label', 'Metric'))}: "
-                f"{item.get('target', item.get('value', 'Confirm target'))}"
-            ) if isinstance(item, dict) else str(item)
-            for item in kpis[:5]
-        ])
-        captured_channels = mi.get("key_marketing_channels") or connect.get("key_marketing_channels")
-        captured_kpis = mi.get("marketing_kpis") or connect.get("marketing_kpis")
+        def _answer_for(key: str) -> Tuple[str, bool]:
+            value = alignment_card.get(key) if isinstance(alignment_card, dict) else None
+            if value is None:
+                value = mi.get(key)
+            if key == "key_marketing_channels":
+                text = _channels_to_text(value)
+            elif key == "kpis":
+                text = _kpis_to_text(value)
+            else:
+                text = str(value or "").strip()
+            captured = _field_captured(value)
+            if not text:
+                text = _needs_confirmation_text(key)
+                captured = False
+            return text, captured
 
-        def _brand_confirmation(label: str) -> str:
-            return f"This detail needs brand confirmation before approval. Please confirm {label}."
+        rows: List[Dict[str, Any]] = []
+        captured_keys: List[str] = []
+        missing_keys: List[str] = []
+        for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
+            answer, captured = _answer_for(key)
+            status = "Captured" if captured else "Needs confirmation"
+            rows.append({
+                "Alignment field": label,
+                "Brand response / comment": answer,
+                "Status": status,
+                "key": key,
+            })
+            if captured:
+                captured_keys.append(key)
+            else:
+                missing_keys.append(key)
 
-        def _alignment_answer(key: str, fallback: str) -> str:
-            if alignment_fields:
-                return _usable_text(alignment_fields.get(key), fallback)
-            return fallback
-
-        about_answer = _alignment_answer(
-            "about_the_organisation",
-            _usable_text(brand.get("about") or brand.get("brand_about") or brand.get("description"), _brand_confirmation("what the organisation does")),
-        )
-        core_focus_answer = _alignment_answer(
-            "core_focus_areas",
-            _usable_text(mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"), _brand_confirmation("the core focus areas")),
-        )
-        customers_answer = _alignment_answer(
-            "key_customers_beneficiaries",
-            _usable_text(mi.get("primary_target_audience") or connect.get("primary_target_audience"), _brand_confirmation("the key customers or beneficiaries")),
-        )
-        goals_answer = _alignment_answer(
-            "key_goals_metrics",
-            _usable_text(kpi_summary if captured_kpis else "", _brand_confirmation("the goals or metrics tracked")),
-        )
-        success_answer = _alignment_answer(
-            "success_timeline",
-            _usable_text(connect.get("timeline") or connect.get("campaign_timeline"), _brand_confirmation("success criteria and timeline")),
-        )
-        focus_answer = _alignment_answer(
-            "focus",
-            _usable_text(", ".join([str(channel) for channel in captured_channels]) if isinstance(captured_channels, list) else captured_channels, _brand_confirmation("the campaign focus")),
-        )
-        priority_answer = _alignment_answer(
-            "priority",
-            _usable_text(connect.get("priority") or connect.get("business_priority") or mi.get("priority"), _brand_confirmation("the priority level")),
-        )
-        date_answer = _alignment_answer("date_of_connect", _usable_text(date_of_connect, _brand_confirmation("the Connect call date")))
-
-        source_excerpt = _usable_text(
-            mi.get("source_excerpt") or connect.get("source_excerpt") or connect.get("analysis_summary") or connect.get("transcript_summary"),
-            "",
-        )
-
-        def _detailed_alignment_answer(label: str, answer: str, confirmation_hint: str) -> str:
-            base = str(answer or "").strip()
-            missing = (
-                (not base)
-                or base.startswith("Not captured clearly")
-                or base.startswith("This detail needs brand confirmation")
-                or "Brand should confirm" in base
-            )
-            if missing:
-                return (
-                    f"{label} still needs brand confirmation before it is treated as final. "
-                    f"TASCK needs the brand to confirm {confirmation_hint}. "
-                    "The brand should add precise wording, correct any assumptions, and approve only when the statement matches the conversation and the organisation's current business reality."
-                )
-            evidence = f" Supporting context for this field: {source_excerpt}" if source_excerpt else ""
-            return (
-                f"TASCK's current understanding of {label} is: {base}. "
-                "This is the working alignment position for the project, shaped from the brand conversation and organised into a clear planning input for TASCK. "
-                f"The brand should review the wording carefully, add nuance where needed, and correct anything that does not fully represent the discussion before approval.{evidence}"
-            )
-
-        about_answer = _detailed_alignment_answer("About The Organisation", about_answer, "what the organisation does, who it serves, and why the market should care")
-        core_focus_answer = _detailed_alignment_answer("the Core Focus Areas", core_focus_answer, "the business, communication, product, or cultural focus areas TASCK should build around")
-        customers_answer = _detailed_alignment_answer("the Key Customers/Beneficiaries", customers_answer, "the specific audience groups, beneficiaries, buyers, communities, or decision makers the work must influence")
-        goals_answer = _detailed_alignment_answer("the Key Goals or Metrics that are Tracked", goals_answer, "the measurable targets, commercial goals, engagement goals, and reporting metrics that define success")
-        success_answer = _detailed_alignment_answer("What Success Looks Like / Timeline", success_answer, "the success picture, timing, launch window, reporting period, and any hard deadlines")
-        focus_answer = _detailed_alignment_answer("Focus", focus_answer, "the channels, cultural territories, formats, and communication focus TASCK should prioritise")
-        priority_answer = _detailed_alignment_answer("Priority", priority_answer, "what matters most first and how urgent this work is for the brand")
-        date_answer = _detailed_alignment_answer("Date of connect", date_answer, "the correct date and session context for the Connect conversation")
+        label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
+        evidence_notes = alignment_card.get("evidence_notes") if isinstance(alignment_card, dict) else []
+        if not isinstance(evidence_notes, list):
+            evidence_notes = []
 
         scope_flags = [
             {"text": "Brand review", "reason": "Brand must review, comment, or approve the Alignment Snapshot before admin approval."},
         ]
         as_id = (existing or {}).get("id") or f"as-{uuid.uuid4().hex[:8]}"
         generated_at = _now_iso()
+        analysis_source = alignment_card.get("analysis_source") if isinstance(alignment_card, dict) else "honest_fallback"
+        analysis_model = alignment_card.get("analysis_model") if isinstance(alignment_card, dict) else ""
+
+        sections = [
+            {
+                "heading": "1. ALIGNMENT SNAPSHOT",
+                "type": "questions",
+                "content": "Based on our call, this is what we understand so far. Please confirm if we are aligned. Review each field below, leave comments where anything does not match the call, or approve when accurate.",
+                "columns": ["Alignment field", "Brand response / comment", "Status"],
+                "rows": rows,
+            },
+            {
+                "heading": "2. HOW THE BRAND SHOULD REVIEW THIS",
+                "type": "numbered",
+                "content": "This Alignment Snapshot is sent to the brand for review, comments, or approval before TASCK admin moves into Plan.",
+                "items": [
+                    "Review each Alignment Snapshot field against the Connect call.",
+                    "Add comments wherever the snapshot does not align with the call.",
+                    "Send comments back to TASCK or approve the snapshot if it is accurate.",
+                    "Admin sees the brand approval or comments before moving the Business Case into Plan.",
+                ],
+            },
+        ]
+        if evidence_notes:
+            sections.append({
+                "heading": "3. EVIDENCE & CONFLICTS NOTED BY ANALYZER",
+                "type": "bullets",
+                "content": "Items the analyzer noted from the transcript review. These help the brand spot conflicts or missing detail.",
+                "items": [str(item) for item in evidence_notes],
+            })
+
         doc = {
             "id": as_id,
             "business_case_id": bc_id,
@@ -2881,30 +3312,35 @@ def make_v3_router(db):
             "approved_by_party": None,
             "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
             "title": f"{brand_company} - Alignment Snapshot",
-            "meta": "Alignment Snapshot for brand review. TASCK sends this to the brand so they can confirm it aligns with the Connect call, add comments if anything is off, or approve it before Plan.",
+            "meta": "Based on our call, this is what we understand. Are we aligned? Please review, comment, or approve before TASCK moves into Plan.",
             "marketing_intelligence": mi,
-            "alignment_analysis_source": alignment_fields.get("analysis_source") if isinstance(alignment_fields, dict) else "deterministic_fallback",
-            "brand_comments": (existing or {}).get("brand_comments", []),
-            "sections": [
-                {"heading": "1. ALIGNMENT SNAPSHOT", "type": "questions", "content": (
-                    "Brand should review each alignment field below, comment where anything does not match the Connect call, or approve when accurate."
-                ), "columns": ["Alignment field", "Brand response / comment"], "rows": [
-                    {"Alignment field": "About The Organisation", "Brand response / comment": about_answer},
-                    {"Alignment field": "What are the Core Focus Areas", "Brand response / comment": core_focus_answer},
-                    {"Alignment field": "Who are The Key Customers/Beneficiaries", "Brand response / comment": customers_answer},
-                    {"Alignment field": "Key Goals or Metrics that are Tracked", "Brand response / comment": goals_answer},
-                    {"Alignment field": "What Success Looks Like / Timeline", "Brand response / comment": success_answer},
-                    {"Alignment field": "Focus", "Brand response / comment": focus_answer},
-                    {"Alignment field": "Priority", "Brand response / comment": priority_answer},
-                    {"Alignment field": "Date of connect", "Brand response / comment": date_answer},
-                ]},
-                {"heading": "2. HOW THE BRAND SHOULD REVIEW THIS", "type": "numbered", "content": "This Alignment Snapshot is sent to the brand for review, comments, or approval before TASCK admin moves into Plan.", "items": [
-                    "Review each Alignment Snapshot field against the Connect call.",
-                    "Add comments wherever the snapshot does not align with the call.",
-                    "Send comments back to TASCK or approve the snapshot if it is accurate.",
-                    "Admin sees the brand approval or comments before moving the Business Case into Plan.",
-                ]},
+            "alignment_snapshot_fields": [
+                {
+                    "question": label_for_key[key],
+                    "key": key,
+                    "answer": row["Brand response / comment"],
+                    "value": (alignment_card.get(key) if isinstance(alignment_card, dict) else mi.get(key)),
+                    "status": "captured" if key in captured_keys else "needs_confirmation",
+                }
+                for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS
+                for row in [next((r for r in rows if r.get("key") == key), {"Brand response / comment": ""})]
             ],
+            "readiness": {
+                "captured_count": len(captured_keys),
+                "missing_count": len(missing_keys),
+                "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
+                "percentage": int(round((len(captured_keys) / len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)) * 100)) if ALIGNMENT_SNAPSHOT_FIELD_SPECS else 0,
+            },
+            "captured_fields": captured_keys,
+            "missing_fields": missing_keys,
+            "captured_field_labels": [label_for_key[k] for k in captured_keys],
+            "missing_field_labels": [label_for_key[k] for k in missing_keys],
+            "analysis_source": analysis_source,
+            "analysis_model": analysis_model,
+            "evidence_notes": [str(item) for item in evidence_notes],
+            "alignment_analysis_source": analysis_source,
+            "brand_comments": (existing or {}).get("brand_comments", []),
+            "sections": sections,
             "scope_flags": scope_flags,
         }
         if existing:
@@ -4759,81 +5195,38 @@ def make_v3_router(db):
         # Get all meetings for this business case under stage "connect"
         meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
 
-        transcripts = []
-        meeting_dates = []
+        transcript_blocks: List[Dict[str, Any]] = []
+        meeting_dates: List[str] = []
         for m in meetings:
             t = (m.get("transcript") or "").strip()
             if t:
-                # Add separating headers if multiple
-                transcripts.append(f"Meeting on {m.get('scheduled_for') or 'unspecified date'}:\n{t}")
+                transcript_blocks.append({
+                    "title": m.get("title") or m.get("session_label") or "Business call",
+                    "date": m.get("scheduled_for") or m.get("call_date") or "",
+                    "source": m.get("meeting_type") or "business_call",
+                    "content": t,
+                })
             if m.get("scheduled_for"):
                 meeting_dates.append(m.get("scheduled_for"))
 
-        combined_text = "\n\n".join(transcripts).strip()
-
-        # Run transcript analysis. Use the configured model-backed analyzer for the
-        # Alignment Snapshot fields; keep deterministic extraction as the fallback.
-        mi = _extract_marketing_intelligence(combined_text)
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
-        alignment_tool_result = None
-        anthropic_configured = bool(os.getenv("ANTHROPIC_API_KEY"))
-        if combined_text:
-            try:
-                alignment_timeout_seconds = max(
-                    3.0,
-                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "30")),
-                )
-            except ValueError:
-                alignment_timeout_seconds = 30.0
-            try:
-                alignment_tool_result = await asyncio.wait_for(
-                    _call_alignment_analysis_tool(combined_text, brand, case, raise_on_failure=anthropic_configured),
-                    timeout=alignment_timeout_seconds,
-                )
-            except HTTPException:
-                # Bubble up the explicit Anthropic failure so the UI shows a clear error.
-                raise
-            except asyncio.TimeoutError:
-                if anthropic_configured:
-                    raise HTTPException(504, f"Anthropic transcript analysis timed out after {alignment_timeout_seconds:.0f}s. Please try again or shorten the transcripts.")
-                logger.warning(
-                    "Alignment analysis tool timed out for business case %s after %.1fs; using deterministic fallback.",
-                    bc_id,
-                    alignment_timeout_seconds,
-                )
+        combined_text = "\n\n".join(block["content"] for block in transcript_blocks)
 
-        # When the Anthropic key is configured the contract requires that the displayed
-        # results come from a successful authenticated call — never the deterministic fallback.
-        if combined_text and anthropic_configured and not alignment_tool_result:
-            raise HTTPException(502, "Anthropic transcript analysis did not return a usable response. The Combined AI Transcript Analysis requires a valid Anthropic API call — please retry, and contact an admin if the issue persists.")
-        if alignment_tool_result:
-            mi = {
-                **mi,
-                "alignment_snapshot_fields": alignment_tool_result,
-                "analysis_source": alignment_tool_result.get("analysis_source"),
-                "extraction_confidence": alignment_tool_result.get("confidence", 0) / 100,
-            }
-        # Score Connect readiness against the V1 Alignment Snapshot question set.
-        lower = combined_text.lower()
-        alignment_requirements = [
-            ("About The Organisation", ["about the organisation", "about the organization", "organisation", "organization", "company", "brand", "business", "product", "service", "we are"]),
-            ("What are the Core Focus Areas", ["core focus", "focus area", "focus", "objective", "goal", "challenge", "priority area"]),
-            ("Who are The Key Customers/Beneficiaries", ["customer", "beneficiary", "audience", "consumer", "buyer", "client", "target market", "target audience"]),
-            ("Key Goals or Metrics that are Tracked", ["goal", "metric", "kpi", "tracked", "measure", "reach", "engagement", "conversion", "sales", "leads"]),
-            ("What Success Looks Like / Timeline", ["success", "timeline", "date", "launch", "deadline", "month", "week", "quarter"]),
-            ("Focus", ["focus", "campaign", "activation", "channel", "instagram", "tiktok", "youtube", "events", "retail", "pr"]),
-            ("Priority", ["priority", "urgent", "high priority", "low priority", "sequence", "first", "important"]),
-            ("Date of connect", ["date of connect", "connect date", "call date", "meeting on", "scheduled", "session", "202"]),
-        ]
-        captured = [label for label, markers in alignment_requirements if any(marker in lower for marker in markers)]
-        missing = [label for label, _ in alignment_requirements if label not in captured]
-        readiness = int(round((len(captured) / len(alignment_requirements)) * 100)) if alignment_requirements else 0
-        if alignment_tool_result:
-            captured = alignment_tool_result.get("captured_fields") or [label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS if _field_captured(alignment_tool_result.get(key))]
-            missing = alignment_tool_result.get("missing_fields") or [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS if label not in captured]
-            readiness = int(alignment_tool_result.get("confidence") or readiness)
+        # Run the shared transcript bundle analyzer (Claude-first when configured).
+        bundle = await _analyze_transcript_bundle(
+            transcript_blocks,
+            brand=brand,
+            business_case=case,
+            raise_on_anthropic_failure=True,
+        )
+        mi = bundle["marketing_intelligence"]
+        readiness = int(bundle["readiness"]["percentage"])
+        missing_keys = bundle.get("missing_fields") or []
+        label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
+        missing_labels = [label_for_key[k] for k in missing_keys if k in label_for_key]
 
         risk_flags = []
+        lower = combined_text.lower()
         for label, markers in [
             ("No budget or budget too low", ["no budget", "too low", "cannot afford", "free only"]),
             ("Opt-out or low intent", ["not interested", "opt out", "maybe later", "no longer"]),
@@ -4846,7 +5239,7 @@ def make_v3_router(db):
         if risk_flags:
             readiness = min(readiness, 80)
 
-        summary = mi.get("source_excerpt") or combined_text[:280] or "No transcripts provided yet."
+        summary = combined_text[:280] or "No transcripts provided yet."
 
         if not combined_text:
             ai_recommendation = "reschedule"
@@ -4856,33 +5249,39 @@ def make_v3_router(db):
             ai_reasons = ["Confidence is 70% or higher, so the combined transcripts are ready to move into Frame."]
             if risk_flags:
                 ai_reasons.extend([f"Flag to review during Frame: {item}." for item in risk_flags])
-            if missing:
-                ai_reasons.append(f"Admin can refine these fields in Frame: {', '.join(missing)}.")
+            if missing_labels:
+                ai_reasons.append(f"Admin can refine these fields in Frame: {', '.join(missing_labels)}.")
         else:
             ai_recommendation = "reschedule"
             ai_reasons = ["Confidence is below 70%, so schedule another Connect call before moving to Frame."]
             if risk_flags:
                 ai_reasons.extend([f"Clarify risk before Frame: {item}." for item in risk_flags])
-            if missing:
-                ai_reasons.append(f"Missing Alignment Snapshot context: {', '.join(missing)}.")
+            if missing_labels:
+                ai_reasons.append(f"Missing Alignment Snapshot context: {', '.join(missing_labels)}.")
 
         recommendation_label = {
             "promote": "Promote to Frame",
             "reschedule": "Reschedule Business Call",
         }.get(ai_recommendation, "Reschedule Business Call")
 
+        alignment_tool_result = bundle.get("card") or {}
         recommendation = {
             "decision": ai_recommendation,
             "label": recommendation_label,
             "confidence": readiness,
             "reasons": ai_reasons,
-            "missing_context": missing,
+            "missing_context": missing_labels,
             "summary": summary,
-            "next_questions": [f"Clarify {item}." for item in missing] or [f"Confirm {label}." for label, _ in alignment_requirements],
-            "captured_context": captured,
+            "next_questions": [f"Clarify {item}." for item in missing_labels] or [f"Confirm {label}." for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
+            "captured_context": bundle["marketing_intelligence"].get("captured_field_labels") or [],
             "risk_flags": risk_flags,
             "marketing_intelligence": mi,
-            "alignment_snapshot_fields": alignment_tool_result,
+            "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
+            "readiness": bundle["readiness"],
+            "analysis_source": bundle["analysis_source"],
+            "analysis_model": bundle["analysis_model"],
+            "transcript_count": bundle["transcript_count"],
+            "evidence_notes": bundle.get("evidence_notes") or [],
         }
 
         now = _now_iso()
@@ -4907,6 +5306,11 @@ def make_v3_router(db):
             "ok": True,
             "recommendation": recommendation,
             "business_case": updated,
+            "marketing_intelligence": mi,
+            "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
+            "readiness": bundle["readiness"],
+            "analysis_source": bundle["analysis_source"],
+            "analysis_model": bundle["analysis_model"],
         }
 
     @router.post("/business-cases/{bc_id}/connect/promote")
@@ -7750,6 +8154,140 @@ Produce the opportunity card JSON.
         if not m:
             raise HTTPException(404, "Meeting not found")
         transcript = m.get("transcript", "")
+        meeting_type = (m.get("meeting_type") or m.get("type") or "qualification").lower()
+        entity_type = (m.get("qualification_entity_type") or m.get("entity_type") or "brand").lower()
+
+        # For brand-side business call transcripts, use the shared Claude-backed
+        # Alignment Snapshot bundle analyzer so single-transcript and multi-
+        # transcript analysis produce the same readiness checklist shape.
+        if meeting_type in {"connector", "business_call"} and entity_type == "brand" and transcript.strip():
+            brand = {}
+            case: Dict[str, Any] = {}
+            if m.get("brand_id"):
+                brand = await db.v3_brands.find_one({"id": m["brand_id"]}, {"_id": 0}) or {}
+            if m.get("business_case_id"):
+                case = await db.v3_business_cases.find_one({"id": m["business_case_id"]}, {"_id": 0}) or {}
+            bundle = await _analyze_transcript_bundle(
+                [{
+                    "title": m.get("title") or m.get("session_label") or "Business call",
+                    "date": m.get("scheduled_for") or m.get("call_date") or "",
+                    "source": meeting_type,
+                    "content": transcript,
+                }],
+                brand=brand,
+                business_case=case,
+                raise_on_anthropic_failure=False,
+            )
+            mi = bundle["marketing_intelligence"]
+            readiness = int(bundle["readiness"]["percentage"])
+            label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
+            missing = [label_for_key[k] for k in (bundle.get("missing_fields") or []) if k in label_for_key]
+            summary = transcript.strip()[:280] or "Transcript not provided yet."
+            ai_recommendation = "promote" if readiness >= 70 else "reschedule"
+            ai_reasons = [
+                f"Anthropic transcript analysis returned {readiness}% readiness across the 8 Alignment Snapshot fields."
+            ]
+            if missing:
+                ai_reasons.append(f"Still needs confirmation: {', '.join(missing)}.")
+            recommendation_label = "Promote to Frame" if ai_recommendation == "promote" else "Reschedule Business Call"
+            recommendation = {
+                "decision": ai_recommendation,
+                "label": recommendation_label,
+                "confidence": readiness,
+                "reasons": ai_reasons,
+                "missing_context": missing,
+                "summary": summary,
+                "next_questions": [f"Clarify {item}." for item in missing],
+                "risk_flags": [],
+                "marketing_intelligence": mi,
+                "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
+                "readiness": bundle["readiness"],
+                "analysis_source": bundle["analysis_source"],
+                "analysis_model": bundle["analysis_model"],
+            }
+            channels_list = mi.get("key_marketing_channels") or []
+            if not isinstance(channels_list, list):
+                channels_list = [str(channels_list)]
+            kpis_list = mi.get("kpis") or []
+            kpi_names = []
+            for item in kpis_list:
+                if isinstance(item, dict):
+                    kpi_names.append(str(item.get("kpi") or "Metric"))
+                else:
+                    kpi_names.append(str(item))
+            analysis = {
+                "summary": summary,
+                "readiness_score": readiness,
+                "recommendation": recommendation,
+                "detected_fields": mi,
+                "missing_information": missing,
+                "risk_flags": [],
+                "ai_recommendation": ai_recommendation,
+                "ai_reasons": ai_reasons,
+                "next_questions": recommendation["next_questions"],
+                "decision_payload": {
+                    "meeting_type": meeting_type,
+                    "entity_type": entity_type,
+                },
+                "missingContext": missing,
+                "followUpQuestions": recommendation["next_questions"],
+                "ai_outputs": [
+                    f"Key marketing focus -> {mi.get('key_marketing_focus')}",
+                    f"Primary target audience -> {mi.get('primary_target_audience')}",
+                    f"Channels -> {', '.join(str(c) for c in channels_list)}",
+                    f"KPIs -> {', '.join(kpi_names)}",
+                ],
+                "marketing_intelligence": mi,
+                "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
+                "readiness": bundle["readiness"],
+                "analysis_source": bundle["analysis_source"],
+                "analysis_model": bundle["analysis_model"],
+                "transcript_count": bundle["transcript_count"],
+                "generated_at": _now_iso(),
+            }
+            await db.v3_meetings.update_one(
+                {"id": meeting_id},
+                {"$set": {
+                    "analysis": analysis,
+                    "readiness_score": readiness,
+                    "missing_information": missing,
+                    "risk_flags": [],
+                    "ai_recommendation": ai_recommendation,
+                    "ai_reasons": ai_reasons,
+                    "recommendation": recommendation,
+                    "next_questions": recommendation["next_questions"],
+                    "status": "transcribed",
+                    "updated_at": _now_iso(),
+                }},
+            )
+            if m.get("business_case_id"):
+                now = _now_iso()
+                await db.v3_business_cases.update_one(
+                    {"id": m["business_case_id"]},
+                    {
+                        "$set": {
+                            "connect.analysis": analysis,
+                            "connect.marketing_intelligence": mi,
+                            "connect.alignment_tool_analysis": bundle.get("card") or {},
+                            "connect.stated_intent": mi.get("key_marketing_focus"),
+                            "connect.connect_status": "in_discovery",
+                            "connect.status_updated_at": now,
+                            "connect.updated_at": now,
+                            "connect.latest_meeting_id": meeting_id,
+                            "updated_at": now,
+                        },
+                        "$push": {
+                            "timeline": {
+                                "at": now,
+                                "event": "connect_transcript_analyzed",
+                                "meeting_id": meeting_id,
+                                "ai_recommendation": ai_recommendation,
+                            }
+                        },
+                    },
+                )
+            return {**analysis, "readiness_score": readiness}
+
         mi = _extract_marketing_intelligence(transcript)
         text = (transcript or "").strip()
         lower = text.lower()
@@ -7763,8 +8301,6 @@ Produce the opportunity card JSON.
         readiness += 15 if len(text) >= 400 else (10 if len(text) >= 200 else 0)
         readiness += 25 if len(text) >= 800 else 0
         readiness = min(readiness, 100)
-        meeting_type = (m.get("meeting_type") or m.get("type") or "qualification").lower()
-        entity_type = (m.get("qualification_entity_type") or m.get("entity_type") or "brand").lower()
         if meeting_type in {"connector", "business_call"}:
             required = [
                 ("Marketing focus", ["focus", "objective", "goal", "challenge"]),
@@ -7909,10 +8445,10 @@ Produce the opportunity card JSON.
             "missingContext": missing,
             "followUpQuestions": next_questions,
             "ai_outputs": [
-                f"Key marketing focus -> {mi['key_marketing_focus']}",
-                f"Primary target audience -> {mi['primary_target_audience']}",
-                f"Channels -> {', '.join(mi['key_marketing_channels'])}",
-                f"KPIs -> {', '.join(k['kpi'] for k in mi['marketing_kpis'])}",
+                f"Key marketing focus -> {mi.get('key_marketing_focus')}",
+                f"Primary target audience -> {mi.get('primary_target_audience')}",
+                f"Channels -> {', '.join(str(c) for c in (mi.get('key_marketing_channels') or []))}",
+                f"KPIs -> {', '.join((k.get('kpi') if isinstance(k, dict) else str(k)) for k in (mi.get('kpis') or mi.get('marketing_kpis') or []))}",
             ],
             "marketing_intelligence": mi,
             "generated_at": _now_iso(),

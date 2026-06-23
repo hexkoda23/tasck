@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { v3Stages, formatNairaV3 } from '../../../lib/v3data';
-import { v3GetBrand, v3CreateInteraction, v3MoveBrandToBusinessCall, v3MoveBrandToFrame, v3ListRelationshipManagers, v3DeleteBrand } from '../../../lib/v3api';
+import { v3GetBrand, v3CreateInteraction, v3MoveBrandToBusinessCall, v3MoveBrandToFrame, v3ListRelationshipManagers, v3DeleteBrand, v3DraftBrandFollowUp } from '../../../lib/v3api';
 import {
   ChevronLeft,
   Mail,
@@ -57,6 +57,8 @@ const V3AdminBrandDetail = () => {
   const [deleting, setDeleting] = useState(false);
   const [followUpDraft, setFollowUpDraft] = useState('');
   const [followUpNotice, setFollowUpNotice] = useState('');
+  const [draftingFollowUp, setDraftingFollowUp] = useState(false);
+  const [followUpMeta, setFollowUpMeta] = useState(null);
   const [interactionForm, setInteractionForm] = useState({
     type: 'call',
     date_iso: new Date().toISOString().slice(0, 10),
@@ -192,27 +194,51 @@ const V3AdminBrandDetail = () => {
   const scoreColor = brand.leadScore >= 70 ? '#1F4A3A' : brand.leadScore >= 40 ? '#C49B5F' : '#B54A37';
   const activeProject = projects[0];
   const latestInteraction = interactions[0];
-  const draftFollowUp = () => {
-    const contactName = brand.primaryContact || brand.contact_name || 'there';
-    const projectStatus = activeProject
-      ? `I also wanted to reconnect on ${activeProject.title || activeProject.name || 'the active business case'}, currently in ${activeProject.stage_label || activeProject.stage || 'progress'}.`
-      : 'I wanted to reconnect and confirm the next best step for a TASCK business case.';
-    const recentContext = latestInteraction?.title
-      ? `Last CRM note: ${latestInteraction.title}.`
-      : 'There is no recent CRM follow-up logged, so I wanted to check in directly.';
-    const draft = [
-      `Hi ${contactName},`,
-      `Hope you are well. ${projectStatus}`,
-      `${recentContext} Based on the current CRM details, the useful next step is to confirm your priority, timeline, and the decision maker for moving this forward.`,
-      'Would you be open to a quick call this week so we can align on the brief and next action?',
-      'Best,\nTASCK Team',
-    ].join('\n\n');
+  const draftFollowUp = async () => {
+    setDraftingFollowUp(true);
+    setFollowUpNotice('Drafting follow-up with TASCK AI Assist…');
+    const fallbackDraft = () => {
+      const contactName = brand.primaryContact || brand.contact_name || 'there';
+      const projectStatus = activeProject
+        ? `I also wanted to reconnect on ${activeProject.title || activeProject.name || 'the active business case'}, currently in ${activeProject.stage_label || activeProject.stage || 'progress'}.`
+        : 'I wanted to reconnect and confirm the next best step for a TASCK business case.';
+      const recentContext = latestInteraction?.title
+        ? `Last CRM note: ${latestInteraction.title}.`
+        : 'There is no recent CRM follow-up logged, so I wanted to check in directly.';
+      return [
+        `Hi ${contactName},`,
+        `Hope you are well. ${projectStatus}`,
+        `${recentContext} Based on the current CRM details, the useful next step is to confirm your priority, timeline, and the decision maker for moving this forward.`,
+        'Would you be open to a quick call this week so we can align on the brief and next action?',
+        'Best,\nTASCK Team',
+      ].join('\n\n');
+    };
+    let draft = '';
+    let subject = `Follow-up draft — ${brand.company}`;
+    let source = 'fallback';
+    let model = '';
+    try {
+      const result = await v3DraftBrandFollowUp(brand.id || id, {});
+      draft = (result?.draft || '').trim();
+      subject = result?.subject || subject;
+      source = result?.analysis_source || 'fallback';
+      model = result?.analysis_model || '';
+    } catch (err) {
+      console.warn('AI draft fallback used:', err?.response?.data?.detail || err?.message);
+    }
+    if (!draft) {
+      draft = fallbackDraft();
+      source = 'fallback';
+    }
     setFollowUpDraft(draft);
-    setFollowUpNotice('Follow-up draft generated and loaded into the interaction form.');
+    setFollowUpMeta({ subject, source, model });
+    setFollowUpNotice(source === 'fallback'
+      ? 'AI Assist is offline — used a safe deterministic draft. Edit before sending.'
+      : `Follow-up draft generated via ${source}${model ? ` (${model})` : ''}. Loaded into the interaction form.`);
     setInteractionForm({
       type: 'follow_up',
       date_iso: new Date().toISOString().slice(0, 10),
-      title: `Follow-up draft — ${brand.company}`,
+      title: subject,
       summary: draft,
       participants: brand.primaryContact || '',
       transcript: '',
@@ -221,6 +247,7 @@ const V3AdminBrandDetail = () => {
       create_meeting: false,
     });
     setInteractionOpen(true);
+    setDraftingFollowUp(false);
   };
   const copyFollowUpDraft = () => {
     if (!followUpDraft.trim()) {
@@ -495,14 +522,17 @@ const V3AdminBrandDetail = () => {
                 Draft a follow-up from this brand&apos;s CRM details, latest interaction, and Business Case status.
               </p>
               <div className="flex flex-wrap gap-2">
-                <button onClick={draftFollowUp} className="v3-btn-primary text-[12px]" data-testid="ai-draft-follow-up-btn">
-                  <Sparkles className="w-3.5 h-3.5" /> Draft Follow-Up
+                <button onClick={draftFollowUp} disabled={draftingFollowUp} className="v3-btn-primary text-[12px]" data-testid="ai-draft-follow-up-btn">
+                  <Sparkles className="w-3.5 h-3.5" /> {draftingFollowUp ? 'Drafting…' : 'Draft Follow-Up'}
                 </button>
                 <button onClick={copyFollowUpDraft} className="v3-btn-secondary text-[12px]" data-testid="ai-copy-follow-up-btn">
                   <Copy className="w-3.5 h-3.5" /> Copy Draft
                 </button>
               </div>
               {followUpNotice && <p className="mt-3 text-[12px] text-[#1F4A3A]" data-testid="ai-follow-up-notice">{followUpNotice}</p>}
+              {followUpMeta?.source && followUpMeta.source !== 'fallback' && (
+                <p className="mt-1 text-[11px] text-[#6E6657]" data-testid="ai-follow-up-meta">Source: {followUpMeta.source}{followUpMeta.model ? ` · ${followUpMeta.model}` : ''}</p>
+              )}
               {followUpDraft && (
                 <pre className="mt-3 max-h-56 overflow-y-auto rounded-lg border border-[#DDE7E2] bg-white/80 p-3 text-[12px] leading-relaxed text-[#3D3D3D] whitespace-pre-wrap font-sans" data-testid="ai-follow-up-draft">
                   {followUpDraft}

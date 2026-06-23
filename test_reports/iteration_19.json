@@ -1,0 +1,36 @@
+{
+  "summary": "Backend-only testing of TASCK OS v3.3 Alignment Snapshot overhaul. Wrote and ran 8 pytest tests against the production preview URL covering the new 8-field Alignment Snapshot pipeline (Anthropic Claude-backed), the new follow-up draft endpoint, the multi-transcript flow, and a regression check on GET business case. ALL 8 tests PASSED (100%). End-to-end Anthropic calls take ~15-20s each, total run ~145s.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v33_alignment_overhaul.py",
+    "/app/test_reports/pytest/v33_alignment_overhaul.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "v3_routes.py is now ~9433 lines (was ~3920 at iter18). It already hits the 700-line guideline cap by an order of magnitude. STRONGLY recommend splitting into per-resource routers (alignment_router, meetings_router, brands_router, business_cases_router) - same recommendation carried forward from iter16/17/18.",
+    "POST /api/v3/brands/{brand_id}/call-transcript creates a NEW business_call meeting on every invocation and the bundle analyzer in analyze_all_connect_transcripts then aggregates ALL connect meetings for the BC. This means once a rich transcript has been uploaded, subsequent thin uploads will still show all 8 fields as 'captured' in the aggregate alignment_snapshot (because rich data persists in earlier meetings). This is by design but worth documenting - the per-call honesty signal lives in `transcript_analysis` (single meeting) while `alignment_snapshot` is the cumulative view.",
+    "_call_alignment_analysis_tool uses 60s timeout per Anthropic call. With 8 tests each invoking 1-3 Anthropic calls, total test runtime is ~145s. Consider caching by transcript hash in dev/test for faster regression cycles.",
+    "process_brand_call_transcript force-flips stage to 'frame' on every transcript upload, even thin ones. If a brand uploads multiple thin transcripts hoping to refine, the stage cannot regress. Consider gating the stage transition on readiness >= 70."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v33_alignment_overhaul.py (NEW - 8 tests, all PASS)"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 alignment overhaul tests pass)",
+    "frontend": "not tested (backend-only request)"
+  },
+  "test_credentials": "Not required - admin routes unprotected in preview env. ANTHROPIC_API_KEY confirmed set in /app/backend/.env.",
+  "seed_data_creation": "Tests create transient business_call meetings on brand-1915c8bded / bc-0ae422a0dc by calling /call-transcript and /frame-transcripts. These are not cleaned up - they accumulate as analyzed transcript history on the same demo BC. This is consistent with the design (every upload is preserved as a meeting record). No production data altered.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend alignment overhaul is solid. 8 fields confirmed in correct order across analyze-all, call-transcript, frame-transcripts, ai/alignment/questions, and meetings/{id}/analyze. analysis_source='anthropic' confirmed on all primary endpoints. The new /api/v3/brands/{brand_id}/ai/follow-up-draft endpoint works and returns subject/draft/talking_points from Claude. NOTE: alignment_snapshot in process_brand_call_transcript response is the AGGREGATED view across all connect meetings - to verify single-transcript honesty (e.g. 'Needs confirmation' markers), inspect `transcript_analysis` in the same response payload. Demo BC bc-0ae422a0dc has been promoted to 'frame' stage by the rich-transcript test - if the next agent needs to test connect-stage behavior, use a different BC or reset connect.connect_status.",
+  "rca of the issue": "N/A - no bugs found. One initial test assertion was wrong (checking aggregated snapshot for single-call honesty) and was corrected to check `transcript_analysis` instead. After fix, all 8/8 tests pass against the live preview backend."
+}

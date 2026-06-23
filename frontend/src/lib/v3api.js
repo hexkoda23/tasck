@@ -186,6 +186,7 @@ export const v3GenerateAlignmentFromTranscripts = (brandId, transcripts = []) =>
   })),
 }).then(r => r.data);
 export const v3RegenerateMeetingQuestions = (meetingId) => v3.post(`/meetings/${meetingId}/questions/regenerate`).then(r => r.data);
+export const v3DraftBrandFollowUp = (brandId, payload = {}) => v3.post(`/brands/${brandId}/ai/follow-up-draft`, payload).then(r => r.data);
 export const v3AcceptQualificationMeeting = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/qualification/accept`, payload).then(r => r.data);
 export const v3RescheduleQualificationMeeting = (meetingId, payload) => v3.post(`/meetings/${meetingId}/qualification/reschedule`, payload).then(r => r.data);
 export const v3DeleteQualificationMeeting = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/qualification/delete`, payload).then(r => r.data);

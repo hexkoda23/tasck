@@ -427,7 +427,7 @@ const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, bra
   if (!cleanSessions.length) {
     throw new Error('Upload or paste at least one transcript before running analysis.');
   }
-  const agenda = alignmentQuestionDefaults.join('\n');
+  const agenda = alignmentQuestionLabels.join('\n');
   const brandName = brandDisplayName(brand);
   const businessCaseTitle = bc.title || `${brandName} business case`;
   const savedSessions = [];
@@ -711,15 +711,17 @@ const flagsFromText = (value) => splitLines(value).map((line) => {
 });
 
 const alignmentQuestionDefaults = [
-  'About The Organisation',
-  'What are the Core Focus Areas',
-  'Who are The Key Customers/Beneficiaries',
-  'Key Goals or Metrics that are Tracked',
-  'What Success Looks Like / Timeline',
-  'Focus',
-  'Priority',
-  'Date of connect',
+  { question: 'Key marketing focus', key: 'key_marketing_focus' },
+  { question: 'Primary target audience', key: 'primary_target_audience' },
+  { question: 'Key marketing channels', key: 'key_marketing_channels' },
+  { question: 'KPIs', key: 'kpis' },
+  { question: 'Budget range', key: 'budget_range' },
+  { question: 'Timeline', key: 'timeline' },
+  { question: 'Approval process / decision maker', key: 'approval_process_decision_maker' },
+  { question: 'Current marketing challenge', key: 'current_marketing_challenge' },
 ];
+
+const alignmentQuestionLabels = alignmentQuestionDefaults.map((item) => item.question);
 const replaceSnapshotCopy = (value, search, replacement) => value.split(search).join(replacement);
 
 const cleanAlignmentSnapshotCopy = (value) => {
@@ -747,20 +749,25 @@ const alignmentQuestionsFromSection = (section) => {
   const columns = Array.isArray(section.columns) ? section.columns : [];
   const rows = Array.isArray(section.rows) ? section.rows : [];
   if (!rows.length) {
-    return alignmentQuestionDefaults.map((question) => ({ question, answer: '' }));
+    return alignmentQuestionDefaults.map(({ question }) => ({ question, answer: '', status: 'needs_confirmation' }));
   }
-  return rows.map((row) => ({
-    question: questionValueFromRow(row, columns, 'Alignment field', 0) || questionValueFromRow(row, columns, 'Question', 0) || 'Alignment field',
-    answer: questionValueFromRow(row, columns, 'Brand response / comment', 1)
-      || questionValueFromRow(row, columns, 'Brand answer / correction', 2)
-      || questionValueFromRow(row, columns, 'Brand answer', 1)
-      || '',
-  }));
+  return rows.map((row) => {
+    const statusRaw = (questionValueFromRow(row, columns, 'Status', 2) || '').toString().toLowerCase();
+    return {
+      question: questionValueFromRow(row, columns, 'Alignment field', 0) || questionValueFromRow(row, columns, 'Question', 0) || 'Alignment field',
+      answer: questionValueFromRow(row, columns, 'Brand response / comment', 1)
+        || questionValueFromRow(row, columns, 'Brand answer / correction', 2)
+        || questionValueFromRow(row, columns, 'Brand answer', 1)
+        || '',
+      status: statusRaw === 'captured' ? 'captured' : 'needs_confirmation',
+    };
+  });
 };
 
 const alignmentRowsFromQuestions = (questions) => questions.map((item) => ({
   'Alignment field': item.question,
   'Brand response / comment': item.answer,
+  'Status': item.status === 'captured' ? 'Captured' : 'Needs confirmation',
 }));
 
 const isAlignmentQuestionSection = (section) => (
@@ -1192,7 +1199,7 @@ export const V3BusinessCaseConnectQuestions = () => {
         business_case_id: id,
         entity_name: brandDisplayName(brand) || '',
         business_case_title: bc.title,
-        agenda: alignmentQuestionDefaults.join('\n'),
+        agenda: alignmentQuestionLabels.join('\n'),
       });
       activeMeetingId = meeting.id;
       setMeetingId(activeMeetingId);
@@ -1207,7 +1214,7 @@ export const V3BusinessCaseConnectQuestions = () => {
     <FlowShell title="Connect Call Questions + Transcript" subtitle="Use these prompts to capture the call before the brand completes the Alignment Snapshot questions." nextAction="Analyze the transcript, then open the AI result page.">
       <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-4">
         <InfoCard title="Suggested questions">
-          <ol className="list-decimal pl-5 space-y-2 text-[13px]">{alignmentQuestionDefaults.map((q) => <li key={q}>{q}</li>)}</ol>
+          <ol className="list-decimal pl-5 space-y-2 text-[13px]">{alignmentQuestionLabels.map((q) => <li key={q}>{q}</li>)}</ol>
         </InfoCard>
         <InfoCard title="Transcript paste/upload">
           <textarea value={transcript} onChange={(e) => setTranscript(e.target.value)} rows={12} className="w-full rounded-lg border border-[#E8E4DB] p-3 text-[13px]" />
@@ -1511,13 +1518,13 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
   const updateQuestions = (nextQuestions) => onChange({
     ...section,
     type: 'questions',
-    columns: ['Alignment field', 'Brand response / comment'],
+    columns: ['Alignment field', 'Brand response / comment', 'Status'],
     rows: alignmentRowsFromQuestions(nextQuestions),
   });
   const updateQuestion = (questionIndex, patch) => updateQuestions(questions.map((item, idx) => (
     idx === questionIndex ? { ...item, ...patch } : item
   )));
-  const addQuestion = () => updateQuestions([...questions, { question: 'New question', answer: '' }]);
+  const addQuestion = () => updateQuestions([...questions, { question: 'New question', answer: '', status: 'needs_confirmation' }]);
   const removeQuestion = (questionIndex) => updateQuestions(questions.filter((_, idx) => idx !== questionIndex));
 
   return (
@@ -1535,22 +1542,39 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
           </div>
 
           <div className="grid gap-3">
-            {questions.map((item, questionIndex) => (
-              <div key={`alignment-question-${questionIndex}`} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F4F2EC] text-[11px] font-semibold text-[#4F3E2F]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                    {questionIndex + 1}
-                  </span>
-                  <button type="button" onClick={() => removeQuestion(questionIndex)} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove Alignment Snapshot field ${questionIndex + 1}`}>
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+            {questions.map((item, questionIndex) => {
+              const isCaptured = item.status === 'captured';
+              const isNeedsConfirmation = String(item.answer || '').toLowerCase().startsWith('needs confirmation');
+              return (
+                <div key={`alignment-question-${questionIndex}`} className={`rounded-[8px] border bg-white p-3 ${isCaptured ? 'border-[#BDE0CE]' : 'border-[#E8C9A8]'}`} data-testid={`alignment-question-row-${questionIndex}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F4F2EC] text-[11px] font-semibold text-[#4F3E2F]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+                        {questionIndex + 1}
+                      </span>
+                      <span
+                        className={`rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${isCaptured ? 'bg-[#E8F3ED] text-[#1F4A3A]' : 'bg-[#FBF1E4] text-[#7A5A1E]'}`}
+                        data-testid={`alignment-question-status-${questionIndex}`}
+                      >
+                        {isCaptured ? 'Captured' : 'Needs confirmation'}
+                      </span>
+                    </div>
+                    <button type="button" onClick={() => removeQuestion(questionIndex)} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove Alignment Snapshot field ${questionIndex + 1}`}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(220px,0.9fr)_minmax(280px,1.1fr)]">
+                    <TextInput label="Alignment field" value={item.question} onChange={(value) => updateQuestion(questionIndex, { question: value })} />
+                    <TextInput
+                      label={isNeedsConfirmation ? 'Brand response / comment (needs confirmation)' : 'Brand response / comment'}
+                      rows={4}
+                      value={item.answer}
+                      onChange={(value) => updateQuestion(questionIndex, { answer: value })}
+                    />
+                  </div>
                 </div>
-                <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(220px,0.9fr)_minmax(280px,1.1fr)]">
-                  <TextInput label="Alignment field" value={item.question} onChange={(value) => updateQuestion(questionIndex, { question: value })} />
-                  <TextInput label="Brand response / comment" rows={4} value={item.answer} onChange={(value) => updateQuestion(questionIndex, { answer: value })} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1760,6 +1784,26 @@ export const V3BusinessCaseFrameSnapshot = () => {
           </div>
         ) : (
           <div className="space-y-4" data-testid="alignment-snapshot-editor">
+            {activeSnapshot?.readiness && (
+              <div
+                className="rounded-[8px] border border-[#D7CBB8] bg-white p-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center"
+                data-testid="alignment-readiness-summary"
+              >
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">Readiness</p>
+                  <p className="text-[15px] font-semibold text-[#1A1A1A]">
+                    {activeSnapshot.readiness.captured_count} of {activeSnapshot.readiness.total_count} fields captured ({activeSnapshot.readiness.percentage}%)
+                  </p>
+                  <p className="text-[12px] text-[#6E6657] mt-1">
+                    Analysis source: {activeSnapshot.analysis_source || 'unknown'}
+                    {activeSnapshot.analysis_model ? ` · ${activeSnapshot.analysis_model}` : ''}
+                  </p>
+                </div>
+                <div className="rounded-md border border-[#BDE0CE] bg-[#E8F3ED] px-3 py-2 text-[12px] font-semibold text-[#1F4A3A]" data-testid="alignment-readiness-percentage">
+                  {activeSnapshot.readiness.percentage}% ready
+                </div>
+              </div>
+            )}
             <div className="rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-4">
               <TextInput label="Snapshot title" value={activeSnapshot?.title || ''} onChange={(value) => setDraft({ ...(activeSnapshot || {}), title: value })} />
               <div className="mt-3 flex flex-wrap gap-2">

@@ -1136,11 +1136,15 @@ export const V3AdminQualificationCallDetail = () => {
   const handleAccept = async () => {
     const targetType = (meeting?.qualification_entity_type || meeting?.entity_type || 'brand').toLowerCase();
     if (accepted) {
+      const existingBrandId = meeting?.brand_id || '';
+      const existingCreatorId = meeting?.creator_id || '';
       setAcceptFeedback({
-        title: targetType === 'creator' ? 'Creator already added' : 'Brand already accepted',
+        title: targetType === 'creator' ? 'Creator already added' : 'Brand already accepted into CRM',
         message: targetType === 'creator'
           ? 'This creator is already in the approved roster. No duplicate qualification record was added.'
-          : 'This brand is already accepted into CRM. No duplicate transcript record was added.',
+          : 'This brand is already in the CRM. No duplicate transcript record was added.',
+        brand_id: existingBrandId,
+        creator_id: existingCreatorId,
       });
       setAnalysisModalOpen(false);
       return;
@@ -1150,15 +1154,19 @@ export const V3AdminQualificationCallDetail = () => {
       const result = await v3AcceptQualificationMeeting(meetingId, {});
       setAccepted(true);
       setMeeting((m) => ({ ...m, decision_status: 'accepted', qualification_status: 'accepted', ...result }));
+      const resolvedBrandId = result?.brand?.id || meeting?.brand_id || '';
+      const resolvedCreatorId = result?.creator?.id || meeting?.creator_id || '';
       setAcceptFeedback({
-        title: targetType === 'creator' ? 'Creator added' : 'Brand accepted',
+        title: targetType === 'creator' ? 'Creator added to roster' : 'Brand accepted into CRM',
         message: result.already_accepted
           ? targetType === 'creator'
             ? 'This creator was already in the approved roster. No duplicate qualification record was added.'
-            : 'This brand was already accepted into CRM. No duplicate transcript record was added.'
+            : 'This brand was already in the CRM. No duplicate transcript record was added.'
           : targetType === 'creator'
             ? 'Creator added to the approved roster and welcome email queued.'
             : 'Brand accepted into CRM. The qualification transcript is now attached to the CRM profile.',
+        brand_id: resolvedBrandId,
+        creator_id: resolvedCreatorId,
       });
       setAnalysisModalOpen(false);
     } catch (err) {
@@ -1473,13 +1481,24 @@ export const V3AdminQualificationCallDetail = () => {
                 <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{acceptFeedback.title}</h3>
                 <p className="mt-2 text-[13px] leading-relaxed text-[#6E6657]">{acceptFeedback.message}</p>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <button onClick={() => setAcceptFeedback(null)} className="v3-btn-primary text-[11px]">Close</button>
-                  <button
-                    onClick={() => navigate(entityType === 'creator' ? '/v3/admin/creators' : '/v3/admin/crm')}
-                    className="v3-btn-secondary text-[11px]"
-                  >
-                    {entityType === 'creator' ? 'Open Creator Roster' : 'Open CRM Brands'}
-                  </button>
+                  <button onClick={() => setAcceptFeedback(null)} className="v3-btn-primary text-[11px]" data-testid="qualification-accept-feedback-close">Close</button>
+                  {entityType === 'creator' ? (
+                    <button
+                      onClick={() => navigate(acceptFeedback.creator_id ? `/v3/admin/creators/${acceptFeedback.creator_id}` : '/v3/admin/creators')}
+                      className="v3-btn-secondary text-[11px]"
+                      data-testid="qualification-open-creator-btn"
+                    >
+                      {acceptFeedback.creator_id ? 'Open Creator in Roster' : 'Open Creator Roster'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => navigate(acceptFeedback.brand_id ? `/v3/admin/crm-brands/${acceptFeedback.brand_id}` : '/v3/admin/crm')}
+                      className="v3-btn-secondary text-[11px]"
+                      data-testid="qualification-open-brand-in-crm-btn"
+                    >
+                      {acceptFeedback.brand_id ? 'Open Brand in CRM' : 'Open CRM Brands'}
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
