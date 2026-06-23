@@ -569,6 +569,18 @@ Rules:
 def _alignment_tool_user_message(brand: Dict[str, Any], case: Dict[str, Any], transcript_blocks: List[Dict[str, Any]]) -> str:
     transcript_count = len(transcript_blocks)
     blocks: List[str] = []
+    # Cap per-transcript content to keep the Anthropic request within model limits.
+    # Anthropic rejects requests above ~200k input tokens. We aim for ~80k chars
+    # combined which is comfortably below that ceiling.
+    try:
+        per_block_chars = int(os.getenv("ALIGNMENT_ANALYZER_PER_TRANSCRIPT_CHARS", "8000"))
+    except (TypeError, ValueError):
+        per_block_chars = 8000
+    try:
+        total_chars_cap = int(os.getenv("ALIGNMENT_ANALYZER_TOTAL_CHARS", "80000"))
+    except (TypeError, ValueError):
+        total_chars_cap = 80000
+    running_total = 0
     for index, block in enumerate(transcript_blocks):
         title = str(block.get("title") or block.get("session_label") or f"Session {index + 1}").strip()
         date = str(block.get("date") or block.get("call_date") or block.get("scheduled_for") or "Date not captured").strip()
@@ -576,7 +588,14 @@ def _alignment_tool_user_message(brand: Dict[str, Any], case: Dict[str, Any], tr
         text = str(block.get("content") or block.get("transcript") or "").strip()
         if not text:
             continue
-        blocks.append(f"--- Transcript {index + 1}: {title} | Date: {date} | Source: {source} ---\n{text}")
+        if len(text) > per_block_chars:
+            text = text[:per_block_chars] + "\n…(transcript truncated to fit analysis budget)"
+        block_text = f"--- Transcript {index + 1}: {title} | Date: {date} | Source: {source} ---\n{text}"
+        running_total += len(block_text)
+        if running_total > total_chars_cap:
+            blocks.append(f"--- Transcript {index + 1}+ omitted to stay within analysis budget ---")
+            break
+        blocks.append(block_text)
     combined = "\n\n".join(blocks) if blocks else "(No transcript content available.)"
     merge_instruction = (
         "Merge the transcripts into one final Alignment Snapshot readiness checklist. If anything conflicts between them, mention it in evidence_notes."
@@ -645,16 +664,19 @@ async def _call_alignment_analysis_tool(
     openai_key = os.getenv("OPENAI_API_KEY")
 
     try:
-        timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "60")))
+        timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "45")))
     except (TypeError, ValueError):
-        timeout_seconds = 60.0
+        timeout_seconds = 45.0
+    # Reserve a small budget for response parsing so the requests timeout never
+    # exceeds the outer asyncio.wait_for budget.
+    inner_timeout = max(5.0, timeout_seconds - 3.0)
 
     # Anthropic is the preferred provider when configured — the Combined AI
     # Transcript Analysis is contractually bound to use Claude.
     if anthropic_key:
         try:
             def _call_anthropic() -> Dict[str, Any]:
-                model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "claude-sonnet-4-20250514"
+                model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "claude-sonnet-4-5"
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -669,8 +691,14 @@ async def _call_alignment_analysis_tool(
                         "system": system_prompt,
                         "messages": [{"role": "user", "content": user_message}],
                     },
-                    timeout=timeout_seconds,
+                    timeout=inner_timeout,
                 )
+                if response.status_code >= 400:
+                    body_preview = (response.text or "")[:600]
+                    logger.warning(
+                        "Anthropic %s for case %s model=%s body=%s",
+                        response.status_code, case.get("id"), model, body_preview,
+                    )
                 response.raise_for_status()
                 data = response.json()
                 text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
@@ -680,8 +708,9 @@ async def _call_alignment_analysis_tool(
             return await asyncio.to_thread(_call_anthropic)
         except Exception as exc:
             logger.warning("Anthropic alignment analysis failed for business case %s: %s", case.get("id"), exc)
-            if raise_on_failure:
-                raise HTTPException(502, f"Anthropic transcript analysis failed: {exc}")
+            # Always swallow — caller will fall back gracefully so the HTTP
+            # route can return 200 with analysis_source='fallback'. We never
+            # raise here because gateway-level 5xx strips CORS headers.
             return None
 
     try:
@@ -689,7 +718,7 @@ async def _call_alignment_analysis_tool(
             from emergentintegrations.llm.chat import LlmChat, UserMessage
 
             provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "anthropic"
-            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "claude-sonnet-4-20250514"
+            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "claude-sonnet-4-5"
             chat = LlmChat(
                 api_key=emergent_key,
                 session_id=f"alignment-analyzer-{uuid.uuid4()}",
@@ -715,7 +744,7 @@ async def _call_alignment_analysis_tool(
                             {"role": "user", "content": user_message},
                         ],
                     },
-                    timeout=timeout_seconds,
+                    timeout=inner_timeout,
                 )
                 response.raise_for_status()
                 text = response.json()["choices"][0]["message"]["content"]
@@ -736,7 +765,7 @@ async def _call_alignment_analysis_tool(
                             {"role": "user", "content": user_message},
                         ],
                     },
-                    timeout=timeout_seconds,
+                    timeout=inner_timeout,
                 )
                 response.raise_for_status()
                 text = response.json()["choices"][0]["message"]["content"]
@@ -807,6 +836,11 @@ async def _analyze_transcript_bundle(
 
     Returns a normalised payload containing marketing_intelligence,
     alignment_snapshot_fields, readiness, analysis_source, and analysis_model.
+
+    Note: ``raise_on_anthropic_failure`` is retained for backwards compatibility
+    but is now treated as a soft preference. Production callers should keep it
+    False so we never bubble a 5xx (which strips CORS at the gateway) — instead
+    we always return a safe fallback payload tagged ``analysis_source='fallback'``.
     """
     brand = brand or {}
     business_case = business_case or {}
@@ -815,30 +849,40 @@ async def _analyze_transcript_bundle(
     card: Optional[Dict[str, Any]] = None
     anthropic_configured = bool(os.getenv("ANTHROPIC_API_KEY"))
 
+    fallback_error: Optional[str] = None
     if blocks:
         try:
-            timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "60")))
+            timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "45")))
         except (TypeError, ValueError):
-            timeout_seconds = 60.0
+            timeout_seconds = 45.0
         try:
+            # Never raise — surface a clean fallback so the HTTP route can
+            # return 200 with analysis_source='fallback'. This keeps CORS
+            # headers attached and avoids ingress 502s for slow Anthropic
+            # responses or transient model errors.
             card = await asyncio.wait_for(
                 _call_alignment_analysis_tool(
                     blocks,
                     brand,
                     business_case,
-                    raise_on_failure=raise_on_anthropic_failure and anthropic_configured,
+                    raise_on_failure=False,
                 ),
-                timeout=timeout_seconds + 5,
+                timeout=timeout_seconds,
             )
-        except HTTPException:
-            raise
         except asyncio.TimeoutError:
-            if raise_on_anthropic_failure and anthropic_configured:
-                raise HTTPException(504, f"Anthropic transcript analysis timed out after {timeout_seconds:.0f}s.")
+            fallback_error = f"Anthropic transcript analysis timed out after {timeout_seconds:.0f}s."
             logger.warning("Alignment analysis timed out after %.1fs for case %s", timeout_seconds, business_case.get("id"))
+        except Exception as exc:  # pragma: no cover - defensive
+            fallback_error = f"Alignment analyzer error: {exc}"
+            logger.exception("Alignment analyzer raised unexpectedly for case %s", business_case.get("id"))
 
-    if not card:
+    used_fallback = card is None
+    if used_fallback:
         card = _alignment_fallback_result()
+        if fallback_error:
+            notes = card.get("evidence_notes") or []
+            card["evidence_notes"] = [fallback_error] + [n for n in notes if n != fallback_error]
+            card["analysis_source"] = "fallback"
 
     captured_count = len(card.get("captured_fields") or [])
     total_count = len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)
@@ -5188,6 +5232,58 @@ def make_v3_router(db):
 
     @router.post("/business-cases/{bc_id}/connect/analyze-all")
     async def analyze_all_connect_transcripts(bc_id: str):
+        # Production-safety wrapper: this route must NEVER return a 5xx that
+        # bypasses CORS — instead it falls back to a safe analysis_source='fallback'
+        # payload so the browser still gets a valid JSON response with CORS headers.
+        try:
+            return await _analyze_all_connect_transcripts_impl(bc_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("analyze_all_connect_transcripts crashed for %s", bc_id)
+            fallback = _alignment_fallback_result()
+            fallback["evidence_notes"] = [f"Server error: {exc}. Returning honest fallback so the UI does not break."] + (fallback.get("evidence_notes") or [])
+            fallback["analysis_source"] = "fallback"
+            return {
+                "ok": False,
+                "error": str(exc),
+                "business_case": None,
+                "marketing_intelligence": {key: fallback.get(key) for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS},
+                "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(fallback),
+                "readiness": {
+                    "captured_count": 0,
+                    "missing_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
+                    "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
+                    "percentage": 0,
+                },
+                "analysis_source": "fallback",
+                "analysis_model": "",
+                "recommendation": {
+                    "decision": "reschedule",
+                    "label": "Reschedule Business Call",
+                    "confidence": 0,
+                    "reasons": ["Server error occurred while analysing transcripts. Please retry or contact admin."],
+                    "missing_context": [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
+                    "summary": "Analyzer fallback triggered.",
+                    "next_questions": [f"Confirm {label}." for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
+                    "captured_context": [],
+                    "risk_flags": [],
+                    "marketing_intelligence": {key: fallback.get(key) for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS},
+                    "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(fallback),
+                    "readiness": {
+                        "captured_count": 0,
+                        "missing_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
+                        "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
+                        "percentage": 0,
+                    },
+                    "analysis_source": "fallback",
+                    "analysis_model": "",
+                    "transcript_count": 0,
+                    "evidence_notes": fallback.get("evidence_notes") or [],
+                },
+            }
+
+    async def _analyze_all_connect_transcripts_impl(bc_id: str):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
@@ -5213,11 +5309,13 @@ def make_v3_router(db):
         combined_text = "\n\n".join(block["content"] for block in transcript_blocks)
 
         # Run the shared transcript bundle analyzer (Claude-first when configured).
+        # raise_on_anthropic_failure=False so any LLM failure produces a graceful
+        # fallback instead of a 5xx that loses CORS headers at the gateway.
         bundle = await _analyze_transcript_bundle(
             transcript_blocks,
             brand=brand,
             business_case=case,
-            raise_on_anthropic_failure=True,
+            raise_on_anthropic_failure=False,
         )
         mi = bundle["marketing_intelligence"]
         readiness = int(bundle["readiness"]["percentage"])

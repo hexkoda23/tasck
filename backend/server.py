@@ -625,9 +625,11 @@ _default_cors_origins = [
     "https://tasck-live-demo-1.preview.emergentagent.com",
 ]
 _env_cors_origins = [origin.strip() for origin in os.environ.get('CORS_ORIGINS', '').split(',') if origin.strip()]
+# Note: CORS spec forbids Access-Control-Allow-Origin='*' when credentials are
+# allowed. If the env asks for '*' we drop it and rely on the explicit list +
+# regex below so the actual Origin header is echoed back instead.
+_env_cors_origins = [o for o in _env_cors_origins if o != '*']
 allow_origins = list(dict.fromkeys(_env_cors_origins + _default_cors_origins))
-if '*' in _env_cors_origins:
-    allow_origins = ['*']
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -635,4 +637,40 @@ app.add_middleware(
     allow_origin_regex=r"https://.*\.(?:emergent\.host|emergentagent\.com)$",
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+
+# Last-resort exception handler that guarantees a JSON body with CORS headers
+# instead of letting an unhandled error bubble up as a gateway 502 (which would
+# strip CORS and trigger a misleading browser CORS error).
+from fastapi.responses import JSONResponse
+from starlette.requests import Request
+
+
+def _cors_origin_for_request(request: Request) -> Optional[str]:
+    origin = request.headers.get("origin")
+    if not origin:
+        return None
+    if origin in allow_origins:
+        return origin
+    import re as _re
+    if _re.match(r"https://.*\.(?:emergent\.host|emergentagent\.com)$", origin):
+        return origin
+    return None
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logging.getLogger("server").exception("Unhandled exception on %s %s", request.method, request.url.path)
+    origin = _cors_origin_for_request(request)
+    headers = {}
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Vary"] = "Origin"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {exc}", "path": request.url.path},
+        headers=headers,
+    )
