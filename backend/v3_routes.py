@@ -1708,7 +1708,11 @@ def make_v3_router(db):
         plain_body = str(email.get("body") or "")
         message.set_content(plain_body)
         kind = str(email.get("kind") or "")
-        if _smtp_flag("SMTP_SEND_HTML_ALTERNATIVE", False) and not _email_uses_plain_text_only(kind):
+        explicit_html = str(email.get("html_body") or "").strip()
+        if explicit_html:
+            # Caller supplied a clean HTML version (e.g. welcome email) — always include it
+            message.add_alternative(explicit_html, subtype="html")
+        elif _smtp_flag("SMTP_SEND_HTML_ALTERNATIVE", False) and not _email_uses_plain_text_only(kind):
             message.add_alternative(_smtp_transactional_html(plain_body, reply_to or from_email), subtype="html")
         for attachment in email.get("attachments") or []:
             content = attachment.get("content")
@@ -1745,6 +1749,7 @@ def make_v3_router(db):
         business_case_id: Optional[str] = None,
         creator_id: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
+        html_body: Optional[str] = None,
     ) -> Dict[str, Any]:
         delivery_attachments = attachments or []
         stored_attachments = []
@@ -1760,6 +1765,7 @@ def make_v3_router(db):
             "to": to,
             "subject": subject,
             "body": body,
+            "html_body": html_body or "",
             "kind": kind,
             "brand_id": brand_id,
             "business_case_id": business_case_id,
@@ -1772,6 +1778,11 @@ def make_v3_router(db):
         }
         delivery = await asyncio.to_thread(_deliver_email_now, {**email, "attachments": delivery_attachments})
         email.update(delivery)
+        # Log delivery result (no secrets) so admins can diagnose deliverability
+        logger.info(
+            "email_delivery kind=%s to=%s id=%s status=%s error=%r",
+            kind, to, email["id"], email.get("status"), email.get("delivery_error") or "",
+        )
         await db.v3_email_outbox.insert_one({**email})
         return email
     # ------------------------------------------------------------------------
@@ -2383,23 +2394,67 @@ def make_v3_router(db):
 
         app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
         brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{app_base_url}/brand").rstrip("/")
-        welcome = await queue_email(
-            to=username,
-            subject="Your TASCK brand access",
-            body=(
-                f"Hello {payload.primary_contact},\n\n"
-                "Welcome to TASCK.\n\n"
-                f"We have prepared brand portal access for {payload.company} so your team can review project documents, respond to approval requests, and keep communication with TASCK in one place.\n\n"
-                f"Brand portal: {brand_portal_url}\n"
-                f"Email: {username}\n"
-                f"Access code: {temp_password}\n\n"
-                "For security, please sign in and change this access code before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
-                "Regards,\n"
-                "TASCK"
-            ),
-            kind="brand_welcome",
-            brand_id=brand_id,
+        support_email = (os.getenv("SMTP_REPLY_TO") or os.getenv("TASCK_SUPPORT_EMAIL") or "").strip()
+        contact_name_clean = (payload.primary_contact or "").strip() or "there"
+        company_clean = (payload.company or "your brand").strip()
+
+        # Guard against duplicate welcome emails for the same brand. The brand
+        # creation flow only fires once per brand insert, but this is a belt-
+        # and-braces check so the user never sees a duplicate inbox entry.
+        existing_welcome = await db.v3_email_outbox.find_one({
+            "brand_id": brand_id, "kind": "brand_welcome",
+        })
+        welcome_subject = "Welcome to your TASCK brand workspace"
+        plain_body = (
+            f"Hi {contact_name_clean},\n\n"
+            f"Welcome to TASCK. Your brand workspace for {company_clean} is ready.\n\n"
+            "Inside the workspace you can review business cases, approve creative work, "
+            "track campaigns, and talk with the TASCK team in one place.\n\n"
+            f"Sign in: {brand_portal_url}\n"
+            f"Username: {username}\n"
+            f"Temporary access code: {temp_password}\n\n"
+            "Please sign in once and replace the temporary access code with your own password.\n\n"
+            + (f"Questions? Reply to this email or write to {support_email}.\n\n" if support_email else "Questions? Reply to this email and the TASCK team will help.\n\n")
+            + "— The TASCK Team\n"
         )
+        html_body = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Welcome to TASCK</title></head>
+<body style="font-family:Arial,Helvetica,sans-serif;color:#1A1A1A;background:#FBFAF7;margin:0;padding:24px;">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:560px;margin:0 auto;background:#FFFFFF;border:1px solid #E8E4DB;border-radius:8px;padding:32px;">
+    <tr><td>
+      <h1 style="font-size:20px;margin:0 0 16px;color:#1A1A1A;">Welcome to your TASCK brand workspace</h1>
+      <p style="font-size:14px;line-height:22px;margin:0 0 16px;">Hi {contact_name_clean},</p>
+      <p style="font-size:14px;line-height:22px;margin:0 0 16px;">Welcome to TASCK. Your brand workspace for <strong>{company_clean}</strong> is ready.</p>
+      <p style="font-size:14px;line-height:22px;margin:0 0 16px;">Inside the workspace you can review business cases, approve creative work, track campaigns, and talk with the TASCK team in one place.</p>
+      <p style="margin:24px 0;">
+        <a href="{brand_portal_url}" style="display:inline-block;background:#1F4A3A;color:#FFFFFF;text-decoration:none;padding:10px 18px;border-radius:6px;font-size:14px;">Sign in to your workspace</a>
+      </p>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;line-height:20px;border-collapse:collapse;">
+        <tr><td style="color:#6E6657;padding:2px 12px 2px 0;">Username</td><td style="color:#1A1A1A;">{username}</td></tr>
+        <tr><td style="color:#6E6657;padding:2px 12px 2px 0;">Temporary access code</td><td style="color:#1A1A1A;font-family:monospace;">{temp_password}</td></tr>
+      </table>
+      <p style="font-size:13px;line-height:20px;color:#6E6657;margin:20px 0 0;">Please sign in once and replace the temporary access code with your own password.</p>
+      <hr style="border:none;border-top:1px solid #E8E4DB;margin:24px 0;">
+      <p style="font-size:12px;line-height:18px;color:#6E6657;margin:0;">
+        Questions? {('Reply to this email or write to <a href="mailto:' + support_email + '" style="color:#1F4A3A;">' + support_email + '</a>.') if support_email else 'Reply to this email and the TASCK team will help.'}
+      </p>
+      <p style="font-size:12px;line-height:18px;color:#6E6657;margin:12px 0 0;">— The TASCK Team</p>
+    </td></tr>
+  </table>
+</body></html>"""
+
+        if existing_welcome:
+            logger.info("welcome_email_skip brand_id=%s — duplicate welcome already sent (id=%s)", brand_id, existing_welcome.get("id"))
+            welcome = existing_welcome
+        else:
+            welcome = await queue_email(
+                to=username,
+                subject=welcome_subject,
+                body=plain_body,
+                html_body=html_body,
+                kind="brand_welcome",
+                brand_id=brand_id,
+            )
         return {
             **doc,
             "account": {
@@ -3807,8 +3862,19 @@ def make_v3_router(db):
                 return _needs_confirmation_kpi()["evidence"]
             lines: List[str] = []
             for item in kpis:
+                # Defensive: if a previous version of the pipeline stringified a
+                # dict KPI via str() (Python repr with single quotes), try to
+                # parse it back into a dict so we can render it cleanly.
+                if isinstance(item, str) and item.strip().startswith("{") and item.strip().endswith("}"):
+                    try:
+                        import ast as _ast
+                        parsed = _ast.literal_eval(item)
+                        if isinstance(parsed, dict):
+                            item = parsed
+                    except (ValueError, SyntaxError):
+                        pass
                 if isinstance(item, dict):
-                    kpi = str(item.get("kpi") or "Metric").strip()
+                    kpi = str(item.get("kpi") or item.get("metric") or item.get("name") or "Metric").strip()
                     target = str(item.get("target") or "").strip()
                     evidence = str(item.get("evidence") or "").strip()
                     parts = [kpi]
@@ -5926,10 +5992,23 @@ def make_v3_router(db):
             if key in ALIGNMENT_LIST_FIELD_KEYS:
                 # Union all list values, dedupe preserving order
                 seen = set()
-                merged_list: List[str] = []
+                merged_list: List[Any] = []
                 for _src, val in entries:
                     items = val if isinstance(val, list) else [val]
                     for item in items:
+                        # KPIs are dict-shaped (kpi/target/evidence) — keep
+                        # the dict so downstream renderers can format cleanly.
+                        if isinstance(item, dict):
+                            # Dedup key: primary identifier of the KPI
+                            dedup = str(item.get("kpi") or item.get("metric") or item.get("name") or "").strip().lower()
+                            if not dedup:
+                                # Fallback to a stable JSON-ish repr
+                                dedup = json.dumps(item, sort_keys=True, default=str).lower()
+                            if dedup in seen:
+                                continue
+                            seen.add(dedup)
+                            merged_list.append(item)
+                            continue
                         s = str(item).strip()
                         if s and s.lower() not in seen:
                             seen.add(s.lower())

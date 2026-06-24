@@ -2,6 +2,59 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import AnalyzerSourceBanner from '../../../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../../../components/admin/StrategyDraftEditor';
+import { normalizeKpiList, formatReadinessFieldValue } from '../../../../lib/readinessFieldFormat';
+
+// Detect a cell that contains a KPI list (real array of dicts OR a
+// stringified Python-repr dict) and render it cleanly. Falls back to plain
+// text rendering for non-KPI cells.
+const renderAlignmentCell = (cell) => {
+  if (typeof cell === 'string') {
+    const trimmed = cell.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}') && /['"]?(kpi|metric)['"]?\s*:/i.test(trimmed)) {
+      const kpis = normalizeKpiList([cell]);
+      if (kpis.length) return <KpiCardList items={kpis} />;
+    }
+    return cell;
+  }
+  if (Array.isArray(cell)) {
+    if (cell.length && typeof cell[0] === 'object' && cell[0] && ('kpi' in cell[0] || 'metric' in cell[0] || 'target' in cell[0])) {
+      return <KpiCardList items={normalizeKpiList(cell)} />;
+    }
+    return cell.map((v, i) => (
+      <span key={`alt-${i}`}>{typeof v === 'string' ? v : formatReadinessFieldValue(null, v)}{i < cell.length - 1 ? ', ' : ''}</span>
+    ));
+  }
+  if (cell && typeof cell === 'object') {
+    return <pre className="text-[12px] whitespace-pre-wrap font-sans m-0">{formatReadinessFieldValue(null, cell)}</pre>;
+  }
+  return cell ?? '';
+};
+
+const KpiCardList = ({ items }) => {
+  if (!items?.length) return null;
+  return (
+    <ol className="space-y-2 m-0 p-0 list-decimal pl-5">
+      {items.map((k, idx) => {
+        const targetNeedsConfirm = /^needs confirmation/i.test((k.target || '').trim());
+        return (
+          <li key={`kpi-${idx}`} className="text-[12px] text-[#4F3E2F]" data-testid={`alignment-kpi-${idx + 1}`}>
+            <div className="font-semibold text-[#1A1A1A]">{k.kpi}</div>
+            {k.target && (
+              <div className={targetNeedsConfirm ? 'text-[#8A6E2F] italic' : ''}>
+                <span className="font-medium">Target:</span> {k.target}
+              </div>
+            )}
+            {k.evidence && (
+              <div className="text-[#6E6657]">
+                <span className="font-medium">Evidence:</span> {k.evidence}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+};
 import {
   ArrowLeft,
   ArrowRight,
@@ -1083,7 +1136,11 @@ export const V3BusinessCaseFrameSnapshot = () => {
                                 const cells = Array.isArray(row) ? row : Object.values(row || {});
                                 return (
                                   <tr key={`preview-row-${rowIndex}`} className="border-t border-[#E8E4DB]">
-                                    {cells.map((cell, cellIndex) => <td key={`preview-cell-${rowIndex}-${cellIndex}`} className="px-3 py-2 align-top text-[#4F3E2F]">{cell}</td>)}
+                                    {cells.map((cell, cellIndex) => (
+                                      <td key={`preview-cell-${rowIndex}-${cellIndex}`} className="px-3 py-2 align-top text-[#4F3E2F] whitespace-pre-line">
+                                        {renderAlignmentCell(cell)}
+                                      </td>
+                                    ))}
                                   </tr>
                                 );
                               })}

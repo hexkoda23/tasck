@@ -3,6 +3,62 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
+import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
+
+// Detect a cell that contains a KPI list (either real array of dicts, or a
+// stringified Python-repr dict / object literal) and render it cleanly.
+// Falls back to plain text/string rendering for non-KPI cells.
+const renderAlignmentCell = (cell) => {
+  // Already a plain string: try to detect a stringified KPI dict
+  if (typeof cell === 'string') {
+    const trimmed = cell.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}') && /['"]?(kpi|metric)['"]?\s*:/i.test(trimmed)) {
+      const kpis = normalizeKpiList([cell]);
+      if (kpis.length) return <KpiCardList items={kpis} />;
+    }
+    return cell;
+  }
+  // Array of dicts (KPI list)
+  if (Array.isArray(cell)) {
+    if (cell.length && typeof cell[0] === 'object' && cell[0] && ('kpi' in cell[0] || 'metric' in cell[0] || 'target' in cell[0])) {
+      return <KpiCardList items={normalizeKpiList(cell)} />;
+    }
+    // Plain string array
+    return cell.map((v, i) => (
+      <span key={`alt-${i}`}>{typeof v === 'string' ? v : formatReadinessFieldValue(null, v)}{i < cell.length - 1 ? ', ' : ''}</span>
+    ));
+  }
+  if (cell && typeof cell === 'object') {
+    return <pre className="text-[12px] whitespace-pre-wrap font-sans m-0">{formatReadinessFieldValue(null, cell)}</pre>;
+  }
+  return cell ?? '';
+};
+
+const KpiCardList = ({ items }) => {
+  if (!items?.length) return null;
+  return (
+    <ol className="space-y-2 m-0 p-0 list-decimal pl-5">
+      {items.map((k, idx) => {
+        const targetNeedsConfirm = /^needs confirmation/i.test((k.target || '').trim());
+        return (
+          <li key={`kpi-${idx}`} className="text-[12px] text-[#4F3E2F]" data-testid={`alignment-kpi-${idx + 1}`}>
+            <div className="font-semibold text-[#1A1A1A]">{k.kpi}</div>
+            {k.target && (
+              <div className={targetNeedsConfirm ? 'text-[#8A6E2F] italic' : ''}>
+                <span className="font-medium">Target:</span> {k.target}
+              </div>
+            )}
+            {k.evidence && (
+              <div className="text-[#6E6657]">
+                <span className="font-medium">Evidence:</span> {k.evidence}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+};
 import {
   ArrowLeft,
   ArrowRight,
@@ -358,81 +414,102 @@ const transcriptSessionFromMeeting = (meeting, index) => {
 
 const transcriptHasContent = (session) => Boolean(String(session.content || '').trim());
 
-const TranscriptUploadPanel = ({ sessions, onAdd, onRemove, onChange, onUploadFile }) => (
-  <InfoCard
-    title="Transcripts"
-    action={(
-      <button type="button" onClick={onAdd} className="v3-btn-primary text-[12px] flex items-center gap-1.5" data-testid="connect-add-transcript-btn">
-        <Plus className="w-3.5 h-3.5" /> Add Transcript
-      </button>
-    )}
-  >
-    <div className="space-y-4">
-      {sessions.map((session) => (
-        <div key={session.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-4 shadow-sm">
-          <div className="grid gap-3 border-b border-[#F1ECDF] pb-4 lg:grid-cols-[minmax(160px,0.45fr)_minmax(240px,1fr)_36px] lg:items-end">
-            <label className="block">
-              <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Date</span>
-              <input
-                type="date"
-                value={session.date}
-                onChange={(event) => onChange(session.id, 'date', event.target.value)}
-                className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] outline-none focus:border-[#1F4A3A]"
-                data-testid={`connect-transcript-date-${session.id}`}
-              />
-            </label>
-            <label className="block">
-              <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Session Name</span>
-              <input
-                type="text"
-                value={session.session}
-                onChange={(event) => onChange(session.id, 'session', event.target.value)}
-                className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] outline-none focus:border-[#1F4A3A]"
-                data-testid={`connect-transcript-session-${session.id}`}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => onRemove(session.id)}
-              className="justify-self-end rounded-md p-2 text-[#B54A37] hover:bg-[#FBF1EE]"
-              aria-label="Remove transcript"
-              data-testid={`connect-remove-transcript-${session.id}`}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="mt-4">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Transcript Content</label>
-              <label className="v3-btn-secondary cursor-pointer text-[11px]">
-                <Upload className="w-3.5 h-3.5" /> Upload Meeting Transcript
+const TranscriptUploadPanel = ({ sessions, onAdd, onRemove, onChange, onUploadFile, lastAddedId }) => {
+  const lastRef = React.useRef(null);
+  React.useEffect(() => {
+    if (lastAddedId && lastRef.current) {
+      lastRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Move focus to the content textarea inside the new card for better UX
+      const textarea = lastRef.current.querySelector('textarea');
+      if (textarea) textarea.focus({ preventScroll: true });
+    }
+  }, [lastAddedId]);
+
+  return (
+    <InfoCard title="Transcripts">
+      <div className="space-y-4" data-testid="transcripts-list">
+        {sessions.map((session) => (
+          <div
+            key={session.id}
+            ref={session.id === lastAddedId ? lastRef : null}
+            className="rounded-[8px] border border-[#E8E4DB] bg-white p-4 shadow-sm"
+            data-testid={`connect-transcript-card-${session.id}`}
+          >
+            <div className="grid gap-3 border-b border-[#F1ECDF] pb-4 lg:grid-cols-[minmax(160px,0.45fr)_minmax(240px,1fr)_36px] lg:items-end">
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Date</span>
                 <input
-                  type="file"
-                  accept=".txt,.md,text/plain"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (file) onUploadFile(session.id, file);
-                    event.target.value = '';
-                  }}
-                  data-testid={`connect-upload-transcript-${session.id}`}
+                  type="date"
+                  value={session.date}
+                  onChange={(event) => onChange(session.id, 'date', event.target.value)}
+                  className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] outline-none focus:border-[#1F4A3A]"
+                  data-testid={`connect-transcript-date-${session.id}`}
                 />
               </label>
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Session Name</span>
+                <input
+                  type="text"
+                  value={session.session}
+                  onChange={(event) => onChange(session.id, 'session', event.target.value)}
+                  className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] outline-none focus:border-[#1F4A3A]"
+                  data-testid={`connect-transcript-session-${session.id}`}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => onRemove(session.id)}
+                className="justify-self-end rounded-md p-2 text-[#B54A37] hover:bg-[#FBF1EE]"
+                aria-label="Remove transcript"
+                data-testid={`connect-remove-transcript-${session.id}`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
             </div>
-            <textarea
-              value={session.content}
-              onChange={(event) => onChange(session.id, 'content', event.target.value)}
-              rows={7}
-              placeholder="Paste your transcript here..."
-              className="w-full rounded-md border border-[#E8E4DB] bg-[#FBFAF7] px-3 py-2 text-[13px] leading-6 text-[#1A1A1A] outline-none focus:border-[#1F4A3A] focus:bg-white"
-              data-testid={`connect-transcript-content-${session.id}`}
-            />
+            <div className="mt-4">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Transcript Content</label>
+                <label className="v3-btn-secondary cursor-pointer text-[11px]">
+                  <Upload className="w-3.5 h-3.5" /> Upload Meeting Transcript
+                  <input
+                    type="file"
+                    accept=".txt,.md,text/plain"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) onUploadFile(session.id, file);
+                      event.target.value = '';
+                    }}
+                    data-testid={`connect-upload-transcript-${session.id}`}
+                  />
+                </label>
+              </div>
+              <textarea
+                value={session.content}
+                onChange={(event) => onChange(session.id, 'content', event.target.value)}
+                rows={7}
+                placeholder="Paste your transcript here..."
+                className="w-full rounded-md border border-[#E8E4DB] bg-[#FBFAF7] px-3 py-2 text-[13px] leading-6 text-[#1A1A1A] outline-none focus:border-[#1F4A3A] focus:bg-white"
+                data-testid={`connect-transcript-content-${session.id}`}
+              />
+            </div>
           </div>
+        ))}
+        <div className="flex items-center justify-between pt-2 border-t border-dashed border-[#E8E4DB]">
+          <p className="text-[11px] text-[#8A8A8A]">Add another transcript below the existing ones. This does not send any email.</p>
+          <button
+            type="button"
+            onClick={onAdd}
+            className="v3-btn-primary text-[12px] flex items-center gap-1.5"
+            data-testid="connect-add-transcript-btn"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add another transcript
+          </button>
         </div>
-      ))}
-    </div>
-  </InfoCard>
-);
+      </div>
+    </InfoCard>
+  );
+};
 
 const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, brand, contactName, contactEmail, sourceLabel }) => {
   const cleanSessions = sessions.filter(transcriptHasContent);
@@ -1026,6 +1103,7 @@ export const V3BusinessCaseConnectSchedule = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
   const inFlightRef = useRef(false);
+  const [lastAddedTranscriptId, setLastAddedTranscriptId] = useState(null);
 
   const loadMeetings = useCallback(async () => {
     try {
@@ -1087,8 +1165,12 @@ export const V3BusinessCaseConnectSchedule = () => {
   }, [bc]);
 
   const addTranscriptSession = () => {
-    setTranscriptSessions((current) => [...current, createTranscriptSession(current.length)]);
-    setSaveNotice('New transcript div added below.');
+    setTranscriptSessions((current) => {
+      const next = createTranscriptSession(current.length);
+      setLastAddedTranscriptId(next.id);
+      return [...current, next];
+    });
+    setSaveNotice('New transcript card added below — no email was sent.');
   };
 
   const removeTranscriptSession = (sessionId) => {
@@ -1251,6 +1333,7 @@ export const V3BusinessCaseConnectSchedule = () => {
           onRemove={removeTranscriptSession}
           onChange={updateTranscriptSession}
           onUploadFile={uploadTranscriptFile}
+          lastAddedId={lastAddedTranscriptId}
         />
       )}
 
@@ -1400,8 +1483,14 @@ export const V3BusinessCaseConnectReschedule = () => {
     }
   }, [brand.email, contact.email, form.contact_email]);
 
+  const [lastAddedTranscriptId, setLastAddedTranscriptId] = useState(null);
+
   const addTranscriptSession = () => {
-    setTranscriptSessions((current) => [...current, createTranscriptSession(current.length, { session: `Follow-up Session ${current.length + 1}` })]);
+    setTranscriptSessions((current) => {
+      const next = createTranscriptSession(current.length, { session: `Follow-up Session ${current.length + 1}` });
+      setLastAddedTranscriptId(next.id);
+      return [...current, next];
+    });
   };
 
   const removeTranscriptSession = (sessionId) => {
@@ -1509,6 +1598,7 @@ export const V3BusinessCaseConnectReschedule = () => {
         onRemove={removeTranscriptSession}
         onChange={updateTranscriptSession}
         onUploadFile={uploadTranscriptFile}
+        lastAddedId={lastAddedTranscriptId}
       />
 
       <InfoCard title="Combined AI Transcript Analysis">
@@ -2023,7 +2113,11 @@ export const V3BusinessCaseFrameSnapshot = () => {
                                 const cells = Array.isArray(row) ? row : Object.values(row || {});
                                 return (
                                   <tr key={`preview-row-${rowIndex}`} className="border-t border-[#E8E4DB]">
-                                    {cells.map((cell, cellIndex) => <td key={`preview-cell-${rowIndex}-${cellIndex}`} className="px-3 py-2 align-top text-[#4F3E2F]">{cell}</td>)}
+                                    {cells.map((cell, cellIndex) => (
+                                      <td key={`preview-cell-${rowIndex}-${cellIndex}`} className="px-3 py-2 align-top text-[#4F3E2F] whitespace-pre-line">
+                                        {renderAlignmentCell(cell)}
+                                      </td>
+                                    ))}
                                   </tr>
                                 );
                               })}

@@ -446,3 +446,46 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 ### Outstanding
 - Production redeploy needed to push these changes to `https://thcodemo.space` (preview was tested with bc-472329ed4c; user requested testing on production bc-8624bf9e which requires the code to be on production first).
 - Run on production Mongo to clean the 4 test meetings from earlier iter (`meeting-7654200810, meeting-1a77017ac1, meeting-77cf10d9d8, meeting-321e3b71e5` on bc-0ae422a0dc).
+
+
+## Update — 24 Feb 2026 (KPI render + Add Transcript placement + Welcome email — DONE)
+
+### Issue 1 — KPI render: no more raw `{'kpi': ...}` objects in the Alignment Snapshot
+- **Backend `_merge_per_transcript_bundles`** now preserves dict KPIs through union/dedup (key = case-insensitive KPI name).
+- **Backend `_kpis_to_text`** defensively `ast.literal_eval`-parses legacy Python-repr string KPIs.
+- **Frontend `readinessFieldFormat.js`** — NEW shared helpers (`normalizeKpiList`, `formatReadinessFieldValue`, `renderKpiList`).
+- **Frontend V1 + V3 flow pages** — alignment-snapshot table cells now use `renderAlignmentCell` → `<KpiCardList>` with bold KPI name, italicised "Needs confirmation" target, dim evidence.
+- Tests: `/app/backend/tests/test_kpi_merge_clean.py` (2/2 PASS).
+
+### Issue 2 — Add Transcript audit (re-confirmed clean)
+- POST `/brands/{id}/business-call` and `addTranscriptSession` do NOT send any email. Verified via grep + live UI smoke (0 email requests fired on click).
+- The user's perceived "Add Transcript sends email" is the brand welcome email arriving in spam, attributed to the wrong click. Welcome email is sent ONLY by brand creation.
+
+### Issue 3 — Move Add Transcript button under Transcripts + auto-scroll
+- `TranscriptUploadPanel` button moved from InfoCard `action` slot to the bottom of the panel body, separated by a dashed border.
+- New card uses `ref` + `scrollIntoView` and textarea autofocus.
+- Each card now has `data-testid="connect-transcript-card-{sessionId}"`.
+- Live UI smoke confirms button below cards (y=730 > 705), scroll + focus works, click fires zero email requests.
+
+### Issue 4 — Welcome email deliverability
+- Subject: `Welcome to your TASCK brand workspace` (was `Your TASCK brand access`).
+- Welcome email now always includes plain-text + HTML alternative (regardless of `SMTP_SEND_HTML_ALTERNATIVE` flag). HTML body: card layout, CTA button, table for credentials, footer.
+- Idempotency guard: `v3_email_outbox.find_one({brand_id, kind:'brand_welcome'})` blocks duplicates.
+- Delivery logging: `email_delivery kind=... to=... id=... status=... error=...` (no secrets).
+- `queue_email` extended with `html_body` parameter.
+- Tests: `/app/backend/tests/test_welcome_email.py` (2/2 PASS).
+- **DNS playbook**: `/app/memory/email_deliverability.md` (NEW) — SPF/DKIM/DMARC records, transactional provider env values, mail-tester.com verification, `p=none → quarantine → reject` rollout. User action required to publish DNS records.
+
+### Files touched
+- `/app/backend/v3_routes.py` — merge dict-preserving, KPI text-parser, `queue_email(html_body=…)`, welcome email rewrite + idempotency + logging.
+- `/app/frontend/src/lib/readinessFieldFormat.js` — NEW.
+- `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js` — `renderAlignmentCell`, `KpiCardList`, `TranscriptUploadPanel` refactor, `lastAddedTranscriptId` state.
+- `/app/frontend/src/pages/v3/admin/businessCaseFlow/V3BusinessCaseFlowPages.js` — same KPI cell renderer.
+- `/app/backend/tests/test_kpi_merge_clean.py`, `test_welcome_email.py` — NEW.
+- `/app/backend/tests/test_connect_transcript_persistence.py` — updated for background-job response shape and new log format.
+- `/app/memory/email_deliverability.md` — NEW DNS + SMTP playbook.
+
+### Outstanding (user action)
+- Production redeploy to push code to `https://thcodemo.space`.
+- Publish SPF / DKIM / DMARC records (see `/app/memory/email_deliverability.md`).
+- Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.

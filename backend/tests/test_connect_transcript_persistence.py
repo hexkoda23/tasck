@@ -175,23 +175,39 @@ class TestConnectTranscriptPersistence:
         elapsed = time.monotonic() - t0
         assert r.status_code == 200, f"analyze-all returned {r.status_code} in {elapsed:.1f}s: {r.text[:400]}"
         body = r.json()
-        # Must always carry these alignment-snapshot keys regardless of source
-        for key in ("ok", "recommendation", "analysis_source"):
-            assert key in body, f"missing top-level key {key} in analyze-all payload: {list(body.keys())}"
-        rec = body["recommendation"]
-        # Sanity on shape — fallback or real result
+        assert body.get("ok") is True
+        # Multi-transcript bundle should now trigger background-job mode
+        if body.get("mode") == "background_job":
+            job_id = body["job_id"]
+            assert job_id and job_id.startswith("analysis-job-")
+            assert body.get("transcript_count") == 4
+            # Poll the job until completed/failed
+            deadline = time.monotonic() + 240
+            job = None
+            while time.monotonic() < deadline:
+                jr = api.get(f"{BASE_URL}/api/v3/business-cases/{bc_id}/connect/analyze-all/jobs/{job_id}", timeout=15)
+                assert jr.status_code == 200
+                job = jr.json()
+                if job["status"] in ("completed", "failed"):
+                    break
+                time.sleep(2.5)
+            assert job is not None and job["status"] in ("completed", "failed")
+            rec = job.get("recommendation") or {}
+        else:
+            # Sync mode (fallback / fast path) — must carry the existing shape
+            for key in ("recommendation", "analysis_source"):
+                assert key in body, f"missing top-level key {key} in analyze-all payload: {list(body.keys())}"
+            rec = body["recommendation"]
         for key in ("decision", "reasons", "missing_context", "confidence",
                     "alignment_snapshot_fields", "analysis_source", "analysis_model"):
             assert key in rec, f"missing recommendation key {key}; got {list(rec.keys())}"
-        # Fallback acceptable due to billing — explicitly assert the contract holds
         assert rec["analysis_source"] in {"anthropic", "anthropic_claude", "fallback",
                                           "honest_fallback", "fallback_timeout"}, \
             f"unexpected analysis_source: {rec['analysis_source']}"
-        # When the real model runs, model must be claude-sonnet-4-5; fallback may carry "" or fallback marker.
         if rec["analysis_source"].startswith("anthropic"):
             assert "claude-sonnet-4-5" in (rec.get("analysis_model") or ""), \
                 f"Wrong model used: {rec.get('analysis_model')}"
-        print(f"analyze-all (4 transcripts) elapsed={elapsed:.1f}s source={rec['analysis_source']} "
+        print(f"analyze-all (4 transcripts) mode={body.get('mode')} elapsed={elapsed:.1f}s source={rec['analysis_source']} "
               f"model={rec.get('analysis_model')!r}")
 
     def test_06_append_fifth_transcript_does_not_replace_existing(self, api, bc_id, created_meeting_ids):
@@ -215,10 +231,25 @@ class TestConnectTranscriptPersistence:
         r = api.post(url, json={}, timeout=60)
         assert r.status_code == 200
         body = r.json()
-        rec = body["recommendation"]
+        if body.get("mode") == "background_job":
+            job_id = body["job_id"]
+            assert body.get("transcript_count") == 5
+            deadline = time.monotonic() + 240
+            job = None
+            while time.monotonic() < deadline:
+                jr = api.get(f"{BASE_URL}/api/v3/business-cases/{bc_id}/connect/analyze-all/jobs/{job_id}", timeout=15)
+                assert jr.status_code == 200
+                job = jr.json()
+                if job["status"] in ("completed", "failed"):
+                    break
+                time.sleep(2.5)
+            assert job is not None and job["status"] in ("completed", "failed")
+            rec = job.get("recommendation") or {}
+        else:
+            rec = body["recommendation"]
         assert rec["analysis_source"] in {"anthropic", "anthropic_claude", "fallback",
                                           "honest_fallback", "fallback_timeout"}
-        print(f"analyze-all (5 transcripts) source={rec['analysis_source']} "
+        print(f"analyze-all (5 transcripts) mode={body.get('mode')} source={rec['analysis_source']} "
               f"model={rec.get('analysis_model')!r}")
 
     def test_08_alignment_model_env_is_claude_sonnet_4_5(self):
@@ -235,17 +266,23 @@ class TestConnectTranscriptPersistence:
             f"Expected claude-sonnet-4-5, got {kv.get('ALIGNMENT_ANALYZER_MODEL')!r}"
 
     def test_09_backend_logs_show_transcript_count_5(self):
-        """Verify analyze-all log line shows transcript_count=5 from recent call."""
-        # tail recent backend log
+        """Verify analyze-all log line shows transcript dispatch for 4 or 5 transcripts."""
+        # Hybrid endpoint logs "dispatch bc_id=... transcripts=N total_chars=...".
+        # Smart-split background also logs "transcripts loaded" via the per-job runner.
         import subprocess
         out = subprocess.run(
-            ["bash", "-lc", "tail -n 400 /var/log/supervisor/backend.*.log 2>/dev/null | grep 'transcripts loaded' | tail -n 5"],
+            ["bash", "-lc",
+             "tail -n 400 /var/log/supervisor/backend.*.log 2>/dev/null "
+             "| grep -E 'analyze-all: dispatch|transcripts loaded' | tail -n 8"],
             capture_output=True, text=True, timeout=10,
         )
         text = out.stdout
-        print("Recent transcripts-loaded log lines:\n" + text)
-        assert "transcript_count=5" in text or "transcript_count=4" in text, \
-            f"expected transcript_count=4 or 5 in recent log lines, got:\n{text}"
+        print("Recent analyze-all log lines:\n" + text)
+        # Accept either the new dispatch line or the legacy 'transcripts loaded' format
+        assert (
+            "transcripts=4" in text or "transcripts=5" in text
+            or "transcript_count=4" in text or "transcript_count=5" in text
+        ), f"expected 4 or 5 transcripts in recent log lines, got:\n{text}"
 
     def test_10_cleanup_test_meetings(self, api, bc_id, created_meeting_ids):
         """Hard cleanup via direct Mongo since v3 has no DELETE /meetings endpoint."""
