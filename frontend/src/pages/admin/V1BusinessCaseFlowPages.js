@@ -1003,9 +1003,30 @@ export const V3BusinessCaseConnectSchedule = () => {
       const list = await v3ListMeetings({ business_case_id: id, stage: 'connect' });
       const businessCallMeetings = (list || [])
         .filter((meeting) => meeting.meeting_type === 'business_call' || meeting.type === 'business_call')
-        .sort((a, b) => String(b.updated_at || b.scheduled_for || b.created_at || '').localeCompare(String(a.updated_at || a.scheduled_for || a.created_at || '')));
-      const initialSession = businessCallMeetings.length ? transcriptSessionFromMeeting(businessCallMeetings[0], 0) : createTranscriptSession(0);
-      setTranscriptSessions([initialSession]);
+        // Sort by call_date / scheduled_for / created_at ascending so the
+        // earliest call appears first as "Session 1".
+        .sort((a, b) => {
+          const aKey = String(a.call_date || a.scheduled_for || a.created_at || '');
+          const bKey = String(b.call_date || b.scheduled_for || b.created_at || '');
+          return aKey.localeCompare(bKey);
+        });
+      // De-duplicate by meeting id so a refetch never doubles the list.
+      const seenIds = new Set();
+      const uniqueMeetings = [];
+      for (const meeting of businessCallMeetings) {
+        const mid = meeting.id || `${meeting.business_case_id}-${meeting.created_at}`;
+        if (seenIds.has(mid)) continue;
+        seenIds.add(mid);
+        uniqueMeetings.push(meeting);
+      }
+      if (uniqueMeetings.length > 0) {
+        // Hydrate ALL saved business-call transcripts so the user sees every
+        // session they previously added.
+        setTranscriptSessions(uniqueMeetings.map((meeting, idx) => transcriptSessionFromMeeting(meeting, idx)));
+      } else {
+        // No saved transcripts yet — start the user with one empty editor row.
+        setTranscriptSessions([createTranscriptSession(0)]);
+      }
     } catch (e) {
       setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not load Connect meetings.');
     } finally {
