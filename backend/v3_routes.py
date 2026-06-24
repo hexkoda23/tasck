@@ -1439,6 +1439,79 @@ def make_v3_router(db):
                 probe["error"] = {"type": "client_exception", "message": str(exc)[:300]}
         return {"key": fingerprint, "probe": probe}
 
+    @router.delete("/meetings/{meeting_id}")
+    async def delete_meeting(meeting_id: str, x_admin_cleanup_token: Optional[str] = Header(default=None), reset_connect: bool = False):
+        """Admin-only cleanup: delete a meeting and remove its references from the
+        linked business case's connect block. Gated by ENABLE_ADMIN_CLEANUP=true.
+        Optional header X-Admin-Cleanup-Token must match ADMIN_CLEANUP_TOKEN if set.
+        Pass ?reset_connect=true to also reset the parent BC's connect.connect_status
+        and clear connect.analysis/alignment_tool_analysis when this was the last
+        business_call meeting on the case."""
+        if (os.getenv("ENABLE_ADMIN_CLEANUP") or "").lower() not in ("1", "true", "yes"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        expected_token = os.getenv("ADMIN_CLEANUP_TOKEN") or ""
+        if expected_token and x_admin_cleanup_token != expected_token:
+            raise HTTPException(status_code=401, detail="Invalid admin cleanup token")
+
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        bc_id = meeting.get("business_case_id")
+        meeting_type = meeting.get("meeting_type") or meeting.get("type")
+
+        # Delete the meeting itself
+        del_result = await db.v3_meetings.delete_one({"id": meeting_id})
+
+        # Clean up references on the parent business case
+        bc_update: Dict[str, Any] = {}
+        remaining_business_call = 0
+        if bc_id:
+            case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+            if case:
+                connect = case.get("connect") or {}
+                meeting_ids = [m for m in (connect.get("meeting_ids") or []) if m != meeting_id]
+                bcm_ids = [m for m in (connect.get("business_call_meeting_ids") or case.get("business_call_meeting_ids") or []) if m != meeting_id]
+                latest = connect.get("latest_meeting_id")
+                if latest == meeting_id:
+                    bc_update["connect.latest_meeting_id"] = meeting_ids[-1] if meeting_ids else None
+                bc_update["connect.meeting_ids"] = meeting_ids
+                bc_update["connect.business_call_meeting_ids"] = bcm_ids
+                bc_update["business_call_meeting_ids"] = bcm_ids
+                bc_update["updated_at"] = _now_iso()
+
+                if meeting_type == "business_call":
+                    remaining_business_call = await db.v3_meetings.count_documents({
+                        "business_case_id": bc_id,
+                        "meeting_type": "business_call",
+                    })
+                    if reset_connect and remaining_business_call == 0:
+                        bc_update["connect.connect_status"] = "needs_business_call"
+                        bc_update["connect.analysis"] = None
+                        bc_update["connect.alignment_tool_analysis"] = None
+                        bc_update["connect.alignment_snapshot_fields"] = []
+                        bc_update["connect.marketing_intelligence"] = None
+                        bc_update["connect.readiness"] = None
+                        bc_update["connect.analysis_source"] = None
+                        bc_update["connect.analysis_model"] = None
+
+                await db.v3_business_cases.update_one(
+                    {"id": bc_id},
+                    {"$set": bc_update,
+                     "$push": {"timeline": {"at": _now_iso(), "event": "meeting_deleted", "meeting_id": meeting_id, "reset_connect": reset_connect and remaining_business_call == 0}}}
+                )
+
+        return {
+            "ok": True,
+            "meeting_id": meeting_id,
+            "deleted": del_result.deleted_count,
+            "business_case_id": bc_id,
+            "remaining_business_call_meetings": remaining_business_call,
+            "connect_reset": bool(bc_update.get("connect.connect_status") == "needs_business_call"),
+        }
+
+
+
 
 
     async def _relationship_manager(rm_id: Optional[str] = None) -> Dict[str, Any]:
