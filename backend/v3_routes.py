@@ -9135,6 +9135,11 @@ Produce the opportunity card JSON.
         parent_meeting_id: Optional[str] = None
         reschedule_count: int = 0
         max_reschedules: Optional[int] = 3
+        # SECURITY: defaults to False so calls from the transcript-save loop or
+        # any internal flow never auto-send an invite email. Only the explicit
+        # "Send to brand email" button or an explicit invite flow should pass
+        # send_invite_email=True.
+        send_invite_email: bool = False
 
     @router.post("/meetings")
     async def create_meeting(payload: MeetingCreate):
@@ -9274,7 +9279,7 @@ Produce the opportunity card JSON.
                     {"id": payload.business_case_id},
                     {"$addToSet": {"creator_fit_meeting_ids": mid, "plan.creator_fit_meeting_ids": mid}, "$set": {"updated_at": _now_iso(), "plan.creator_briefing_status": "scheduled"}},
                 )
-        if payload.scheduled_for and payload.contact_email:
+        if payload.send_invite_email and payload.scheduled_for and payload.contact_email:
             kind = {
                 "qualification": "qualification_call_invite",
                 "connector": "business_call_invite",
@@ -9282,6 +9287,11 @@ Produce the opportunity card JSON.
                 "creator_fit": "creator_fit_call_invite",
                 "creator_briefing": "creator_briefing_call_invite",
             }.get(payload.meeting_type, "meeting_invite")
+            logger.info(
+                "meeting_invite_email source=create_meeting kind=%s meeting_id=%s to=%s "
+                "send_invite_email=True (explicit opt-in)",
+                kind, mid, payload.contact_email,
+            )
             await queue_email(
                 to=payload.contact_email,
                 subject=f"TASCK meeting: {doc['title']}",
@@ -9297,6 +9307,15 @@ Produce the opportunity card JSON.
                 brand_id=payload.brand_id,
                 creator_id=payload.creator_id,
                 business_case_id=payload.business_case_id,
+            )
+        elif payload.scheduled_for and payload.contact_email:
+            # Diagnostics: log that we suppressed an auto-invite. This is
+            # intentional — internal flows (transcript save, smart-split
+            # background job, etc.) must NEVER send invites silently.
+            logger.info(
+                "meeting_invite_email_suppressed reason=send_invite_email_default_false "
+                "meeting_id=%s meeting_type=%s brand_id=%s",
+                mid, payload.meeting_type, payload.brand_id,
             )
         return await _hydrate_meeting(doc)
 

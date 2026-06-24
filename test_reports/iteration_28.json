@@ -1,0 +1,34 @@
+{
+  "summary": "PASS - Connect 'Analyze All' no-auto-email regression is fully verified. Backend pytest 5/5 PASS (4 cases in test_create_meeting_no_auto_email.py + 1 case in test_add_transcript_does_not_email.py). Existing analyze_all background-job pytest 4/4 PASS - no regression on multi-transcript persistence. Frontend smoke on /admin/business-cases/bc-472329ed4c/connect/schedule: 4 transcripts added + 'Analyze All Transcripts' clicked produced exactly 4 POST /api/v3/meetings + 4 POST /api/v3/meetings/{id}/transcript + 1 POST /api/v3/business-cases/{id}/connect/analyze-all, with ZERO POSTs to any send-meeting-email / send-welcome / business-call/email endpoint and ZERO new business_call_invite docs queued in v3_email_outbox. Backend log shows 4 'meeting_invite_email_suppressed reason=send_invite_email_default_false' lines for the 4 frontend meetings (brand-484ce2bc64) and NO 'meeting_invite_email source=create_meeting kind=business_call_invite' lines for them. Analyze-all completed (notice: 'AI analysis complete from the saved Connect transcripts'). Test data cleaned up at the end.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_create_meeting_no_auto_email.py",
+    "/app/backend/tests/test_add_transcript_does_not_email.py",
+    "/app/backend/tests/test_analyze_all_background_job.py",
+    "/app/test_reports/pytest/iter28_no_auto_email.xml",
+    "/app/test_reports/pytest/iter28_bgjob.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix is correctly localized: MeetingCreate.send_invite_email defaults to False, and the queue_email branch in POST /meetings is gated on `payload.send_invite_email and scheduled_for and contact_email` (v3_routes.py line 9282). Defense-in-depth is good: the suppress branch logs the reason so any future regression is observable in backend logs.",
+    "Frontend saveConnectTranscriptSessions + v3CreateMeeting do not forward send_invite_email - the default-False on the Pydantic model is the single source of truth. This is the safer design (opt-in for emails, never opt-out).",
+    "Only callers in the backend that should set send_invite_email=True today are the explicit 'Send to brand email' button flow (POST /connect/send-meeting-email) and any future schedule-and-notify flows; no implicit caller in the transcript save loop or analyze-all background job sets it, which matches the acceptance criteria.",
+    "Minor: /api/v3/admin/email-outbox endpoint returns 404 (no endpoint defined). It is referenced in the testing brief but not actually present in the backend. Direct Motor queries via MONGO_URL are the only way to verify outbox state. Not a bug for the fix being verified; flag for awareness if main agent wants to add an admin email-outbox listing endpoint for future regression tests."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (9/9 pytest: 5 no-auto-email + 4 analyze-all bg-job)",
+    "frontend": "100% (4 meetings + 4 transcripts + 1 analyze-all = 9 expected POSTs, 0 email-endpoint POSTs, 0 new business_call_invite outbox docs, analysis completed)"
+  },
+  "test_credentials": "POST /api/auth/demo-login {role:'admin'} -> token; seeded localStorage tasck_user (JSON) + tasck_token (string). Same flow as iter24-27.",
+  "seed_data_creation": "Frontend smoke created 4 v3_meetings (business_call, brand-484ce2bc64) + 1 v3_analysis_jobs row. ALL cleaned up at the end of the run (4 meetings + 1 analysis_job deleted). Zero business_call_invite outbox docs were created during the test (verified post-run).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Bug is fully fixed. The acceptance pattern to preserve in future regression tests: (1) POST /api/v3/meetings with scheduled_for + contact_email + meeting_type='business_call' WITHOUT send_invite_email must NOT queue a business_call_invite email and MUST log 'meeting_invite_email_suppressed reason=send_invite_email_default_false meeting_id=... brand_id=...'. (2) Only send_invite_email=True (explicit opt-in) may queue exactly 1 invite email. (3) The dedicated 'Send to brand email' endpoint (POST /api/v3/business-cases/{id}/connect/send-meeting-email) is the only user-facing path that should set send_invite_email=True OR call queue_email itself. (4) The frontend save loop in V1BusinessCaseFlowPages.js (saveConnectTranscriptSessions) intentionally does NOT pass send_invite_email, relying on the Pydantic default. (5) /api/v3/admin/email-outbox does not exist - use direct Motor against db.v3_email_outbox with the test contact_email + kind='business_call_invite' filter to assert ZERO new docs.",
+  "rca of the issue": "Root cause (already fixed by main agent in this iteration): POST /api/v3/meetings unconditionally enqueued a business_call_invite email whenever the payload had scheduled_for + contact_email + meeting_type='business_call'. The V1 Connect Schedule 'Analyze All' flow calls v3CreateMeeting once per transcript (saveConnectTranscriptSessions). With 4 transcripts the brand contact received 4 invite emails. Fix: added `send_invite_email: bool = False` to the MeetingCreate Pydantic model (v3_routes.py L9142) with a security comment, and gated the queue_email branch (L9282) on this flag. A suppressed-branch logger was added (L9315-9319) so non-opt-in calls are observable for audit. Frontend was NOT changed - it relies on the default-False so any future caller that wants to opt in must do so explicitly. Verification: 4 backend pytest cases + 1 add-transcript regression case + analyze-all bg-job 4-case suite + a full end-to-end V1 admin UI smoke (this iteration) all PASS with ZERO business_call_invite emails queued during the analyze-all flow."
+}
