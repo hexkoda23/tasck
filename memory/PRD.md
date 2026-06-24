@@ -489,3 +489,23 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Production redeploy to push code to `https://thcodemo.space`.
 - Publish SPF / DKIM / DMARC records (see `/app/memory/email_deliverability.md`).
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
+
+
+## Update — 24 Feb 2026 (URGENT P0: Connect 'Analyze All' was sending N invite emails — FIXED, verified iter28)
+
+### Root cause
+`POST /api/v3/meetings` unconditionally queued a `business_call_invite` email whenever the payload carried `scheduled_for + contact_email + meeting_type='business_call'`. The V1 Connect `saveConnectTranscriptSessions` save loop calls `v3CreateMeeting` once per transcript with exactly those fields, so 4 transcripts → 4 brand emails per Analyze All click.
+
+### Fix (single change, opt-in only)
+- `/app/backend/v3_routes.py` `MeetingCreate`: added `send_invite_email: bool = False` (default False, security comment in code).
+- The `queue_email` branch is now gated on `payload.send_invite_email and scheduled_for and contact_email`. Suppress branch logs `meeting_invite_email_suppressed reason=send_invite_email_default_false`; opt-in branch logs `meeting_invite_email source=create_meeting kind=business_call_invite ... send_invite_email=True (explicit opt-in)`.
+- Frontend not changed: `v3CreateMeeting` does not forward `send_invite_email`. Pydantic default-False is the single source of truth.
+- Only the dedicated `POST /api/v3/business-cases/{id}/connect/send-meeting-email` endpoint queues business-call email.
+
+### Verification (iter28 testing_agent — PASS, no action items)
+- Backend pytest 9/9 PASS: 4 new cases in `tests/test_create_meeting_no_auto_email.py` (default no-fire, explicit opt-in fires once, 4-transcript save-loop = 0 emails, transcript-upload = 0 emails) + 4 analyze-all background-job cases + 1 add-transcript regression.
+- Frontend UI smoke on `/admin/business-cases/bc-472329ed4c/connect/schedule`: 4 transcripts → Analyze All → exactly 4 POST /meetings + 4 POST /transcript + 1 POST /analyze-all; ZERO POSTs to any send-email endpoint; ZERO new `business_call_invite` docs in `v3_email_outbox`; 4 `meeting_invite_email_suppressed` log lines; analyze-all completed.
+
+### Files touched
+- `/app/backend/v3_routes.py` — `MeetingCreate.send_invite_email: bool = False`; gated `queue_email` branch + suppress-logging.
+- `/app/backend/tests/test_create_meeting_no_auto_email.py` — NEW (4 cases).
