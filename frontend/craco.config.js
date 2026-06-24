@@ -108,11 +108,6 @@ webpackConfig.devServer = (devServerConfig) => {
       setupHealthEndpoints(devServer, healthPluginInstance);
     }
 
-    devServer.app.get(/^\/(?!api\/).*/, (req, res, next) => {
-      if (req.path.includes('.')) return next();
-      res.sendFile(path.resolve(__dirname, 'public', 'index.html'));
-    });
-
     return middlewares;
   };
 
