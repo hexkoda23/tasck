@@ -10,7 +10,7 @@ import {
   v3CreateBrainstorm, v3AddDeliverable, v3GenerateFinalReport, v3SetConnectStatus,
   v3CreateInteraction, v3ResolveScopeFlag, v3ApproveAlignmentAs, v3UpdateAlignment,
   v3SendAlignmentToBrand, v3ResolveAlignmentComment, v3SuggestCreatorMatches,
-  v3SendBriefReminder, v3UpdateStrategySnapshot,
+  v3SendBriefReminder, v3UpdateStrategySnapshot, v3SaveStrategyDraft,
   v3SendStrategySnapshotToBrand, v3ResolveStrategySnapshotComment, v3UpdateInvoice,
   v3UpdateDeliverable,
 } from '../../../lib/v3api';
@@ -800,6 +800,8 @@ const V3AdminBusinessCaseDetail = () => {
   // Plan-phase editable drafts (session-scoped)
   const [planBrainstormText, setPlanBrainstormText] = useState('');
   const [planStrategyDraft, setPlanStrategyDraft] = useState({});
+  const [strategyDraftSavedAt, setStrategyDraftSavedAt] = useState(null);
+  const [strategyDraftSaving, setStrategyDraftSaving] = useState(false);
 
   const reload = () => v3GetBusinessCase(id)
     .then((next) => {
@@ -817,6 +819,30 @@ const V3AdminBusinessCaseDetail = () => {
   useEffect(() => {
     reload();
   }, [id]);
+
+  // Hydrate the 9-section Strategy Draft from the persisted business case so
+  // the editor survives reloads and browser navigation.
+  useEffect(() => {
+    const draft = bundle?.business_case?.plan?.strategy_draft;
+    if (draft && draft.sections && typeof draft.sections === 'object') {
+      setPlanStrategyDraft(draft.sections);
+      setStrategyDraftSavedAt(draft.updated_at || null);
+    }
+  }, [bundle?.business_case?.id, bundle?.business_case?.plan?.strategy_draft?.updated_at]);
+
+  const handleSaveStrategyDraft = async () => {
+    if (!id) return;
+    setStrategyDraftSaving(true);
+    try {
+      const res = await v3SaveStrategyDraft(id, planStrategyDraft, 'admin');
+      setStrategyDraftSavedAt(res?.strategy_draft?.updated_at || new Date().toISOString());
+      setToast({ kind: 'success', text: 'Strategy draft saved.' });
+    } catch (e) {
+      setToast({ kind: 'error', text: e?.response?.data?.detail || e?.message || 'Failed to save strategy draft.' });
+    } finally {
+      setStrategyDraftSaving(false);
+    }
+  };
 
   useEffect(() => {
     if (bundle?.business_case?.stage) {
@@ -2330,6 +2356,23 @@ const V3AdminBusinessCaseDetail = () => {
                   />
                 </div>
               ))}
+              <div className="flex items-center justify-between pt-1">
+                <p className="text-[11px] text-[#8A8A8A]" data-testid="bc-plan-strategy-saved-at">
+                  {strategyDraftSavedAt
+                    ? `Last saved ${new Date(strategyDraftSavedAt).toLocaleString()}`
+                    : 'Draft not saved yet.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleSaveStrategyDraft}
+                  disabled={strategyDraftSaving}
+                  className="v3-btn-primary flex items-center gap-1.5"
+                  data-testid="bc-plan-strategy-save-btn"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {strategyDraftSaving ? 'Saving…' : 'Save Strategy Draft'}
+                </button>
+              </div>
             </div>
           </Section>
 

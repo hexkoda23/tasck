@@ -5122,6 +5122,42 @@ def make_v3_router(db):
         )
         return {"ok": True, "scope_change": log_entry}
 
+    # ------------------------------------------------------------------------
+    # Plan stage — Strategy Draft persistence (9-section editor)
+    # ------------------------------------------------------------------------
+    STRATEGY_DRAFT_HEADINGS = [
+        "Executive Snapshot", "Strategic Foundation", "Growth Plan",
+        "Creator Strategy", "Execution Roadmap", "Commercial Overview",
+        "Tracking Plan", "Risks & Mitigation", "Next Steps",
+    ]
+
+    class StrategyDraftPayload(BaseModel):
+        sections: Dict[str, str] = Field(default_factory=dict)
+        actor: Optional[str] = "admin"
+
+    @router.post("/business-cases/{bc_id}/plan/save-strategy-draft")
+    async def save_strategy_draft(bc_id: str, payload: StrategyDraftPayload):
+        """Persist the 9-section Strategy Draft so it survives reloads.
+        Only the canonical 9 headings are stored; unknown keys are dropped."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        canonical = {h: str(payload.sections.get(h, "") or "") for h in STRATEGY_DRAFT_HEADINGS}
+        now = _now_iso()
+        draft = {
+            "sections": canonical,
+            "updated_at": now,
+            "updated_by": payload.actor or "admin",
+        }
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.strategy_draft": draft, "updated_at": now},
+             "$push": {"timeline": {"at": now, "event": "strategy_draft_saved", "actor": payload.actor or "admin"}}},
+        )
+        return {"ok": True, "business_case_id": bc_id, "strategy_draft": draft}
+
+
+
     @router.post("/business-cases/{bc_id}/scope-change/{sc_id}/approve")
     async def approve_scope_change(bc_id: str, sc_id: str):
         await db.v3_business_cases.update_one(

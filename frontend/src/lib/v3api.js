@@ -102,6 +102,7 @@ export const v3ListSnapshots = (bcId) => v3.get('/creative-snapshots', { params:
 export const v3CreateSnapshot = (payload) => v3.post('/creative-snapshots', payload).then(r => r.data);
 export const v3ApproveSnapshot = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/creative-snapshot/approve`, { approver, approver_party }).then(r => r.data);
 export const v3UpdateStrategySnapshot = (snapshotId, payload) => v3.patch(`/creative-snapshots/${snapshotId}`, payload).then(r => r.data);
+export const v3SaveStrategyDraft = (bcId, sections, actor = 'admin') => v3.post(`/business-cases/${bcId}/plan/save-strategy-draft`, { sections, actor }).then(r => r.data);
 export const v3SendStrategySnapshotToBrand = (bcId) => v3.post(`/business-cases/${bcId}/creative-snapshot/send`).then(r => r.data);
 export const v3AddStrategySnapshotComment = (snapshotId, payload) => v3.post(`/creative-snapshots/${snapshotId}/comments`, payload).then(r => r.data);
 export const v3ResolveStrategySnapshotComment = (snapshotId, commentId) => v3.post(`/creative-snapshots/${snapshotId}/comments/${commentId}/resolve`).then(r => r.data);
