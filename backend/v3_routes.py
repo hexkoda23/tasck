@@ -1385,11 +1385,15 @@ def make_v3_router(db):
     router = APIRouter(prefix="/api/v3", tags=["v3"])
 
     @router.get("/diagnostics/anthropic")
-    async def diagnostics_anthropic():
+    async def diagnostics_anthropic(x_diagnostics_token: Optional[str] = Header(default=None)):
         """Safe key-fingerprint + live-probe diagnostic. Gated by ENABLE_DIAGNOSTICS.
-        Never returns the full secret. Disable by unsetting ENABLE_DIAGNOSTICS after use."""
+        Never returns the full secret. Optionally protected by DIAGNOSTICS_TOKEN header.
+        Default OFF — set ENABLE_DIAGNOSTICS=true to enable; unset/false returns 404."""
         if (os.getenv("ENABLE_DIAGNOSTICS") or "").lower() not in ("1", "true", "yes"):
             raise HTTPException(status_code=404, detail="Not Found")
+        expected_token = os.getenv("DIAGNOSTICS_TOKEN") or ""
+        if expected_token and x_diagnostics_token != expected_token:
+            raise HTTPException(status_code=401, detail="Invalid diagnostics token")
         import hashlib
         key = os.getenv("ANTHROPIC_API_KEY") or ""
         model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
