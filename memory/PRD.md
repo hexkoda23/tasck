@@ -364,3 +364,47 @@ Fixes the bug where adding 4 transcripts to a V1 Business Case Connect page pers
 - P2 Skip `v3UploadMeetingTranscript` for unchanged content (write amplification on re-saves).
 - P2 Add `DELETE /api/v3/meetings/{id}` for testability and admin housekeeping.
 - P2 Visually separate the partial-failure red toast from the AnalyzerSourceBanner amber banner.
+
+
+## Update — 24 Feb 2026 (P2 #1: Strategy Draft Persistence — DONE; production Anthropic key swap verified)
+
+**Strategy Draft persistence (P2 #1) — DONE**
+- New backend endpoint `POST /api/v3/business-cases/{bc_id}/plan/save-strategy-draft` (in `/app/backend/v3_routes.py` after the scope-change routes). Persists 9 canonical headings (`Executive Snapshot, Strategic Foundation, Growth Plan, Creator Strategy, Execution Roadmap, Commercial Overview, Tracking Plan, Risks & Mitigation, Next Steps`) into `case.plan.strategy_draft.sections` with `updated_at` and `updated_by`. Drops unknown keys; missing keys default to `""`.
+- Shared frontend component at `/app/frontend/src/components/admin/StrategyDraftEditor.jsx` — hydrates from `bundle.business_case.plan.strategy_draft`, persists via the new endpoint, shows saving state + "Last saved" timestamp + per-save error toast.
+- Mounted in `V3BusinessCasePlanStrategySnapshot` for both the V3 admin route (`/v3/admin/business-cases/:id/plan/strategy-snapshot`) and the V1 admin route (`/admin/business-cases/:id/plan/strategy-snapshot`). Same component, no logic duplication.
+- Inline 9-section editor removed from the orphaned `V3AdminBusinessCaseDetail.js` (also now uses the shared component — DRY).
+- Pytest: `/app/backend/tests/test_strategy_draft_persistence.py` 5/5 PASS.
+- iter27 frontend Playwright: 100% pass on V3 + V1 routes — save → reload → nav-away+back all hydrate correctly. Single POST per click. Strategy Snapshot (`case.plan.creative_snapshot`) is fully orthogonal and untouched by draft saves.
+
+**Production Anthropic key — verified live**
+- New key (suffix `ugAA`, sha256-first16 `0ac831abf06fc406`) live in preview + production. `analyze-all` returns `analysis_source=anthropic` with `analysis_model=claude-sonnet-4-5` and full 8-field readiness bundle on both environments (12s on prod with 4 transcripts, no CORS).
+- Diagnostic endpoint `GET /api/v3/diagnostics/anthropic` shipped, gated by `ENABLE_DIAGNOSTICS=true` + optional `X-Diagnostics-Token` header (default 404). Preview flag set to `false` post-verification.
+- Admin cleanup endpoint `DELETE /api/v3/meetings/{id}` shipped, gated by `ENABLE_ADMIN_CLEANUP=true` + optional `ADMIN_CLEANUP_TOKEN` header. With `?reset_connect=true`, also resets `case.connect.connect_status / analysis / alignment_tool_analysis` when the deleted meeting was the last business_call on the case. Preview flag set to `false`.
+
+**Outstanding production cleanup (handed to user — preview pod has no production Mongo access)**
+- Run on production Mongo:
+```
+db.v3_meetings.deleteMany({ id: { $in: ["meeting-7654200810","meeting-1a77017ac1","meeting-77cf10d9d8","meeting-321e3b71e5"] }})
+db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.connect_status": "needs_business_call", "connect.analysis": null, "connect.alignment_tool_analysis": null, "connect.meeting_ids": [], "connect.business_call_meeting_ids": [], "connect.latest_meeting_id": null, "business_call_meeting_ids": [] }})
+```
+
+**Files touched this iteration**
+- `/app/backend/v3_routes.py` — `+ /diagnostics/anthropic`, `+ DELETE /meetings/{id}`, `+ /business-cases/{bc_id}/plan/save-strategy-draft`.
+- `/app/backend/.env` — new ANTHROPIC_API_KEY; `ENABLE_DIAGNOSTICS=false`, `ENABLE_ADMIN_CLEANUP=false`.
+- `/app/backend/tests/test_strategy_draft_persistence.py` — NEW (5 cases).
+- `/app/frontend/src/lib/v3api.js` — `+ v3SaveStrategyDraft`.
+- `/app/frontend/src/components/admin/StrategyDraftEditor.jsx` — NEW.
+- `/app/frontend/src/pages/v3/admin/businessCaseFlow/V3BusinessCaseFlowPages.js` — mount editor.
+- `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js` — mount editor (V1).
+- `/app/frontend/src/pages/v3/admin/V3AdminBusinessCaseDetail.js` — replaced inline editor with shared component.
+- `/app/memory/test_credentials.md` — documented demo-login + localStorage seed for /admin/* tests.
+- `/app/frontend/craco.config.js` — removed stray middleware that was breaking the webpack bundle injection in preview.
+
+**Next priorities (carry-over)**
+- P2 Push the new code (DELETE endpoint, diagnostic endpoint, Strategy Draft) to production via redeploy.
+- P2 Skip `v3UploadMeetingTranscript` re-upload when content unchanged.
+- P2 Mobile responsiveness pass.
+- P2 Refactor `v3_routes.py` (~10.1k lines) into per-domain routers.
+- P2 WhatsApp document sharing.
+- P3 Visually separate partial-failure toast from AnalyzerSourceBanner.
+- P3 Resolve carry-over `react-hooks/set-state-in-effect` warnings.
