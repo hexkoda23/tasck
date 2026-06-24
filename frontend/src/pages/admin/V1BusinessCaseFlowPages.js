@@ -485,7 +485,14 @@ const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, bra
       failures.push({ sessionName, detail });
     }
   }
-  if (failures.length) {
+  if (failures.length || savedSessions.length !== cleanSessions.length) {
+    const lostCount = cleanSessions.length - savedSessions.length - failures.length;
+    if (lostCount > 0) {
+      // Some sessions were silently lost (e.g. hung await) — synthesize a failure entry
+      for (let i = 0; i < lostCount; i++) {
+        failures.push({ sessionName: `Session ${savedSessions.length + failures.length + 1}`, detail: 'Save did not complete (request stalled or aborted).' });
+      }
+    }
     const failureMsg = failures.map((f) => `${f.sessionName}: ${f.detail}`).join('; ');
     const summary = `Saved ${savedSessions.length}/${cleanSessions.length} transcripts. Failed: ${failureMsg}`;
     if (!savedSessions.length) {
@@ -1016,6 +1023,7 @@ export const V3BusinessCaseConnectSchedule = () => {
   const [prefilled, setPrefilled] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
+  const inFlightRef = useRef(false);
 
   const loadMeetings = useCallback(async () => {
     try {
@@ -1123,6 +1131,8 @@ export const V3BusinessCaseConnectSchedule = () => {
   };
 
   const runCombinedAnalysis = async () => {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setAnalyzing(true);
     setSaveNotice('Saving transcripts before analysis...');
     try {
@@ -1147,6 +1157,7 @@ export const V3BusinessCaseConnectSchedule = () => {
     } finally {
       setSaving(false);
       setAnalyzing(false);
+      inFlightRef.current = false;
     }
   };
 
