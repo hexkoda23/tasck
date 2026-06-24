@@ -329,3 +329,38 @@ Three-stage dedupe layer in `v3_tracker_dedupe.py` — additive, does **not** ch
 - P2 Wire Strategy Draft persistence (`POST /api/v3/business-cases/{id}/plan/save-strategy-draft`).
 - P2 Migrate `creative-briefs` and `creative-snapshots` generators to Claude.
 - P2 Mobile responsiveness pass.
+
+
+## Update — 24 Feb 2026 (P0: V1 Connect multi-transcript persistence — REGRESSION CLOSED)
+Fixes the bug where adding 4 transcripts to a V1 Business Case Connect page persisted only 1 (or silently dropped sessions) and the UI only showed the first on return.
+
+**Bugs fixed**
+- **Frontend dev-server bundle missing**: `/app/frontend/craco.config.js` had a stray `devServer.app.get(/^\/(?!api\/).*/, ...)` middleware that sent the raw `public/index.html` template, bypassing HtmlWebpackPlugin's script injection. Result: all UI Playwright runs saw a blank React tree. Removed the middleware — bundle script tag `/static/js/bundle.js` now ships in the served HTML.
+- **Save-loop silent data loss** in `saveConnectTranscriptSessions` (`/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js`):
+  - Wrapped each iteration in try/catch so a single failed session no longer aborts the loop.
+  - Added fallback unwrap for the meeting id: `meeting?.id || meeting?.meeting_id || meeting?.data?.id` with a hard error if all are undefined.
+  - Collected per-session failures and propagate a `partialFailure` summary up to `setSaveNotice`.
+  - Post-loop integrity check synthesizes a failure entry if `savedSessions.length !== cleanSessions.length`, so silent stalls (hung XHR, etc.) surface to the user instead of vanishing.
+- **Parallel invocation race** in `runCombinedAnalysis`:
+  - Added a `useRef`-based `inFlightRef` synchronous guard so concurrent re-entries (React 18 microtask scheduling, rapid double-click) bail immediately. The setState-based `disabled` prop on the button had a microtask race window that could let two save loops interleave and one stalls.
+
+**Verification (iter22 → iter26)**
+- Backend pytest: `/app/backend/tests/test_connect_transcript_persistence.py` — 10/10 GREEN.
+- Frontend Playwright (iter26): all 9 assertions pass — 4 transcripts save cleanly in one click (4 POST /meetings + 4 POST /transcript + 1 POST /analyze-all, no duplicates, no hung XHR), 4 hydrate after nav-away+return WITH content, 5th appends cleanly, F5 retains all 5 with no duplicates.
+- ALIGNMENT_ANALYZER_MODEL confirmed `claude-sonnet-4-5` in `/app/backend/.env` line 16 (NOT 3.5 — the handoff summary's mention of 3.5 was a typo).
+- Anthropic API key is still out of credits in preview — `analyze-all` returns `analysis_source='honest_fallback'`, which is acceptable per the brief.
+
+**Files touched**
+- `/app/frontend/craco.config.js` — removed manual sendFile middleware that broke webpack-injected scripts.
+- `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js`:
+  - `saveConnectTranscriptSessions` lines 435-510: try/catch + meetingId fallback unwrap + per-session failure collection + post-loop integrity check.
+  - `runCombinedAnalysis` lines 1133-1162: `inFlightRef.current` synchronous useRef guard, surfaces `savedSessions.partialFailure` to `setSaveNotice`.
+- `/app/memory/test_credentials.md` — documented the demo-login + localStorage seed pattern so /admin/* tests can authenticate as admin.
+
+**Next priorities (unchanged)**
+- P2 Refactor `v3_routes.py` (now ~10k lines) into routers.
+- P2 Wire Strategy Draft persistence (`POST /api/v3/business-cases/{id}/plan/save-strategy-draft`).
+- P2 Mobile responsiveness pass.
+- P2 Skip `v3UploadMeetingTranscript` for unchanged content (write amplification on re-saves).
+- P2 Add `DELETE /api/v3/meetings/{id}` for testability and admin housekeeping.
+- P2 Visually separate the partial-failure red toast from the AnalyzerSourceBanner amber banner.
