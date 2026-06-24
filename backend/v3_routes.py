@@ -5722,11 +5722,16 @@ def make_v3_router(db):
             return _build_fallback_response(bc_id, f"Server error {exc.status_code}: {exc.detail}", source="fallback")
         except asyncio.TimeoutError:
             logger.warning("analyze-all hard-timed-out bc_id=%s after %.1fs", bc_id, hard_timeout)
-            return _build_fallback_response(
+            response = _build_fallback_response(
                 bc_id,
                 f"Analyze All exceeded the {hard_timeout:.0f}s hard timeout. Try splitting the transcripts, shortening them, or retrying.",
                 source="fallback_timeout",
             )
+            # Timeout is a recoverable analyser slowdown, not a real failure.
+            # Setting ok=true lets the UI present a "retry later" affordance
+            # without showing a red error toast.
+            response["ok"] = True
+            return response
         except Exception as exc:
             logger.exception("analyze-all crashed bc_id=%s", bc_id)
             return _build_fallback_response(bc_id, f"Server error: {exc}. Returning honest fallback so the UI does not break.", source="fallback")
