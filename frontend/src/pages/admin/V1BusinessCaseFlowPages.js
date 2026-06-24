@@ -441,39 +441,58 @@ const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, bra
   const brandName = brandDisplayName(brand);
   const businessCaseTitle = bc.title || `${brandName} business case`;
   const savedSessions = [];
+  const failures = [];
 
   for (const [index, session] of cleanSessions.entries()) {
     const sessionName = session.session || `Session ${index + 1}`;
     let meetingId = session.meetingId;
-    if (!meetingId) {
-      const meeting = await v3CreateMeeting({
-        title: `Business Call - Connect: ${businessCaseTitle} - ${sessionName}`,
-        meeting_type: 'business_call',
-        stage: 'connect',
-        entity_type: 'brand',
-        brand_id: bc.brand_id || brand.id,
-        business_case_id: businessCaseId,
-        business_case_title: businessCaseTitle,
-        entity_name: brandName,
-        contact_name: contactName || brand.primary_contact || '',
-        contact_email: contactEmail || brand.email || '',
-        contact_phone: brand.phone || '',
-        scheduled_for: session.date || null,
-        agenda,
-        meeting_notes: `${sourceLabel}. ${sessionName}`,
-      });
-      meetingId = meeting.id;
-    } else {
-      await v3SaveMeetingContact(meetingId, {
-        contact_name: contactName || brand.primary_contact || '',
-        contact_email: contactEmail || brand.email || '',
-        contact_phone: brand.phone || '',
-        scheduled_for: session.date || null,
-        meeting_notes: `${sourceLabel}. ${sessionName}`,
-      });
+    try {
+      if (!meetingId) {
+        const meeting = await v3CreateMeeting({
+          title: `Business Call - Connect: ${businessCaseTitle} - ${sessionName}`,
+          meeting_type: 'business_call',
+          stage: 'connect',
+          entity_type: 'brand',
+          brand_id: bc.brand_id || brand.id,
+          business_case_id: businessCaseId,
+          business_case_title: businessCaseTitle,
+          entity_name: brandName,
+          contact_name: contactName || brand.primary_contact || '',
+          contact_email: contactEmail || brand.email || '',
+          contact_phone: brand.phone || '',
+          scheduled_for: session.date || null,
+          agenda,
+          meeting_notes: `${sourceLabel}. ${sessionName}`,
+        });
+        meetingId = meeting?.id || meeting?.meeting_id || meeting?.data?.id;
+        if (!meetingId) {
+          throw new Error(`Meeting created but no id returned: ${JSON.stringify(meeting).slice(0, 200)}`);
+        }
+      } else {
+        await v3SaveMeetingContact(meetingId, {
+          contact_name: contactName || brand.primary_contact || '',
+          contact_email: contactEmail || brand.email || '',
+          contact_phone: brand.phone || '',
+          scheduled_for: session.date || null,
+          meeting_notes: `${sourceLabel}. ${sessionName}`,
+        });
+      }
+      await v3UploadMeetingTranscript(meetingId, { transcript: session.content.trim() });
+      savedSessions.push({ ...session, meetingId });
+    } catch (err) {
+      const detail = err?.response?.data?.detail || err?.message || String(err);
+      console.error(`[saveConnectTranscriptSessions] ${sessionName} failed:`, detail, err);
+      failures.push({ sessionName, detail });
     }
-    await v3UploadMeetingTranscript(meetingId, { transcript: session.content.trim() });
-    savedSessions.push({ ...session, meetingId });
+  }
+  if (failures.length) {
+    const failureMsg = failures.map((f) => `${f.sessionName}: ${f.detail}`).join('; ');
+    const summary = `Saved ${savedSessions.length}/${cleanSessions.length} transcripts. Failed: ${failureMsg}`;
+    if (!savedSessions.length) {
+      throw new Error(summary);
+    }
+    // Attach summary so the caller can surface partial success
+    savedSessions.partialFailure = summary;
   }
   return savedSessions;
 };
@@ -1109,10 +1128,16 @@ export const V3BusinessCaseConnectSchedule = () => {
     try {
       const savedSessions = await saveTranscriptSessions();
       if (!savedSessions.length) return;
+      if (savedSessions.partialFailure) {
+        setSaveNotice(savedSessions.partialFailure);
+      }
       const res = await v3AnalyzeAllTranscripts(id);
       if (res.ok) {
         setAnalysisResult(res.recommendation);
-        setSaveNotice('AI analysis complete from the saved Connect transcripts.');
+        setSaveNotice((current) => {
+          const base = 'AI analysis complete from the saved Connect transcripts.';
+          return savedSessions.partialFailure ? `${base} (Warning: ${savedSessions.partialFailure})` : base;
+        });
         await reload();
       } else {
         setSaveNotice('AI analysis failed.');
