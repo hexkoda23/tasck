@@ -1384,6 +1384,59 @@ def make_v3_router(db):
     """Factory - receives the motor DB handle and returns a FastAPI router."""
     router = APIRouter(prefix="/api/v3", tags=["v3"])
 
+    @router.get("/diagnostics/anthropic")
+    async def diagnostics_anthropic():
+        """Safe key-fingerprint + live-probe diagnostic. Gated by ENABLE_DIAGNOSTICS.
+        Never returns the full secret. Disable by unsetting ENABLE_DIAGNOSTICS after use."""
+        if (os.getenv("ENABLE_DIAGNOSTICS") or "").lower() not in ("1", "true", "yes"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        import hashlib
+        key = os.getenv("ANTHROPIC_API_KEY") or ""
+        model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
+        fingerprint = {
+            "present": bool(key),
+            "length": len(key),
+            "prefix": key[:7] if key else "",
+            "last4": key[-4:] if len(key) >= 4 else "",
+            "sha256_first16": hashlib.sha256(key.encode()).hexdigest()[:16] if key else "",
+            "model": model,
+        }
+        probe = {"status": None, "ok": False, "error": None, "model_returned": None}
+        if key:
+            try:
+                def _probe():
+                    return requests.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": key,
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": model,
+                            "max_tokens": 16,
+                            "messages": [{"role": "user", "content": "Reply with the single token OK."}],
+                        },
+                        timeout=20,
+                    )
+                r = await asyncio.to_thread(_probe)
+                probe["status"] = r.status_code
+                try:
+                    body = r.json()
+                except Exception:
+                    body = {"raw": r.text[:300]}
+                if r.status_code == 200:
+                    probe["ok"] = True
+                    probe["model_returned"] = body.get("model") if isinstance(body, dict) else None
+                else:
+                    err = body.get("error") if isinstance(body, dict) else None
+                    probe["error"] = {"type": (err or {}).get("type"), "message": (err or {}).get("message")} if err else body
+            except Exception as exc:
+                probe["error"] = {"type": "client_exception", "message": str(exc)[:300]}
+        return {"key": fingerprint, "probe": probe}
+
+
+
     async def _relationship_manager(rm_id: Optional[str] = None) -> Dict[str, Any]:
         """Return an RM from workbook-imported v3_rms. No hardcoded demo RM fallback."""
         if rm_id:
