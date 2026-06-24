@@ -1,0 +1,40 @@
+{
+  "summary": "Backend-only validation of the analyze-all CORS / hard-timeout production fix. All 42 tests pass: 9 black-box HTTP tests against the live supervisor backend covering single + 3-transcript happy paths, 404 path, OPTIONS preflight from each allow-listed origin (thcodemo.space, www.thcodemo.space, tasck-live-demo-1.emergent.host), disallowed origin not echoed, and per-phase backend log markers; 1 in-process TestClient proof that the 20s-floored hard timeout fires and returns HTTP 200 with analysis_source='fallback_timeout', CORS header, and 8 alignment fields when _analyze_transcript_bundle is monkey-patched to sleep 40s; 32 existing regression tests (brand_scraper_identity, brand_scraper_candidates, brand_logo_normalisation) still green.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/v3/business-cases/{bc_id}/connect/analyze-all", "issue": "ANTHROPIC_API_KEY has 0 credits in preview, so all analyze-all calls fall through to analysis_source='honest_fallback' as documented. The fix's 200+CORS+8-field contract still holds; no action needed unless prod has credits."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_analyze_all_cors_timeout.py",
+    "/app/backend/tests/test_analyze_all_hard_timeout_proof.py",
+    "/app/test_reports/pytest/analyze_all_cors_timeout.xml",
+    "/app/test_reports/pytest/analyze_all_timeout_proof.xml",
+    "/app/test_reports/pytest/regression_iter21.xml",
+    "/app/test_reports/pytest/iter21_final.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "v3_routes.py is 9992 lines — well over the 700-line guideline. Strongly recommend splitting analyze-all + alignment helpers into a dedicated module (e.g. v3_alignment.py) to make future fixes safer.",
+    "Wrapper has max(20.0, float(...)) floor on ANALYZE_ALL_HARD_TIMEOUT_SECONDS, so any env value below 20s is silently clamped. This is documented in the test but undocumented in .env — add a comment to .env so ops doesn't try to drop it to 10s and wonder why nothing changes.",
+    "_build_fallback_response returns top-level 'ok': false even on the timeout fallback. UI presently doesn't rely on this, but it conflates 404/error fallbacks with the legitimate-timeout fallback. Consider 'ok': true with analysis_source='fallback_timeout' so the UI can distinguish 'analyzer slow, retry later' from 'real failure'.",
+    "Frontend v3UploadMeetingTranscript still retries once on network failure (retries=1). On a flaky 502 this may upload the same transcript twice. Confirm meeting transcript upload is idempotent on the backend, otherwise drop to 0 retries here too."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_analyze_all_cors_timeout.py (new)",
+    "/app/backend/tests/test_analyze_all_hard_timeout_proof.py (new)"
+  ],
+  "success_rate": {"backend": "100% (42/42)", "frontend": "n/a — backend-only review request"},
+  "test_credentials": "Not required — admin v3 routes are unprotected in preview.",
+  "seed_data_creation": "Each test inserts a temporary brand-prod-test-* / bc-prod-test-* into v3_brands, v3_business_cases, v3_meetings and tears down on fixture exit. No production data touched.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The CORS-stripping multi-transcript bug fix is verified end-to-end at the preview gateway level. The hard-timeout wrapper has a 20s floor in code (max(20.0, env)). Per-phase log lines confirmed: 'analyze-all started', 'business case loaded', 'transcripts loaded transcript_count=N', 'anthropic call starting', 'bundle complete source=...' (or 'analyze-all hard-timed-out' on timeout). New regression files in /app/backend/tests/ — please keep running them.",
+  "rca of the issue": "Original failure: with N>=2 transcripts, Anthropic call could exceed the Emergent gateway's response window, causing a gateway 502 that stripped CORS headers and surfaced to the browser as ERR_FAILED + CORS error. Frontend axios then retried 2x, multiplying the spam. Fix verified in this run: (1) v3_routes.py wraps the whole route in asyncio.wait_for(timeout=20-35s) and returns 200 + 8 fields + analysis_source='fallback_timeout' on timeout, with CORS middleware always present; (2) v3api.js v3AnalyzeAllTranscripts now uses plain v3.post (no retry), v3UploadMeetingTranscript drops from 2 retries to 1, axios timeout set to 45s; (3) ALIGNMENT_ANALYZER_TIMEOUT_SECONDS=28s leaves a 7s buffer under the 35s hard cap. All preflight + actual POST flows from each allow-listed origin echo the correct Access-Control-Allow-Origin; disallowed origins do NOT get ACAO; 404 path still ships CORS via FastAPI's CORSMiddleware + a last-resort server.py exception handler."
+}

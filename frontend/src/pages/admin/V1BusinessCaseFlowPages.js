@@ -275,12 +275,21 @@ const TextInput = ({ label, value, onChange, rows = 1 }) => (
   </label>
 );
 
+const _normaliseDateTimeLocal = (raw) => {
+  if (!raw) return '';
+  const text = String(raw);
+  // Accept "YYYY-MM-DD" only by appending T00:00; accept ISO strings by trimming seconds/zone.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return `${text}T00:00`;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text)) return text.slice(0, 16);
+  return text;
+};
+
 const DateTimeInput = ({ label, value, onChange }) => (
   <label className="space-y-1">
     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
     <input
       type="datetime-local"
-      value={value}
+      value={_normaliseDateTimeLocal(value)}
       onChange={(e) => onChange(e.target.value)}
       className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
       data-testid="connect-scheduled-for"
@@ -946,7 +955,7 @@ export const V3BusinessCaseConnect = () => {
                 </label>
                 <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
                   Meeting date and time
-                  <input type="datetime-local" value={meetingForm.scheduled_for} onChange={(e) => updateMeetingForm('scheduled_for', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" />
+                  <input type="datetime-local" value={_normaliseDateTimeLocal(meetingForm.scheduled_for)} onChange={(e) => updateMeetingForm('scheduled_for', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" />
                 </label>
                 <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
                   Meeting link

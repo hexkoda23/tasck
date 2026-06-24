@@ -32,6 +32,7 @@ import os
 import re
 import requests
 import smtplib
+import time
 import uuid
 import zipfile
 
@@ -5651,24 +5652,35 @@ def make_v3_router(db):
         contact_name: Optional[str] = None
         agenda: Optional[str] = None
 
-    @router.post("/business-cases/{bc_id}/connect/analyze-all")
-    async def analyze_all_connect_transcripts(bc_id: str):
-        # Production-safety wrapper: this route must NEVER return a 5xx that
-        # bypasses CORS — instead it falls back to a safe analysis_source='fallback'
-        # payload so the browser still gets a valid JSON response with CORS headers.
-        try:
-            return await _analyze_all_connect_transcripts_impl(bc_id)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("analyze_all_connect_transcripts crashed for %s", bc_id)
-            fallback = _alignment_fallback_result()
-            fallback["evidence_notes"] = [f"Server error: {exc}. Returning honest fallback so the UI does not break."] + (fallback.get("evidence_notes") or [])
-            fallback["analysis_source"] = "fallback"
-            return {
-                "ok": False,
-                "error": str(exc),
-                "business_case": None,
+    def _build_fallback_response(bc_id: str, reason: str, source: str = "fallback") -> Dict[str, Any]:
+        fallback = _alignment_fallback_result()
+        fallback["evidence_notes"] = [reason] + (fallback.get("evidence_notes") or [])
+        fallback["analysis_source"] = source
+        return {
+            "ok": False,
+            "error": reason,
+            "business_case_id": bc_id,
+            "business_case": None,
+            "marketing_intelligence": {key: fallback.get(key) for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS},
+            "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(fallback),
+            "readiness": {
+                "captured_count": 0,
+                "missing_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
+                "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
+                "percentage": 0,
+            },
+            "analysis_source": source,
+            "analysis_model": "",
+            "recommendation": {
+                "decision": "reschedule",
+                "label": "Reschedule Business Call",
+                "confidence": 0,
+                "reasons": [reason],
+                "missing_context": [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
+                "summary": "Analyzer fallback triggered.",
+                "next_questions": [f"Confirm {label}." for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
+                "captured_context": [],
+                "risk_flags": [],
                 "marketing_intelligence": {key: fallback.get(key) for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS},
                 "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(fallback),
                 "readiness": {
@@ -5677,37 +5689,55 @@ def make_v3_router(db):
                     "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
                     "percentage": 0,
                 },
-                "analysis_source": "fallback",
+                "analysis_source": source,
                 "analysis_model": "",
-                "recommendation": {
-                    "decision": "reschedule",
-                    "label": "Reschedule Business Call",
-                    "confidence": 0,
-                    "reasons": ["Server error occurred while analysing transcripts. Please retry or contact admin."],
-                    "missing_context": [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
-                    "summary": "Analyzer fallback triggered.",
-                    "next_questions": [f"Confirm {label}." for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
-                    "captured_context": [],
-                    "risk_flags": [],
-                    "marketing_intelligence": {key: fallback.get(key) for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS},
-                    "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(fallback),
-                    "readiness": {
-                        "captured_count": 0,
-                        "missing_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
-                        "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
-                        "percentage": 0,
-                    },
-                    "analysis_source": "fallback",
-                    "analysis_model": "",
-                    "transcript_count": 0,
-                    "evidence_notes": fallback.get("evidence_notes") or [],
-                },
-            }
+                "transcript_count": 0,
+                "evidence_notes": fallback.get("evidence_notes") or [],
+            },
+        }
+
+    @router.post("/business-cases/{bc_id}/connect/analyze-all")
+    async def analyze_all_connect_transcripts(bc_id: str):
+        # Production-safety wrapper: this route MUST always return HTTP 200
+        # with proper CORS headers, even when the Anthropic call times out
+        # or the implementation crashes. A 5xx leaving the gateway would
+        # strip CORS and surface to the browser as a CORS error.
+        try:
+            hard_timeout = max(20.0, float(os.getenv("ANALYZE_ALL_HARD_TIMEOUT_SECONDS", "35")))
+        except (TypeError, ValueError):
+            hard_timeout = 35.0
+        start = time.monotonic()
+        logger.info("analyze-all started bc_id=%s hard_timeout=%.0fs", bc_id, hard_timeout)
+        try:
+            result = await asyncio.wait_for(_analyze_all_connect_transcripts_impl(bc_id), timeout=hard_timeout)
+            logger.info("analyze-all completed bc_id=%s elapsed=%.2fs source=%s", bc_id, time.monotonic() - start, (result or {}).get("analysis_source"))
+            return result
+        except HTTPException as exc:
+            # 404 / 400 etc. are legitimate — let FastAPI render them with the
+            # CORS middleware in front.
+            if exc.status_code < 500:
+                logger.info("analyze-all HTTPException %s bc_id=%s elapsed=%.2fs", exc.status_code, bc_id, time.monotonic() - start)
+                raise
+            logger.exception("analyze-all 5xx HTTPException bc_id=%s converted to fallback response", bc_id)
+            return _build_fallback_response(bc_id, f"Server error {exc.status_code}: {exc.detail}", source="fallback")
+        except asyncio.TimeoutError:
+            logger.warning("analyze-all hard-timed-out bc_id=%s after %.1fs", bc_id, hard_timeout)
+            return _build_fallback_response(
+                bc_id,
+                f"Analyze All exceeded the {hard_timeout:.0f}s hard timeout. Try splitting the transcripts, shortening them, or retrying.",
+                source="fallback_timeout",
+            )
+        except Exception as exc:
+            logger.exception("analyze-all crashed bc_id=%s", bc_id)
+            return _build_fallback_response(bc_id, f"Server error: {exc}. Returning honest fallback so the UI does not break.", source="fallback")
 
     async def _analyze_all_connect_transcripts_impl(bc_id: str):
+        impl_start = time.monotonic()
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
+            logger.info("analyze-all: business case %s not found", bc_id)
             raise HTTPException(404, "Business case not found")
+        logger.info("analyze-all: business case loaded bc_id=%s elapsed=%.2fs", bc_id, time.monotonic() - impl_start)
 
         # Get all meetings for this business case under stage "connect"
         meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
@@ -5728,15 +5758,25 @@ def make_v3_router(db):
 
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
         combined_text = "\n\n".join(block["content"] for block in transcript_blocks)
+        logger.info(
+            "analyze-all: transcripts loaded bc_id=%s transcript_count=%d total_chars=%d brand=%s elapsed=%.2fs",
+            bc_id, len(transcript_blocks), len(combined_text), brand.get("company") or "?", time.monotonic() - impl_start,
+        )
 
         # Run the shared transcript bundle analyzer (Claude-first when configured).
         # raise_on_anthropic_failure=False so any LLM failure produces a graceful
         # fallback instead of a 5xx that loses CORS headers at the gateway.
+        logger.info("analyze-all: anthropic call starting bc_id=%s", bc_id)
         bundle = await _analyze_transcript_bundle(
             transcript_blocks,
             brand=brand,
             business_case=case,
             raise_on_anthropic_failure=False,
+        )
+        logger.info(
+            "analyze-all: bundle complete bc_id=%s source=%s model=%s readiness=%d%% elapsed=%.2fs",
+            bc_id, bundle.get("analysis_source"), bundle.get("analysis_model"),
+            bundle.get("readiness", {}).get("percentage", 0), time.monotonic() - impl_start,
         )
         mi = bundle["marketing_intelligence"]
         readiness = int(bundle["readiness"]["percentage"])

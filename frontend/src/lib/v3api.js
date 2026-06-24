@@ -7,7 +7,7 @@ const DEFAULT_BACKEND_URL = 'https://tasck-live-demo-1.emergent.host';
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/, '');
 const V3 = `${BACKEND_URL}/api/v3`;
 
-const v3 = axios.create({ baseURL: V3, headers: { 'Content-Type': 'application/json' } });
+const v3 = axios.create({ baseURL: V3, headers: { 'Content-Type': 'application/json' }, timeout: 45000 });
 
 v3.interceptors.response.use((response) => {
   const data = response.data;
@@ -171,9 +171,9 @@ export const v3ListMeetings = (params) => v3.get('/meetings', { params }).then(r
 export const v3GetMeeting = (meetingId) => v3.get(`/meetings/${meetingId}`).then(r => r.data);
 export const v3CreateMeeting = (payload) => v3.post('/meetings', payload).then(r => r.data);
 export const v3SaveMeetingContact = (meetingId, payload) => v3.patch(`/meetings/${meetingId}/contact`, payload).then(r => r.data);
-export const v3UploadMeetingTranscript = (meetingId, payload) => v3PostWithNetworkRetry(`/meetings/${meetingId}/transcript`, payload, 2).then(r => r.data);
-export const v3AnalyzeMeetingTranscript = (meetingId, payload = {}) => v3PostWithNetworkRetry(`/meetings/${meetingId}/analyze`, payload, 2).then(r => r.data);
-export const v3AnalyzeAllTranscripts = (bcId) => v3PostWithNetworkRetry(`/business-cases/${bcId}/connect/analyze-all`, undefined, 2).then(r => r.data);
+export const v3UploadMeetingTranscript = (meetingId, payload) => v3PostWithNetworkRetry(`/meetings/${meetingId}/transcript`, payload, 1).then(r => r.data);
+export const v3AnalyzeMeetingTranscript = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/analyze`, payload).then(r => r.data);
+export const v3AnalyzeAllTranscripts = (bcId) => v3.post(`/business-cases/${bcId}/connect/analyze-all`).then(r => r.data);
 
 export const v3GenerateAlignmentFromTranscripts = (brandId, transcripts = []) => v3.post(`/brands/${brandId}/frame-transcripts`, {
   actor: 'admin',
