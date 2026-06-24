@@ -5862,45 +5862,422 @@ def make_v3_router(db):
             },
         }
 
+
+    # ------------------------------------------------------------------------
+    # Background-job + Smart Split for Connect / Analyze All
+    # ------------------------------------------------------------------------
+    # Stored in Mongo collection `v3_analysis_jobs`:
+    #   { id, business_case_id, status: queued|running|completed|failed,
+    #     progress: 0..100, message, transcript_count, total_chars,
+    #     created_at, updated_at, result?, error? }
+
+    SMART_SPLIT_TRANSCRIPT_THRESHOLD = int(os.getenv("SMART_SPLIT_TRANSCRIPT_THRESHOLD", "1"))
+    SMART_SPLIT_CHARS_THRESHOLD = int(os.getenv("SMART_SPLIT_CHARS_THRESHOLD", "12000"))
+
+    def _job_doc_to_response(job: Dict[str, Any]) -> Dict[str, Any]:
+        out = {
+            "ok": True,
+            "job_id": job.get("id"),
+            "status": job.get("status"),
+            "progress": int(job.get("progress") or 0),
+            "message": job.get("message") or "",
+            "business_case_id": job.get("business_case_id"),
+            "transcript_count": job.get("transcript_count") or 0,
+            "created_at": job.get("created_at"),
+            "updated_at": job.get("updated_at"),
+        }
+        if job.get("status") == "completed" and job.get("result"):
+            out.update(job["result"])
+        if job.get("status") == "failed":
+            out["error"] = job.get("error") or "Analysis failed; safe fallback shown."
+            if job.get("result"):
+                out.update(job["result"])
+        return out
+
+    def _merge_per_transcript_bundles(
+        bundles: List[Dict[str, Any]],
+    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[str], Dict[str, str], str, str]:
+        """Merge per-transcript analysis bundles into one final bundle.
+
+        Returns (marketing_intelligence, alignment_snapshot_fields, evidence_notes,
+        readiness, analysis_source, analysis_model).
+        """
+        # Collect values per canonical field
+        per_field: Dict[str, List[Tuple[str, Any]]] = {key: [] for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
+        for idx, b in enumerate(bundles):
+            mi = (b or {}).get("marketing_intelligence") or {}
+            for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
+                val = mi.get(key)
+                if val is None or val == "":
+                    continue
+                if isinstance(val, list) and not val:
+                    continue
+                per_field[key].append((f"Transcript {idx + 1}", val))
+
+        merged_mi: Dict[str, Any] = {}
+        evidence_notes: List[str] = []
+        captured_count = 0
+        for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
+            entries = per_field[key]
+            if not entries:
+                merged_mi[key] = f"Needs confirmation: {label.lower()}"
+                continue
+
+            if key in ALIGNMENT_LIST_FIELD_KEYS:
+                # Union all list values, dedupe preserving order
+                seen = set()
+                merged_list: List[str] = []
+                for _src, val in entries:
+                    items = val if isinstance(val, list) else [val]
+                    for item in items:
+                        s = str(item).strip()
+                        if s and s.lower() not in seen:
+                            seen.add(s.lower())
+                            merged_list.append(s)
+                merged_mi[key] = merged_list
+                captured_count += 1
+                continue
+
+            # String fields: dedupe, then either use single value or note conflict
+            unique_values = []
+            sources_per_value: Dict[str, List[str]] = {}
+            for src, val in entries:
+                s = str(val).strip()
+                if not s or s.lower().startswith("needs confirmation"):
+                    continue
+                if s not in unique_values:
+                    unique_values.append(s)
+                sources_per_value.setdefault(s, []).append(src)
+            if not unique_values:
+                merged_mi[key] = f"Needs confirmation: {label.lower()}"
+                continue
+            captured_count += 1
+            if len(unique_values) == 1:
+                merged_mi[key] = unique_values[0]
+            else:
+                # Take the longest non-empty as the canonical and record conflict
+                canonical = max(unique_values, key=len)
+                merged_mi[key] = canonical
+                others = [v for v in unique_values if v != canonical]
+                evidence_notes.append(
+                    f"Conflicting {label}: {canonical} (from {', '.join(sources_per_value[canonical])}) "
+                    f"vs " + "; ".join(f"{v} (from {', '.join(sources_per_value[v])})" for v in others)
+                )
+
+        # Captured field labels for readiness reporting
+        merged_mi["captured_field_labels"] = [
+            label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS
+            if not (isinstance(merged_mi.get(key), str) and merged_mi[key].lower().startswith("needs confirmation"))
+            and not (isinstance(merged_mi.get(key), list) and not merged_mi[key])
+        ]
+
+        alignment_snapshot_fields = [
+            {"label": label, "key": key, "value": merged_mi.get(key)}
+            for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS
+        ]
+
+        total = len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)
+        readiness = {
+            "captured_count": captured_count,
+            "missing_count": total - captured_count,
+            "total_count": total,
+            "percentage": int(round((captured_count / total) * 100)) if total else 0,
+        }
+
+        # Source/model: prefer anthropic if any bundle used it
+        sources = [(b or {}).get("analysis_source") for b in bundles if b]
+        models = [(b or {}).get("analysis_model") for b in bundles if b]
+        analysis_source = "anthropic" if any(s == "anthropic" for s in sources) else (
+            next((s for s in sources if s), "fallback")
+        )
+        analysis_model = next((m for m in models if m), "")
+
+        # Per-bundle evidence notes
+        for idx, b in enumerate(bundles):
+            for note in ((b or {}).get("evidence_notes") or []):
+                evidence_notes.append(f"Transcript {idx + 1}: {note}")
+
+        return merged_mi, alignment_snapshot_fields, evidence_notes, readiness, analysis_source, analysis_model
+
+    async def _smart_split_analyze(
+        transcript_blocks: List[Dict[str, Any]],
+        brand: Dict[str, Any],
+        business_case: Dict[str, Any],
+        progress_cb=None,
+    ) -> Dict[str, Any]:
+        """Per-transcript Claude analysis + merge. Tolerates per-transcript failures."""
+        bundles: List[Dict[str, Any]] = []
+        total = len(transcript_blocks)
+        for idx, block in enumerate(transcript_blocks):
+            if progress_cb:
+                await progress_cb(
+                    progress=int((idx / max(total, 1)) * 90),
+                    message=f"Analyzing transcript {idx + 1} of {total}...",
+                )
+            try:
+                bundle = await _analyze_transcript_bundle(
+                    [block], brand=brand, business_case=business_case, raise_on_anthropic_failure=False,
+                )
+            except Exception as exc:
+                logger.exception("smart-split: transcript %d failed; using empty bundle", idx + 1)
+                bundle = {
+                    "marketing_intelligence": {},
+                    "alignment_snapshot_fields": [],
+                    "readiness": {"captured_count": 0, "missing_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS), "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS), "percentage": 0},
+                    "analysis_source": "fallback",
+                    "analysis_model": "",
+                    "evidence_notes": [f"Per-transcript analysis failed: {exc}"],
+                }
+            bundles.append(bundle)
+        if progress_cb:
+            await progress_cb(progress=92, message="Merging per-transcript extractions...")
+        mi, alignment_fields, evidence_notes, readiness, source, model = _merge_per_transcript_bundles(bundles)
+        return {
+            "marketing_intelligence": mi,
+            "alignment_snapshot_fields": alignment_fields,
+            "readiness": readiness,
+            "analysis_source": source,
+            "analysis_model": model,
+            "transcript_count": total,
+            "evidence_notes": evidence_notes,
+            "card": dict(mi),
+            "missing_fields": [k for _, k in ALIGNMENT_SNAPSHOT_FIELD_SPECS
+                               if isinstance(mi.get(k), str) and mi[k].lower().startswith("needs confirmation")],
+        }
+
+    async def _build_recommendation_from_bundle(bc_id: str, case: Dict[str, Any], bundle: Dict[str, Any], transcript_blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
+        mi = bundle["marketing_intelligence"]
+        readiness = int(bundle["readiness"]["percentage"])
+        missing_keys = bundle.get("missing_fields") or []
+        label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
+        missing_labels = [label_for_key[k] for k in missing_keys if k in label_for_key]
+        combined_text = "\n\n".join(block["content"] for block in transcript_blocks)
+
+        risk_flags = []
+        lower = combined_text.lower()
+        for label, markers in [
+            ("No budget or budget too low", ["no budget", "too low", "cannot afford", "free only"]),
+            ("Opt-out or low intent", ["not interested", "opt out", "maybe later", "no longer"]),
+            ("No authority", ["no authority", "not the decision maker", "cannot approve"]),
+            ("Unavailable", ["unavailable", "no capacity", "fully booked"]),
+            ("Conflict or brand safety issue", ["conflict", "unsafe", "controversy", "exclusive with"]),
+        ]:
+            if any(marker in lower for marker in markers):
+                risk_flags.append(label)
+        if risk_flags:
+            readiness = min(readiness, 80)
+
+        summary = combined_text[:280] or "No transcripts provided yet."
+
+        if not combined_text:
+            ai_recommendation = "reschedule"
+            ai_reasons = ["Transcripts are empty, so TASCK cannot make a reliable decision."]
+        elif readiness >= 70:
+            ai_recommendation = "promote"
+            ai_reasons = ["Confidence is 70% or higher, so the combined transcripts are ready to move into Frame."]
+            if risk_flags:
+                ai_reasons.extend([f"Flag to review during Frame: {item}." for item in risk_flags])
+            if missing_labels:
+                ai_reasons.append(f"Admin can refine these fields in Frame: {', '.join(missing_labels)}.")
+        else:
+            ai_recommendation = "reschedule"
+            ai_reasons = ["Confidence is below 70%, so schedule another Connect call before moving to Frame."]
+            if risk_flags:
+                ai_reasons.extend([f"Clarify risk before Frame: {item}." for item in risk_flags])
+            if missing_labels:
+                ai_reasons.append(f"Missing Alignment Snapshot context: {', '.join(missing_labels)}.")
+
+        recommendation_label = {
+            "promote": "Promote to Frame",
+            "reschedule": "Reschedule Business Call",
+        }.get(ai_recommendation, "Reschedule Business Call")
+
+        recommendation = {
+            "decision": ai_recommendation,
+            "label": recommendation_label,
+            "confidence": readiness,
+            "reasons": ai_reasons,
+            "missing_context": missing_labels,
+            "summary": summary,
+            "next_questions": [f"Clarify {item}." for item in missing_labels] or [f"Confirm {label}." for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
+            "captured_context": bundle["marketing_intelligence"].get("captured_field_labels") or [],
+            "risk_flags": risk_flags,
+            "marketing_intelligence": mi,
+            "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
+            "readiness": bundle["readiness"],
+            "analysis_source": bundle["analysis_source"],
+            "analysis_model": bundle["analysis_model"],
+            "transcript_count": bundle["transcript_count"],
+            "evidence_notes": bundle.get("evidence_notes") or [],
+        }
+
+        now = _now_iso()
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {
+                "connect.analysis": recommendation,
+                "connect.transcript": combined_text,
+                "connect.marketing_intelligence": mi,
+                "connect.alignment_tool_analysis": bundle.get("card") or {},
+                "connect.connect_status": "qualified_to_frame" if ai_recommendation == "promote" else "needs_business_call",
+                "connect.status_updated_at": now,
+                "connect.updated_at": now,
+                "updated_at": now,
+            }}
+        )
+        updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        return {
+            "recommendation": recommendation,
+            "business_case": updated,
+            "marketing_intelligence": mi,
+            "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
+            "readiness": bundle["readiness"],
+            "analysis_source": bundle["analysis_source"],
+            "analysis_model": bundle["analysis_model"],
+        }
+
+    async def _update_job(job_id: str, **fields):
+        fields["updated_at"] = _now_iso()
+        await db.v3_analysis_jobs.update_one({"id": job_id}, {"$set": fields})
+
+    async def _run_analyze_all_job(job_id: str, bc_id: str):
+        """Background runner. Drives Smart Split + saves result to BC + updates job."""
+        try:
+            case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+            if not case:
+                await _update_job(job_id, status="failed", progress=100, error="Business case not found")
+                return
+            await _update_job(job_id, status="running", progress=5, message="Loading transcripts...")
+            meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
+            transcript_blocks: List[Dict[str, Any]] = []
+            for m in meetings:
+                t = (m.get("transcript") or "").strip()
+                if t:
+                    transcript_blocks.append({
+                        "title": m.get("title") or "Business call",
+                        "date": m.get("scheduled_for") or m.get("call_date") or "",
+                        "source": m.get("meeting_type") or "business_call",
+                        "content": t,
+                    })
+            brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
+
+            async def progress_cb(progress: int, message: str):
+                await _update_job(job_id, status="running", progress=progress, message=message)
+
+            await progress_cb(10, f"Analyzing {len(transcript_blocks)} transcripts (Smart Split)...")
+            bundle = await _smart_split_analyze(transcript_blocks, brand, case, progress_cb=progress_cb)
+            result = await _build_recommendation_from_bundle(bc_id, case, bundle, transcript_blocks)
+            # Drop the heavy business_case payload from the cached job result to keep the doc small
+            result_for_job = {k: v for k, v in result.items() if k != "business_case"}
+            await _update_job(
+                job_id,
+                status="completed",
+                progress=100,
+                message=f"Completed. Source: {bundle['analysis_source']}. Captured {bundle['readiness']['captured_count']}/{bundle['readiness']['total_count']} fields.",
+                result=result_for_job,
+                transcript_count=len(transcript_blocks),
+            )
+        except Exception as exc:
+            logger.exception("analyze-all background job failed bc_id=%s job_id=%s", bc_id, job_id)
+            # Save a safe fallback so the UI always has something
+            try:
+                case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or {}
+                fallback = _build_fallback_response(bc_id, f"Smart Split failed: {exc}", source="fallback")
+            except Exception:
+                fallback = {"recommendation": {"decision": "reschedule", "analysis_source": "fallback"}}
+            await _update_job(
+                job_id,
+                status="failed",
+                progress=100,
+                error=f"Smart Split failed: {exc}",
+                result=fallback,
+                message="Claude analysis failed. Showing safe fallback.",
+            )
+
+
     @router.post("/business-cases/{bc_id}/connect/analyze-all")
     async def analyze_all_connect_transcripts(bc_id: str):
-        # Production-safety wrapper: this route MUST always return HTTP 200
-        # with proper CORS headers, even when the Anthropic call times out
-        # or the implementation crashes. A 5xx leaving the gateway would
-        # strip CORS and surface to the browser as a CORS error.
-        try:
-            hard_timeout = max(20.0, float(os.getenv("ANALYZE_ALL_HARD_TIMEOUT_SECONDS", "35")))
-        except (TypeError, ValueError):
-            hard_timeout = 35.0
-        start = time.monotonic()
-        logger.info("analyze-all started bc_id=%s hard_timeout=%.0fs", bc_id, hard_timeout)
-        try:
-            result = await asyncio.wait_for(_analyze_all_connect_transcripts_impl(bc_id), timeout=hard_timeout)
-            logger.info("analyze-all completed bc_id=%s elapsed=%.2fs source=%s", bc_id, time.monotonic() - start, (result or {}).get("analysis_source"))
-            return result
-        except HTTPException as exc:
-            # 404 / 400 etc. are legitimate — let FastAPI render them with the
-            # CORS middleware in front.
-            if exc.status_code < 500:
-                logger.info("analyze-all HTTPException %s bc_id=%s elapsed=%.2fs", exc.status_code, bc_id, time.monotonic() - start)
+        """Hybrid: small bundle runs synchronously (≤20s budget). Large bundle
+        (multi-transcript OR long total content) creates a background job and
+        returns quickly. Poll /jobs/{job_id} for progress + final result."""
+        # Inspect transcripts before deciding mode
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
+        transcript_blocks: List[Dict[str, Any]] = []
+        for m in meetings:
+            t = (m.get("transcript") or "").strip()
+            if t:
+                transcript_blocks.append({
+                    "title": m.get("title") or "Business call",
+                    "date": m.get("scheduled_for") or m.get("call_date") or "",
+                    "source": m.get("meeting_type") or "business_call",
+                    "content": t,
+                })
+        total_chars = sum(len(b["content"]) for b in transcript_blocks)
+        transcript_count = len(transcript_blocks)
+        logger.info(
+            "analyze-all: dispatch bc_id=%s transcripts=%d total_chars=%d threshold=(%d,%d)",
+            bc_id, transcript_count, total_chars,
+            SMART_SPLIT_TRANSCRIPT_THRESHOLD, SMART_SPLIT_CHARS_THRESHOLD,
+        )
+
+        # Fast path: 0 or 1 short transcript → run synchronously under a 20s budget
+        if transcript_count <= SMART_SPLIT_TRANSCRIPT_THRESHOLD and total_chars <= SMART_SPLIT_CHARS_THRESHOLD:
+            try:
+                fast_timeout = max(15.0, float(os.getenv("ANALYZE_ALL_SYNC_TIMEOUT_SECONDS", "20")))
+            except (TypeError, ValueError):
+                fast_timeout = 20.0
+            start = time.monotonic()
+            try:
+                result = await asyncio.wait_for(_analyze_all_connect_transcripts_impl(bc_id), timeout=fast_timeout)
+                logger.info("analyze-all sync OK bc_id=%s elapsed=%.2fs source=%s", bc_id, time.monotonic() - start, (result or {}).get("analysis_source"))
+                result["mode"] = "sync"
+                return result
+            except asyncio.TimeoutError:
+                logger.warning("analyze-all sync hard-timed-out bc_id=%s after %.1fs — promoting to background job", bc_id, fast_timeout)
+                # Fall through to background job
+            except HTTPException:
                 raise
-            logger.exception("analyze-all 5xx HTTPException bc_id=%s converted to fallback response", bc_id)
-            return _build_fallback_response(bc_id, f"Server error {exc.status_code}: {exc.detail}", source="fallback")
-        except asyncio.TimeoutError:
-            logger.warning("analyze-all hard-timed-out bc_id=%s after %.1fs", bc_id, hard_timeout)
-            response = _build_fallback_response(
-                bc_id,
-                f"Analyze All exceeded the {hard_timeout:.0f}s hard timeout. Try splitting the transcripts, shortening them, or retrying.",
-                source="fallback_timeout",
-            )
-            # Timeout is a recoverable analyser slowdown, not a real failure.
-            # Setting ok=true lets the UI present a "retry later" affordance
-            # without showing a red error toast.
-            response["ok"] = True
-            return response
-        except Exception as exc:
-            logger.exception("analyze-all crashed bc_id=%s", bc_id)
-            return _build_fallback_response(bc_id, f"Server error: {exc}. Returning honest fallback so the UI does not break.", source="fallback")
+            except Exception as exc:
+                logger.exception("analyze-all sync crashed bc_id=%s — falling back to honest fallback", bc_id)
+                return _build_fallback_response(bc_id, f"Server error: {exc}", source="fallback")
+
+        # Slow path: create a job, kick off the background runner, return queued
+        job_id = f"analysis-job-{uuid.uuid4().hex[:10]}"
+        now = _now_iso()
+        await db.v3_analysis_jobs.insert_one({
+            "id": job_id,
+            "business_case_id": bc_id,
+            "status": "queued",
+            "progress": 0,
+            "message": "Queued. Smart Split will analyze each transcript separately, then merge.",
+            "transcript_count": transcript_count,
+            "total_chars": total_chars,
+            "created_at": now,
+            "updated_at": now,
+            "result": None,
+            "error": None,
+        })
+        asyncio.create_task(_run_analyze_all_job(job_id, bc_id))
+        logger.info("analyze-all background job created bc_id=%s job_id=%s transcripts=%d total_chars=%d", bc_id, job_id, transcript_count, total_chars)
+        return {
+            "ok": True,
+            "mode": "background_job",
+            "job_id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "transcript_count": transcript_count,
+            "message": "Transcript analysis started. We'll update this page when it is ready.",
+        }
+
+    @router.get("/business-cases/{bc_id}/connect/analyze-all/jobs/{job_id}")
+    async def get_analyze_all_job_status(bc_id: str, job_id: str):
+        job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
+        if not job:
+            raise HTTPException(404, "Analysis job not found")
+        return _job_doc_to_response(job)
 
     async def _analyze_all_connect_transcripts_impl(bc_id: str):
         impl_start = time.monotonic()

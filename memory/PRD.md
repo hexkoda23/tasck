@@ -408,3 +408,41 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - P2 WhatsApp document sharing.
 - P3 Visually separate partial-failure toast from AnalyzerSourceBanner.
 - P3 Resolve carry-over `react-hooks/set-state-in-effect` warnings.
+
+
+## Update — 24 Feb 2026 (P0: Analyze-All Background Job + Smart Split — DONE; Add Transcript email audit — DONE)
+
+### Issue 1: Connect Analyze-All — Background Job + Smart Split (replaces single blocking call)
+**Why**: `POST /connect/analyze-all` was a single Claude call with a 35s timeout. For multi-transcript / long bundles, Claude takes 60–120s, hitting the ingress 504 + perceived CORS errors. Reducing timeout further was not the right fix.
+
+**What shipped**:
+- New Mongo collection `v3_analysis_jobs` (`{id, business_case_id, status, progress, message, transcript_count, total_chars, created_at, updated_at, result, error}`).
+- `POST /api/v3/business-cases/{bc_id}/connect/analyze-all` is now **hybrid**:
+  - Fast path: `≤1` transcript AND `total_chars ≤ 12000` → runs synchronously (20s budget) and returns the result inline with `mode='sync'`.
+  - Slow path: more transcripts OR longer total → creates a `v3_analysis_jobs` doc, kicks off `asyncio.create_task(_run_analyze_all_job(job_id, bc_id))`, returns within ~1s with `{mode:'background_job', job_id, status:'queued', message}`.
+  - If the sync path hits its 20s budget, it auto-promotes to background mode (graceful degradation).
+- **Smart Split** (`_smart_split_analyze`): per-transcript Claude extraction of the 8 readiness fields, then `_merge_per_transcript_bundles` consolidates them — union for list fields (`key_marketing_channels`, `kpis`), longest-string for text fields, conflicts captured in `evidence_notes`, missing fields become `"Needs confirmation: <field>"`. Per-transcript failure no longer aborts the run.
+- New endpoint `GET /api/v3/business-cases/{bc_id}/connect/analyze-all/jobs/{job_id}` — returns `{ok, job_id, status: queued|running|completed|failed, progress, message, transcript_count, recommendation?, error?}`. Returns the 8 readiness fields when status=completed, returns a safe fallback when status=failed (no 5xx).
+- **Frontend** (`V1BusinessCaseFlowPages.js` `runCombinedAnalysis`): if response has `mode='background_job'` it begins polling `v3GetAnalyzeAllJob` every 2.5s up to 5 min. UI shows per-transcript progress (`"Analyzing transcript 2 of 4..."`). Polling is bound to the same `inFlightRef` guard so concurrent clicks are deduped. On `completed` → `setAnalysisResult` + reload. On `failed` → render fallback + amber warning.
+- **Backend regression**: `/app/backend/tests/test_analyze_all_background_job.py` — 4/4 pass (sync, background+complete, empty, 404 unknown job). Smart Split end-to-end with 4 transcripts captures 8/8 fields, `analysis_source='anthropic'`.
+- **Smoke test (UI)**: Connect schedule page with 4 transcripts → 1 POST, 12 GETs, progress notice cycles `1/4 → 2/4 → 3/4 → 4/4`, final UI banner reads `Analysed by Claude (Anthropic) · claude-sonnet-4-5`, decision `Promote to Frame`, confidence 100%.
+
+**Env**: `SMART_SPLIT_TRANSCRIPT_THRESHOLD` (default 1), `SMART_SPLIT_CHARS_THRESHOLD` (default 12000), `ANALYZE_ALL_SYNC_TIMEOUT_SECONDS` (default 20).
+
+### Issue 2: Add Transcript button must not send email — AUDITED & DEFENSIVE FIX
+**Audit**: `POST /api/v3/brands/{brand_id}/business-call` (the "Move to call page" / "Add Transcript create-bc" backend) does NOT enqueue any email, does NOT set `connect.last_meeting_email_sent_at`, does NOT push a `meeting_email` interaction. Side effects are limited to inserting the business case + updating brand.status. The `v3SendConnectMeetingEmail` axios wrapper is only invoked by the explicit `sendMeetingEmail` handler bound to the `Send to brand email` button. No `useEffect` auto-fires it.
+
+**Defensive fix**: Several `<button>` elements in `V1BusinessCaseFlowPages.js` were missing explicit `type="button"`. If a future change introduces a parent `<form>`, they would default to `type="submit"` and accidentally submit. Added `type="button"` to all 4 "Add Transcript" buttons. Added `data-testid` for both Add Transcript variants (`connect-add-transcript-link`, `connect-add-transcript-btn-secondary`) — testable.
+
+**Backend regression**: `/app/backend/tests/test_add_transcript_does_not_email.py` — locks in: POST `/brands/{id}/business-call` does NOT increment `v3_emails` or `v3_interactions` counts, does NOT set `last_meeting_email_sent_at`, does NOT push `connect_meeting_email_sent` timeline event. 1/1 pass.
+
+### Files touched
+- `/app/backend/v3_routes.py` — `+ _smart_split_analyze`, `+ _merge_per_transcript_bundles`, `+ _build_recommendation_from_bundle`, `+ _run_analyze_all_job`, `+ _update_job`, `+ _job_doc_to_response`. Refactored `POST /connect/analyze-all` to hybrid sync/background. New `GET /connect/analyze-all/jobs/{job_id}`.
+- `/app/frontend/src/lib/v3api.js` — `+ v3GetAnalyzeAllJob`.
+- `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js` — `+ pollAnalysisJob`, modified `runCombinedAnalysis` to detect `mode='background_job'` and poll. Added `type="button"` to 2 "Add Transcript" buttons.
+- `/app/backend/tests/test_analyze_all_background_job.py` — NEW (4 cases).
+- `/app/backend/tests/test_add_transcript_does_not_email.py` — NEW (1 case).
+
+### Outstanding
+- Production redeploy needed to push these changes to `https://thcodemo.space` (preview was tested with bc-472329ed4c; user requested testing on production bc-8624bf9e which requires the code to be on production first).
+- Run on production Mongo to clean the 4 test meetings from earlier iter (`meeting-7654200810, meeting-1a77017ac1, meeting-77cf10d9d8, meeting-321e3b71e5` on bc-0ae422a0dc).

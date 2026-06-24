@@ -175,6 +175,7 @@ export const v3SaveMeetingContact = (meetingId, payload) => v3.patch(`/meetings/
 export const v3UploadMeetingTranscript = (meetingId, payload) => v3PostWithNetworkRetry(`/meetings/${meetingId}/transcript`, payload, 1).then(r => r.data);
 export const v3AnalyzeMeetingTranscript = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/analyze`, payload).then(r => r.data);
 export const v3AnalyzeAllTranscripts = (bcId) => v3.post(`/business-cases/${bcId}/connect/analyze-all`).then(r => r.data);
+export const v3GetAnalyzeAllJob = (bcId, jobId) => v3.get(`/business-cases/${bcId}/connect/analyze-all/jobs/${jobId}`).then(r => r.data);
 
 export const v3GenerateAlignmentFromTranscripts = (brandId, transcripts = []) => v3.post(`/brands/${brandId}/frame-transcripts`, {
   actor: 'admin',

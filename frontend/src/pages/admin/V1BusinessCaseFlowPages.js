@@ -32,6 +32,7 @@ import {
   v3AdvanceBusinessCase,
   v3AnalyzeMeetingTranscript,
   v3AnalyzeAllTranscripts,
+  v3GetAnalyzeAllJob,
   v3ApproveAlignmentAs,
   v3ApproveSnapshot,
   v3CreateBrainstorm,
@@ -972,7 +973,7 @@ export const V3BusinessCaseConnect = () => {
         </InfoCard>
         <InfoCard title="Next steps">
           <div className="grid gap-3">
-            <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/schedule`))} className="v3-btn-primary"><Plus className="w-3.5 h-3.5" /> Add Transcript</button>
+            <button type="button" onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/schedule`))} className="v3-btn-primary" data-testid="connect-add-transcript-link"><Plus className="w-3.5 h-3.5" /> Add Transcript</button>
             <div className="rounded-lg border border-[#E8E4DB] bg-[#FAFAF7] p-3">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Send meeting schedule to brand</p>
               <div className="mt-3 grid gap-2">
@@ -1131,6 +1132,44 @@ export const V3BusinessCaseConnectSchedule = () => {
     return savedSessions;
   };
 
+  const pollAnalysisJob = async (jobId, partialFailure) => {
+    // Poll every 2.5s for up to ~5 minutes; bail early on completed/failed.
+    const POLL_INTERVAL_MS = 2500;
+    const MAX_POLLS = 120;
+    for (let i = 0; i < MAX_POLLS; i++) {
+      // If the user navigated away or analysis was cancelled, stop.
+      if (!inFlightRef.current) return;
+      try {
+        const job = await v3GetAnalyzeAllJob(id, jobId);
+        const progress = job.progress || 0;
+        const message = job.message || `Analyzing... ${progress}%`;
+        setSaveNotice(message);
+        if (job.status === 'completed') {
+          if (job.recommendation) setAnalysisResult(job.recommendation);
+          await reload();
+          const base = 'AI analysis complete from the saved Connect transcripts.';
+          setSaveNotice(partialFailure ? `${base} (Warning: ${partialFailure})` : base);
+          return;
+        }
+        if (job.status === 'failed') {
+          const fallbackRec = job.recommendation;
+          if (fallbackRec) setAnalysisResult(fallbackRec);
+          await reload();
+          setSaveNotice(`Claude analysis failed — showing safe fallback. (${job.error || job.message || 'unknown error'})`);
+          return;
+        }
+      } catch (err) {
+        // Transient poll error — keep trying unless explicitly 404
+        if (err?.response?.status === 404) {
+          setSaveNotice('Analysis job missing on server. Please retry.');
+          return;
+        }
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    setSaveNotice('Analysis is taking longer than expected. It will keep running on the server — refresh the page later to see results.');
+  };
+
   const runCombinedAnalysis = async () => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
@@ -1142,17 +1181,25 @@ export const V3BusinessCaseConnectSchedule = () => {
       if (savedSessions.partialFailure) {
         setSaveNotice(savedSessions.partialFailure);
       }
+      setSaveNotice('Starting transcript analysis...');
       const res = await v3AnalyzeAllTranscripts(id);
-      if (res.ok) {
-        setAnalysisResult(res.recommendation);
-        setSaveNotice((current) => {
-          const base = 'AI analysis complete from the saved Connect transcripts.';
-          return savedSessions.partialFailure ? `${base} (Warning: ${savedSessions.partialFailure})` : base;
-        });
-        await reload();
-      } else {
+      if (!res?.ok) {
         setSaveNotice('AI analysis failed.');
+        return;
       }
+      // Background-job mode → poll until completed/failed
+      if (res.mode === 'background_job' && res.job_id) {
+        setSaveNotice(res.message || `Analyzing ${res.transcript_count || ''} transcripts in the background...`);
+        await pollAnalysisJob(res.job_id, savedSessions.partialFailure);
+        return;
+      }
+      // Sync mode → result already inline
+      if (res.recommendation) setAnalysisResult(res.recommendation);
+      setSaveNotice((current) => {
+        const base = 'AI analysis complete from the saved Connect transcripts.';
+        return savedSessions.partialFailure ? `${base} (Warning: ${savedSessions.partialFailure})` : base;
+      });
+      await reload();
     } catch (e) {
       setSaveNotice(e?.response?.data?.detail || e?.message || 'AI analysis failed.');
     } finally {
@@ -2185,7 +2232,7 @@ export const V1BusinessCaseFrameTranscripts = () => {
       <InfoCard 
         title="Transcripts" 
         action={
-          <button onClick={addTranscript} className="v3-btn-primary text-[12px] flex items-center gap-1">
+          <button type="button" onClick={addTranscript} className="v3-btn-primary text-[12px] flex items-center gap-1" data-testid="connect-add-transcript-btn-secondary">
             <Plus className="w-3.5 h-3.5" /> Add Transcript
           </button>
         }
