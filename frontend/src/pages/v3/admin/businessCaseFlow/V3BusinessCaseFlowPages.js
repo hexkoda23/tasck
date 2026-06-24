@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import AnalyzerSourceBanner from '../../../../components/v3/AnalyzerSourceBanner';
+import StrategyDraftEditor from '../../../../components/admin/StrategyDraftEditor';
 import {
   ArrowLeft,
   ArrowRight,
@@ -1974,6 +1975,14 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
             ))}
           </div>
         )}
+      </InfoCard>
+      <InfoCard title="Strategy Draft (working notes)">
+        <StrategyDraftEditor
+          businessCaseId={id}
+          initialDraft={bundle?.business_case?.plan?.strategy_draft}
+          onSaved={() => reload().catch(() => {})}
+          actor="admin"
+        />
       </InfoCard>
       <InfoCard title="Next Plan page">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

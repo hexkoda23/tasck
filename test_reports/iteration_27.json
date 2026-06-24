@@ -1,0 +1,27 @@
+{
+  "summary": "PASS — P2 #1 Strategy Draft persistence is fully verified on BOTH /v3/admin and /admin (V1) routes. Reused StrategyDraftEditor component renders all 9 canonical-heading textareas with the expected data-testids on both routes. Save → reload → nav-away+back all hydrate correctly with the saved values. V3-saved content hydrates cleanly on the V1 route and vice versa (single backend bundle source of truth). Single POST /api/v3/business-cases/{id}/plan/save-strategy-draft per click (no duplicate spam). Backend persists exactly the 9 canonical headings (no extra keys leak through, missing headings default to empty string). Strategy Draft saves do NOT touch case.plan.creative_snapshot (title/sections/status remain null/empty as before). pytest regression /app/backend/tests/test_strategy_draft_persistence.py runs 5/5 PASS. Zero console errors, zero CORS errors observed during the run.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_strategy_draft_persistence.py",
+    "/app/test_reports/pytest/iter27_strategy_draft.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "StrategyDraftEditor useEffect re-hydration keyed on [businessCaseId, initialDraft?.updated_at] correctly handles the late-bundle-arrival case (initial mount with undefined initialDraft, later parent re-render with hydrated bundle). Confirmed visually + via input_value polling. Recommend tests/UI also wait for 'Last saved …' before asserting input values — otherwise a check between editor-mounted and bundle-arrived can race and read empty strings (false negative).",
+  "v3_routes.py save-strategy-draft endpoint correctly drops unknown keys and back-fills missing canonical keys with empty strings (verified by both pytest and the live cleanup payload). No extra keys ever leak into case.plan.strategy_draft.sections.",
+    "creative_snapshot is fully orthogonal to strategy_draft writes (separate sub-doc on case.plan). Verified pre+post save state on bc-472329ed4c — title/sections/status untouched."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% (5/5 pytest pass, 1 save POST per UI click, integrity preserved)", "frontend": "100% (V3 + V1: all 9 testids render, save+reload+nav-back all hydrate, cross-route hydration works, no console errors)" },
+  "test_credentials": "POST /api/auth/demo-login {role:'admin'} -> token; seeded localStorage tasck_user (JSON) + tasck_token (string) — works as documented in /app/memory/test_credentials.md.",
+  "seed_data_creation": "Wrote to case.plan.strategy_draft on bc-472329ed4c during testing. Cleaned up at end of run by POSTing all-empty sections via /plan/save-strategy-draft (verified: 9 canonical keys, all '', ok=true). creative_snapshot was untouched throughout.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Strategy Draft persistence is closed and stable across BOTH /v3/admin and /admin (V1) routes via the shared StrategyDraftEditor component. The component hydrates on the second useEffect pass after initialDraft.updated_at populates from the bundle GET, so any future Playwright check MUST wait for data-testid='strategy-draft-saved-at' to contain 'Last saved …' before reading textarea values — otherwise it can race with the post-mount hydration and falsely read empty strings (this caught me on the first run and was fixed by polling for the saved-at label). Backend endpoint POST /api/v3/business-cases/{id}/plan/save-strategy-draft enforces the 9 canonical heading set strictly (drops unknown, back-fills missing→''). It is independent of case.plan.creative_snapshot — they share case.plan but never co-mutate.",
+  "rca of the issue": "N/A — no bug to RCA. Initial Playwright run produced a false-negative on 'reload empty after save' because the assertions fired against the editor in its mounted-but-not-yet-hydrated state (initialDraft prop not yet populated by the case-bundle fetch). Fix in the test harness only: poll the saved-at label for 'Last saved …' (not 'Draft not saved yet.') before asserting input values. Backend + component behaviour are correct."
+}

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
+import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
 import {
   ArrowLeft,
   ArrowRight,
@@ -3235,6 +3236,14 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
             ))}
           </div>
         )}
+      </InfoCard>
+      <InfoCard title="Strategy Draft (working notes)">
+        <StrategyDraftEditor
+          businessCaseId={id}
+          initialDraft={bundle?.business_case?.plan?.strategy_draft}
+          onSaved={() => reload().catch(() => {})}
+          actor="admin"
+        />
       </InfoCard>
       {brandComments.length > 0 && !editing && (
         <InfoCard title={`Brand Comments (${brandComments.length})`}>

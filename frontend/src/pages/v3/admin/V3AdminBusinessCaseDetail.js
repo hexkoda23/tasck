@@ -10,12 +10,13 @@ import {
   v3CreateBrainstorm, v3AddDeliverable, v3GenerateFinalReport, v3SetConnectStatus,
   v3CreateInteraction, v3ResolveScopeFlag, v3ApproveAlignmentAs, v3UpdateAlignment,
   v3SendAlignmentToBrand, v3ResolveAlignmentComment, v3SuggestCreatorMatches,
-  v3SendBriefReminder, v3UpdateStrategySnapshot, v3SaveStrategyDraft,
+  v3SendBriefReminder, v3UpdateStrategySnapshot,
   v3SendStrategySnapshotToBrand, v3ResolveStrategySnapshotComment, v3UpdateInvoice,
   v3UpdateDeliverable,
 } from '../../../lib/v3api';
 import { formatNairaV3 } from '../../../lib/v3data';
 import V3DocumentSurface from '../../../components/v3/V3DocumentSurface';
+import StrategyDraftEditor from '../../../components/admin/StrategyDraftEditor';
 import {
   ArrowLeft, ChevronRight, CheckCircle2, Clock, AlertTriangle, FileText,
   Sparkles, ShieldAlert, FileSignature, PackageCheck, AlertOctagon, Plus,
@@ -800,8 +801,6 @@ const V3AdminBusinessCaseDetail = () => {
   // Plan-phase editable drafts (session-scoped)
   const [planBrainstormText, setPlanBrainstormText] = useState('');
   const [planStrategyDraft, setPlanStrategyDraft] = useState({});
-  const [strategyDraftSavedAt, setStrategyDraftSavedAt] = useState(null);
-  const [strategyDraftSaving, setStrategyDraftSaving] = useState(false);
 
   const reload = () => v3GetBusinessCase(id)
     .then((next) => {
@@ -819,30 +818,6 @@ const V3AdminBusinessCaseDetail = () => {
   useEffect(() => {
     reload();
   }, [id]);
-
-  // Hydrate the 9-section Strategy Draft from the persisted business case so
-  // the editor survives reloads and browser navigation.
-  useEffect(() => {
-    const draft = bundle?.business_case?.plan?.strategy_draft;
-    if (draft && draft.sections && typeof draft.sections === 'object') {
-      setPlanStrategyDraft(draft.sections);
-      setStrategyDraftSavedAt(draft.updated_at || null);
-    }
-  }, [bundle?.business_case?.id, bundle?.business_case?.plan?.strategy_draft?.updated_at]);
-
-  const handleSaveStrategyDraft = async () => {
-    if (!id) return;
-    setStrategyDraftSaving(true);
-    try {
-      const res = await v3SaveStrategyDraft(id, planStrategyDraft, 'admin');
-      setStrategyDraftSavedAt(res?.strategy_draft?.updated_at || new Date().toISOString());
-      setToast({ kind: 'success', text: 'Strategy draft saved.' });
-    } catch (e) {
-      setToast({ kind: 'error', text: e?.response?.data?.detail || e?.message || 'Failed to save strategy draft.' });
-    } finally {
-      setStrategyDraftSaving(false);
-    }
-  };
 
   useEffect(() => {
     if (bundle?.business_case?.stage) {
@@ -2337,43 +2312,12 @@ const V3AdminBusinessCaseDetail = () => {
 
           {/* Editable Strategy — always available */}
           <Section title="Strategy">
-            <div className="space-y-3" data-testid="bc-plan-strategy-editable">
-              <p className="text-[11px] text-[#8A8A8A]">Draft the brand-facing strategy. Sections follow the Strategy Snapshot template.</p>
-              {[
-                'Executive Snapshot', 'Strategic Foundation', 'Growth Plan',
-                'Creator Strategy', 'Execution Roadmap', 'Commercial Overview',
-                'Tracking Plan', 'Risks & Mitigation', 'Next Steps',
-              ].map((heading) => (
-                <div key={heading} className="p-3 rounded border border-[#E8E4DB] bg-[#FAFAF7]">
-                  <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-1">{heading}</label>
-                  <textarea
-                    value={planStrategyDraft[heading] || ''}
-                    onChange={(e) => setPlanStrategyDraft({ ...planStrategyDraft, [heading]: e.target.value })}
-                    rows={3}
-                    placeholder={`${heading}…`}
-                    className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white"
-                    data-testid={`bc-plan-strategy-${heading.replace(/\s+/g, '-').toLowerCase()}`}
-                  />
-                </div>
-              ))}
-              <div className="flex items-center justify-between pt-1">
-                <p className="text-[11px] text-[#8A8A8A]" data-testid="bc-plan-strategy-saved-at">
-                  {strategyDraftSavedAt
-                    ? `Last saved ${new Date(strategyDraftSavedAt).toLocaleString()}`
-                    : 'Draft not saved yet.'}
-                </p>
-                <button
-                  type="button"
-                  onClick={handleSaveStrategyDraft}
-                  disabled={strategyDraftSaving}
-                  className="v3-btn-primary flex items-center gap-1.5"
-                  data-testid="bc-plan-strategy-save-btn"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  {strategyDraftSaving ? 'Saving…' : 'Save Strategy Draft'}
-                </button>
-              </div>
-            </div>
+            <StrategyDraftEditor
+              businessCaseId={id}
+              initialDraft={bundle?.business_case?.plan?.strategy_draft}
+              onSaved={() => reload().catch(() => {})}
+              actor="admin"
+            />
           </Section>
 
           {!isGrant && bundle.invoices?.filter((i) => i.kind === 'strategy_development_fee').length > 0 && (
