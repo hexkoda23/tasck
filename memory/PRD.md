@@ -491,6 +491,45 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (P0 RESTORATION: 10 fixes recovered after `git checkout --theirs` regression — VERIFIED iter29)
+
+### Root cause
+User resolved a GitHub merge conflict using `git checkout --theirs` on `backend/v3_routes.py` and `frontend/src/pages/admin/V1AdminCRMBrandDetail.js`. The "theirs" version was an older PR branch base that pre-dated the 10 critical session fixes, so all 10 reverted. The user's own new commit `fdc432c` (WEYAN logo pin + V1 admin Connect/Frame segmentation) was preserved; only the two regressed files lost work.
+
+### Restoration strategy (additive, no rollback of user changes)
+- `v3_routes.py` restored from auto-commit `e61adc6` (10637 lines — the last working state with all 10 fixes intact).
+- WEYAN logo pin re-applied on top: `WEYAN_LOGO_URL` constant (line 513), `_is_weyan_brand()` helper (line 516), pin assignment after the bad-logo drop check (line 2238) so a bad scraped logo cannot survive and the pin always wins for any brand whose normalised name contains "weyan".
+- `V1AdminCRMBrandDetail.js` `handleScrape` block restored: now reads `res.warnings` + `res.enrichment_target.warnings`, dedupes, surfaces the first as a warning toast and the next 3 as follow-up toasts, then `toast.success("Scraped via {source_type}{summary}")` with source URL / logo-found / supporting-links summary. The user's new `SharedBrandLogo` refactor (from `lib/brandLogo`) is preserved untouched.
+
+### 10 fixes verified (iter29 / 94% backend / 100% frontend)
+1. **SerpAPI brand scraper**: rejects `apps.apple.com` / `itunes.apple.com`, prefers official website. Verified live on CJID (`website=https://thecjid.org`).
+2. **8 readiness fields**: `ALIGNMENT_SNAPSHOT_FIELD_SPECS` now `key_marketing_focus / primary_target_audience / key_marketing_channels / kpis / budget_range / timeline / approval_process_decision_maker / current_marketing_challenge`. Confirmed live in `bc-472329ed4c.connect.alignment_tool_analysis`.
+3. **Honest fallback**: `_extract_marketing_intelligence` surfaces `Needs confirmation:` markers when LLM is unreachable; no invented Instagram/TikTok/KPI/audience/budget/timeline values.
+4. **Background Job + Smart Split**: `POST /connect/analyze-all` hybrid sync (≤1 transcript, ≤12000 chars, 20s budget) or background (`mode='background_job', job_id`); `GET /connect/analyze-all/jobs/{job_id}` returns progress + final readiness. pytest 4/4 PASS.
+5. **Anthropic priority + model**: `ALIGNMENT_ANALYZER_MODEL=claude-sonnet-4-5`, provider priority Anthropic → Emergent → Custom → OpenAI → honest_fallback. Gracefully degrades on out-of-credit (no 5xx).
+6. **Safe opt-in email**: `MeetingCreate.send_invite_email: bool = False` (line 9155); `queue_email` only fires when caller passes `send_invite_email=True`. Suppression log line confirmed live. pytest 4/4 PASS.
+7. **Strategy draft persistence**: `POST /api/v3/business-cases/{id}/plan/save-strategy-draft` writes 9 canonical headings into `case.plan.strategy_draft.sections`. pytest 5/5 PASS.
+8. **Gated diagnostics + admin cleanup**: `GET /api/v3/diagnostics/anthropic` and `DELETE /api/v3/meetings/{id}` return 404 when their `ENABLE_*` env flag is false (safer than 403).
+9. **Welcome email deliverability**: subject `Welcome to your TASCK brand workspace`, HTML body always included, idempotency via `v3_email_outbox.find_one({brand_id, kind:'brand_welcome'})`. pytest 2/2 PASS.
+10. **Frontend scrape warnings UI** (`V1AdminCRMBrandDetail.js handleScrape` L310-344): warnings deduped + surfaced as warning toasts; `toast.success(\`Scraped via ${sourceType}${summary}\`)` with source URL / logo-found / supporting-links summary.
+
+### Files touched this iteration
+- `/app/backend/v3_routes.py` — restored from `e61adc6` (10637 lines) + WEYAN pin re-applied (3 chunks).
+- `/app/frontend/src/pages/admin/V1AdminCRMBrandDetail.js` — `handleScrape` warnings + summary toast restored; `SharedBrandLogo` refactor preserved.
+- `/app/backend/tests/test_iter29_restoration.py` — NEW targeted restoration verification file.
+- `/app/test_reports/iteration_29.json`, `/app/test_reports/pytest/iter29_restoration.xml`, `iter29_restoration_targeted.xml` — NEW.
+
+### Known acceptable test failures (env, not product)
+- `test_v33_alignment_overhaul::test_brand_call_transcript_rich` and `test_analyze_all_connect_transcripts` hardcode-assert `analysis_source='anthropic'`. When `ANTHROPIC_API_KEY` is out-of-credit in preview, the correct restored behaviour is `analysis_source='honest_fallback'` — these two tests will go green again when the key is topped up. Not blocking.
+
+### Outstanding / next priorities
+- P2 Refactor `v3_routes.py` (now 10650 lines) into per-domain routers — explicit recommendation from iter29 reviewer.
+- P2 Optional: relax the two stale anthropic-assertion tests so they accept `{'anthropic','honest_fallback'}`.
+- P2 Mobile responsiveness pass.
+- P2 React-hooks ESLint warning cleanup.
+- P2 WhatsApp document sharing.
+
+
 ## Update — 24 Feb 2026 (URGENT P0: Connect 'Analyze All' was sending N invite emails — FIXED, verified iter28)
 
 ### Root cause
