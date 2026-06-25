@@ -7,7 +7,7 @@ import {
   v3CreateBusinessCase, v3ListOpportunityCandidates,
 } from '../../lib/v3api';
 import {
-  formatNairaV3, formatValueV3, v3Stages,
+  formatNairaV3, formatValueV3,
 } from '../../lib/v3data';
 import { candidateToBusinessOpportunity } from '../../lib/v3opportunityDemo';
 import V3Modal from '../../components/v3/V3Modal';
@@ -19,8 +19,30 @@ const stageMeta = {
   frame: { label: 'Frame', color: '#C49B5F' },
   plan: { label: 'Plan', color: '#1F4A3A' },
   deliver: { label: 'Deliver', color: '#567B3F' },
-  closed: { label: 'Closed', color: '#B54A37' },
+  // The backend `closed` stage is where the Reporting / closeout work happens.
+  closed: { label: 'Reporting', color: '#B54A37' },
 };
+
+// Business Cases only surface once a brand has reached Plan. Connect / Frame stay
+// inside the CRM brand workflow, so they never appear here.
+const VISIBLE_STAGES = ['plan', 'deliver', 'closed'];
+
+// Filter chips shown for the Business Case area and how each maps onto a real
+// backend stage. "Reporting" is the `closed` stage (final-report / closeout).
+const BC_STAGE_CHIPS = [
+  { key: 'all', label: 'All' },
+  { key: 'plan', label: 'Plan' },
+  { key: 'deliver', label: 'Deliver' },
+  { key: 'reporting', label: 'Reporting' },
+];
+const CHIP_STAGE = { plan: 'plan', deliver: 'deliver', reporting: 'closed' };
+
+// Stages shown in the overview "By stage" breakdown for the Business Case area.
+const BC_STAGE_METRICS = [
+  { key: 'plan', label: 'Plan', color: '#1F4A3A' },
+  { key: 'deliver', label: 'Deliver', color: '#567B3F' },
+  { key: 'closed', label: 'Reporting', color: '#B54A37' },
+];
 
 const healthBadge = (h) => {
   const map = {
@@ -33,11 +55,11 @@ const healthBadge = (h) => {
   return map[key] || map.new;
 };
 
-const STAGE_INDEX = { connect: 0, frame: 1, plan: 2, deliver: 3, reporting: 4, closed: 4 };
+// Phase tab index relative to the Business Case phases (Plan → Delivery → Reporting).
+// A phase tab is locked until the case has reached that stage.
+const STAGE_PHASE_INDEX = { plan: 0, deliver: 1, reporting: 2, closed: 2 };
 
 const phaseLinks = (id) => [
-  ['Connect', adminRoute(`/business-cases/${id}/connect`)],
-  ['Frame', adminRoute(`/business-cases/${id}/frame/snapshot`)],
   ['Plan', adminRoute(`/business-cases/${id}/plan/brainstorm`)],
   ['Delivery', adminRoute(`/business-cases/${id}/delivery/summary`)],
   ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
@@ -110,7 +132,7 @@ const V1AdminBusinessCases = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialStage = (searchParams.get('stage') || 'all').toLowerCase();
-  const validStages = ['all', ...v3Stages.map((s) => s.key)];
+  const validStages = BC_STAGE_CHIPS.map((c) => c.key);
   const [cases, setCases] = useState([]);
   const [overview, setOverview] = useState(null);
   const [stage, setStage] = useState(validStages.includes(initialStage) ? initialStage : 'all');
@@ -195,7 +217,9 @@ const V1AdminBusinessCases = () => {
     () => dedupeBusinessCasesForV1(
       (Array.isArray(cases) ? cases : []).filter(
         (c) =>
-          (stage === 'all' || c.stage === stage) &&
+          // Only brands that have reached Plan appear in the Business Case area.
+          VISIBLE_STAGES.includes(c.stage) &&
+          (stage === 'all' || c.stage === CHIP_STAGE[stage]) &&
           (track === 'all' || c.engagement_track === track)
       )
     ),
@@ -393,7 +417,7 @@ const V1AdminBusinessCases = () => {
           <div className="v3-card p-5">
             <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">By Stage</p>
             <div className="space-y-1">
-              {v3Stages.map((s) => (
+              {BC_STAGE_METRICS.map((s) => (
                 <div key={s.key} className="flex items-center justify-between text-[11px]">
                   <span className="text-[#6E6657]">{s.label}</span>
                   <span
@@ -418,23 +442,25 @@ const V1AdminBusinessCases = () => {
       <div className="flex items-center gap-3 mb-6">
         <Filter className="w-4 h-4 text-[#8A8A8A]" />
         <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg" data-testid="bc-stage-filter">
-          {['all', 'connect', 'frame', 'plan', 'deliver', 'closed'].map((s) => {
-            const stageCount = s === 'all'
-              ? (Array.isArray(cases) ? cases.length : 0)
-              : (byStage[s]?.count ?? (Array.isArray(cases) ? cases.filter((c) => c.stage === s).length : 0));
+          {BC_STAGE_CHIPS.map(({ key, label }) => {
+            const visibleCases = Array.isArray(cases) ? cases.filter((c) => VISIBLE_STAGES.includes(c.stage)) : [];
+            const mappedStage = CHIP_STAGE[key];
+            const stageCount = key === 'all'
+              ? visibleCases.length
+              : (byStage[mappedStage]?.count ?? visibleCases.filter((c) => c.stage === mappedStage).length);
             return (
               <button
-                key={s}
+                key={key}
                 onClick={() => {
-                  setStage(s);
+                  setStage(key);
                   const next = new URLSearchParams(searchParams);
-                  if (s === 'all') next.delete('stage'); else next.set('stage', s);
+                  if (key === 'all') next.delete('stage'); else next.set('stage', key);
                   setSearchParams(next, { replace: true });
                 }}
-                className={`text-[11px] px-3 py-1 rounded transition-colors capitalize ${stage === s ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
-                data-testid={`bc-stage-${s}`}
+                className={`text-[11px] px-3 py-1 rounded transition-colors ${stage === key ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
+                data-testid={`bc-stage-${key}`}
               >
-                {s} <span className="text-[10px] opacity-70">({stageCount})</span>
+                {label} <span className="text-[10px] opacity-70">({stageCount})</span>
               </button>
             );
           })}
@@ -528,7 +554,7 @@ const V1AdminBusinessCases = () => {
       {/* List */}
       <div className="space-y-2">
         {filtered.map((c) => {
-          const sm = stageMeta[c.stage] || stageMeta.connect;
+          const sm = stageMeta[c.stage] || stageMeta.plan;
           const hb = healthBadge(c.health);
           const nextPath = businessCasePhasePath(c.id, c);
           return (
@@ -587,7 +613,7 @@ const V1AdminBusinessCases = () => {
               </div>
               <div className="flex flex-wrap gap-2 pl-5">
                 {phaseLinks(c.id).map(([label, href], idx) => {
-                  const locked = idx > (STAGE_INDEX[c.stage] ?? 0);
+                  const locked = idx > (STAGE_PHASE_INDEX[c.stage] ?? 0);
                   const isActive = href === nextPath;
                   return (
                     <button

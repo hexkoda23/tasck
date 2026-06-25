@@ -32,7 +32,6 @@ import os
 import re
 import requests
 import smtplib
-import time
 import uuid
 import zipfile
 
@@ -86,260 +85,6 @@ def _brand_created_at_key(brand: Dict[str, Any]) -> str:
     return created_at if isinstance(created_at, str) else ""
 
 
-# Logo URL substrings that mark a stored value as a generic marketplace /
-# social asset (e.g. App Store badge). Defined up here so the canonical
-# logo helper can use it before the full scraper helpers load.
-_BAD_LOGO_URL_HINTS = (
-    "apps.apple.com/assets/",
-    "itunes.apple.com/",
-    "play.google.com/intl/",
-    "play.google.com/static/",
-    "googleusercontent.com/play-",
-    "static.xx.fbcdn.net/rsrc.php",
-    "static.licdn.com/",
-    "abs.twimg.com/",
-    "abs-0.twimg.com/",
-    "scontent.cdninstagram.com/static",
-)
-
-
-def _looks_like_bad_logo_url(value: Any) -> bool:
-    text = str(value or "").strip().lower()
-    if not text:
-        return True
-    if not text.startswith(("http://", "https://", "data:")):
-        return True
-    return any(fragment in text for fragment in _BAD_LOGO_URL_HINTS)
-
-
-def _canonical_brand_logo(brand: Dict[str, Any]) -> str:
-    """Pick the brand logo from any of the historic field names so list and
-    detail responses always agree on a single canonical value.
-
-    Values that point at marketplace/social generic assets are skipped so a
-    legacy brand record carrying ``apps.apple.com/assets/app-store.png``
-    surfaces as having no logo (which lets the frontend fall through to
-    clearbit and finally to initials).
-    """
-    if not isinstance(brand, dict):
-        return ""
-    for key in ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url"):
-        value = brand.get(key)
-        if not value or not isinstance(value, str):
-            continue
-        text = value.strip()
-        if not text.lower().startswith(("http://", "https://", "data:")):
-            continue
-        if _looks_like_bad_logo_url(text):
-            continue
-        return text
-    return ""
-
-
-def _normalise_brand_payload(brand: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Ensure every brand record returned by the API exposes a single
-    canonical ``logo_url`` / ``brand_logo_url``. Legacy fields that store
-    generic marketplace assets are also stripped so the frontend never sees
-    e.g. ``apps.apple.com/assets/app-store.png`` and can fall through to
-    its clearbit / initials chain."""
-    if not isinstance(brand, dict):
-        return brand
-    brand = {**brand}
-    logo = _canonical_brand_logo(brand)
-    if logo:
-        brand["logo_url"] = logo
-        brand["brand_logo_url"] = logo
-    else:
-        # Strip every historic field that holds a bad-looking asset so the
-        # frontend defensive filter never has to think about it.
-        for key in ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url"):
-            value = brand.get(key)
-            if value and _looks_like_bad_logo_url(value):
-                brand[key] = ""
-    return brand
-
-
-# Marketplace / app store / social / directory domains that are never
-# allowed as a brand's primary website. These can be saved as supporting
-# links but must never overwrite ``website``, ``logo_url``, or ``about``.
-_MARKETPLACE_REJECT_DOMAINS = {
-    "apps.apple.com", "itunes.apple.com",
-    "play.google.com", "play.google.com.ng", "market.android.com",
-    "instagram.com", "facebook.com", "x.com", "twitter.com",
-    "tiktok.com", "linkedin.com", "snapchat.com", "youtube.com", "youtu.be",
-    "crunchbase.com", "producthunt.com", "indeed.com", "glassdoor.com",
-    "yelp.com", "google.com", "bing.com", "duckduckgo.com",
-    "wikipedia.org", "wikidata.org", "amazon.com", "amazon.co.uk",
-    "etsy.com", "ebay.com", "alibaba.com", "jiji.ng", "konga.com",
-    "github.com", "medium.com", "substack.com", "wordpress.com",
-    "wix.com", "godaddy.com", "namecheap.com",
-}
-
-
-# Logo URLs from these CDN/asset paths are generic store/social icons and
-# must be rejected as a brand logo even if scraping picked them up.
-_LOGO_REJECT_URL_FRAGMENTS = (
-    "apps.apple.com/assets/",
-    "itunes.apple.com/",
-    "play.google.com/intl/",
-    "play.google.com/static/",
-    "googleusercontent.com/play-",
-    "static.xx.fbcdn.net/rsrc.php",
-    "static.licdn.com/",
-    "abs.twimg.com/",
-    "abs-0.twimg.com/",
-    "scontent.cdninstagram.com/static",
-)
-_LOGO_REJECT_ALT_HINTS = (
-    "app store", "app-store", "download on the app store",
-    "google play", "get it on google play", "google-play",
-    "appstore-badge", "googleplay-badge", "download badge",
-    "instagram icon", "facebook icon", "twitter icon",
-)
-
-
-def _is_marketplace_domain(domain: str) -> bool:
-    if not domain:
-        return False
-    domain = domain.lower().lstrip("www.")
-    return any(domain == reject or domain.endswith("." + reject) or domain == reject for reject in _MARKETPLACE_REJECT_DOMAINS)
-
-
-def _is_bad_logo_url(candidate: str, official_domain: str = "", alt_hint: str = "") -> bool:
-    """True when the candidate logo URL is a generic marketplace/social
-    asset that must not be saved as the brand logo.
-    """
-    if not candidate or candidate.startswith("data:"):
-        return True
-    lowered = candidate.lower()
-    if any(fragment in lowered for fragment in _LOGO_REJECT_URL_FRAGMENTS):
-        return True
-    alt = (alt_hint or "").lower()
-    if any(hint in alt for hint in _LOGO_REJECT_ALT_HINTS):
-        return True
-    # If the logo URL is from a marketplace domain but the official site is
-    # somewhere else, reject the logo. (When the official source itself is
-    # the App Store as a last resort, we accept it.)
-    logo_domain = _domain_from_url(candidate)
-    if official_domain and logo_domain and _is_marketplace_domain(logo_domain):
-        official = (official_domain or "").lstrip("www.")
-        if not _is_marketplace_domain(official):
-            return True
-    return False
-
-
-def _score_brand_candidate(url: str, brand_name: str, declared_website: str = "") -> Dict[str, Any]:
-    """Score a candidate URL for being the brand's official website.
-
-    Returns ``{url, domain, source_type, score, reason}``. Higher is better.
-    """
-    candidate = _normalise_website_url(url)
-    domain = _domain_from_url(candidate)
-    declared_domain = _domain_from_url(declared_website)
-    brand_token = _normalise_brand_token(brand_name)
-    domain_root = (domain or "").split(".")[0].lstrip("www.")
-    domain_token = _normalise_brand_token(domain_root)
-
-    if not candidate or not domain:
-        return {"url": url, "domain": domain, "source_type": "invalid", "score": 0, "reason": "Empty or unparseable URL."}
-
-    # Pinned explicit website.
-    if declared_domain and domain == declared_domain:
-        return {"url": candidate, "domain": domain, "source_type": "official_website", "score": 100, "reason": "Matches the explicit website provided by admin."}
-
-    if _is_marketplace_domain(domain):
-        return {"url": candidate, "domain": domain, "source_type": "marketplace", "score": 5, "reason": f"Rejected as primary source because {domain} is a marketplace/social/directory page."}
-
-    score = 30
-    reasons: List[str] = ["SerpAPI organic result."]
-    if brand_token and domain_token and (domain_token in brand_token or brand_token in domain_token):
-        score += 50
-        reasons.append("Domain name matches brand name.")
-    if brand_token and brand_token in candidate.lower().replace(".", "").replace("-", ""):
-        score += 5
-    if domain.endswith((".app", ".io", ".co", ".com", ".ng", ".io.app")):
-        score += 5
-    return {"url": candidate, "domain": domain, "source_type": "candidate_website", "score": score, "reason": " ".join(reasons)}
-
-
-async def discover_brand_sources_with_serpapi(brand: Dict[str, Any]) -> Dict[str, Any]:
-    """Always run SerpAPI (when configured) and return scored candidates +
-    the selected primary source + rejected supporting links.
-
-    ``brand`` should already contain at least ``company`` and optionally
-    ``website``, ``email``, ``industry``, ``hq``.
-    """
-    brand_name = str(brand.get("company") or brand.get("name") or brand.get("brand_name") or "").strip()
-    declared_website = _normalise_website_url(brand.get("website") or brand.get("url") or brand.get("brand_url") or "")
-    declared_domain = _domain_from_url(declared_website)
-    industry = str(brand.get("industry") or brand.get("category") or "").strip()
-    hq = str(brand.get("hq") or "").strip()
-    api_key = os.getenv("SERPAPI_API_KEY", "").strip()
-    candidates: List[Dict[str, Any]] = []
-
-    if declared_website:
-        candidates.append({
-            "url": declared_website,
-            "domain": declared_domain,
-            "source_type": "official_website",
-            "score": 100,
-            "reason": "Explicit website provided by admin.",
-        })
-
-    if api_key and brand_name:
-        queries: List[str] = [f"{brand_name} official website"]
-        if industry:
-            queries.append(f"{brand_name} {industry} official website")
-        if declared_domain:
-            queries.append(f"site:{declared_domain}")
-            queries.append(f"{brand_name} {declared_domain}")
-        if hq:
-            queries.append(f"{brand_name} {hq} official site")
-        seen_urls = {c["url"] for c in candidates}
-        for query in queries[:4]:
-            try:
-                params = {"engine": "google", "q": query, "api_key": api_key, "num": 5}
-                resp = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
-                resp.raise_for_status()
-                data = resp.json()
-                for result in data.get("organic_results") or []:
-                    link = str(result.get("link") or "")
-                    if not link or link in seen_urls:
-                        continue
-                    scored = _score_brand_candidate(link, brand_name, declared_website)
-                    if scored["score"] <= 0:
-                        continue
-                    candidates.append(scored)
-                    seen_urls.add(link)
-            except requests.RequestException as exc:
-                logger.warning("SerpAPI discovery failed for %s (query=%r): %s", brand_name, query, exc)
-
-    candidates.sort(key=lambda item: item.get("score", 0), reverse=True)
-    accepted: List[Dict[str, Any]] = [c for c in candidates if c.get("source_type") != "marketplace" and c.get("score", 0) > 5]
-    rejected: List[Dict[str, Any]] = [c for c in candidates if c.get("source_type") == "marketplace" or c.get("score", 0) <= 5]
-    selected = accepted[0] if accepted else None
-
-    warnings: List[str] = []
-    if selected and rejected:
-        marketplace_rejects = [c for c in rejected if c.get("source_type") == "marketplace"]
-        if marketplace_rejects and selected.get("source_type") in ("official_website", "candidate_website"):
-            for c in marketplace_rejects:
-                warnings.append(f"Ignored {c['domain']} as primary source because official website {selected['domain']} exists.")
-    if not selected and rejected:
-        # As an absolute last resort, accept the highest-scored marketplace.
-        rejected.sort(key=lambda item: item.get("score", 0), reverse=True)
-        selected = rejected[0]
-        warnings.append(f"No official website found via SerpAPI. Using fallback source {selected['domain']}.")
-
-    return {
-        "selected": selected,
-        "accepted_candidates": accepted[:5],
-        "rejected_candidates": rejected[:5],
-        "warnings": warnings,
-        "brand_name": brand_name,
-    }
-
-
 def _domain_from_url(value: str) -> str:
     raw = str(value or "").strip()
     match = re.search(r"https?://([^/]+)", raw)
@@ -369,12 +114,7 @@ def _normalise_website_url(value: Any) -> str:
     return ""
 
 
-def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "", brand_name: Any = "") -> str:
-    """Resolve a website URL for a brand without blindly using mismatched email domains.
-
-    Priority: explicit website > explicit source url > email domain only when
-    it clearly matches the brand name (and is not in the agency block list).
-    """
+def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "") -> str:
     direct = _normalise_website_url(website)
     if direct:
         return direct
@@ -383,117 +123,8 @@ def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url
         return source
     email_domain = str(email or "").strip().lower().rsplit("@", 1)[-1] if "@" in str(email or "") else ""
     if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS and "." in email_domain:
-        if email_domain in _AGENCY_BLOCKED_DOMAINS:
-            return ""
-        if brand_name and not _email_domain_matches_brand(email_domain, str(brand_name)):
-            return ""
         return f"https://{email_domain}"
     return ""
-
-
-# Agency / internal domains that must NEVER be treated as a client brand's
-# website or identity, even if they appear in a contact email. These can still
-# be saved as raw contact emails but are skipped for scrape/enrichment.
-_AGENCY_BLOCKED_DOMAINS = {
-    "tasck.com",
-    "thetasck.com",
-    "thcodemo.space",
-    "emergent.host",
-    "emergentagent.com",
-    "preview.emergentagent.com",
-}
-
-
-_BRAND_NAME_NOISE_TOKENS = {
-    "ltd", "limited", "inc", "incorporated", "co", "company", "corp", "corporation",
-    "group", "global", "intl", "international", "nigeria", "ng", "africa", "plc",
-    "holdings", "the", "and", "&",
-}
-
-
-def _normalise_brand_token(value: Any) -> str:
-    text = str(value or "").lower()
-    text = re.sub(r"[^a-z0-9]+", " ", text)
-    tokens = [t for t in text.split() if t and t not in _BRAND_NAME_NOISE_TOKENS]
-    return "".join(tokens)
-
-
-def _email_domain_matches_brand(email_domain: str, brand_name: str) -> bool:
-    """True when the email domain root clearly refers to the brand.
-
-    Example: brand 'Pepsi' + domain 'pepsi.com' -> True
-             brand 'Pepsi' + domain 'tasck.com' -> False
-    """
-    domain_root = (email_domain or "").split(".")[0].lower()
-    domain_token = _normalise_brand_token(domain_root)
-    brand_token = _normalise_brand_token(brand_name)
-    if not domain_token or not brand_token:
-        return False
-    return domain_token in brand_token or brand_token in domain_token
-
-
-def resolve_brand_enrichment_target(brand: Dict[str, Any]) -> Dict[str, Any]:
-    """Pick the safest target for brand scrape/enrichment.
-
-    Returns: {target_type, target_value, confidence, warnings}
-
-    target_type is one of:
-      - "website"      explicit website on the brand record (highest confidence)
-      - "email_domain" contact email domain that matches the brand name
-      - "brand_name"   fall back to searching by the brand name (medium confidence)
-      - "none"         no usable target (skip scrape)
-    """
-    warnings: List[str] = []
-    raw_website = brand.get("website") or brand.get("url") or brand.get("brand_url") or brand.get("source_url") or ""
-    brand_name = str(brand.get("company") or brand.get("name") or brand.get("brand_name") or "").strip()
-    email = str(brand.get("email") or brand.get("primary_email") or "").strip().lower()
-    email_domain = email.rsplit("@", 1)[-1] if "@" in email else ""
-
-    explicit_website = _normalise_website_url(raw_website)
-
-    # Case A — explicit website wins, always.
-    if explicit_website:
-        if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS:
-            website_domain = _domain_from_url(explicit_website)
-            if email_domain != website_domain:
-                warnings.append(f"Ignored contact email domain {email_domain} because explicit website {website_domain} exists.")
-        return {
-            "target_type": "website",
-            "target_value": explicit_website,
-            "confidence": "high",
-            "warnings": warnings,
-        }
-
-    # Case C — email domain that clearly matches the brand name (and not on
-    # the agency block list) is usable.
-    if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS:
-        if email_domain in _AGENCY_BLOCKED_DOMAINS:
-            warnings.append(f"Ignored contact email domain {email_domain} because it is on the agency block list.")
-        elif brand_name and _email_domain_matches_brand(email_domain, brand_name):
-            return {
-                "target_type": "email_domain",
-                "target_value": f"https://{email_domain}",
-                "confidence": "high",
-                "warnings": warnings,
-            }
-        elif brand_name:
-            warnings.append(f"Ignored contact email domain {email_domain} because it does not match brand name {brand_name}.")
-
-    # Case B — fall back to the brand name search.
-    if brand_name:
-        return {
-            "target_type": "brand_name",
-            "target_value": brand_name,
-            "confidence": "medium",
-            "warnings": warnings,
-        }
-
-    return {
-        "target_type": "none",
-        "target_value": "",
-        "confidence": "low",
-        "warnings": warnings + ["No usable brand identity (no website, no brand name, no matching email domain)."],
-    }
 
 
 def _compact_text(value: Any, limit: int = 900) -> str:
@@ -506,6 +137,16 @@ def _compact_text(value: Any, limit: int = 900) -> str:
     else:
         text = str(value)
     return " ".join(text.split())[:limit]
+
+
+# We Yan's published logo is white-on-transparent and disappears on the white logo tile,
+# so we always pin it to a known-good logo whenever its details are scraped.
+WEYAN_LOGO_URL = "https://scontent-los4-1.cdninstagram.com/v/t51.82787-19/601692842_17862524652545721_3369637980792452369_n.jpg?efg=eyJ2ZW5jb2RlX3RhZyI6InByb2ZpbGVfcGljLmRqYW5nby4zMjAuYzIifQ&_nc_ht=scontent-los4-1.cdninstagram.com&_nc_cat=109&_nc_oc=Q6cZ2gH9uAtrwTgLvFzBdmyqtcKhToIxt0TV3qRdx9FYnsKC_blx2--pkZkQF65wp-TP4jU&_nc_ohc=4FM9BtLjBKcQ7kNvwGP6Zqz&_nc_gid=wGJOFiidyqtUGSEfxTF9jA&edm=APoiHPcBAAAA&ccb=7-5&oh=00_Af9y_Zg_LBk9ujRAVBg8BCZnKH6wciQ7EPwXQ4eSKq5S0Q&oe=6A413562&_nc_sid=22de04"
+
+
+def _is_weyan_brand(name: Any) -> bool:
+    normalized = "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+    return "weyan" in normalized
 
 
 def _brand_logo_from_source(source_url: str, raw_logo: Any = None) -> str:
@@ -681,43 +322,15 @@ def _required_missing_fields(text: str, required: List[Tuple[str, List[str]]]) -
 
 
 ALIGNMENT_SNAPSHOT_FIELD_SPECS = [
-    ("Key marketing focus", "key_marketing_focus"),
-    ("Primary target audience", "primary_target_audience"),
-    ("Key marketing channels", "key_marketing_channels"),
-    ("KPIs", "kpis"),
-    ("Budget range", "budget_range"),
-    ("Timeline", "timeline"),
-    ("Approval process / decision maker", "approval_process_decision_maker"),
-    ("Current marketing challenge", "current_marketing_challenge"),
+    ("About The Organisation", "about_the_organisation"),
+    ("What are the Core Focus Areas", "core_focus_areas"),
+    ("Who are The Key Customers/Beneficiaries", "key_customers_beneficiaries"),
+    ("Key Goals or Metrics that are Tracked", "key_goals_metrics"),
+    ("What Success Looks Like / Timeline", "success_timeline"),
+    ("Focus", "focus"),
+    ("Priority", "priority"),
+    ("Date of connect", "date_of_connect"),
 ]
-
-# Field keys that must be normalised to arrays/lists.
-ALIGNMENT_LIST_FIELD_KEYS = {"key_marketing_channels", "kpis"}
-
-# Human readable hints used when fallback marks a field as needing confirmation.
-ALIGNMENT_FIELD_CONFIRMATION_HINTS = {
-    "key_marketing_focus": "key marketing focus",
-    "primary_target_audience": "primary target audience",
-    "key_marketing_channels": "approved marketing channels",
-    "kpis": "KPIs or measurement targets",
-    "budget_range": "budget range",
-    "timeline": "timeline",
-    "approval_process_decision_maker": "approval process or decision maker",
-    "current_marketing_challenge": "current marketing challenge",
-}
-
-
-def _needs_confirmation_text(field_key: str) -> str:
-    hint = ALIGNMENT_FIELD_CONFIRMATION_HINTS.get(field_key, field_key.replace("_", " "))
-    return f"Needs confirmation: the transcript did not clearly state the {hint}."
-
-
-def _needs_confirmation_kpi() -> Dict[str, str]:
-    return {
-        "kpi": "Needs confirmation",
-        "target": "Needs confirmation",
-        "evidence": "The transcript did not clearly state the KPI or measurement target.",
-    }
 
 
 def _parse_json_object(text: str) -> Dict[str, Any]:
@@ -743,309 +356,130 @@ def _response_to_text(response: Any) -> str:
 
 
 def _field_captured(value: Any) -> bool:
-    """A field is captured only when it has real content that is not a needs-confirmation marker."""
-    if isinstance(value, list):
-        if not value:
-            return False
-        # For arrays (channels) the field is captured if at least one real
-        # entry exists that is not a "needs confirmation" placeholder. KPI
-        # arrays carry dicts so each entry has to be inspected.
-        for entry in value:
-            if isinstance(entry, dict):
-                kpi = str(entry.get("kpi") or "").strip().lower()
-                if kpi and "needs confirmation" not in kpi and "not captured" not in kpi:
-                    return True
-            else:
-                text = str(entry or "").strip().lower()
-                if text and "needs confirmation" not in text and "not captured" not in text:
-                    return True
-        return False
     text = str(value or "").strip().lower()
     if not text:
         return False
     unavailable_markers = (
-        "needs confirmation",
         "not captured",
         "not provided",
         "not mentioned",
         "unclear",
         "unknown",
+        "brand should confirm",
+        "admin review",
     )
     return not any(marker in text for marker in unavailable_markers)
-
-
-def _normalise_channel_list(value: Any) -> List[str]:
-    if isinstance(value, list):
-        items = value
-    elif isinstance(value, str):
-        # Split comma-separated strings into a list.
-        items = [part.strip() for part in re.split(r"[,;\n]+", value) if part.strip()]
-    elif value in (None, ""):
-        items = []
-    else:
-        items = [str(value)]
-    cleaned: List[str] = []
-    for item in items:
-        text = str(item or "").strip()
-        if text:
-            cleaned.append(text[:160])
-    if not cleaned:
-        return [_needs_confirmation_text("key_marketing_channels")]
-    return cleaned[:10]
-
-
-def _normalise_kpi_list(value: Any) -> List[Dict[str, str]]:
-    if isinstance(value, list):
-        raw_items = value
-    elif isinstance(value, dict):
-        raw_items = [value]
-    elif isinstance(value, str) and value.strip():
-        raw_items = [value.strip()]
-    else:
-        raw_items = []
-
-    cleaned: List[Dict[str, str]] = []
-    for entry in raw_items:
-        if isinstance(entry, dict):
-            kpi = str(entry.get("kpi") or entry.get("name") or entry.get("metric") or "").strip()
-            target = str(entry.get("target") or entry.get("goal") or entry.get("value") or "").strip()
-            evidence = str(entry.get("evidence") or entry.get("source") or entry.get("note") or "").strip()
-            if not kpi:
-                continue
-            cleaned.append({
-                "kpi": kpi[:160],
-                "target": (target or "Needs confirmation")[:240],
-                "evidence": (evidence or "")[:300],
-            })
-        else:
-            text = str(entry or "").strip()
-            if not text:
-                continue
-            cleaned.append({
-                "kpi": text[:160],
-                "target": "Needs confirmation",
-                "evidence": "",
-            })
-    if not cleaned:
-        return [_needs_confirmation_kpi()]
-    return cleaned[:8]
 
 
 def _normalise_alignment_tool_result(card: Dict[str, Any]) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
     for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
-        raw_value = card.get(key)
-        if key == "key_marketing_channels":
-            fields[key] = _normalise_channel_list(raw_value)
-        elif key == "kpis":
-            fields[key] = _normalise_kpi_list(raw_value)
-        else:
-            text = str(raw_value or "").strip()
-            if not text:
-                fields[key] = _needs_confirmation_text(key)
-            else:
-                fields[key] = text[:1400]
-
-    captured_keys: List[str] = []
-    missing_keys: List[str] = []
-    for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
-        if _field_captured(fields.get(key)):
-            captured_keys.append(key)
-        else:
-            missing_keys.append(key)
-
-    # Prefer model-reported captured/missing when they look valid, otherwise
-    # fall back to the deterministic check above.
-    reported_captured = card.get("captured_fields")
-    if isinstance(reported_captured, list) and reported_captured:
-        reported_captured = [str(k).strip() for k in reported_captured if str(k).strip()]
-        captured_keys = [k for k in reported_captured if k in {key for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}]
-        if captured_keys:
-            missing_keys = [key for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS if key not in captured_keys]
+        value = str(card.get(key) or "").strip()
+        fields[key] = value[:1400] if value else f"This detail needs brand confirmation before approval. Please confirm {label.lower()}."
 
     try:
-        raw_confidence = float(card.get("confidence", 0))
-        if raw_confidence > 1:
-            confidence = int(round(max(0.0, min(raw_confidence, 100.0))))
-        else:
-            confidence = int(round(max(0.0, min(raw_confidence, 1.0)) * 100))
+        confidence = int(float(card.get("confidence", 0)))
     except (TypeError, ValueError):
         confidence = 0
+    captured = [label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS if _field_captured(fields.get(key))]
+    missing = [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS if label not in captured]
     if not confidence:
-        confidence = int(round((len(captured_keys) / len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)) * 100))
+        confidence = int(round((len(captured) / len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)) * 100))
 
     evidence_notes = card.get("evidence_notes")
     if not isinstance(evidence_notes, list):
         evidence_notes = [str(evidence_notes)] if evidence_notes else []
 
-    label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
     return {
         **fields,
         "confidence": max(0, min(confidence, 100)),
-        "captured_fields": captured_keys,
-        "missing_fields": missing_keys,
-        "captured_field_labels": [label_for_key[k] for k in captured_keys],
-        "missing_field_labels": [label_for_key[k] for k in missing_keys],
-        "evidence_notes": [str(item)[:400] for item in evidence_notes if str(item).strip()][:12],
+        "captured_fields": captured,
+        "missing_fields": missing,
+        "evidence_notes": [str(item)[:300] for item in evidence_notes if str(item).strip()][:8],
         "analysis_source": str(card.get("analysis_source") or "llm_alignment_tool"),
-        "analysis_model": str(card.get("analysis_model") or ""),
         "generated_at": _now_iso(),
     }
 
 
 def _alignment_tool_system_prompt() -> str:
     return """
-You are TASCK's Business Call to Alignment Snapshot analyst.
+You are TASCK's Connect-to-Frame Alignment Snapshot analyst.
 
-Your job is to read one or multiple business-call transcripts and produce a clean Alignment Snapshot readiness checklist that TASCK can send back to the brand for confirmation.
+Read the CRM context and every Connect transcript. Extract only what is supported by the evidence. Do not invent facts, numbers, dates, audiences, priorities, or goals. If a field is unclear, say exactly what the brand should confirm. Produce polished Nigerian business English suitable for sending to a brand for review.
 
-Return ONLY valid JSON. No markdown. No explanation outside JSON.
-
-Required JSON keys:
+Return JSON only, no markdown, with exactly these keys:
 {
-  "key_marketing_focus": "",
-  "primary_target_audience": "",
-  "key_marketing_channels": [],
-  "kpis": [],
-  "budget_range": "",
-  "timeline": "",
-  "approval_process_decision_maker": "",
-  "current_marketing_challenge": "",
-  "confidence": 0,
-  "captured_fields": [],
-  "missing_fields": [],
-  "evidence_notes": []
+  "about_the_organisation": "string",
+  "core_focus_areas": "string",
+  "key_customers_beneficiaries": "string",
+  "key_goals_metrics": "string",
+  "success_timeline": "string",
+  "focus": "string",
+  "priority": "string",
+  "date_of_connect": "string",
+  "confidence": integer 0-100,
+  "evidence_notes": ["short evidence note"]
 }
 
-Rules:
-- Use only information found in the transcript, CRM context, or business case context.
-- Do not invent answers.
-- If something is unclear, write: "Needs confirmation: ..." and explain what is missing.
-- If multiple transcripts are provided, merge them into one final understanding.
-- If transcripts conflict, mention the conflict in evidence_notes.
-- Write the answers in a polished client-facing style, as if TASCK is saying:
-  "Based on our call, this is what we understand..."
-- key_marketing_channels should be an array of channels explicitly mentioned or strongly implied.
-- kpis should be an array of KPI objects, for example:
-  [{"kpi": "Lead conversion", "target": "Needs confirmation", "evidence": "Client mentioned wanting more qualified leads"}]
-- captured_fields should contain field keys that were clearly answered.
-- missing_fields should contain field keys that still need confirmation.
-- Use these exact field keys when filling captured_fields and missing_fields: key_marketing_focus, primary_target_audience, key_marketing_channels, kpis, budget_range, timeline, approval_process_decision_maker, current_marketing_challenge.
-- confidence is an integer 0-100 reflecting how many of the eight fields are clearly supported. Never use 100 unless every field is explicit and risk-free.
+Confidence should reflect how many of the eight fields are clearly supported. Never use 100 unless all eight fields are explicit and risk-free.
 """.strip()
 
 
-def _alignment_tool_user_message(brand: Dict[str, Any], case: Dict[str, Any], transcript_blocks: List[Dict[str, Any]]) -> str:
-    transcript_count = len(transcript_blocks)
-    blocks: List[str] = []
-    # Cap per-transcript content to keep the Anthropic request within model limits.
-    # Anthropic rejects requests above ~200k input tokens. We aim for ~80k chars
-    # combined which is comfortably below that ceiling.
-    try:
-        per_block_chars = int(os.getenv("ALIGNMENT_ANALYZER_PER_TRANSCRIPT_CHARS", "8000"))
-    except (TypeError, ValueError):
-        per_block_chars = 8000
-    try:
-        total_chars_cap = int(os.getenv("ALIGNMENT_ANALYZER_TOTAL_CHARS", "80000"))
-    except (TypeError, ValueError):
-        total_chars_cap = 80000
-    running_total = 0
-    for index, block in enumerate(transcript_blocks):
-        title = str(block.get("title") or block.get("session_label") or f"Session {index + 1}").strip()
-        date = str(block.get("date") or block.get("call_date") or block.get("scheduled_for") or "Date not captured").strip()
-        source = str(block.get("source") or block.get("meeting_type") or "business_call").strip()
-        text = str(block.get("content") or block.get("transcript") or "").strip()
-        if not text:
-            continue
-        if len(text) > per_block_chars:
-            text = text[:per_block_chars] + "\n…(transcript truncated to fit analysis budget)"
-        block_text = f"--- Transcript {index + 1}: {title} | Date: {date} | Source: {source} ---\n{text}"
-        running_total += len(block_text)
-        if running_total > total_chars_cap:
-            blocks.append(f"--- Transcript {index + 1}+ omitted to stay within analysis budget ---")
-            break
-        blocks.append(block_text)
-    combined = "\n\n".join(blocks) if blocks else "(No transcript content available.)"
-    merge_instruction = (
-        "Merge the transcripts into one final Alignment Snapshot readiness checklist. If anything conflicts between them, mention it in evidence_notes."
-        if transcript_count > 1
-        else "Use this single transcript as the source of truth."
-    )
+def _alignment_tool_user_message(brand: Dict[str, Any], case: Dict[str, Any], combined_text: str) -> str:
     return f"""
 CRM BRAND CONTEXT
 - Brand name: {brand.get("company") or brand.get("name") or case.get("brand_name") or ""}
 - Category/industry: {brand.get("category") or brand.get("industry") or brand.get("sector") or ""}
 - Website: {brand.get("website") or ""}
 - Stored about: {brand.get("about") or brand.get("brand_about") or brand.get("description") or ""}
-- Primary contact: {brand.get("primary_contact") or brand.get("contact_name") or ""} {brand.get("email") or ""}
+- Contact: {brand.get("primary_contact") or brand.get("contact_name") or ""} {brand.get("email") or ""}
 
 BUSINESS CASE CONTEXT
 - Title: {case.get("title") or ""}
 - Stage: {case.get("stage") or ""}
 - Estimated value: {case.get("estimated_value") or ""}
-- Engagement track: {case.get("engagement_track") or ""}
 
-TRANSCRIPTS ({transcript_count} total)
-{combined}
+CONNECT TRANSCRIPTS
+{combined_text}
 
-{merge_instruction}
-Do not invent missing information. For any field not clearly stated, return "Needs confirmation: ..." with a short explanation of what is missing.
+Extract the eight Alignment Snapshot fields from the transcripts and CRM context. If the transcripts contradict CRM context, prefer the transcript and mention the uncertainty in evidence_notes.
 """.strip()
 
 
-def _normalise_transcript_blocks(blocks: List[Any]) -> List[Dict[str, Any]]:
-    """Accept a list of strings or dicts and return normalised dicts."""
-    result: List[Dict[str, Any]] = []
-    for entry in blocks or []:
-        if isinstance(entry, dict):
-            text = str(entry.get("content") or entry.get("transcript") or "").strip()
-            if not text:
-                continue
-            result.append({
-                "title": entry.get("title") or entry.get("session_label") or "",
-                "date": entry.get("date") or entry.get("call_date") or entry.get("scheduled_for") or "",
-                "source": entry.get("source") or entry.get("meeting_type") or "business_call",
-                "content": text,
-            })
-        else:
-            text = str(entry or "").strip()
-            if text:
-                result.append({"title": "", "date": "", "source": "business_call", "content": text})
-    return result
-
-
 async def _call_alignment_analysis_tool(
-    transcript_blocks: List[Dict[str, Any]],
+    combined_text: str,
     brand: Dict[str, Any],
     case: Dict[str, Any],
-    raise_on_failure: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    blocks = _normalise_transcript_blocks(transcript_blocks)
-    if not blocks:
+    if not (combined_text or "").strip():
         return None
 
     system_prompt = _alignment_tool_system_prompt()
-    user_message = _alignment_tool_user_message(brand, case, blocks)
+    user_message = _alignment_tool_user_message(brand, case, combined_text)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    emergent_key = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY") or os.getenv("EMERGENT_LLM_KEY")
-    custom_key = os.getenv("CUSTOM_OPENAI_COMPATIBLE_KEY") or os.getenv("ALIGNMENT_ANALYZER_LLM_API_KEY") or os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
-    custom_base = (os.getenv("CUSTOM_OPENAI_COMPATIBLE_BASE_URL") or os.getenv("ALIGNMENT_ANALYZER_LLM_BASE_URL") or os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
+    custom_key = os.getenv("ALIGNMENT_ANALYZER_LLM_API_KEY") or os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
+    custom_base = (os.getenv("ALIGNMENT_ANALYZER_LLM_BASE_URL") or os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
     openai_key = os.getenv("OPENAI_API_KEY")
 
     try:
-        timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "45")))
-    except (TypeError, ValueError):
-        timeout_seconds = 45.0
-    # Reserve a small budget for response parsing so the requests timeout never
-    # exceeds the outer asyncio.wait_for budget.
-    inner_timeout = max(5.0, timeout_seconds - 3.0)
+        if emergent_key:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
 
-    # Anthropic is the preferred provider when configured — the Combined AI
-    # Transcript Analysis is contractually bound to use Claude.
-    if anthropic_key:
-        try:
-            def _call_anthropic() -> Dict[str, Any]:
-                model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "claude-sonnet-4-5"
+            provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
+            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.0-flash"
+            chat = LlmChat(
+                api_key=emergent_key,
+                session_id=f"alignment-analyzer-{uuid.uuid4()}",
+                system_message=system_prompt,
+            ).with_model(provider, model)
+            response = await chat.send_message(UserMessage(text=user_message))
+            parsed = _parse_json_object(_response_to_text(response))
+            return _normalise_alignment_tool_result({**parsed, "analysis_source": f"emergent:{provider}/{model}"})
+
+        def _call_http_model() -> Optional[Dict[str, Any]]:
+            if anthropic_key:
+                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "claude-sonnet-4-20250514"
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -1055,50 +489,18 @@ async def _call_alignment_analysis_tool(
                     },
                     json={
                         "model": model,
-                        "max_tokens": 1600,
+                        "max_tokens": 1200,
                         "temperature": 0.1,
                         "system": system_prompt,
                         "messages": [{"role": "user", "content": user_message}],
                     },
-                    timeout=inner_timeout,
+                    timeout=45,
                 )
-                if response.status_code >= 400:
-                    body_preview = (response.text or "")[:600]
-                    logger.warning(
-                        "Anthropic %s for case %s model=%s body=%s",
-                        response.status_code, case.get("id"), model, body_preview,
-                    )
                 response.raise_for_status()
                 data = response.json()
                 text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
-                logger.info("Alignment analysis: provider=anthropic model=%s case=%s", model, case.get("id"))
-                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": "anthropic", "analysis_model": model})
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"anthropic:{model}"})
 
-            return await asyncio.to_thread(_call_anthropic)
-        except Exception as exc:
-            logger.warning("Anthropic alignment analysis failed for business case %s: %s", case.get("id"), exc)
-            # Always swallow — caller will fall back gracefully so the HTTP
-            # route can return 200 with analysis_source='fallback'. We never
-            # raise here because gateway-level 5xx strips CORS headers.
-            return None
-
-    try:
-        if emergent_key:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-            provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "anthropic"
-            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "claude-sonnet-4-5"
-            chat = LlmChat(
-                api_key=emergent_key,
-                session_id=f"alignment-analyzer-{uuid.uuid4()}",
-                system_message=system_prompt,
-            ).with_model(provider, model)
-            response = await chat.send_message(UserMessage(text=user_message))
-            parsed = _parse_json_object(_response_to_text(response))
-            logger.info("Alignment analysis: provider=emergent model=%s case=%s", model, case.get("id"))
-            return _normalise_alignment_tool_result({**parsed, "analysis_source": "emergent", "analysis_model": model})
-
-        def _call_http_model() -> Optional[Dict[str, Any]]:
             if custom_key and custom_base:
                 model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "gpt-4o-mini"
                 response = requests.post(
@@ -1107,18 +509,17 @@ async def _call_alignment_analysis_tool(
                     json={
                         "model": model,
                         "temperature": 0.1,
-                        "max_tokens": 1600,
+                        "max_tokens": 1200,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
                         ],
                     },
-                    timeout=inner_timeout,
+                    timeout=45,
                 )
                 response.raise_for_status()
                 text = response.json()["choices"][0]["message"]["content"]
-                logger.info("Alignment analysis: provider=custom model=%s case=%s", model, case.get("id"))
-                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": "custom_openai_compatible", "analysis_model": model})
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"custom:{model}"})
 
             if openai_key:
                 model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or "gpt-4o-mini"
@@ -1128,18 +529,17 @@ async def _call_alignment_analysis_tool(
                     json={
                         "model": model,
                         "temperature": 0.1,
-                        "max_tokens": 1600,
+                        "max_tokens": 1200,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
                         ],
                     },
-                    timeout=inner_timeout,
+                    timeout=45,
                 )
                 response.raise_for_status()
                 text = response.json()["choices"][0]["message"]["content"]
-                logger.info("Alignment analysis: provider=openai model=%s case=%s", model, case.get("id"))
-                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": "openai", "analysis_model": model})
+                return _normalise_alignment_tool_result({**_parse_json_object(text), "analysis_source": f"openai:{model}"})
 
             return None
 
@@ -1148,166 +548,16 @@ async def _call_alignment_analysis_tool(
         logger.warning("Alignment analysis tool failed for business case %s: %s", case.get("id"), exc)
         return None
 
-
-def _alignment_fallback_result() -> Dict[str, Any]:
-    """Honest fallback used when no LLM is configured or the transcript is empty.
-    Every field is marked as needing confirmation; nothing is invented."""
-    card = {key: "" for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
-    card["confidence"] = 0
-    card["captured_fields"] = []
-    card["missing_fields"] = [key for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS]
-    card["evidence_notes"] = ["No LLM-backed transcript analysis was available. All fields need brand confirmation."]
-    card["analysis_source"] = "honest_fallback"
-    card["analysis_model"] = ""
-    return _normalise_alignment_tool_result(card)
-
-
-def _alignment_snapshot_fields_from_card(card: Dict[str, Any]) -> List[Dict[str, Any]]:
-    captured = set(card.get("captured_fields") or [])
-    fields: List[Dict[str, Any]] = []
-    for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
-        value = card.get(key)
-        if key == "key_marketing_channels" and isinstance(value, list):
-            answer = ", ".join(str(v) for v in value if v)
-        elif key == "kpis" and isinstance(value, list):
-            parts = []
-            for item in value:
-                if isinstance(item, dict):
-                    kpi = item.get("kpi") or "Metric"
-                    target = item.get("target") or ""
-                    evidence = item.get("evidence") or ""
-                    fragment = kpi if not target else f"{kpi}: {target}"
-                    if evidence:
-                        fragment = f"{fragment} (evidence: {evidence})"
-                    parts.append(fragment)
-                else:
-                    parts.append(str(item))
-            answer = "; ".join(parts)
-        else:
-            answer = str(value or "")
-        fields.append({
-            "question": label,
-            "key": key,
-            "answer": answer,
-            "value": value,
-            "status": "captured" if key in captured else "needs_confirmation",
-        })
-    return fields
-
-
-async def _analyze_transcript_bundle(
-    transcripts: List[Any],
-    brand: Optional[Dict[str, Any]] = None,
-    business_case: Optional[Dict[str, Any]] = None,
-    raise_on_anthropic_failure: bool = False,
-) -> Dict[str, Any]:
-    """Shared analyzer for one or many transcripts.
-
-    Returns a normalised payload containing marketing_intelligence,
-    alignment_snapshot_fields, readiness, analysis_source, and analysis_model.
-
-    Note: ``raise_on_anthropic_failure`` is retained for backwards compatibility
-    but is now treated as a soft preference. Production callers should keep it
-    False so we never bubble a 5xx (which strips CORS at the gateway) — instead
-    we always return a safe fallback payload tagged ``analysis_source='fallback'``.
-    """
-    brand = brand or {}
-    business_case = business_case or {}
-    blocks = _normalise_transcript_blocks(transcripts)
-
-    card: Optional[Dict[str, Any]] = None
-    anthropic_configured = bool(os.getenv("ANTHROPIC_API_KEY"))
-
-    fallback_error: Optional[str] = None
-    if blocks:
-        try:
-            timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "45")))
-        except (TypeError, ValueError):
-            timeout_seconds = 45.0
-        try:
-            # Never raise — surface a clean fallback so the HTTP route can
-            # return 200 with analysis_source='fallback'. This keeps CORS
-            # headers attached and avoids ingress 502s for slow Anthropic
-            # responses or transient model errors.
-            card = await asyncio.wait_for(
-                _call_alignment_analysis_tool(
-                    blocks,
-                    brand,
-                    business_case,
-                    raise_on_failure=False,
-                ),
-                timeout=timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            fallback_error = f"Anthropic transcript analysis timed out after {timeout_seconds:.0f}s."
-            logger.warning("Alignment analysis timed out after %.1fs for case %s", timeout_seconds, business_case.get("id"))
-        except Exception as exc:  # pragma: no cover - defensive
-            fallback_error = f"Alignment analyzer error: {exc}"
-            logger.exception("Alignment analyzer raised unexpectedly for case %s", business_case.get("id"))
-
-    used_fallback = card is None
-    if used_fallback:
-        card = _alignment_fallback_result()
-        if fallback_error:
-            notes = card.get("evidence_notes") or []
-            card["evidence_notes"] = [fallback_error] + [n for n in notes if n != fallback_error]
-            card["analysis_source"] = "fallback"
-
-    captured_count = len(card.get("captured_fields") or [])
-    total_count = len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)
-    missing_count = max(0, total_count - captured_count)
-    percentage = int(round((captured_count / total_count) * 100)) if total_count else 0
-
-    label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
-    marketing_intelligence = {
-        "key_marketing_focus": card.get("key_marketing_focus"),
-        "primary_target_audience": card.get("primary_target_audience"),
-        "key_marketing_channels": card.get("key_marketing_channels"),
-        "kpis": card.get("kpis"),
-        "budget_range": card.get("budget_range"),
-        "timeline": card.get("timeline"),
-        "approval_process_decision_maker": card.get("approval_process_decision_maker"),
-        "current_marketing_challenge": card.get("current_marketing_challenge"),
-        "confidence": card.get("confidence"),
-        "captured_fields": card.get("captured_fields") or [],
-        "missing_fields": card.get("missing_fields") or [],
-        "evidence_notes": card.get("evidence_notes") or [],
-        "captured_field_labels": [label_for_key[k] for k in (card.get("captured_fields") or []) if k in label_for_key],
-        "missing_field_labels": [label_for_key[k] for k in (card.get("missing_fields") or []) if k in label_for_key],
-        "generated_at": card.get("generated_at") or _now_iso(),
-    }
-
-    return {
-        "marketing_intelligence": marketing_intelligence,
-        "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(card),
-        "readiness": {
-            "captured_count": captured_count,
-            "missing_count": missing_count,
-            "total_count": total_count,
-            "percentage": percentage,
-        },
-        "analysis_source": card.get("analysis_source") or "honest_fallback",
-        "analysis_model": card.get("analysis_model") or "",
-        "transcript_count": len(blocks),
-        "evidence_notes": card.get("evidence_notes") or [],
-        "captured_fields": card.get("captured_fields") or [],
-        "missing_fields": card.get("missing_fields") or [],
-        "confidence": card.get("confidence", 0),
-        "card": card,
-    }
-
-
 def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
-    """Honest deterministic extraction used only as a last-resort fallback.
+    """Deterministic transcript extraction used by the transcript analysis layer.
 
-    This must never invent channels, KPIs, audience, budget, or timeline. If a
-    field is not explicitly stated in the transcript, the corresponding value
-    will be a "Needs confirmation" marker so the brand can confirm later.
+    The production version can swap this for an LLM/transcription provider while
+    keeping the same response contract.
     """
     text = (content or "").strip()
     lower = text.lower()
 
-    def _after_any(labels: List[str]) -> str:
+    def _after_any(labels: List[str], fallback: str) -> str:
         for label in labels:
             marker = label.lower()
             pos = lower.find(marker)
@@ -1321,42 +571,42 @@ def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
                 value = chunk[:stop].strip(" .;-")
                 if value:
                     return value[:260]
-        return ""
+        return fallback
 
-    focus = _after_any(["key marketing focus", "marketing focus", "main objective", "primary goal"])
-    audience = _after_any(["primary target audience", "target audience", "audience is", "we are targeting"])
-    challenge = _after_any(["current marketing challenge", "marketing challenge", "main challenge", "biggest problem"])
-    timeline = _after_any(["timeline", "launch date", "go-live", "deadline"])
-    budget = _after_any(["budget range", "budget is", "budget", "marketing budget"])
-    decision_maker = _after_any(["decision maker", "approval process", "approver", "sign-off"])
+    focus = _after_any(
+        ["key marketing focus", "marketing focus", "focus", "objective", "goal"],
+        "Clarify the brand problem, campaign ambition, and cultural role from the discovery call.",
+    )
+    audience = _after_any(
+        ["primary target audience", "target audience", "audience", "consumer"],
+        "Primary customer segment mentioned by the brand; admin review required.",
+    )
 
-    explicit_channels: List[str] = []
-    for channel in ["Instagram", "TikTok", "YouTube", "X", "Twitter", "OOH", "Events", "Radio", "TV", "Influencers", "Retail", "PR", "LinkedIn", "Facebook"]:
+    channel_candidates = []
+    for channel in ["Instagram", "TikTok", "YouTube", "X", "Twitter", "OOH", "Events", "Radio", "TV", "Influencers", "Retail", "PR"]:
         if channel.lower() in lower:
-            explicit_channels.append("X" if channel == "Twitter" else channel)
+            channel_candidates.append("X" if channel == "Twitter" else channel)
+    if not channel_candidates:
+        channel_candidates = ["Instagram", "TikTok", "YouTube", "PR"]
 
-    explicit_kpis: List[Dict[str, str]] = []
-    for name in ["Reach", "Engagement rate", "UGC posts", "Sales lift", "App installs", "Earned media value", "Lead conversion", "Impressions", "Click-through rate", "Conversions"]:
+    kpis = []
+    for name in ["Reach", "Engagement rate", "UGC posts", "Sales lift", "App installs", "Earned media value", "Lead conversion"]:
         if name.lower() in lower:
-            explicit_kpis.append({
-                "kpi": name,
-                "target": "Needs confirmation",
-                "evidence": f"The transcript mentioned {name} but did not state a specific target.",
-            })
+            kpis.append({"kpi": name, "target": "Target mentioned in transcript; admin to confirm exact number."})
+    if not kpis:
+        kpis = [
+            {"kpi": "Reach", "target": "AI-inferred from campaign ambition; confirm with brand."},
+            {"kpi": "Engagement rate", "target": "AI-inferred; confirm channel benchmark."},
+            {"kpi": "Conversion signal", "target": "Define the business outcome before Plan."},
+        ]
 
     return {
-        "key_marketing_focus": focus or _needs_confirmation_text("key_marketing_focus"),
-        "primary_target_audience": audience or _needs_confirmation_text("primary_target_audience"),
-        "key_marketing_channels": explicit_channels if explicit_channels else [_needs_confirmation_text("key_marketing_channels")],
-        "kpis": explicit_kpis if explicit_kpis else [_needs_confirmation_kpi()],
-        "budget_range": budget or _needs_confirmation_text("budget_range"),
-        "timeline": timeline or _needs_confirmation_text("timeline"),
-        "approval_process_decision_maker": decision_maker or _needs_confirmation_text("approval_process_decision_maker"),
-        "current_marketing_challenge": challenge or _needs_confirmation_text("current_marketing_challenge"),
-        # Legacy keys preserved for parts of the codebase that still read them.
-        "marketing_kpis": explicit_kpis if explicit_kpis else [_needs_confirmation_kpi()],
+        "key_marketing_focus": focus,
+        "primary_target_audience": audience,
+        "key_marketing_channels": channel_candidates[:6],
+        "marketing_kpis": kpis[:5],
         "source_excerpt": text[:420],
-        "extraction_confidence": 0.5 if text else 0.0,
+        "extraction_confidence": 0.82 if text else 0.35,
         "generated_at": _now_iso(),
     }
 
@@ -1367,152 +617,17 @@ def _marketing_intelligence_from_case(case: Dict[str, Any]) -> Dict[str, Any]:
     if mi:
         return mi
     return {
-        "key_marketing_focus": connect.get("key_marketing_focus") or _needs_confirmation_text("key_marketing_focus"),
-        "primary_target_audience": connect.get("primary_target_audience") or _needs_confirmation_text("primary_target_audience"),
-        "key_marketing_channels": connect.get("key_marketing_channels") or [_needs_confirmation_text("key_marketing_channels")],
-        "kpis": connect.get("kpis") or connect.get("marketing_kpis") or [_needs_confirmation_kpi()],
-        "marketing_kpis": connect.get("marketing_kpis") or [_needs_confirmation_kpi()],
-        "budget_range": connect.get("budget_range") or connect.get("budget") or _needs_confirmation_text("budget_range"),
-        "timeline": connect.get("timeline") or connect.get("campaign_timeline") or _needs_confirmation_text("timeline"),
-        "approval_process_decision_maker": connect.get("approval_process_decision_maker") or connect.get("decision_maker") or _needs_confirmation_text("approval_process_decision_maker"),
-        "current_marketing_challenge": connect.get("current_marketing_challenge") or connect.get("marketing_challenge") or _needs_confirmation_text("current_marketing_challenge"),
-        "extraction_confidence": 0.0,
+        "key_marketing_focus": connect.get("key_marketing_focus") or connect.get("stated_intent") or "Admin review required.",
+        "primary_target_audience": connect.get("primary_target_audience") or "Admin review required.",
+        "key_marketing_channels": connect.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"],
+        "marketing_kpis": connect.get("marketing_kpis") or [{"kpi": "Reach", "target": "Confirm with brand."}],
+        "extraction_confidence": 0.45,
     }
 
 
 def make_v3_router(db):
     """Factory - receives the motor DB handle and returns a FastAPI router."""
     router = APIRouter(prefix="/api/v3", tags=["v3"])
-
-    @router.get("/diagnostics/anthropic")
-    async def diagnostics_anthropic(x_diagnostics_token: Optional[str] = Header(default=None)):
-        """Safe key-fingerprint + live-probe diagnostic. Gated by ENABLE_DIAGNOSTICS.
-        Never returns the full secret. Optionally protected by DIAGNOSTICS_TOKEN header.
-        Default OFF — set ENABLE_DIAGNOSTICS=true to enable; unset/false returns 404."""
-        if (os.getenv("ENABLE_DIAGNOSTICS") or "").lower() not in ("1", "true", "yes"):
-            raise HTTPException(status_code=404, detail="Not Found")
-        expected_token = os.getenv("DIAGNOSTICS_TOKEN") or ""
-        if expected_token and x_diagnostics_token != expected_token:
-            raise HTTPException(status_code=401, detail="Invalid diagnostics token")
-        import hashlib
-        key = os.getenv("ANTHROPIC_API_KEY") or ""
-        model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
-        fingerprint = {
-            "present": bool(key),
-            "length": len(key),
-            "prefix": key[:7] if key else "",
-            "last4": key[-4:] if len(key) >= 4 else "",
-            "sha256_first16": hashlib.sha256(key.encode()).hexdigest()[:16] if key else "",
-            "model": model,
-        }
-        probe = {"status": None, "ok": False, "error": None, "model_returned": None}
-        if key:
-            try:
-                def _probe():
-                    return requests.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": key,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": model,
-                            "max_tokens": 16,
-                            "messages": [{"role": "user", "content": "Reply with the single token OK."}],
-                        },
-                        timeout=20,
-                    )
-                r = await asyncio.to_thread(_probe)
-                probe["status"] = r.status_code
-                try:
-                    body = r.json()
-                except Exception:
-                    body = {"raw": r.text[:300]}
-                if r.status_code == 200:
-                    probe["ok"] = True
-                    probe["model_returned"] = body.get("model") if isinstance(body, dict) else None
-                else:
-                    err = body.get("error") if isinstance(body, dict) else None
-                    probe["error"] = {"type": (err or {}).get("type"), "message": (err or {}).get("message")} if err else body
-            except Exception as exc:
-                probe["error"] = {"type": "client_exception", "message": str(exc)[:300]}
-        return {"key": fingerprint, "probe": probe}
-
-    @router.delete("/meetings/{meeting_id}")
-    async def delete_meeting(meeting_id: str, x_admin_cleanup_token: Optional[str] = Header(default=None), reset_connect: bool = False):
-        """Admin-only cleanup: delete a meeting and remove its references from the
-        linked business case's connect block. Gated by ENABLE_ADMIN_CLEANUP=true.
-        Optional header X-Admin-Cleanup-Token must match ADMIN_CLEANUP_TOKEN if set.
-        Pass ?reset_connect=true to also reset the parent BC's connect.connect_status
-        and clear connect.analysis/alignment_tool_analysis when this was the last
-        business_call meeting on the case."""
-        if (os.getenv("ENABLE_ADMIN_CLEANUP") or "").lower() not in ("1", "true", "yes"):
-            raise HTTPException(status_code=404, detail="Not Found")
-        expected_token = os.getenv("ADMIN_CLEANUP_TOKEN") or ""
-        if expected_token and x_admin_cleanup_token != expected_token:
-            raise HTTPException(status_code=401, detail="Invalid admin cleanup token")
-
-        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
-        if not meeting:
-            raise HTTPException(status_code=404, detail="Meeting not found")
-
-        bc_id = meeting.get("business_case_id")
-        meeting_type = meeting.get("meeting_type") or meeting.get("type")
-
-        # Delete the meeting itself
-        del_result = await db.v3_meetings.delete_one({"id": meeting_id})
-
-        # Clean up references on the parent business case
-        bc_update: Dict[str, Any] = {}
-        remaining_business_call = 0
-        if bc_id:
-            case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
-            if case:
-                connect = case.get("connect") or {}
-                meeting_ids = [m for m in (connect.get("meeting_ids") or []) if m != meeting_id]
-                bcm_ids = [m for m in (connect.get("business_call_meeting_ids") or case.get("business_call_meeting_ids") or []) if m != meeting_id]
-                latest = connect.get("latest_meeting_id")
-                if latest == meeting_id:
-                    bc_update["connect.latest_meeting_id"] = meeting_ids[-1] if meeting_ids else None
-                bc_update["connect.meeting_ids"] = meeting_ids
-                bc_update["connect.business_call_meeting_ids"] = bcm_ids
-                bc_update["business_call_meeting_ids"] = bcm_ids
-                bc_update["updated_at"] = _now_iso()
-
-                if meeting_type == "business_call":
-                    remaining_business_call = await db.v3_meetings.count_documents({
-                        "business_case_id": bc_id,
-                        "meeting_type": "business_call",
-                    })
-                    if reset_connect and remaining_business_call == 0:
-                        bc_update["connect.connect_status"] = "needs_business_call"
-                        bc_update["connect.analysis"] = None
-                        bc_update["connect.alignment_tool_analysis"] = None
-                        bc_update["connect.alignment_snapshot_fields"] = []
-                        bc_update["connect.marketing_intelligence"] = None
-                        bc_update["connect.readiness"] = None
-                        bc_update["connect.analysis_source"] = None
-                        bc_update["connect.analysis_model"] = None
-
-                await db.v3_business_cases.update_one(
-                    {"id": bc_id},
-                    {"$set": bc_update,
-                     "$push": {"timeline": {"at": _now_iso(), "event": "meeting_deleted", "meeting_id": meeting_id, "reset_connect": reset_connect and remaining_business_call == 0}}}
-                )
-
-        return {
-            "ok": True,
-            "meeting_id": meeting_id,
-            "deleted": del_result.deleted_count,
-            "business_case_id": bc_id,
-            "remaining_business_call_meetings": remaining_business_call,
-            "connect_reset": bool(bc_update.get("connect.connect_status") == "needs_business_call"),
-        }
-
-
-
-
 
     async def _relationship_manager(rm_id: Optional[str] = None) -> Dict[str, Any]:
         """Return an RM from workbook-imported v3_rms. No hardcoded demo RM fallback."""
@@ -1708,11 +823,7 @@ def make_v3_router(db):
         plain_body = str(email.get("body") or "")
         message.set_content(plain_body)
         kind = str(email.get("kind") or "")
-        explicit_html = str(email.get("html_body") or "").strip()
-        if explicit_html:
-            # Caller supplied a clean HTML version (e.g. welcome email) — always include it
-            message.add_alternative(explicit_html, subtype="html")
-        elif _smtp_flag("SMTP_SEND_HTML_ALTERNATIVE", False) and not _email_uses_plain_text_only(kind):
+        if _smtp_flag("SMTP_SEND_HTML_ALTERNATIVE", False) and not _email_uses_plain_text_only(kind):
             message.add_alternative(_smtp_transactional_html(plain_body, reply_to or from_email), subtype="html")
         for attachment in email.get("attachments") or []:
             content = attachment.get("content")
@@ -1749,7 +860,6 @@ def make_v3_router(db):
         business_case_id: Optional[str] = None,
         creator_id: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
-        html_body: Optional[str] = None,
     ) -> Dict[str, Any]:
         delivery_attachments = attachments or []
         stored_attachments = []
@@ -1765,7 +875,6 @@ def make_v3_router(db):
             "to": to,
             "subject": subject,
             "body": body,
-            "html_body": html_body or "",
             "kind": kind,
             "brand_id": brand_id,
             "business_case_id": business_case_id,
@@ -1778,11 +887,6 @@ def make_v3_router(db):
         }
         delivery = await asyncio.to_thread(_deliver_email_now, {**email, "attachments": delivery_attachments})
         email.update(delivery)
-        # Log delivery result (no secrets) so admins can diagnose deliverability
-        logger.info(
-            "email_delivery kind=%s to=%s id=%s status=%s error=%r",
-            kind, to, email["id"], email.get("status"), email.get("delivery_error") or "",
-        )
         await db.v3_email_outbox.insert_one({**email})
         return email
     # ------------------------------------------------------------------------
@@ -1818,14 +922,13 @@ def make_v3_router(db):
 
         brands = await db.v3_brands.find(query, {"_id": 0}).to_list(1000)
         brands = sorted(brands, key=_brand_created_at_key, reverse=True)
-        return [_normalise_brand_payload(await _with_relationship_manager(brand)) for brand in brands]
+        return [await _with_relationship_manager(brand) for brand in brands]
 
     @router.get("/brands/{brand_id}")
     async def get_brand(brand_id: str):
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
-        brand = _normalise_brand_payload(brand)
         contacts = await db.v3_contacts.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         cases = await db.v3_business_cases.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
         interactions = await db.v3_interactions.find({"brand_id": brand_id}, {"_id": 0}).to_list(100)
@@ -1896,173 +999,14 @@ def make_v3_router(db):
         updates = {k: v for k, v in body.items() if k in allowed}
         if not updates:
             raise HTTPException(400, "No valid fields to update")
-        # Defence-in-depth: reject bad logo URLs at the input layer so a
-        # stale UI form can never re-pollute the DB with apps.apple.com/...
-        for logo_key in ("logo_url", "brand_logo_url"):
-            if logo_key in updates and updates[logo_key] and _looks_like_bad_logo_url(updates[logo_key]):
-                raise HTTPException(400, f"Refusing to save {logo_key}={updates[logo_key]!r} — it points at a generic marketplace/social asset, not the brand's own logo.")
         updates["updated_at"] = _now_iso()
         await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
         updated = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
-        return {"ok": True, "brand": _normalise_brand_payload(updated)}
-
-    class BrandFollowUpDraftPayload(BaseModel):
-        instructions: Optional[str] = None
-        context: Optional[str] = None
-
-    @router.post("/brands/{brand_id}/ai/follow-up-draft")
-    async def draft_brand_follow_up(brand_id: str, payload: BrandFollowUpDraftPayload = BrandFollowUpDraftPayload()):
-        """Generate a Claude-powered follow-up draft for a CRM brand contact.
-
-        Uses the same Anthropic priority chain as the Alignment Snapshot
-        analyzer. Returns a JSON payload with a draft, subject line and key
-        talking points. Honest fallback is provided if no LLM is configured.
-        """
-        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
-        if not brand:
-            raise HTTPException(404, "Brand not found")
-
-        # Pull the latest interaction and any active business case for context.
-        latest_interactions = await db.v3_interactions.find({"brand_id": brand_id}, {"_id": 0}).sort("date_iso", -1).to_list(3)
-        active_case = await db.v3_business_cases.find_one(
-            {"brand_id": brand_id, "status": {"$ne": "deleted"}},
-            {"_id": 0},
-            sort=[("updated_at", -1)],
-        ) or {}
-
-        contact_name = brand.get("primary_contact") or brand.get("contact_name") or "there"
-        company = brand.get("company") or brand.get("name") or "the brand"
-
-        interactions_summary = "\n".join([
-            f"- {(it.get('date_iso') or '')[:10]} · {it.get('type')}: {it.get('title')}"
-            for it in latest_interactions
-        ]) or "No prior CRM interactions logged."
-        case_summary = (
-            f"Active business case: {active_case.get('title')} (stage: {active_case.get('stage_label') or active_case.get('stage')})"
-            if active_case else "No active business case yet."
-        )
-
-        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-        emergent_key = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY") or os.getenv("EMERGENT_LLM_KEY")
-        system_prompt = (
-            "You are TASCK's CRM relationship manager assistant. Draft a polished, concise "
-            "follow-up email for a brand contact based on the CRM context and the latest "
-            "interaction. Return ONLY JSON with keys: subject (string), draft (string with \\n\\n "
-            "paragraph breaks), talking_points (array of strings). The draft must address the "
-            "contact by name, reference the most recent interaction, suggest a clear next step, "
-            "and stay under 180 words. Do not invent budgets, dates, or commitments."
-        )
-        user_message = (
-            f"BRAND CONTEXT\n- Company: {company}\n- Industry: {brand.get('industry') or brand.get('category') or 'unknown'}\n"
-            f"- Primary contact: {contact_name}\n- Email: {brand.get('email') or 'unknown'}\n"
-            f"- Stored about: {brand.get('about') or brand.get('description') or 'no notes'}\n\n"
-            f"BUSINESS CASE\n{case_summary}\n\n"
-            f"RECENT INTERACTIONS\n{interactions_summary}\n\n"
-            f"ADMIN INSTRUCTIONS\n{payload.instructions or 'Default polite re-engagement to confirm priority, timeline and decision maker.'}\n\n"
-            f"ADDITIONAL CONTEXT\n{payload.context or 'None.'}"
-        )
-
-        try:
-            timeout_seconds = max(5.0, float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "60")))
-        except (TypeError, ValueError):
-            timeout_seconds = 60.0
-
-        analysis_source = "honest_fallback"
-        analysis_model = ""
-        parsed: Optional[Dict[str, Any]] = None
-
-        if anthropic_key:
-            try:
-                def _call_anthropic() -> Dict[str, Any]:
-                    model = os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
-                    response = requests.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": anthropic_key,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": model,
-                            "max_tokens": 900,
-                            "temperature": 0.4,
-                            "system": system_prompt,
-                            "messages": [{"role": "user", "content": user_message}],
-                        },
-                        timeout=timeout_seconds,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-                    text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
-                    return {**_parse_json_object(text), "_model": model}
-
-                parsed = await asyncio.to_thread(_call_anthropic)
-                analysis_source = "anthropic"
-                analysis_model = parsed.get("_model") or "claude-sonnet-4-5"
-            except Exception as exc:
-                logger.warning("Anthropic follow-up draft failed for brand %s: %s", brand_id, exc)
-                parsed = None
-
-        if parsed is None and emergent_key:
-            try:
-                from emergentintegrations.llm.chat import LlmChat, UserMessage
-                provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or "anthropic"
-                model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or "claude-sonnet-4-5"
-                chat = LlmChat(
-                    api_key=emergent_key,
-                    session_id=f"brand-followup-{uuid.uuid4()}",
-                    system_message=system_prompt,
-                ).with_model(provider, model)
-                response = await chat.send_message(UserMessage(text=user_message))
-                parsed = _parse_json_object(_response_to_text(response))
-                analysis_source = "emergent"
-                analysis_model = model
-            except Exception as exc:
-                logger.warning("Emergent follow-up draft failed for brand %s: %s", brand_id, exc)
-                parsed = None
-
-        if parsed is None:
-            # Honest deterministic fallback. No invented commitments.
-            draft_lines = [
-                f"Hi {contact_name},",
-                f"I am following up from TASCK on our work with {company}.",
-                f"{case_summary}",
-                "It would help us to confirm your current priority, timeline and the right decision maker before we recommend the next step.",
-                "Would a short call this week work for you?",
-                "Best,\nTASCK Team",
-            ]
-            parsed = {
-                "subject": f"Following up with {company}",
-                "draft": "\n\n".join(draft_lines),
-                "talking_points": [
-                    "Confirm current priority",
-                    "Confirm working timeline",
-                    "Confirm decision maker for next step",
-                ],
-            }
-
-        return {
-            "ok": True,
-            "brand_id": brand_id,
-            "subject": str(parsed.get("subject") or f"Following up with {company}")[:180],
-            "draft": str(parsed.get("draft") or "").strip(),
-            "talking_points": [str(t) for t in (parsed.get("talking_points") or [])][:6],
-            "analysis_source": analysis_source,
-            "analysis_model": analysis_model,
-            "generated_at": _now_iso(),
-        }
+        return {"ok": True, "brand": updated}
 
     @router.post("/brands/{brand_id}/scrape")
     async def scrape_brand_details(brand_id: str):
-        """Scrape the web for source-grounded brand details.
-
-        Discovery always goes through SerpAPI when ``SERPAPI_API_KEY`` is
-        configured. The official brand website is pinned as the highest-
-        priority candidate; App Store / Google Play / social / directory
-        pages are rejected as primary sources and only kept as supporting
-        links. Marketing budget is NEVER extracted from page body text —
-        admin/Transcript Analysis owns that field.
-        """
+        """Scrape the web for source-grounded brand details."""
         import html as html_module
         import httpx
         import re as _re
@@ -2073,35 +1017,29 @@ def make_v3_router(db):
             raise HTTPException(404, "Brand not found")
 
         source_url = brand.get("source_url") or brand.get("source") or brand.get("lead_source") or brand.get("scrape_source") or ""
+        website = _website_from_brand_inputs(website=brand.get("website") or brand.get("url") or brand.get("brand_url"), email=brand.get("email"), source_url=source_url)
         brand_name = brand.get("company") or brand.get("name") or brand.get("brand_name") or "Brand"
-
-        # ---- Step 1: identity resolution (blocks tasck.com etc) ----
-        enrichment_target = resolve_brand_enrichment_target({**brand, "source_url": source_url})
-
-        # ---- Step 2: SerpAPI candidate discovery ----
-        discovery = await discover_brand_sources_with_serpapi(brand)
-        warnings: List[str] = list(enrichment_target.get("warnings") or [])
-        warnings.extend(discovery.get("warnings") or [])
-
-        # Pick the best selected source. Explicit website wins, then SerpAPI
-        # top candidate, then fall back to identity-resolved target.
-        website = ""
-        selected_source_type = "none"
-        if discovery.get("selected"):
-            website = discovery["selected"]["url"]
-            selected_source_type = discovery["selected"].get("source_type", "candidate_website")
-        elif enrichment_target["target_type"] in ("website", "email_domain"):
-            website = _normalise_website_url(enrichment_target["target_value"])
-            selected_source_type = "official_website" if enrichment_target["target_type"] == "website" else "email_domain"
-
         scraped_about = ""
         scraped_logo = ""
+        scraped_budget = ""
         final_url = website
-        selected_domain = _domain_from_url(website)
-        # Marketing budget is intentionally NOT scraped from body text — the
-        # previous behaviour produced garbage like "n, and are willing to pay
-        # you real cash!". Budget can only be set by admin or transcript
-        # analysis, so we preserve whatever is already on the brand.
+
+        if not website and os.getenv("SERPAPI_API_KEY", "").strip():
+            try:
+                params = {"engine": "google", "q": f"{brand_name} official website logo", "api_key": os.getenv("SERPAPI_API_KEY", "").strip(), "num": 5}
+                search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
+                search_response.raise_for_status()
+                search_data = search_response.json()
+                blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com"}
+                for result in search_data.get("organic_results") or []:
+                    link = str(result.get("link") or "")
+                    domain = _domain_from_url(link)
+                    if domain and not any(domain.endswith(blocked) for blocked in blocked_domains):
+                        website = _normalise_website_url(link)
+                        final_url = website
+                        break
+            except requests.RequestException as exc:
+                logger.warning("Brand website search failed for %s: %s", brand_name, exc)
 
         if website:
             url = website if website.startswith("http") else f"https://{website}"
@@ -2110,7 +1048,6 @@ def make_v3_router(db):
                     resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
                     resp.raise_for_status()
                     final_url = str(resp.url).rstrip("/")
-                    selected_domain = _domain_from_url(final_url)
                     html = resp.text
 
                     def _attr(tag: str, name: str) -> str:
@@ -2132,16 +1069,12 @@ def make_v3_router(db):
                         if src:
                             script_urls.append(urljoin(final_url, src))
 
-                    # ---- About: only structured/meta sources from official site ----
                     og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
                     meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
-                    jsonld_desc = _re.search(r'"description"\s*:\s*"([^"\\]{40,800})"', html)
                     if og_desc:
                         scraped_about = html_module.unescape(og_desc.group(1)).strip()
                     elif meta_desc:
                         scraped_about = html_module.unescape(meta_desc.group(1)).strip()
-                    elif jsonld_desc:
-                        scraped_about = html_module.unescape(jsonld_desc.group(1)).strip()
                     else:
                         paragraphs = _re.findall(r'<p[^>]*>(.*?)</p>', html, _re.I | _re.S)
                         for paragraph in paragraphs:
@@ -2149,103 +1082,94 @@ def make_v3_router(db):
                             if len(clean_paragraph) >= 80:
                                 scraped_about = html_module.unescape(clean_paragraph)[:700]
                                 break
-
-                    # ---- Manifest icons/description ----
                     if manifest_url:
-                        try:
-                            manifest_resp = await client.get(manifest_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
-                            if manifest_resp.status_code < 400:
-                                manifest_data = manifest_resp.json()
-                                manifest_description = str(manifest_data.get("description") or "").strip()
-                                if manifest_description and not scraped_about:
-                                    scraped_about = html_module.unescape(manifest_description)[:700]
-                                for manifest_icon in manifest_data.get("icons") or []:
-                                    manifest_src = manifest_icon.get("src") if isinstance(manifest_icon, dict) else manifest_icon
-                                    if manifest_src:
-                                        manifest_logo_candidates.append(urljoin(manifest_url, str(manifest_src)))
-                        except (httpx.HTTPError, ValueError):
-                            pass
+                        manifest_resp = await client.get(manifest_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                        if manifest_resp.status_code < 400:
+                            manifest_data = manifest_resp.json()
+                            manifest_description = str(manifest_data.get("description") or "").strip()
+                            if manifest_description and not scraped_about:
+                                scraped_about = html_module.unescape(manifest_description)[:700]
+                            for manifest_icon in manifest_data.get("icons") or []:
+                                if isinstance(manifest_icon, dict):
+                                    manifest_src = manifest_icon.get("src")
+                                else:
+                                    manifest_src = manifest_icon
+                                if manifest_src:
+                                    manifest_logo_candidates.append(urljoin(manifest_url, str(manifest_src)))
+                    if not scraped_about:
+                        for script_url in script_urls[:3]:
+                            script_resp = await client.get(script_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            if script_resp.status_code >= 400:
+                                continue
+                            script_text = script_resp.text
+                            phrases = []
+                            for match in _re.findall(r'"([^"\\]*(?:brand|fashion|clothing|style|styling|wear|drops|lookbook|challenge|trend)[^"\\]*)"', script_text, _re.I):
+                                clean_phrase = html_module.unescape(" ".join(match.split()))
+                                if 45 <= len(clean_phrase) <= 240 and not clean_phrase.lower().startswith(("http", "class", "text-")):
+                                    phrases.append(clean_phrase)
+                            if phrases:
+                                scraped_about = max(phrases, key=len)[:700]
+                                break
 
-                    # ---- Logo extraction with bad-asset filter ----
-                    logo_candidates: List[Tuple[int, str, str]] = []  # (score, url, alt_hint)
-
-                    def _add_logo(candidate: str, score: int, alt_hint: str = ""):
+                    def _add_logo(candidate: str, score: int = 0):
                         candidate = str(candidate or "").strip()
                         if not candidate or candidate.startswith("data:"):
                             return
-                        full = urljoin(final_url, candidate)
-                        if _is_bad_logo_url(full, selected_domain, alt_hint):
-                            warnings.append(f"Rejected logo candidate {full} (generic marketplace/social/badge asset).")
+                        lowered = candidate.lower()
+                        if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar", "blank", "vite.svg", "react.svg"]):
                             return
-                        if any(blocked in full.lower() for blocked in ["sprite", "placeholder", "tracking", "pixel", "blank", "vite.svg", "react.svg"]):
-                            return
-                        logo_candidates.append((score, full, alt_hint))
+                        logo_candidates.append((score, urljoin(final_url, candidate)))
 
+                    logo_candidates = []
                     for tag in _re.findall(r'<meta[^>]+>', html, _re.I | _re.S):
                         meta_key = (_attr(tag, "property") or _attr(tag, "name")).lower()
                         content = _attr(tag, "content")
                         if meta_key in {"og:logo", "logo"}:
-                            _add_logo(content, 100, "meta logo")
+                            _add_logo(content, 100)
                         elif meta_key in {"og:image", "twitter:image", "twitter:image:src"}:
-                            _add_logo(content, 62, "og image")
+                            _add_logo(content, 62)
                     for tag in _re.findall(r'<link[^>]+>', html, _re.I | _re.S):
                         rel = _attr(tag, "rel").lower()
                         if any(key in rel for key in ["apple-touch-icon", "mask-icon", "shortcut icon", "icon"]):
-                            _add_logo(_attr(tag, "href"), 55 if "apple" in rel else 45, "favicon")
+                            _add_logo(_attr(tag, "href"), 55 if "apple" in rel else 45)
                     for manifest_icon_url in manifest_logo_candidates:
-                        _add_logo(manifest_icon_url, 58, "manifest icon")
+                        _add_logo(manifest_icon_url, 58)
                     for tag in _re.findall(r'<img[^>]+>', html, _re.I | _re.S):
-                        alt_value = _attr(tag, "alt")
-                        haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), alt_value, _attr(tag, "src"), _attr(tag, "data-src")]).lower()
+                        haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), _attr(tag, "alt"), _attr(tag, "src"), _attr(tag, "data-src")]).lower()
                         if "logo" in haystack or _slug(brand_name).replace(".", "") in haystack.replace("-", "").replace("_", ""):
-                            _add_logo(
-                                _attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"),
-                                92 if "logo" in haystack else 68,
-                                alt_value,
-                            )
+                            _add_logo(_attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"), 92 if "logo" in haystack else 68)
                     for match in _re.findall(r'"logo"\s*:\s*(?:"([^"\n]+)"|\{[^}]*"url"\s*:\s*"([^"\n]+)")', html, _re.I | _re.S):
-                        _add_logo(next((item for item in match if item), ""), 96, "json-ld logo")
+                        _add_logo(next((item for item in match if item), ""), 96)
                     if logo_candidates:
                         logo_candidates.sort(key=lambda item: item[0], reverse=True)
                         scraped_logo = _brand_logo_from_source(final_url, logo_candidates[0][1])
-                        if _is_bad_logo_url(scraped_logo, selected_domain):
-                            warnings.append(f"Dropped final logo {scraped_logo} after bad-asset re-check.")
-                            scraped_logo = ""
+
+                    page_text = html_module.unescape(_re.sub(r'<[^>]+>', ' ', html))
+                    page_text = " ".join(page_text.split())
+                    budget_patterns = [
+                        r'(?:marketing|campaign|media|advertising)\s+(?:budget|spend)[^.\n]{0,100}(?:₦|NGN|N|USD|\$|£)?\s?[\d,.]+\s?(?:k|m|bn|million|billion|thousand)?',
+                        r'(?:₦|NGN|N|USD|\$|£)\s?[\d,.]+\s?(?:k|m|bn|million|billion|thousand)?[^.\n]{0,100}(?:marketing|campaign|media|advertising|budget|spend)',
+                    ]
+                    for pattern in budget_patterns:
+                        match = _re.search(pattern, page_text, _re.I)
+                        if match:
+                            scraped_budget = " ".join(match.group(0).split())[:180]
+                            break
             except (httpx.HTTPError, ValueError) as exc:
                 logger.warning("Scrape failed for %s: %s", url, exc)
 
-        # ---- Preserve existing data on weak/empty scrape results ----
-        existing_about = str(brand.get("about") or brand.get("brand_about") or "")
-        existing_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
         if not scraped_about:
-            scraped_about = existing_about
+            scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
         if not scraped_logo:
-            scraped_logo = existing_logo
-        if scraped_logo and _is_bad_logo_url(scraped_logo, selected_domain):
-            warnings.append(f"Dropped saved logo {scraped_logo} (bad/generic marketplace asset).")
-            scraped_logo = ""
+            scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
+        # We Yan's scraped logo is white and invisible on the tile — always pin a known-good logo.
+        if _is_weyan_brand(brand_name):
+            scraped_logo = WEYAN_LOGO_URL
+        if not scraped_budget:
+            scraped_budget = "No public marketing budget found. Confirm during Connect call."
 
-        # ---- Belt-and-braces: never overwrite with agency-blocked domain ----
-        final_domain = _domain_from_url(final_url) if final_url else ""
-        if final_domain in _AGENCY_BLOCKED_DOMAINS:
-            warnings.append(
-                f"Discarded scrape from {final_domain} because it matches the agency block list, not the brand {brand_name}."
-            )
-            scraped_about = existing_about
-            scraped_logo = existing_logo if not _is_bad_logo_url(existing_logo, "") else ""
-            final_url = brand.get("website") or ""
-            selected_source_type = "skipped_agency_block"
-
-        # Don't overwrite a high-confidence existing website with a low-
-        # confidence marketplace fallback.
-        if existing_about and selected_source_type == "marketplace" and not enrichment_target.get("target_value"):
-            scraped_about = existing_about
-
-        # ---- Persist canonical fields ----
         updates = {"updated_at": _now_iso()}
-        # Don't save marketplace fallbacks as ``website`` — they live in
-        # ``supporting_links`` instead.
-        if final_url and selected_source_type not in ("marketplace", "skipped_agency_block") and _domain_from_url(final_url) not in _AGENCY_BLOCKED_DOMAINS:
+        if final_url:
             updates["website"] = final_url
             updates["source_url"] = final_url
         if scraped_about:
@@ -2254,37 +1178,21 @@ def make_v3_router(db):
         if scraped_logo:
             updates["logo_url"] = scraped_logo
             updates["brand_logo_url"] = scraped_logo
-        supporting_links = [c["url"] for c in (discovery.get("rejected_candidates") or []) if c.get("url")][:5]
-        if supporting_links:
-            updates["supporting_links"] = supporting_links
-        # Marketing budget is owned by admin/transcript analysis — never
-        # overwrite from a scrape.
+        if scraped_budget:
+            updates["marketing_budget"] = scraped_budget
         if len(updates) > 1:
             await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
 
         return {
             "ok": True,
-            "brand_id": brand_id,
-            "name": brand_name,
             "about": scraped_about,
             "logo_url": scraped_logo,
             "brand_logo_url": scraped_logo,
-            "marketing_budget": brand.get("marketing_budget") or "Not captured yet",
+            "marketing_budget": scraped_budget,
             "brand_name": brand_name,
-            "website": final_url if selected_source_type not in ("marketplace", "skipped_agency_block") else "",
-            "source_url": final_url if selected_source_type not in ("marketplace", "skipped_agency_block") else "",
+            "website": final_url,
+            "source_url": final_url,
             "scraped": True,
-            "enrichment_target": {
-                **enrichment_target,
-                "selected_url": final_url,
-                "selected_domain": _domain_from_url(final_url) if final_url else "",
-                "source_type": selected_source_type,
-                "score": (discovery.get("selected") or {}).get("score"),
-            },
-            "accepted_candidates": discovery.get("accepted_candidates") or [],
-            "rejected_candidates": discovery.get("rejected_candidates") or [],
-            "supporting_links": supporting_links,
-            "warnings": warnings,
         }
     class BrandCreate(BaseModel):
         company: str
@@ -2322,7 +1230,7 @@ def make_v3_router(db):
             crm_accepted_at = now
         about_text = _compact_text(payload.about or payload.brand_about)
         source_url = payload.source_url or ""
-        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url, brand_name=payload.company)
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
         logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,
@@ -2394,67 +1302,23 @@ def make_v3_router(db):
 
         app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
         brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{app_base_url}/brand").rstrip("/")
-        support_email = (os.getenv("SMTP_REPLY_TO") or os.getenv("TASCK_SUPPORT_EMAIL") or "").strip()
-        contact_name_clean = (payload.primary_contact or "").strip() or "there"
-        company_clean = (payload.company or "your brand").strip()
-
-        # Guard against duplicate welcome emails for the same brand. The brand
-        # creation flow only fires once per brand insert, but this is a belt-
-        # and-braces check so the user never sees a duplicate inbox entry.
-        existing_welcome = await db.v3_email_outbox.find_one({
-            "brand_id": brand_id, "kind": "brand_welcome",
-        })
-        welcome_subject = "Welcome to your TASCK brand workspace"
-        plain_body = (
-            f"Hi {contact_name_clean},\n\n"
-            f"Welcome to TASCK. Your brand workspace for {company_clean} is ready.\n\n"
-            "Inside the workspace you can review business cases, approve creative work, "
-            "track campaigns, and talk with the TASCK team in one place.\n\n"
-            f"Sign in: {brand_portal_url}\n"
-            f"Username: {username}\n"
-            f"Temporary access code: {temp_password}\n\n"
-            "Please sign in once and replace the temporary access code with your own password.\n\n"
-            + (f"Questions? Reply to this email or write to {support_email}.\n\n" if support_email else "Questions? Reply to this email and the TASCK team will help.\n\n")
-            + "— The TASCK Team\n"
+        welcome = await queue_email(
+            to=username,
+            subject="Your TASCK brand access",
+            body=(
+                f"Hello {payload.primary_contact},\n\n"
+                "Welcome to TASCK.\n\n"
+                f"We have prepared brand portal access for {payload.company} so your team can review project documents, respond to approval requests, and keep communication with TASCK in one place.\n\n"
+                f"Brand portal: {brand_portal_url}\n"
+                f"Email: {username}\n"
+                f"Access code: {temp_password}\n\n"
+                "For security, please sign in and change this access code before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
+                "Regards,\n"
+                "TASCK"
+            ),
+            kind="brand_welcome",
+            brand_id=brand_id,
         )
-        html_body = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Welcome to TASCK</title></head>
-<body style="font-family:Arial,Helvetica,sans-serif;color:#1A1A1A;background:#FBFAF7;margin:0;padding:24px;">
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:560px;margin:0 auto;background:#FFFFFF;border:1px solid #E8E4DB;border-radius:8px;padding:32px;">
-    <tr><td>
-      <h1 style="font-size:20px;margin:0 0 16px;color:#1A1A1A;">Welcome to your TASCK brand workspace</h1>
-      <p style="font-size:14px;line-height:22px;margin:0 0 16px;">Hi {contact_name_clean},</p>
-      <p style="font-size:14px;line-height:22px;margin:0 0 16px;">Welcome to TASCK. Your brand workspace for <strong>{company_clean}</strong> is ready.</p>
-      <p style="font-size:14px;line-height:22px;margin:0 0 16px;">Inside the workspace you can review business cases, approve creative work, track campaigns, and talk with the TASCK team in one place.</p>
-      <p style="margin:24px 0;">
-        <a href="{brand_portal_url}" style="display:inline-block;background:#1F4A3A;color:#FFFFFF;text-decoration:none;padding:10px 18px;border-radius:6px;font-size:14px;">Sign in to your workspace</a>
-      </p>
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="font-size:13px;line-height:20px;border-collapse:collapse;">
-        <tr><td style="color:#6E6657;padding:2px 12px 2px 0;">Username</td><td style="color:#1A1A1A;">{username}</td></tr>
-        <tr><td style="color:#6E6657;padding:2px 12px 2px 0;">Temporary access code</td><td style="color:#1A1A1A;font-family:monospace;">{temp_password}</td></tr>
-      </table>
-      <p style="font-size:13px;line-height:20px;color:#6E6657;margin:20px 0 0;">Please sign in once and replace the temporary access code with your own password.</p>
-      <hr style="border:none;border-top:1px solid #E8E4DB;margin:24px 0;">
-      <p style="font-size:12px;line-height:18px;color:#6E6657;margin:0;">
-        Questions? {('Reply to this email or write to <a href="mailto:' + support_email + '" style="color:#1F4A3A;">' + support_email + '</a>.') if support_email else 'Reply to this email and the TASCK team will help.'}
-      </p>
-      <p style="font-size:12px;line-height:18px;color:#6E6657;margin:12px 0 0;">— The TASCK Team</p>
-    </td></tr>
-  </table>
-</body></html>"""
-
-        if existing_welcome:
-            logger.info("welcome_email_skip brand_id=%s — duplicate welcome already sent (id=%s)", brand_id, existing_welcome.get("id"))
-            welcome = existing_welcome
-        else:
-            welcome = await queue_email(
-                to=username,
-                subject=welcome_subject,
-                body=plain_body,
-                html_body=html_body,
-                kind="brand_welcome",
-                brand_id=brand_id,
-            )
         return {
             **doc,
             "account": {
@@ -2544,7 +1408,7 @@ def make_v3_router(db):
         rm = await _relationship_manager(payload.rm_id)
         about_text = _compact_text(payload.about or payload.brand_about)
         source_url = payload.source_url or ""
-        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url, brand_name=payload.company)
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
         logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,
@@ -3847,120 +2711,164 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
         connect = case.get("connect", {}) or {}
         brand_company = brand.get("company") or brand.get("name") or case.get("brand_name") or case.get("title") or "Brand"
+        brand_industry = brand.get("industry") or brand.get("sector") or brand.get("category") or "consumer culture"
+        project_title = case.get("title") or f"{brand_company} Relationship Opportunity"
         mi = _marketing_intelligence_from_case(case)
-        alignment_card = connect.get("alignment_tool_analysis") or {}
+        alignment_fields = connect.get("alignment_tool_analysis") or mi.get("alignment_snapshot_fields") or {}
 
-        def _channels_to_text(channels: Any) -> str:
-            if isinstance(channels, list):
-                cleaned = [str(c).strip() for c in channels if str(c).strip()]
-                return ", ".join(cleaned) if cleaned else _needs_confirmation_text("key_marketing_channels")
-            text = str(channels or "").strip()
-            return text if text else _needs_confirmation_text("key_marketing_channels")
+        def _usable_text(value: Any, fallback: str) -> str:
+            text = str(value or "").strip()
+            if not text or text.lower() in {"admin review required.", "admin review required", "confirm with brand.", "pending admin review."}:
+                return fallback
+            return text
 
-        def _kpis_to_text(kpis: Any) -> str:
-            if not isinstance(kpis, list) or not kpis:
-                return _needs_confirmation_kpi()["evidence"]
-            lines: List[str] = []
-            for item in kpis:
-                # Defensive: if a previous version of the pipeline stringified a
-                # dict KPI via str() (Python repr with single quotes), try to
-                # parse it back into a dict so we can render it cleanly.
-                if isinstance(item, str) and item.strip().startswith("{") and item.strip().endswith("}"):
-                    try:
-                        import ast as _ast
-                        parsed = _ast.literal_eval(item)
-                        if isinstance(parsed, dict):
-                            item = parsed
-                    except (ValueError, SyntaxError):
-                        pass
-                if isinstance(item, dict):
-                    kpi = str(item.get("kpi") or item.get("metric") or item.get("name") or "Metric").strip()
-                    target = str(item.get("target") or "").strip()
-                    evidence = str(item.get("evidence") or "").strip()
-                    parts = [kpi]
-                    if target:
-                        parts.append(f"target: {target}")
-                    if evidence:
-                        parts.append(f"evidence: {evidence}")
-                    lines.append(" — ".join(parts))
-                else:
-                    lines.append(str(item))
-            return "\n".join(lines)
+        def _money(value: Any) -> str:
+            try:
+                amount = int(float(value or 0))
+            except (TypeError, ValueError):
+                amount = 0
+            if amount <= 0:
+                return "NGN 75,000,000 - NGN 120,000,000 directional working range"
+            return f"NGN {amount:,} directional working range"
 
-        def _answer_for(key: str) -> Tuple[str, bool]:
-            value = alignment_card.get(key) if isinstance(alignment_card, dict) else None
-            if value is None:
-                value = mi.get(key)
-            if key == "key_marketing_channels":
-                text = _channels_to_text(value)
-            elif key == "kpis":
-                text = _kpis_to_text(value)
-            else:
-                text = str(value or "").strip()
-            captured = _field_captured(value)
-            if not text:
-                text = _needs_confirmation_text(key)
-                captured = False
-            return text, captured
+        has_call_context = bool(
+            mi.get("source_excerpt")
+            or connect.get("analysis")
+            or connect.get("transcript")
+            or connect.get("latest_meeting_id")
+            or connect.get("latest_business_call_id")
+        )
+        focus = _usable_text(
+            mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"),
+            f"Turn {brand_company}'s {brand_industry} advantage into a sharper creator-led narrative that improves qualified consideration and conversion.",
+        )
+        audience = _usable_text(
+            mi.get("primary_target_audience") or connect.get("primary_target_audience"),
+            f"Urban Nigerian consumers and professional decision-makers who already engage with {brand_industry} content but need stronger proof, relevance, and trust cues before action.",
+        )
+        challenge = _usable_text(
+            connect.get("marketing_challenge") or connect.get("current_marketing_challenge") or connect.get("observed_challenge"),
+            f"{brand_company} has an opportunity to move from broad awareness into clearer behavior change by matching the right creator voices to the right purchase or adoption moments.",
+        )
+        timeline = _usable_text(
+            connect.get("timeline") or connect.get("campaign_timeline"),
+            "6-8 weeks from snapshot approval to launch readiness, with reporting after the first campaign cycle.",
+        )
+        decision_maker = _usable_text(
+            connect.get("decision_maker") or brand.get("primary_contact") or brand.get("contact_name"),
+            "Brand lead plus finance or senior marketing approver to confirm during Plan.",
+        )
+        channels = mi.get("key_marketing_channels") or connect.get("key_marketing_channels") or ["Instagram", "TikTok", "YouTube", "PR"]
+        channels = [str(channel) for channel in channels if str(channel).strip()][:6] or ["Instagram", "TikTok", "YouTube", "PR"]
+        kpis = mi.get("marketing_kpis") or connect.get("marketing_kpis") or [
+            {"kpi": "Qualified reach", "target": "1.5M-3M relevant impressions across selected creator channels."},
+            {"kpi": "Engagement quality", "target": "Above benchmark saves, comments, profile visits, and story interactions."},
+            {"kpi": "Conversion signal", "target": "Track leads, inquiries, sales lift, sign-ups, or booked consultations based on brand objective."},
+        ]
+        if not isinstance(kpis, list) or not kpis:
+            kpis = [{"kpi": "Qualified reach", "target": "Confirm target with brand."}]
+        budget_range = _money(case.get("estimated_value") or connect.get("budget") or connect.get("budget_range"))
+        date_of_connect = _usable_text(
+            connect.get("date_of_connect")
+            or connect.get("connected_at")
+            or connect.get("promoted_at")
+            or connect.get("latest_meeting_date")
+            or connect.get("created_at")
+            or case.get("created_at"),
+            "Brand to confirm the Connect call date.",
+        )
+        priority = _usable_text(
+            connect.get("priority") or connect.get("business_priority") or mi.get("priority"),
+            "Brand to confirm priority level and sequence.",
+        )
+        kpi_summary = "; ".join([
+            (
+                f"{item.get('kpi', item.get('label', 'Metric'))}: "
+                f"{item.get('target', item.get('value', 'Confirm target'))}"
+            ) if isinstance(item, dict) else str(item)
+            for item in kpis[:5]
+        ])
+        captured_channels = mi.get("key_marketing_channels") or connect.get("key_marketing_channels")
+        captured_kpis = mi.get("marketing_kpis") or connect.get("marketing_kpis")
 
-        rows: List[Dict[str, Any]] = []
-        captured_keys: List[str] = []
-        missing_keys: List[str] = []
-        for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
-            answer, captured = _answer_for(key)
-            status = "Captured" if captured else "Needs confirmation"
-            rows.append({
-                "Alignment field": label,
-                "Brand response / comment": answer,
-                "Status": status,
-                "key": key,
-            })
-            if captured:
-                captured_keys.append(key)
-            else:
-                missing_keys.append(key)
+        def _brand_confirmation(label: str) -> str:
+            return f"This detail needs brand confirmation before approval. Please confirm {label}."
 
-        label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
-        evidence_notes = alignment_card.get("evidence_notes") if isinstance(alignment_card, dict) else []
-        if not isinstance(evidence_notes, list):
-            evidence_notes = []
+        def _alignment_answer(key: str, fallback: str) -> str:
+            if alignment_fields:
+                return _usable_text(alignment_fields.get(key), fallback)
+            return fallback
+
+        about_answer = _alignment_answer(
+            "about_the_organisation",
+            _usable_text(brand.get("about") or brand.get("brand_about") or brand.get("description"), _brand_confirmation("what the organisation does")),
+        )
+        core_focus_answer = _alignment_answer(
+            "core_focus_areas",
+            _usable_text(mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"), _brand_confirmation("the core focus areas")),
+        )
+        customers_answer = _alignment_answer(
+            "key_customers_beneficiaries",
+            _usable_text(mi.get("primary_target_audience") or connect.get("primary_target_audience"), _brand_confirmation("the key customers or beneficiaries")),
+        )
+        goals_answer = _alignment_answer(
+            "key_goals_metrics",
+            _usable_text(kpi_summary if captured_kpis else "", _brand_confirmation("the goals or metrics tracked")),
+        )
+        success_answer = _alignment_answer(
+            "success_timeline",
+            _usable_text(connect.get("timeline") or connect.get("campaign_timeline"), _brand_confirmation("success criteria and timeline")),
+        )
+        focus_answer = _alignment_answer(
+            "focus",
+            _usable_text(", ".join([str(channel) for channel in captured_channels]) if isinstance(captured_channels, list) else captured_channels, _brand_confirmation("the campaign focus")),
+        )
+        priority_answer = _alignment_answer(
+            "priority",
+            _usable_text(connect.get("priority") or connect.get("business_priority") or mi.get("priority"), _brand_confirmation("the priority level")),
+        )
+        date_answer = _alignment_answer("date_of_connect", _usable_text(date_of_connect, _brand_confirmation("the Connect call date")))
+
+        source_excerpt = _usable_text(
+            mi.get("source_excerpt") or connect.get("source_excerpt") or connect.get("analysis_summary") or connect.get("transcript_summary"),
+            "",
+        )
+
+        def _detailed_alignment_answer(label: str, answer: str, confirmation_hint: str) -> str:
+            base = str(answer or "").strip()
+            missing = (
+                (not base)
+                or base.startswith("Not captured clearly")
+                or base.startswith("This detail needs brand confirmation")
+                or "Brand should confirm" in base
+            )
+            if missing:
+                return (
+                    f"{label} still needs brand confirmation before it is treated as final. "
+                    f"TASCK needs the brand to confirm {confirmation_hint}. "
+                    "The brand should add precise wording, correct any assumptions, and approve only when the statement matches the conversation and the organisation's current business reality."
+                )
+            evidence = f" Supporting context for this field: {source_excerpt}" if source_excerpt else ""
+            return (
+                f"TASCK's current understanding of {label} is: {base}. "
+                "This is the working alignment position for the project, shaped from the brand conversation and organised into a clear planning input for TASCK. "
+                f"The brand should review the wording carefully, add nuance where needed, and correct anything that does not fully represent the discussion before approval.{evidence}"
+            )
+
+        about_answer = _detailed_alignment_answer("About The Organisation", about_answer, "what the organisation does, who it serves, and why the market should care")
+        core_focus_answer = _detailed_alignment_answer("the Core Focus Areas", core_focus_answer, "the business, communication, product, or cultural focus areas TASCK should build around")
+        customers_answer = _detailed_alignment_answer("the Key Customers/Beneficiaries", customers_answer, "the specific audience groups, beneficiaries, buyers, communities, or decision makers the work must influence")
+        goals_answer = _detailed_alignment_answer("the Key Goals or Metrics that are Tracked", goals_answer, "the measurable targets, commercial goals, engagement goals, and reporting metrics that define success")
+        success_answer = _detailed_alignment_answer("What Success Looks Like / Timeline", success_answer, "the success picture, timing, launch window, reporting period, and any hard deadlines")
+        focus_answer = _detailed_alignment_answer("Focus", focus_answer, "the channels, cultural territories, formats, and communication focus TASCK should prioritise")
+        priority_answer = _detailed_alignment_answer("Priority", priority_answer, "what matters most first and how urgent this work is for the brand")
+        date_answer = _detailed_alignment_answer("Date of connect", date_answer, "the correct date and session context for the Connect conversation")
 
         scope_flags = [
             {"text": "Brand review", "reason": "Brand must review, comment, or approve the Alignment Snapshot before admin approval."},
         ]
         as_id = (existing or {}).get("id") or f"as-{uuid.uuid4().hex[:8]}"
         generated_at = _now_iso()
-        analysis_source = alignment_card.get("analysis_source") if isinstance(alignment_card, dict) else "honest_fallback"
-        analysis_model = alignment_card.get("analysis_model") if isinstance(alignment_card, dict) else ""
-
-        sections = [
-            {
-                "heading": "1. ALIGNMENT SNAPSHOT",
-                "type": "questions",
-                "content": "Based on our call, this is what we understand so far. Please confirm if we are aligned. Review each field below, leave comments where anything does not match the call, or approve when accurate.",
-                "columns": ["Alignment field", "Brand response / comment", "Status"],
-                "rows": rows,
-            },
-            {
-                "heading": "2. HOW THE BRAND SHOULD REVIEW THIS",
-                "type": "numbered",
-                "content": "This Alignment Snapshot is sent to the brand for review, comments, or approval before TASCK admin moves into Plan.",
-                "items": [
-                    "Review each Alignment Snapshot field against the Connect call.",
-                    "Add comments wherever the snapshot does not align with the call.",
-                    "Send comments back to TASCK or approve the snapshot if it is accurate.",
-                    "Admin sees the brand approval or comments before moving the Business Case into Plan.",
-                ],
-            },
-        ]
-        if evidence_notes:
-            sections.append({
-                "heading": "3. EVIDENCE & CONFLICTS NOTED BY ANALYZER",
-                "type": "bullets",
-                "content": "Items the analyzer noted from the transcript review. These help the brand spot conflicts or missing detail.",
-                "items": [str(item) for item in evidence_notes],
-            })
-
         doc = {
             "id": as_id,
             "business_case_id": bc_id,
@@ -3974,35 +2882,30 @@ def make_v3_router(db):
             "approved_by_party": None,
             "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
             "title": f"{brand_company} - Alignment Snapshot",
-            "meta": "Based on our call, this is what we understand. Are we aligned? Please review, comment, or approve before TASCK moves into Plan.",
+            "meta": "Alignment Snapshot for brand review. TASCK sends this to the brand so they can confirm it aligns with the Connect call, add comments if anything is off, or approve it before Plan.",
             "marketing_intelligence": mi,
-            "alignment_snapshot_fields": [
-                {
-                    "question": label_for_key[key],
-                    "key": key,
-                    "answer": row["Brand response / comment"],
-                    "value": (alignment_card.get(key) if isinstance(alignment_card, dict) else mi.get(key)),
-                    "status": "captured" if key in captured_keys else "needs_confirmation",
-                }
-                for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS
-                for row in [next((r for r in rows if r.get("key") == key), {"Brand response / comment": ""})]
-            ],
-            "readiness": {
-                "captured_count": len(captured_keys),
-                "missing_count": len(missing_keys),
-                "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
-                "percentage": int(round((len(captured_keys) / len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)) * 100)) if ALIGNMENT_SNAPSHOT_FIELD_SPECS else 0,
-            },
-            "captured_fields": captured_keys,
-            "missing_fields": missing_keys,
-            "captured_field_labels": [label_for_key[k] for k in captured_keys],
-            "missing_field_labels": [label_for_key[k] for k in missing_keys],
-            "analysis_source": analysis_source,
-            "analysis_model": analysis_model,
-            "evidence_notes": [str(item) for item in evidence_notes],
-            "alignment_analysis_source": analysis_source,
+            "alignment_analysis_source": alignment_fields.get("analysis_source") if isinstance(alignment_fields, dict) else "deterministic_fallback",
             "brand_comments": (existing or {}).get("brand_comments", []),
-            "sections": sections,
+            "sections": [
+                {"heading": "1. ALIGNMENT SNAPSHOT", "type": "questions", "content": (
+                    "Brand should review each alignment field below, comment where anything does not match the Connect call, or approve when accurate."
+                ), "columns": ["Alignment field", "Brand response / comment"], "rows": [
+                    {"Alignment field": "About The Organisation", "Brand response / comment": about_answer},
+                    {"Alignment field": "What are the Core Focus Areas", "Brand response / comment": core_focus_answer},
+                    {"Alignment field": "Who are The Key Customers/Beneficiaries", "Brand response / comment": customers_answer},
+                    {"Alignment field": "Key Goals or Metrics that are Tracked", "Brand response / comment": goals_answer},
+                    {"Alignment field": "What Success Looks Like / Timeline", "Brand response / comment": success_answer},
+                    {"Alignment field": "Focus", "Brand response / comment": focus_answer},
+                    {"Alignment field": "Priority", "Brand response / comment": priority_answer},
+                    {"Alignment field": "Date of connect", "Brand response / comment": date_answer},
+                ]},
+                {"heading": "2. HOW THE BRAND SHOULD REVIEW THIS", "type": "numbered", "content": "This Alignment Snapshot is sent to the brand for review, comments, or approval before TASCK admin moves into Plan.", "items": [
+                    "Review each Alignment Snapshot field against the Connect call.",
+                    "Add comments wherever the snapshot does not align with the call.",
+                    "Send comments back to TASCK or approve the snapshot if it is accurate.",
+                    "Admin sees the brand approval or comments before moving the Business Case into Plan.",
+                ]},
+            ],
             "scope_flags": scope_flags,
         }
         if existing:
@@ -5188,42 +4091,6 @@ def make_v3_router(db):
         )
         return {"ok": True, "scope_change": log_entry}
 
-    # ------------------------------------------------------------------------
-    # Plan stage — Strategy Draft persistence (9-section editor)
-    # ------------------------------------------------------------------------
-    STRATEGY_DRAFT_HEADINGS = [
-        "Executive Snapshot", "Strategic Foundation", "Growth Plan",
-        "Creator Strategy", "Execution Roadmap", "Commercial Overview",
-        "Tracking Plan", "Risks & Mitigation", "Next Steps",
-    ]
-
-    class StrategyDraftPayload(BaseModel):
-        sections: Dict[str, str] = Field(default_factory=dict)
-        actor: Optional[str] = "admin"
-
-    @router.post("/business-cases/{bc_id}/plan/save-strategy-draft")
-    async def save_strategy_draft(bc_id: str, payload: StrategyDraftPayload):
-        """Persist the 9-section Strategy Draft so it survives reloads.
-        Only the canonical 9 headings are stored; unknown keys are dropped."""
-        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
-        if not case:
-            raise HTTPException(404, "Business case not found")
-        canonical = {h: str(payload.sections.get(h, "") or "") for h in STRATEGY_DRAFT_HEADINGS}
-        now = _now_iso()
-        draft = {
-            "sections": canonical,
-            "updated_at": now,
-            "updated_by": payload.actor or "admin",
-        }
-        await db.v3_business_cases.update_one(
-            {"id": bc_id},
-            {"$set": {"plan.strategy_draft": draft, "updated_at": now},
-             "$push": {"timeline": {"at": now, "event": "strategy_draft_saved", "actor": payload.actor or "admin"}}},
-        )
-        return {"ok": True, "business_case_id": bc_id, "strategy_draft": draft}
-
-
-
     @router.post("/business-cases/{bc_id}/scope-change/{sc_id}/approve")
     async def approve_scope_change(bc_id: str, sc_id: str):
         await db.v3_business_cases.update_one(
@@ -5884,535 +4751,79 @@ def make_v3_router(db):
         contact_name: Optional[str] = None
         agenda: Optional[str] = None
 
-    def _build_fallback_response(bc_id: str, reason: str, source: str = "fallback") -> Dict[str, Any]:
-        fallback = _alignment_fallback_result()
-        fallback["evidence_notes"] = [reason] + (fallback.get("evidence_notes") or [])
-        fallback["analysis_source"] = source
-        return {
-            "ok": False,
-            "error": reason,
-            "business_case_id": bc_id,
-            "business_case": None,
-            "marketing_intelligence": {key: fallback.get(key) for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS},
-            "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(fallback),
-            "readiness": {
-                "captured_count": 0,
-                "missing_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
-                "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
-                "percentage": 0,
-            },
-            "analysis_source": source,
-            "analysis_model": "",
-            "recommendation": {
-                "decision": "reschedule",
-                "label": "Reschedule Business Call",
-                "confidence": 0,
-                "reasons": [reason],
-                "missing_context": [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
-                "summary": "Analyzer fallback triggered.",
-                "next_questions": [f"Confirm {label}." for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
-                "captured_context": [],
-                "risk_flags": [],
-                "marketing_intelligence": {key: fallback.get(key) for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS},
-                "alignment_snapshot_fields": _alignment_snapshot_fields_from_card(fallback),
-                "readiness": {
-                    "captured_count": 0,
-                    "missing_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
-                    "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS),
-                    "percentage": 0,
-                },
-                "analysis_source": source,
-                "analysis_model": "",
-                "transcript_count": 0,
-                "evidence_notes": fallback.get("evidence_notes") or [],
-            },
-        }
-
-
-    # ------------------------------------------------------------------------
-    # Background-job + Smart Split for Connect / Analyze All
-    # ------------------------------------------------------------------------
-    # Stored in Mongo collection `v3_analysis_jobs`:
-    #   { id, business_case_id, status: queued|running|completed|failed,
-    #     progress: 0..100, message, transcript_count, total_chars,
-    #     created_at, updated_at, result?, error? }
-
-    SMART_SPLIT_TRANSCRIPT_THRESHOLD = int(os.getenv("SMART_SPLIT_TRANSCRIPT_THRESHOLD", "1"))
-    SMART_SPLIT_CHARS_THRESHOLD = int(os.getenv("SMART_SPLIT_CHARS_THRESHOLD", "12000"))
-
-    def _job_doc_to_response(job: Dict[str, Any]) -> Dict[str, Any]:
-        out = {
-            "ok": True,
-            "job_id": job.get("id"),
-            "status": job.get("status"),
-            "progress": int(job.get("progress") or 0),
-            "message": job.get("message") or "",
-            "business_case_id": job.get("business_case_id"),
-            "transcript_count": job.get("transcript_count") or 0,
-            "created_at": job.get("created_at"),
-            "updated_at": job.get("updated_at"),
-        }
-        if job.get("status") == "completed" and job.get("result"):
-            out.update(job["result"])
-        if job.get("status") == "failed":
-            out["error"] = job.get("error") or "Analysis failed; safe fallback shown."
-            if job.get("result"):
-                out.update(job["result"])
-        return out
-
-    def _merge_per_transcript_bundles(
-        bundles: List[Dict[str, Any]],
-    ) -> Tuple[Dict[str, Any], List[Dict[str, Any]], List[str], Dict[str, str], str, str]:
-        """Merge per-transcript analysis bundles into one final bundle.
-
-        Returns (marketing_intelligence, alignment_snapshot_fields, evidence_notes,
-        readiness, analysis_source, analysis_model).
-        """
-        # Collect values per canonical field
-        per_field: Dict[str, List[Tuple[str, Any]]] = {key: [] for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
-        for idx, b in enumerate(bundles):
-            mi = (b or {}).get("marketing_intelligence") or {}
-            for _, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
-                val = mi.get(key)
-                if val is None or val == "":
-                    continue
-                if isinstance(val, list) and not val:
-                    continue
-                per_field[key].append((f"Transcript {idx + 1}", val))
-
-        merged_mi: Dict[str, Any] = {}
-        evidence_notes: List[str] = []
-        captured_count = 0
-        for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
-            entries = per_field[key]
-            if not entries:
-                merged_mi[key] = f"Needs confirmation: {label.lower()}"
-                continue
-
-            if key in ALIGNMENT_LIST_FIELD_KEYS:
-                # Union all list values, dedupe preserving order
-                seen = set()
-                merged_list: List[Any] = []
-                for _src, val in entries:
-                    items = val if isinstance(val, list) else [val]
-                    for item in items:
-                        # KPIs are dict-shaped (kpi/target/evidence) — keep
-                        # the dict so downstream renderers can format cleanly.
-                        if isinstance(item, dict):
-                            # Dedup key: primary identifier of the KPI
-                            dedup = str(item.get("kpi") or item.get("metric") or item.get("name") or "").strip().lower()
-                            if not dedup:
-                                # Fallback to a stable JSON-ish repr
-                                dedup = json.dumps(item, sort_keys=True, default=str).lower()
-                            if dedup in seen:
-                                continue
-                            seen.add(dedup)
-                            merged_list.append(item)
-                            continue
-                        s = str(item).strip()
-                        if s and s.lower() not in seen:
-                            seen.add(s.lower())
-                            merged_list.append(s)
-                merged_mi[key] = merged_list
-                captured_count += 1
-                continue
-
-            # String fields: dedupe, then either use single value or note conflict
-            unique_values = []
-            sources_per_value: Dict[str, List[str]] = {}
-            for src, val in entries:
-                s = str(val).strip()
-                if not s or s.lower().startswith("needs confirmation"):
-                    continue
-                if s not in unique_values:
-                    unique_values.append(s)
-                sources_per_value.setdefault(s, []).append(src)
-            if not unique_values:
-                merged_mi[key] = f"Needs confirmation: {label.lower()}"
-                continue
-            captured_count += 1
-            if len(unique_values) == 1:
-                merged_mi[key] = unique_values[0]
-            else:
-                # Take the longest non-empty as the canonical and record conflict
-                canonical = max(unique_values, key=len)
-                merged_mi[key] = canonical
-                others = [v for v in unique_values if v != canonical]
-                evidence_notes.append(
-                    f"Conflicting {label}: {canonical} (from {', '.join(sources_per_value[canonical])}) "
-                    f"vs " + "; ".join(f"{v} (from {', '.join(sources_per_value[v])})" for v in others)
-                )
-
-        # Captured field labels for readiness reporting
-        merged_mi["captured_field_labels"] = [
-            label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS
-            if not (isinstance(merged_mi.get(key), str) and merged_mi[key].lower().startswith("needs confirmation"))
-            and not (isinstance(merged_mi.get(key), list) and not merged_mi[key])
-        ]
-
-        alignment_snapshot_fields = [
-            {"label": label, "key": key, "value": merged_mi.get(key)}
-            for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS
-        ]
-
-        total = len(ALIGNMENT_SNAPSHOT_FIELD_SPECS)
-        readiness = {
-            "captured_count": captured_count,
-            "missing_count": total - captured_count,
-            "total_count": total,
-            "percentage": int(round((captured_count / total) * 100)) if total else 0,
-        }
-
-        # Source/model: prefer anthropic if any bundle used it
-        sources = [(b or {}).get("analysis_source") for b in bundles if b]
-        models = [(b or {}).get("analysis_model") for b in bundles if b]
-        analysis_source = "anthropic" if any(s == "anthropic" for s in sources) else (
-            next((s for s in sources if s), "fallback")
-        )
-        analysis_model = next((m for m in models if m), "")
-
-        # Per-bundle evidence notes
-        for idx, b in enumerate(bundles):
-            for note in ((b or {}).get("evidence_notes") or []):
-                evidence_notes.append(f"Transcript {idx + 1}: {note}")
-
-        return merged_mi, alignment_snapshot_fields, evidence_notes, readiness, analysis_source, analysis_model
-
-    async def _smart_split_analyze(
-        transcript_blocks: List[Dict[str, Any]],
-        brand: Dict[str, Any],
-        business_case: Dict[str, Any],
-        progress_cb=None,
-    ) -> Dict[str, Any]:
-        """Per-transcript Claude analysis + merge. Tolerates per-transcript failures."""
-        bundles: List[Dict[str, Any]] = []
-        total = len(transcript_blocks)
-        for idx, block in enumerate(transcript_blocks):
-            if progress_cb:
-                await progress_cb(
-                    progress=int((idx / max(total, 1)) * 90),
-                    message=f"Analyzing transcript {idx + 1} of {total}...",
-                )
-            try:
-                bundle = await _analyze_transcript_bundle(
-                    [block], brand=brand, business_case=business_case, raise_on_anthropic_failure=False,
-                )
-            except Exception as exc:
-                logger.exception("smart-split: transcript %d failed; using empty bundle", idx + 1)
-                bundle = {
-                    "marketing_intelligence": {},
-                    "alignment_snapshot_fields": [],
-                    "readiness": {"captured_count": 0, "missing_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS), "total_count": len(ALIGNMENT_SNAPSHOT_FIELD_SPECS), "percentage": 0},
-                    "analysis_source": "fallback",
-                    "analysis_model": "",
-                    "evidence_notes": [f"Per-transcript analysis failed: {exc}"],
-                }
-            bundles.append(bundle)
-        if progress_cb:
-            await progress_cb(progress=92, message="Merging per-transcript extractions...")
-        mi, alignment_fields, evidence_notes, readiness, source, model = _merge_per_transcript_bundles(bundles)
-        return {
-            "marketing_intelligence": mi,
-            "alignment_snapshot_fields": alignment_fields,
-            "readiness": readiness,
-            "analysis_source": source,
-            "analysis_model": model,
-            "transcript_count": total,
-            "evidence_notes": evidence_notes,
-            "card": dict(mi),
-            "missing_fields": [k for _, k in ALIGNMENT_SNAPSHOT_FIELD_SPECS
-                               if isinstance(mi.get(k), str) and mi[k].lower().startswith("needs confirmation")],
-        }
-
-    async def _build_recommendation_from_bundle(bc_id: str, case: Dict[str, Any], bundle: Dict[str, Any], transcript_blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
-        mi = bundle["marketing_intelligence"]
-        readiness = int(bundle["readiness"]["percentage"])
-        missing_keys = bundle.get("missing_fields") or []
-        label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
-        missing_labels = [label_for_key[k] for k in missing_keys if k in label_for_key]
-        combined_text = "\n\n".join(block["content"] for block in transcript_blocks)
-
-        risk_flags = []
-        lower = combined_text.lower()
-        for label, markers in [
-            ("No budget or budget too low", ["no budget", "too low", "cannot afford", "free only"]),
-            ("Opt-out or low intent", ["not interested", "opt out", "maybe later", "no longer"]),
-            ("No authority", ["no authority", "not the decision maker", "cannot approve"]),
-            ("Unavailable", ["unavailable", "no capacity", "fully booked"]),
-            ("Conflict or brand safety issue", ["conflict", "unsafe", "controversy", "exclusive with"]),
-        ]:
-            if any(marker in lower for marker in markers):
-                risk_flags.append(label)
-        if risk_flags:
-            readiness = min(readiness, 80)
-
-        summary = combined_text[:280] or "No transcripts provided yet."
-
-        if not combined_text:
-            ai_recommendation = "reschedule"
-            ai_reasons = ["Transcripts are empty, so TASCK cannot make a reliable decision."]
-        elif readiness >= 70:
-            ai_recommendation = "promote"
-            ai_reasons = ["Confidence is 70% or higher, so the combined transcripts are ready to move into Frame."]
-            if risk_flags:
-                ai_reasons.extend([f"Flag to review during Frame: {item}." for item in risk_flags])
-            if missing_labels:
-                ai_reasons.append(f"Admin can refine these fields in Frame: {', '.join(missing_labels)}.")
-        else:
-            ai_recommendation = "reschedule"
-            ai_reasons = ["Confidence is below 70%, so schedule another Connect call before moving to Frame."]
-            if risk_flags:
-                ai_reasons.extend([f"Clarify risk before Frame: {item}." for item in risk_flags])
-            if missing_labels:
-                ai_reasons.append(f"Missing Alignment Snapshot context: {', '.join(missing_labels)}.")
-
-        recommendation_label = {
-            "promote": "Promote to Frame",
-            "reschedule": "Reschedule Business Call",
-        }.get(ai_recommendation, "Reschedule Business Call")
-
-        recommendation = {
-            "decision": ai_recommendation,
-            "label": recommendation_label,
-            "confidence": readiness,
-            "reasons": ai_reasons,
-            "missing_context": missing_labels,
-            "summary": summary,
-            "next_questions": [f"Clarify {item}." for item in missing_labels] or [f"Confirm {label}." for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
-            "captured_context": bundle["marketing_intelligence"].get("captured_field_labels") or [],
-            "risk_flags": risk_flags,
-            "marketing_intelligence": mi,
-            "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
-            "readiness": bundle["readiness"],
-            "analysis_source": bundle["analysis_source"],
-            "analysis_model": bundle["analysis_model"],
-            "transcript_count": bundle["transcript_count"],
-            "evidence_notes": bundle.get("evidence_notes") or [],
-        }
-
-        now = _now_iso()
-        await db.v3_business_cases.update_one(
-            {"id": bc_id},
-            {"$set": {
-                "connect.analysis": recommendation,
-                "connect.transcript": combined_text,
-                "connect.marketing_intelligence": mi,
-                "connect.alignment_tool_analysis": bundle.get("card") or {},
-                "connect.connect_status": "qualified_to_frame" if ai_recommendation == "promote" else "needs_business_call",
-                "connect.status_updated_at": now,
-                "connect.updated_at": now,
-                "updated_at": now,
-            }}
-        )
-        updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
-        return {
-            "recommendation": recommendation,
-            "business_case": updated,
-            "marketing_intelligence": mi,
-            "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
-            "readiness": bundle["readiness"],
-            "analysis_source": bundle["analysis_source"],
-            "analysis_model": bundle["analysis_model"],
-        }
-
-    async def _update_job(job_id: str, **fields):
-        fields["updated_at"] = _now_iso()
-        await db.v3_analysis_jobs.update_one({"id": job_id}, {"$set": fields})
-
-    async def _run_analyze_all_job(job_id: str, bc_id: str):
-        """Background runner. Drives Smart Split + saves result to BC + updates job."""
-        try:
-            case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
-            if not case:
-                await _update_job(job_id, status="failed", progress=100, error="Business case not found")
-                return
-            await _update_job(job_id, status="running", progress=5, message="Loading transcripts...")
-            meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
-            transcript_blocks: List[Dict[str, Any]] = []
-            for m in meetings:
-                t = (m.get("transcript") or "").strip()
-                if t:
-                    transcript_blocks.append({
-                        "title": m.get("title") or "Business call",
-                        "date": m.get("scheduled_for") or m.get("call_date") or "",
-                        "source": m.get("meeting_type") or "business_call",
-                        "content": t,
-                    })
-            brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
-
-            async def progress_cb(progress: int, message: str):
-                await _update_job(job_id, status="running", progress=progress, message=message)
-
-            await progress_cb(10, f"Analyzing {len(transcript_blocks)} transcripts (Smart Split)...")
-            bundle = await _smart_split_analyze(transcript_blocks, brand, case, progress_cb=progress_cb)
-            result = await _build_recommendation_from_bundle(bc_id, case, bundle, transcript_blocks)
-            # Drop the heavy business_case payload from the cached job result to keep the doc small
-            result_for_job = {k: v for k, v in result.items() if k != "business_case"}
-            await _update_job(
-                job_id,
-                status="completed",
-                progress=100,
-                message=f"Completed. Source: {bundle['analysis_source']}. Captured {bundle['readiness']['captured_count']}/{bundle['readiness']['total_count']} fields.",
-                result=result_for_job,
-                transcript_count=len(transcript_blocks),
-            )
-        except Exception as exc:
-            logger.exception("analyze-all background job failed bc_id=%s job_id=%s", bc_id, job_id)
-            # Save a safe fallback so the UI always has something
-            try:
-                case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or {}
-                fallback = _build_fallback_response(bc_id, f"Smart Split failed: {exc}", source="fallback")
-            except Exception:
-                fallback = {"recommendation": {"decision": "reschedule", "analysis_source": "fallback"}}
-            await _update_job(
-                job_id,
-                status="failed",
-                progress=100,
-                error=f"Smart Split failed: {exc}",
-                result=fallback,
-                message="Claude analysis failed. Showing safe fallback.",
-            )
-
-
     @router.post("/business-cases/{bc_id}/connect/analyze-all")
     async def analyze_all_connect_transcripts(bc_id: str):
-        """Hybrid: small bundle runs synchronously (≤20s budget). Large bundle
-        (multi-transcript OR long total content) creates a background job and
-        returns quickly. Poll /jobs/{job_id} for progress + final result."""
-        # Inspect transcripts before deciding mode
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
-        transcript_blocks: List[Dict[str, Any]] = []
-        for m in meetings:
-            t = (m.get("transcript") or "").strip()
-            if t:
-                transcript_blocks.append({
-                    "title": m.get("title") or "Business call",
-                    "date": m.get("scheduled_for") or m.get("call_date") or "",
-                    "source": m.get("meeting_type") or "business_call",
-                    "content": t,
-                })
-        total_chars = sum(len(b["content"]) for b in transcript_blocks)
-        transcript_count = len(transcript_blocks)
-        logger.info(
-            "analyze-all: dispatch bc_id=%s transcripts=%d total_chars=%d threshold=(%d,%d)",
-            bc_id, transcript_count, total_chars,
-            SMART_SPLIT_TRANSCRIPT_THRESHOLD, SMART_SPLIT_CHARS_THRESHOLD,
-        )
-
-        # Fast path: 0 or 1 short transcript → run synchronously under a 20s budget
-        if transcript_count <= SMART_SPLIT_TRANSCRIPT_THRESHOLD and total_chars <= SMART_SPLIT_CHARS_THRESHOLD:
-            try:
-                fast_timeout = max(15.0, float(os.getenv("ANALYZE_ALL_SYNC_TIMEOUT_SECONDS", "20")))
-            except (TypeError, ValueError):
-                fast_timeout = 20.0
-            start = time.monotonic()
-            try:
-                result = await asyncio.wait_for(_analyze_all_connect_transcripts_impl(bc_id), timeout=fast_timeout)
-                logger.info("analyze-all sync OK bc_id=%s elapsed=%.2fs source=%s", bc_id, time.monotonic() - start, (result or {}).get("analysis_source"))
-                result["mode"] = "sync"
-                return result
-            except asyncio.TimeoutError:
-                logger.warning("analyze-all sync hard-timed-out bc_id=%s after %.1fs — promoting to background job", bc_id, fast_timeout)
-                # Fall through to background job
-            except HTTPException:
-                raise
-            except Exception as exc:
-                logger.exception("analyze-all sync crashed bc_id=%s — falling back to honest fallback", bc_id)
-                return _build_fallback_response(bc_id, f"Server error: {exc}", source="fallback")
-
-        # Slow path: create a job, kick off the background runner, return queued
-        job_id = f"analysis-job-{uuid.uuid4().hex[:10]}"
-        now = _now_iso()
-        await db.v3_analysis_jobs.insert_one({
-            "id": job_id,
-            "business_case_id": bc_id,
-            "status": "queued",
-            "progress": 0,
-            "message": "Queued. Smart Split will analyze each transcript separately, then merge.",
-            "transcript_count": transcript_count,
-            "total_chars": total_chars,
-            "created_at": now,
-            "updated_at": now,
-            "result": None,
-            "error": None,
-        })
-        asyncio.create_task(_run_analyze_all_job(job_id, bc_id))
-        logger.info("analyze-all background job created bc_id=%s job_id=%s transcripts=%d total_chars=%d", bc_id, job_id, transcript_count, total_chars)
-        return {
-            "ok": True,
-            "mode": "background_job",
-            "job_id": job_id,
-            "status": "queued",
-            "progress": 0,
-            "transcript_count": transcript_count,
-            "message": "Transcript analysis started. We'll update this page when it is ready.",
-        }
-
-    @router.get("/business-cases/{bc_id}/connect/analyze-all/jobs/{job_id}")
-    async def get_analyze_all_job_status(bc_id: str, job_id: str):
-        job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
-        if not job:
-            raise HTTPException(404, "Analysis job not found")
-        return _job_doc_to_response(job)
-
-    async def _analyze_all_connect_transcripts_impl(bc_id: str):
-        impl_start = time.monotonic()
-        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
-        if not case:
-            logger.info("analyze-all: business case %s not found", bc_id)
-            raise HTTPException(404, "Business case not found")
-        logger.info("analyze-all: business case loaded bc_id=%s elapsed=%.2fs", bc_id, time.monotonic() - impl_start)
 
         # Get all meetings for this business case under stage "connect"
         meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
 
-        transcript_blocks: List[Dict[str, Any]] = []
-        meeting_dates: List[str] = []
+        transcripts = []
+        meeting_dates = []
         for m in meetings:
             t = (m.get("transcript") or "").strip()
             if t:
-                transcript_blocks.append({
-                    "title": m.get("title") or m.get("session_label") or "Business call",
-                    "date": m.get("scheduled_for") or m.get("call_date") or "",
-                    "source": m.get("meeting_type") or "business_call",
-                    "content": t,
-                })
+                # Add separating headers if multiple
+                transcripts.append(f"Meeting on {m.get('scheduled_for') or 'unspecified date'}:\n{t}")
             if m.get("scheduled_for"):
                 meeting_dates.append(m.get("scheduled_for"))
 
-        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
-        combined_text = "\n\n".join(block["content"] for block in transcript_blocks)
-        logger.info(
-            "analyze-all: transcripts loaded bc_id=%s transcript_count=%d total_chars=%d brand=%s elapsed=%.2fs",
-            bc_id, len(transcript_blocks), len(combined_text), brand.get("company") or "?", time.monotonic() - impl_start,
-        )
+        combined_text = "\n\n".join(transcripts).strip()
 
-        # Run the shared transcript bundle analyzer (Claude-first when configured).
-        # raise_on_anthropic_failure=False so any LLM failure produces a graceful
-        # fallback instead of a 5xx that loses CORS headers at the gateway.
-        logger.info("analyze-all: anthropic call starting bc_id=%s", bc_id)
-        bundle = await _analyze_transcript_bundle(
-            transcript_blocks,
-            brand=brand,
-            business_case=case,
-            raise_on_anthropic_failure=False,
-        )
-        logger.info(
-            "analyze-all: bundle complete bc_id=%s source=%s model=%s readiness=%d%% elapsed=%.2fs",
-            bc_id, bundle.get("analysis_source"), bundle.get("analysis_model"),
-            bundle.get("readiness", {}).get("percentage", 0), time.monotonic() - impl_start,
-        )
-        mi = bundle["marketing_intelligence"]
-        readiness = int(bundle["readiness"]["percentage"])
-        missing_keys = bundle.get("missing_fields") or []
-        label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
-        missing_labels = [label_for_key[k] for k in missing_keys if k in label_for_key]
+        # Run transcript analysis. Use the configured model-backed analyzer for the
+        # Alignment Snapshot fields; keep deterministic extraction as the fallback.
+        mi = _extract_marketing_intelligence(combined_text)
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
+        alignment_tool_result = None
+        if combined_text:
+            try:
+                alignment_timeout_seconds = max(
+                    3.0,
+                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "10")),
+                )
+            except ValueError:
+                alignment_timeout_seconds = 10.0
+            try:
+                alignment_tool_result = await asyncio.wait_for(
+                    _call_alignment_analysis_tool(combined_text, brand, case),
+                    timeout=alignment_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Alignment analysis tool timed out for business case %s after %.1fs; using deterministic fallback.",
+                    bc_id,
+                    alignment_timeout_seconds,
+                )
+        if alignment_tool_result:
+            mi = {
+                **mi,
+                "alignment_snapshot_fields": alignment_tool_result,
+                "analysis_source": alignment_tool_result.get("analysis_source"),
+                "extraction_confidence": alignment_tool_result.get("confidence", 0) / 100,
+            }
+        # Score Connect readiness against the V1 Alignment Snapshot question set.
+        lower = combined_text.lower()
+        alignment_requirements = [
+            ("About The Organisation", ["about the organisation", "about the organization", "organisation", "organization", "company", "brand", "business", "product", "service", "we are"]),
+            ("What are the Core Focus Areas", ["core focus", "focus area", "focus", "objective", "goal", "challenge", "priority area"]),
+            ("Who are The Key Customers/Beneficiaries", ["customer", "beneficiary", "audience", "consumer", "buyer", "client", "target market", "target audience"]),
+            ("Key Goals or Metrics that are Tracked", ["goal", "metric", "kpi", "tracked", "measure", "reach", "engagement", "conversion", "sales", "leads"]),
+            ("What Success Looks Like / Timeline", ["success", "timeline", "date", "launch", "deadline", "month", "week", "quarter"]),
+            ("Focus", ["focus", "campaign", "activation", "channel", "instagram", "tiktok", "youtube", "events", "retail", "pr"]),
+            ("Priority", ["priority", "urgent", "high priority", "low priority", "sequence", "first", "important"]),
+            ("Date of connect", ["date of connect", "connect date", "call date", "meeting on", "scheduled", "session", "202"]),
+        ]
+        captured = [label for label, markers in alignment_requirements if any(marker in lower for marker in markers)]
+        missing = [label for label, _ in alignment_requirements if label not in captured]
+        readiness = int(round((len(captured) / len(alignment_requirements)) * 100)) if alignment_requirements else 0
+        if alignment_tool_result:
+            captured = alignment_tool_result.get("captured_fields") or [label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS if _field_captured(alignment_tool_result.get(key))]
+            missing = alignment_tool_result.get("missing_fields") or [label for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS if label not in captured]
+            readiness = int(alignment_tool_result.get("confidence") or readiness)
 
         risk_flags = []
-        lower = combined_text.lower()
         for label, markers in [
             ("No budget or budget too low", ["no budget", "too low", "cannot afford", "free only"]),
             ("Opt-out or low intent", ["not interested", "opt out", "maybe later", "no longer"]),
@@ -6425,7 +4836,7 @@ def make_v3_router(db):
         if risk_flags:
             readiness = min(readiness, 80)
 
-        summary = combined_text[:280] or "No transcripts provided yet."
+        summary = mi.get("source_excerpt") or combined_text[:280] or "No transcripts provided yet."
 
         if not combined_text:
             ai_recommendation = "reschedule"
@@ -6435,39 +4846,33 @@ def make_v3_router(db):
             ai_reasons = ["Confidence is 70% or higher, so the combined transcripts are ready to move into Frame."]
             if risk_flags:
                 ai_reasons.extend([f"Flag to review during Frame: {item}." for item in risk_flags])
-            if missing_labels:
-                ai_reasons.append(f"Admin can refine these fields in Frame: {', '.join(missing_labels)}.")
+            if missing:
+                ai_reasons.append(f"Admin can refine these fields in Frame: {', '.join(missing)}.")
         else:
             ai_recommendation = "reschedule"
             ai_reasons = ["Confidence is below 70%, so schedule another Connect call before moving to Frame."]
             if risk_flags:
                 ai_reasons.extend([f"Clarify risk before Frame: {item}." for item in risk_flags])
-            if missing_labels:
-                ai_reasons.append(f"Missing Alignment Snapshot context: {', '.join(missing_labels)}.")
+            if missing:
+                ai_reasons.append(f"Missing Alignment Snapshot context: {', '.join(missing)}.")
 
         recommendation_label = {
             "promote": "Promote to Frame",
             "reschedule": "Reschedule Business Call",
         }.get(ai_recommendation, "Reschedule Business Call")
 
-        alignment_tool_result = bundle.get("card") or {}
         recommendation = {
             "decision": ai_recommendation,
             "label": recommendation_label,
             "confidence": readiness,
             "reasons": ai_reasons,
-            "missing_context": missing_labels,
+            "missing_context": missing,
             "summary": summary,
-            "next_questions": [f"Clarify {item}." for item in missing_labels] or [f"Confirm {label}." for label, _ in ALIGNMENT_SNAPSHOT_FIELD_SPECS],
-            "captured_context": bundle["marketing_intelligence"].get("captured_field_labels") or [],
+            "next_questions": [f"Clarify {item}." for item in missing] or [f"Confirm {label}." for label, _ in alignment_requirements],
+            "captured_context": captured,
             "risk_flags": risk_flags,
             "marketing_intelligence": mi,
-            "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
-            "readiness": bundle["readiness"],
-            "analysis_source": bundle["analysis_source"],
-            "analysis_model": bundle["analysis_model"],
-            "transcript_count": bundle["transcript_count"],
-            "evidence_notes": bundle.get("evidence_notes") or [],
+            "alignment_snapshot_fields": alignment_tool_result,
         }
 
         now = _now_iso()
@@ -6492,11 +4897,6 @@ def make_v3_router(db):
             "ok": True,
             "recommendation": recommendation,
             "business_case": updated,
-            "marketing_intelligence": mi,
-            "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
-            "readiness": bundle["readiness"],
-            "analysis_source": bundle["analysis_source"],
-            "analysis_model": bundle["analysis_model"],
         }
 
     @router.post("/business-cases/{bc_id}/connect/promote")
@@ -9135,11 +7535,6 @@ Produce the opportunity card JSON.
         parent_meeting_id: Optional[str] = None
         reschedule_count: int = 0
         max_reschedules: Optional[int] = 3
-        # SECURITY: defaults to False so calls from the transcript-save loop or
-        # any internal flow never auto-send an invite email. Only the explicit
-        # "Send to brand email" button or an explicit invite flow should pass
-        # send_invite_email=True.
-        send_invite_email: bool = False
 
     @router.post("/meetings")
     async def create_meeting(payload: MeetingCreate):
@@ -9279,7 +7674,7 @@ Produce the opportunity card JSON.
                     {"id": payload.business_case_id},
                     {"$addToSet": {"creator_fit_meeting_ids": mid, "plan.creator_fit_meeting_ids": mid}, "$set": {"updated_at": _now_iso(), "plan.creator_briefing_status": "scheduled"}},
                 )
-        if payload.send_invite_email and payload.scheduled_for and payload.contact_email:
+        if payload.scheduled_for and payload.contact_email:
             kind = {
                 "qualification": "qualification_call_invite",
                 "connector": "business_call_invite",
@@ -9287,11 +7682,6 @@ Produce the opportunity card JSON.
                 "creator_fit": "creator_fit_call_invite",
                 "creator_briefing": "creator_briefing_call_invite",
             }.get(payload.meeting_type, "meeting_invite")
-            logger.info(
-                "meeting_invite_email source=create_meeting kind=%s meeting_id=%s to=%s "
-                "send_invite_email=True (explicit opt-in)",
-                kind, mid, payload.contact_email,
-            )
             await queue_email(
                 to=payload.contact_email,
                 subject=f"TASCK meeting: {doc['title']}",
@@ -9307,15 +7697,6 @@ Produce the opportunity card JSON.
                 brand_id=payload.brand_id,
                 creator_id=payload.creator_id,
                 business_case_id=payload.business_case_id,
-            )
-        elif payload.scheduled_for and payload.contact_email:
-            # Diagnostics: log that we suppressed an auto-invite. This is
-            # intentional — internal flows (transcript save, smart-split
-            # background job, etc.) must NEVER send invites silently.
-            logger.info(
-                "meeting_invite_email_suppressed reason=send_invite_email_default_false "
-                "meeting_id=%s meeting_type=%s brand_id=%s",
-                mid, payload.meeting_type, payload.brand_id,
             )
         return await _hydrate_meeting(doc)
 
@@ -9359,140 +7740,6 @@ Produce the opportunity card JSON.
         if not m:
             raise HTTPException(404, "Meeting not found")
         transcript = m.get("transcript", "")
-        meeting_type = (m.get("meeting_type") or m.get("type") or "qualification").lower()
-        entity_type = (m.get("qualification_entity_type") or m.get("entity_type") or "brand").lower()
-
-        # For brand-side business call transcripts, use the shared Claude-backed
-        # Alignment Snapshot bundle analyzer so single-transcript and multi-
-        # transcript analysis produce the same readiness checklist shape.
-        if meeting_type in {"connector", "business_call"} and entity_type == "brand" and transcript.strip():
-            brand = {}
-            case: Dict[str, Any] = {}
-            if m.get("brand_id"):
-                brand = await db.v3_brands.find_one({"id": m["brand_id"]}, {"_id": 0}) or {}
-            if m.get("business_case_id"):
-                case = await db.v3_business_cases.find_one({"id": m["business_case_id"]}, {"_id": 0}) or {}
-            bundle = await _analyze_transcript_bundle(
-                [{
-                    "title": m.get("title") or m.get("session_label") or "Business call",
-                    "date": m.get("scheduled_for") or m.get("call_date") or "",
-                    "source": meeting_type,
-                    "content": transcript,
-                }],
-                brand=brand,
-                business_case=case,
-                raise_on_anthropic_failure=False,
-            )
-            mi = bundle["marketing_intelligence"]
-            readiness = int(bundle["readiness"]["percentage"])
-            label_for_key = {key: label for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS}
-            missing = [label_for_key[k] for k in (bundle.get("missing_fields") or []) if k in label_for_key]
-            summary = transcript.strip()[:280] or "Transcript not provided yet."
-            ai_recommendation = "promote" if readiness >= 70 else "reschedule"
-            ai_reasons = [
-                f"Anthropic transcript analysis returned {readiness}% readiness across the 8 Alignment Snapshot fields."
-            ]
-            if missing:
-                ai_reasons.append(f"Still needs confirmation: {', '.join(missing)}.")
-            recommendation_label = "Promote to Frame" if ai_recommendation == "promote" else "Reschedule Business Call"
-            recommendation = {
-                "decision": ai_recommendation,
-                "label": recommendation_label,
-                "confidence": readiness,
-                "reasons": ai_reasons,
-                "missing_context": missing,
-                "summary": summary,
-                "next_questions": [f"Clarify {item}." for item in missing],
-                "risk_flags": [],
-                "marketing_intelligence": mi,
-                "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
-                "readiness": bundle["readiness"],
-                "analysis_source": bundle["analysis_source"],
-                "analysis_model": bundle["analysis_model"],
-            }
-            channels_list = mi.get("key_marketing_channels") or []
-            if not isinstance(channels_list, list):
-                channels_list = [str(channels_list)]
-            kpis_list = mi.get("kpis") or []
-            kpi_names = []
-            for item in kpis_list:
-                if isinstance(item, dict):
-                    kpi_names.append(str(item.get("kpi") or "Metric"))
-                else:
-                    kpi_names.append(str(item))
-            analysis = {
-                "summary": summary,
-                "readiness_score": readiness,
-                "recommendation": recommendation,
-                "detected_fields": mi,
-                "missing_information": missing,
-                "risk_flags": [],
-                "ai_recommendation": ai_recommendation,
-                "ai_reasons": ai_reasons,
-                "next_questions": recommendation["next_questions"],
-                "decision_payload": {
-                    "meeting_type": meeting_type,
-                    "entity_type": entity_type,
-                },
-                "missingContext": missing,
-                "followUpQuestions": recommendation["next_questions"],
-                "ai_outputs": [
-                    f"Key marketing focus -> {mi.get('key_marketing_focus')}",
-                    f"Primary target audience -> {mi.get('primary_target_audience')}",
-                    f"Channels -> {', '.join(str(c) for c in channels_list)}",
-                    f"KPIs -> {', '.join(kpi_names)}",
-                ],
-                "marketing_intelligence": mi,
-                "alignment_snapshot_fields": bundle["alignment_snapshot_fields"],
-                "readiness": bundle["readiness"],
-                "analysis_source": bundle["analysis_source"],
-                "analysis_model": bundle["analysis_model"],
-                "transcript_count": bundle["transcript_count"],
-                "generated_at": _now_iso(),
-            }
-            await db.v3_meetings.update_one(
-                {"id": meeting_id},
-                {"$set": {
-                    "analysis": analysis,
-                    "readiness_score": readiness,
-                    "missing_information": missing,
-                    "risk_flags": [],
-                    "ai_recommendation": ai_recommendation,
-                    "ai_reasons": ai_reasons,
-                    "recommendation": recommendation,
-                    "next_questions": recommendation["next_questions"],
-                    "status": "transcribed",
-                    "updated_at": _now_iso(),
-                }},
-            )
-            if m.get("business_case_id"):
-                now = _now_iso()
-                await db.v3_business_cases.update_one(
-                    {"id": m["business_case_id"]},
-                    {
-                        "$set": {
-                            "connect.analysis": analysis,
-                            "connect.marketing_intelligence": mi,
-                            "connect.alignment_tool_analysis": bundle.get("card") or {},
-                            "connect.stated_intent": mi.get("key_marketing_focus"),
-                            "connect.connect_status": "in_discovery",
-                            "connect.status_updated_at": now,
-                            "connect.updated_at": now,
-                            "connect.latest_meeting_id": meeting_id,
-                            "updated_at": now,
-                        },
-                        "$push": {
-                            "timeline": {
-                                "at": now,
-                                "event": "connect_transcript_analyzed",
-                                "meeting_id": meeting_id,
-                                "ai_recommendation": ai_recommendation,
-                            }
-                        },
-                    },
-                )
-            return {**analysis, "readiness_score": readiness}
-
         mi = _extract_marketing_intelligence(transcript)
         text = (transcript or "").strip()
         lower = text.lower()
@@ -9506,6 +7753,8 @@ Produce the opportunity card JSON.
         readiness += 15 if len(text) >= 400 else (10 if len(text) >= 200 else 0)
         readiness += 25 if len(text) >= 800 else 0
         readiness = min(readiness, 100)
+        meeting_type = (m.get("meeting_type") or m.get("type") or "qualification").lower()
+        entity_type = (m.get("qualification_entity_type") or m.get("entity_type") or "brand").lower()
         if meeting_type in {"connector", "business_call"}:
             required = [
                 ("Marketing focus", ["focus", "objective", "goal", "challenge"]),
@@ -9650,10 +7899,10 @@ Produce the opportunity card JSON.
             "missingContext": missing,
             "followUpQuestions": next_questions,
             "ai_outputs": [
-                f"Key marketing focus -> {mi.get('key_marketing_focus')}",
-                f"Primary target audience -> {mi.get('primary_target_audience')}",
-                f"Channels -> {', '.join(str(c) for c in (mi.get('key_marketing_channels') or []))}",
-                f"KPIs -> {', '.join((k.get('kpi') if isinstance(k, dict) else str(k)) for k in (mi.get('kpis') or mi.get('marketing_kpis') or []))}",
+                f"Key marketing focus -> {mi['key_marketing_focus']}",
+                f"Primary target audience -> {mi['primary_target_audience']}",
+                f"Channels -> {', '.join(mi['key_marketing_channels'])}",
+                f"KPIs -> {', '.join(k['kpi'] for k in mi['marketing_kpis'])}",
             ],
             "marketing_intelligence": mi,
             "generated_at": _now_iso(),

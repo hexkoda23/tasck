@@ -26,7 +26,7 @@ import {
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
-import BrandLogo from '../../components/v3/BrandLogo';
+import { BrandLogo as SharedBrandLogo } from '../../lib/brandLogo';
 import { toast } from 'sonner';
 
 const EMPTY_VALUE = 'Not captured yet';
@@ -159,10 +159,14 @@ const logoCandidatesForBrand = (brand) => {
     .filter((value, index, array) => array.indexOf(value) === index);
 };
 
-const BrandLogoCard = ({ brand }) => (
-  <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-[#D7CBB8] bg-white">
-    <BrandLogo brand={brand} size={72} className="border-0" testId="brand-detail-logo" />
-  </div>
+const BrandLogo = ({ brand }) => (
+  <SharedBrandLogo
+    name={brandName(brand)}
+    candidates={logoCandidatesForBrand(brand)}
+    containerClassName="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-[#D7CBB8] bg-white"
+    imgClassName="h-full w-full object-contain p-2"
+    initialsClassName="text-[18px] font-semibold text-[#1F4A3A]"
+  />
 );
 const InfoCard = ({ title, children, action }) => (
   <div className="v3-card p-5">
@@ -309,24 +313,7 @@ const V1AdminCRMBrandDetail = () => {
     try {
       const res = await v3ScrapeBrandDetails(id);
       if (res.ok) {
-        const warnings = [
-          ...(res.warnings || []),
-          ...(res.enrichment_target?.warnings || []),
-        ];
-        const dedupedWarnings = Array.from(new Set(warnings));
-        const sourceType = res.enrichment_target?.source_type || 'website';
-        const summaryParts = [];
-        if (res.website) summaryParts.push(`source ${res.website}`);
-        if (res.logo_url) summaryParts.push('logo found');
-        if (Array.isArray(res.supporting_links) && res.supporting_links.length) {
-          summaryParts.push(`${res.supporting_links.length} supporting link(s) kept`);
-        }
-        const summary = summaryParts.length ? ` (${summaryParts.join(' · ')})` : '';
-        if (dedupedWarnings.length) {
-          toast(`Scrape warning: ${dedupedWarnings[0]}`, { icon: '⚠️', duration: 6000 });
-          dedupedWarnings.slice(1, 4).forEach((w) => toast(w, { icon: '⚠️', duration: 6000 }));
-        }
-        toast.success(`Scraped via ${sourceType}${summary}`);
+        toast.success('Brand details scraped already');
         await reloadData();
       } else {
         toast.error('Scraping returned no results.');
@@ -539,7 +526,7 @@ const V1AdminCRMBrandDetail = () => {
       <div className="v3-card p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex gap-4">
-            <BrandLogoCard brand={brand} />
+            <BrandLogo brand={brand} />
             <div>
               <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">CRM Brand</p>
               <h1 className="v3-heading mt-1 text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)}</h1>
