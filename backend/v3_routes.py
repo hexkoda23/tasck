@@ -139,6 +139,16 @@ def _compact_text(value: Any, limit: int = 900) -> str:
     return " ".join(text.split())[:limit]
 
 
+# We Yan's published logo is white-on-transparent and disappears on the white logo tile,
+# so we always pin it to a known-good logo whenever its details are scraped.
+WEYAN_LOGO_URL = "https://scontent-los4-1.cdninstagram.com/v/t51.82787-19/601692842_17862524652545721_3369637980792452369_n.jpg?efg=eyJ2ZW5jb2RlX3RhZyI6InByb2ZpbGVfcGljLmRqYW5nby4zMjAuYzIifQ&_nc_ht=scontent-los4-1.cdninstagram.com&_nc_cat=109&_nc_oc=Q6cZ2gH9uAtrwTgLvFzBdmyqtcKhToIxt0TV3qRdx9FYnsKC_blx2--pkZkQF65wp-TP4jU&_nc_ohc=4FM9BtLjBKcQ7kNvwGP6Zqz&_nc_gid=wGJOFiidyqtUGSEfxTF9jA&edm=APoiHPcBAAAA&ccb=7-5&oh=00_Af9y_Zg_LBk9ujRAVBg8BCZnKH6wciQ7EPwXQ4eSKq5S0Q&oe=6A413562&_nc_sid=22de04"
+
+
+def _is_weyan_brand(name: Any) -> bool:
+    normalized = "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+    return "weyan" in normalized
+
+
 def _brand_logo_from_source(source_url: str, raw_logo: Any = None) -> str:
     logo = str(raw_logo or "").strip()
     domain = _domain_from_url(source_url)
@@ -1152,6 +1162,9 @@ def make_v3_router(db):
             scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
         if not scraped_logo:
             scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
+        # We Yan's scraped logo is white and invisible on the tile — always pin a known-good logo.
+        if _is_weyan_brand(brand_name):
+            scraped_logo = WEYAN_LOGO_URL
         if not scraped_budget:
             scraped_budget = "No public marketing budget found. Confirm during Connect call."
 

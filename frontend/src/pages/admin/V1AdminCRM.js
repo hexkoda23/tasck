@@ -10,6 +10,7 @@ import { useV3Resource } from '../../lib/useV3Resource';
 import V3Modal from '../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles, Users } from 'lucide-react';
 import { adminRoute, getAdminRouteBase, V1_ADMIN_ROUTE_BASE } from '../../lib/v3AdminRouteBase';
+import { BrandLogo } from '../../lib/brandLogo';
 import { toast } from 'sonner';
 
 // Normalises API brand shape for the component
@@ -60,36 +61,16 @@ const logoCandidatesForBrand = (brand) => {
   ].filter(Boolean).filter((value, index, array) => array.indexOf(value) === index);
 };
 
-const BrandLogo = ({ brand }) => {
-  const [candidateIndex, setCandidateIndex] = useState(0);
-  const logoCandidates = logoCandidatesForBrand(brand);
-  const logoCandidateKey = logoCandidates.join('|');
-  const logoUrl = logoCandidates[candidateIndex] || '';
-
-  useEffect(() => {
-    setCandidateIndex(0);
-  }, [brand.id, logoCandidateKey]);
-
-  return (
-    <div className="w-12 h-12 rounded-lg border border-[#E8E4DB] bg-white flex items-center justify-center flex-shrink-0 overflow-hidden">
-      {logoUrl ? (
-        <img
-          src={logoUrl}
-          alt={`${brand.company} logo`}
-          className="h-full w-full object-contain p-1.5"
-          onError={() => setCandidateIndex((current) => current + 1)}
-        />
-      ) : (
-        <span
-          className="text-[12px] font-semibold text-[#1F4A3A]"
-          style={{ fontFamily: "'JetBrains Mono', monospace" }}
-        >
-          {brandInitials(brand.company)}
-        </span>
-      )}
-    </div>
-  );
-};
+const CrmBrandLogo = ({ brand }) => (
+  <BrandLogo
+    name={brand.company}
+    candidates={logoCandidatesForBrand(brand)}
+    initials={brandInitials(brand.company)}
+    containerClassName="w-12 h-12 rounded-lg border border-[#E8E4DB] bg-white flex items-center justify-center flex-shrink-0 overflow-hidden"
+    imgClassName="h-full w-full object-contain p-1.5"
+    initialsClassName="text-[12px] font-semibold text-[#1F4A3A]"
+  />
+);
 
 const V1AdminCRM = () => {
   const navigate = useNavigate();
@@ -336,7 +317,7 @@ const V1AdminCRM = () => {
                   className="w-full v3-card p-4 text-left flex items-center gap-4 hover:border-[#D4CDBF] transition-colors group"
                   data-testid={`crm-brand-${brand.id}`}
                 >
-                  <BrandLogo brand={brand} />
+                  <CrmBrandLogo brand={brand} />
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">

@@ -160,16 +160,29 @@ const connectStatusUpdatedAt = (bundle) => {
   return time ? new Date(time).toISOString() : '';
 };
 
-const STAGE_INDEX = { connect: 0, frame: 1, plan: 2, deliver: 3, reporting: 4, closed: 4 };
-const currentStageIndex = (stage) => STAGE_INDEX[stage] ?? 0;
-
-const stageLinks = (id) => [
-  ['Connect', adminRoute(`/business-cases/${id}/connect`)],
-  ['Frame', adminRoute(`/business-cases/${id}/frame/snapshot`)],
-  ['Plan', adminRoute(`/business-cases/${id}/plan/brainstorm`)],
-  ['Delivery', adminRoute(`/business-cases/${id}/delivery/summary`)],
-  ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
-];
+// The flow is segmented into two areas: the CRM brand workflow (Connect + Frame)
+// and the Business Case workflow (Plan + Delivery + Reporting). The in-page stepper
+// only shows the phases for the area the current page belongs to.
+const stepperConfig = (id, stage, pathname) => {
+  const inCrmPhase = /\/(connect|frame)(\/|$)/.test(pathname || '');
+  if (inCrmPhase) {
+    return {
+      links: [
+        ['Connect', adminRoute(`/business-cases/${id}/connect`)],
+        ['Frame', adminRoute(`/business-cases/${id}/frame/snapshot`)],
+      ],
+      currentIndex: ({ connect: 0, frame: 1 }[stage] ?? 1),
+    };
+  }
+  return {
+    links: [
+      ['Plan', adminRoute(`/business-cases/${id}/plan/brainstorm`)],
+      ['Delivery', adminRoute(`/business-cases/${id}/delivery/summary`)],
+      ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
+    ],
+    currentIndex: ({ plan: 0, deliver: 1, reporting: 2, closed: 2 }[stage] ?? 0),
+  };
+};
 
 export const businessCasePhasePath = (id, bc = {}) => {
   const stage = bc.stage || 'connect';
@@ -208,9 +221,11 @@ export const V3BusinessCaseStageHome = () => {
 
 const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id, bundle, loading } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
+  const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage, location.pathname);
   return (
     <div className="v3-stage-shell space-y-5" data-testid="business-case-flow-page">
       <div className="flex flex-wrap items-center gap-2">
@@ -230,15 +245,15 @@ const FlowShell = ({ title, subtitle, children, nextAction }) => {
         {nextAction && <div className="v3-next-action-card">{nextAction}</div>}
       </div>
       <div className="v3-stepper">
-        {stageLinks(id).map(([label, href], idx) => {
-          const locked = idx > currentStageIndex(bc.stage);
+        {stepperLinks.map(([label, href], idx) => {
+          const locked = idx > stepperIndex;
           return (
             <button
               key={label}
               onClick={() => { if (!locked) navigate(href); }}
               disabled={locked}
               aria-disabled={locked}
-              title={locked ? `Locked until the ${stageLinks(id)[idx - 1]?.[0]} stage is completed` : ''}
+              title={locked ? `Locked until the ${stepperLinks[idx - 1]?.[0]} stage is completed` : ''}
               className={`v3-stepper-item${locked ? ' v3-stepper-item-locked' : ''}`}
               data-testid={`stepper-${label.toLowerCase()}${locked ? '-locked' : ''}`}
             >
@@ -1635,7 +1650,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
   const approveSnapshot = async () => {
     setNotice(null);
-    setSendPopup({ title: 'Approving', message: 'Approving the Alignment Snapshot and preparing the Brainstorming phase...', tone: 'pending' });
+    setSendPopup({ title: 'Approving', message: 'Approving the Alignment Snapshot and moving this brand into the Business Case area...', tone: 'pending' });
     try {
       await persistDraft();
       await v3ApproveAlignmentAs(id, 'admin', 'admin');
@@ -1647,8 +1662,8 @@ export const V3BusinessCaseFrameSnapshot = () => {
         });
       }
       await reload();
-      setSendPopup({ title: 'Opening next phase', message: 'Snapshot approved. Opening the Brainstorming page now.', tone: 'success' });
-      window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/plan/brainstorm`)), 450);
+      setSendPopup({ title: 'Moving to Business Cases', message: 'Snapshot approved. This brand is now in Plan — opening the Business Cases area.', tone: 'success' });
+      window.setTimeout(() => navigate(adminRoute('/business-cases')), 450);
     } catch (e) {
       setSendPopup(null);
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve the Alignment Snapshot. Generate it first.');
@@ -1911,7 +1926,7 @@ export const V3BusinessCaseFrameAdminReview = () => {
         });
       }
       await reload();
-      navigate(adminRoute(`/business-cases/${id}/plan/brainstorm`));
+      navigate(adminRoute('/business-cases'));
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve and advance. Try generating and approving from the Snapshot page first.');
     }
@@ -1973,7 +1988,7 @@ export const V3BusinessCaseFrameAdminReview = () => {
           <Edit3 className="w-3.5 h-3.5" /> Edit Alignment Snapshot
         </button>
         <button onClick={handleApproveAndProceed} className="v3-btn-primary flex items-center gap-1.5" data-testid="admin-review-proceed-brainstorm">
-          <ArrowRight className="w-3.5 h-3.5" /> Approve & Proceed to Brainstorm
+          <ArrowRight className="w-3.5 h-3.5" /> Approve & Open Business Cases
         </button>
       </div>
     </FlowShell>
@@ -1984,7 +1999,7 @@ export const V3BusinessCaseFrameApproved = () => {
   const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const snap = bundle?.alignment_snapshot || {};
-  return <FlowShell title="Alignment Approved" subtitle="Confirm admin approval and move the Business Case into Plan."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/brainstorm`))} className="v3-btn-primary mt-4">Move to Plan Phase</button></InfoCard></FlowShell>;
+  return <FlowShell title="Alignment Approved" subtitle="Confirm admin approval. This brand has moved into Plan and now lives in the Business Case area."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute('/business-cases'))} className="v3-btn-primary mt-4">Open Business Cases</button></InfoCard></FlowShell>;
 };
 
 export const V1BusinessCaseFrameTranscripts = () => {

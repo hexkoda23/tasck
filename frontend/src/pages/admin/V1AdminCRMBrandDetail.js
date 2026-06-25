@@ -26,6 +26,7 @@ import {
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
+import { BrandLogo as SharedBrandLogo } from '../../lib/brandLogo';
 import { toast } from 'sonner';
 
 const EMPTY_VALUE = 'Not captured yet';
@@ -158,35 +159,15 @@ const logoCandidatesForBrand = (brand) => {
     .filter((value, index, array) => array.indexOf(value) === index);
 };
 
-const BrandLogo = ({ brand }) => {
-  const [candidateIndex, setCandidateIndex] = useState(0);
-  const logoCandidates = logoCandidatesForBrand(brand);
-  const logoCandidateKey = logoCandidates.join('|');
-  const logoUrl = logoCandidates[candidateIndex] || '';
-  const cleanBrandName = brandName(brand);
-  const initials = cleanBrandName.length <= 3
-    ? cleanBrandName.toUpperCase()
-    : cleanBrandName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'BR';
-
-  useEffect(() => {
-    setCandidateIndex(0);
-  }, [brand?.id, logoCandidateKey]);
-
-  return (
-    <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-[#D7CBB8] bg-white">
-      {logoUrl ? (
-        <img
-          src={logoUrl}
-          alt={brandName(brand) + ' logo'}
-          onError={() => setCandidateIndex((current) => current + 1)}
-          className="h-full w-full object-contain p-2"
-        />
-      ) : (
-        <span className="text-[18px] font-semibold text-[#1F4A3A]" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{initials}</span>
-      )}
-    </div>
-  );
-};
+const BrandLogo = ({ brand }) => (
+  <SharedBrandLogo
+    name={brandName(brand)}
+    candidates={logoCandidatesForBrand(brand)}
+    containerClassName="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-[#D7CBB8] bg-white"
+    imgClassName="h-full w-full object-contain p-2"
+    initialsClassName="text-[18px] font-semibold text-[#1F4A3A]"
+  />
+);
 const InfoCard = ({ title, children, action }) => (
   <div className="v3-card p-5">
     <div className="mb-3 flex items-center justify-between gap-3">
