@@ -55,8 +55,9 @@ const logoCandidatesForBrand = (brand) => {
   const domain = domainFromWebsite(brand.website || brand.sourceUrl);
   return [
     brand.logoUrl,
-    domain ? 'https://logo.clearbit.com/' + domain : '',
-    domain ? 'https://www.google.com/s2/favicons?sz=256&domain_url=https://' + domain : '',
+    domain ? 'https://' + domain + '/favicon.png' : '',
+    domain ? 'https://' + domain + '/favicon.ico' : '',
+    domain ? 'https://www.google.com/s2/favicons?sz=256&domain=' + domain : '',
     domain ? 'https://icons.duckduckgo.com/ip3/' + domain + '.ico' : '',
   ].filter(Boolean).filter((value, index, array) => array.indexOf(value) === index);
 };

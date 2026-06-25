@@ -149,10 +149,14 @@ const logoCandidatesForBrand = (brand) => {
   const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
   return [
     direct,
+    domain ? 'https://' + domain + '/favicon.png' : '',
+    domain ? 'https://' + domain + '/favicon.ico' : '',
     domain ? 'https://' + domain + '/logo.svg' : '',
     domain ? 'https://' + domain + '/logo.png' : '',
     domain ? 'https://' + domain + '/assets/logo.svg' : '',
     domain ? 'https://' + domain + '/assets/logo.png' : '',
+    domain ? 'https://www.google.com/s2/favicons?sz=256&domain=' + domain : '',
+    domain ? 'https://icons.duckduckgo.com/ip3/' + domain + '.ico' : '',
   ]
     .filter(Boolean)
     .filter((value) => !/(vite\.svg|react\.svg|placeholder|blank|sprite)/i.test(value))

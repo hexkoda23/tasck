@@ -491,6 +491,47 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Brand logos on CRM page now resolve properly — We Yan / Coca Cola / global fix)
+
+### Bug
+Several brand cards in `/admin/crm` and `/admin/crm/{brand_id}` were rendering initials instead of a real logo:
+- **We Yan**: the pinned Instagram CDN URL inherited from the previous session (`scontent-los4-1.cdninstagram.com/...&oe=6A413562`) had expired (Instagram CDN signs URLs with short-lived `oe=` tokens — returns 403 now). Because the previous `BrandLogo` component HARDCODED that single URL for any name matching "weyan" and dropped all other candidates, the fallback chain never ran.
+- **Coca Cola**: brand has `website='www.cocacola.org'` but the real Coca-Cola domain is `coca-cola.com`. The Google s2 favicon URL the list page was building used the deprecated `domain_url=https://…` form (returns 404 from Google) instead of the canonical `domain=…` form. The Brand Detail page didn't try Google/DDG favicons at all — only direct `/logo.svg` / `/logo.png` paths which 404 on virtually every commercial site.
+- **Clearbit Logo API**: globally deprecated/shutdown (December 2024) — every `https://logo.clearbit.com/…` candidate has been returning DNS errors. Three components were still using it.
+
+### Fix
+**`/app/frontend/src/lib/brandLogo.js`**:
+- Removed the hard-coded WEYAN replace behaviour. Introduced `BRAND_LOGO_OVERRIDES` map (brand-name keyword → priority candidate URLs) and `overrideCandidatesFor(name)`. Overrides are now **prepended** to the caller's candidate list (not substituted) so if every override 404s the website-derived favicon chain still runs and only finally falls back to initials.
+- Replaced the expired Instagram CDN WEYAN URL with `https://www.weyan.app/favicon.png` (stable 2160×2160 RGBA published by the brand itself).
+- Added Coca Cola override → Wikipedia Commons SVG + Google s2 + DDG, and a House of Stacy override → shopfrom23.com candidates.
+- `overrideCandidatesFor` is exported for reuse by other logo components.
+
+**`/app/frontend/src/pages/admin/V1AdminCRM.js`** (CRM brand list logo candidates):
+- Removed dead `https://logo.clearbit.com/${domain}`.
+- Fixed Google s2 URL: `domain=${domain}` (was `domain_url=https://${domain}` — wrong query name).
+- Added `https://${domain}/favicon.png` and `https://${domain}/favicon.ico` as primary domain-derived candidates.
+
+**`/app/frontend/src/pages/admin/V1AdminCRMBrandDetail.js`** (CRM brand detail logo candidates):
+- Added `https://${domain}/favicon.png`, `https://${domain}/favicon.ico`, `https://www.google.com/s2/favicons?sz=256&domain=${domain}`, and `https://icons.duckduckgo.com/ip3/${domain}.ico` as fallbacks after the existing `/logo.svg` / `/logo.png` / `/assets/...` paths.
+
+**`/app/frontend/src/components/v3/BrandLogo.jsx`** (V3 admin shared logo component):
+- Removed dead Clearbit candidate.
+- Imports `overrideCandidatesFor` from `lib/brandLogo.js` so We Yan / Coca Cola / House of Stacy overrides apply consistently across V1 and V3 admin pages.
+- Added favicon.png + Google s2 + DDG fallbacks.
+
+### Verified live
+- `/admin/crm` list: Coca Cola tile renders the iconic red Coca-Cola logo (Wikipedia Commons SVG `Coca-Cola_logo.svg` 300×94, `complete=True`). We Yan tile renders the brand's published lime-green "We" letterform (`weyan.app/favicon.png` 2160×2160 RGBA). 13 brand tiles render real logos; only "All Smiles Signature" (no website + no logo) and BugTest fixtures stayed on the website-derived fallback path (which now correctly serves `weyan.app/favicon.png` because they share that website).
+- `/admin/crm/brand-75922272db` (Coca Cola detail): header logo renders Coca-Cola Wikipedia SVG.
+- `/admin/crm/brand-ae9b4d59` (We Yan detail): header logo renders `weyan.app/favicon.png`.
+- No console errors. Lint clean on all 4 touched files.
+
+### Files touched
+- `/app/frontend/src/lib/brandLogo.js`
+- `/app/frontend/src/pages/admin/V1AdminCRM.js`
+- `/app/frontend/src/pages/admin/V1AdminCRMBrandDetail.js`
+- `/app/frontend/src/components/v3/BrandLogo.jsx`
+
+
 ## Update — 25 Feb 2026 (P0 RESTORATION: 10 fixes recovered after `git checkout --theirs` regression — VERIFIED iter29)
 
 ### Root cause

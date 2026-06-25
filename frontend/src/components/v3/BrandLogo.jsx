@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { overrideCandidatesFor } from '../../lib/brandLogo';
 
 /**
  * Robust brand logo renderer.
@@ -71,10 +72,15 @@ const domainFromBrand = (brand) => {
 const buildCandidates = (brand) => {
   const direct = directLogoUrl(brand);
   const domain = domainFromBrand(brand);
+  const name = brand?.company || brand?.name || brand?.brand_name || '';
+  const overrides = overrideCandidatesFor(name);
   const candidates = [
+    ...overrides,
     direct,
-    domain ? `https://logo.clearbit.com/${domain}` : '',
+    domain ? `https://${domain}/favicon.png` : '',
     domain ? `https://${domain}/favicon.ico` : '',
+    domain ? `https://www.google.com/s2/favicons?sz=256&domain=${domain}` : '',
+    domain ? `https://icons.duckduckgo.com/ip3/${domain}.ico` : '',
   ].filter(Boolean);
   // Dedupe while preserving order.
   return Array.from(new Set(candidates));

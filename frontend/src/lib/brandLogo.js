@@ -1,13 +1,53 @@
 import React, { useEffect, useState } from 'react';
 
-// Some brands (e.g. We Yan) publish a logo that is white-on-transparent, which scrapes
-// fine but disappears on the white logo tile. For those, hardcode a known-good logo.
-export const WEYAN_LOGO_URL = 'https://scontent-los4-1.cdninstagram.com/v/t51.82787-19/601692842_17862524652545721_3369637980792452369_n.jpg?efg=eyJ2ZW5jb2RlX3RhZyI6InByb2ZpbGVfcGljLmRqYW5nby4zMjAuYzIifQ&_nc_ht=scontent-los4-1.cdninstagram.com&_nc_cat=109&_nc_oc=Q6cZ2gH9uAtrwTgLvFzBdmyqtcKhToIxt0TV3qRdx9FYnsKC_blx2--pkZkQF65wp-TP4jU&_nc_ohc=4FM9BtLjBKcQ7kNvwGP6Zqz&_nc_gid=wGJOFiidyqtUGSEfxTF9jA&edm=APoiHPcBAAAA&ccb=7-5&oh=00_Af9y_Zg_LBk9ujRAVBg8BCZnKH6wciQ7EPwXQ4eSKq5S0Q&oe=6A413562&_nc_sid=22de04';
+// Brand-specific logo overrides — for brands whose published logo is white-on-transparent,
+// has a stale CDN URL, or where the domain registered in the CRM doesn't resolve to a
+// usable favicon. Keys are matched against the brand name (after lowercasing and
+// stripping non-alphanumerics). The first override hit produces candidates that are
+// PREPENDED to whatever the caller passes — so if every override 404s we still fall
+// through to the caller's website-derived candidates and finally to the initials.
+const BRAND_LOGO_OVERRIDES = [
+  {
+    match: 'weyan',
+    candidates: [
+      'https://www.weyan.app/favicon.png',
+      'https://www.weyan.app/logos/NavLogo.svg',
+      'https://icons.duckduckgo.com/ip3/weyan.app.ico',
+    ],
+  },
+  {
+    match: 'cocacola',
+    candidates: [
+      'https://upload.wikimedia.org/wikipedia/commons/c/ce/Coca-Cola_logo.svg',
+      'https://www.google.com/s2/favicons?sz=256&domain=coca-cola.com',
+      'https://icons.duckduckgo.com/ip3/coca-cola.com.ico',
+    ],
+  },
+  {
+    match: 'houseofstacy',
+    candidates: [
+      'https://www.google.com/s2/favicons?sz=256&domain=houseofstacy.com',
+      'https://icons.duckduckgo.com/ip3/houseofstacy.com.ico',
+      'https://www.google.com/s2/favicons?sz=256&domain=shopfrom23.com',
+      'https://icons.duckduckgo.com/ip3/shopfrom23.com.ico',
+    ],
+  },
+];
 
-export const isWeYanBrand = (name) => {
-  const normalized = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  return normalized.includes('weyan');
+const normaliseBrandKey = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const overrideCandidatesFor = (name) => {
+  const key = normaliseBrandKey(name);
+  if (!key) return [];
+  const hit = BRAND_LOGO_OVERRIDES.find((entry) => key.includes(entry.match));
+  return hit ? hit.candidates : [];
 };
+
+export { overrideCandidatesFor };
+
+// Kept for backwards compatibility with imports elsewhere in the codebase.
+export const WEYAN_LOGO_URL = 'https://www.weyan.app/favicon.png';
+export const isWeYanBrand = (name) => normaliseBrandKey(name).includes('weyan');
 
 const deriveInitials = (name = '') => {
   const clean = String(name).trim();
@@ -68,9 +108,10 @@ export const BrandLogo = ({
   imgClassName = '',
   initialsClassName = '',
 }) => {
-  const resolved = isWeYanBrand(name)
-    ? [WEYAN_LOGO_URL]
-    : (Array.isArray(candidates) ? candidates.filter(Boolean) : []);
+  const overrides = overrideCandidatesFor(name);
+  const userCandidates = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
+  // Overrides first (priority), then caller's candidates, then dedupe.
+  const resolved = Array.from(new Set([...overrides, ...userCandidates]));
   const candidateKey = resolved.join('|');
   const [index, setIndex] = useState(0);
   const [dark, setDark] = useState(false);
