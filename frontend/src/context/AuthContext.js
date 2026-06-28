@@ -1,7 +1,10 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Mirror v3api.js fallback so a missing REACT_APP_BACKEND_URL at build time
+// doesn't break demo-login on staging.
+const DEFAULT_BACKEND_URL = 'https://tasck-live-demo-1.emergent.host';
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/, '');
 const API = `${BACKEND_URL}/api`;
 
 const AuthContext = createContext(null);
