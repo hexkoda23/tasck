@@ -219,27 +219,31 @@ const connectStatusUpdatedAt = (bundle) => {
   return time ? new Date(time).toISOString() : '';
 };
 
-// The flow is segmented into two areas: the CRM brand workflow (Connect + Frame)
-// and the Business Case workflow (Plan + Delivery + Reporting). The in-page stepper
-// only shows the phases for the area the current page belongs to.
-const stepperConfig = (id, stage, pathname) => {
-  const inCrmPhase = /\/(connect|frame)(\/|$)/.test(pathname || '');
-  if (inCrmPhase) {
-    return {
-      links: [
-        ['Connect', adminRoute(`/business-cases/${id}/connect`)],
-        ['Frame', adminRoute(`/business-cases/${id}/frame/snapshot`)],
-      ],
-      currentIndex: ({ connect: 0, frame: 1 }[stage] ?? 1),
-    };
-  }
+// Client-aligned workflow: one stepper with four conceptual stages.
+//   1. Connect          - covers backend stage `connect`
+//   2. Framing          - covers backend stages `frame` (Alignment Snapshot) AND `plan`
+//                         (Brainstorm, Creative Brief, Creative Snapshot).
+//                         The client groups Alignment + Brainstorm/Brief/Creative Snapshot
+//                         under "Framing".
+//   3. Planning         - covers backend stage `deliver` (contracts, deliverables,
+//                         budget/timeline/invoicing). Only unlocks after Creative
+//                         Snapshot approval AND Strategy Development Fee payment.
+//   4. Feedback         - covers backend `reporting` / `closed` (final report + feedback).
+const STAGE_TO_STEP_INDEX = { connect: 0, frame: 1, plan: 1, deliver: 2, reporting: 3, closed: 3 };
+
+const stepperConfig = (id, stage) => {
+  // Land each step on a sensible entry page that the user is allowed to view.
+  const framingEntry = adminRoute(`/business-cases/${id}/frame/snapshot`);
+  const planningEntry = adminRoute(`/business-cases/${id}/delivery/summary`);
+  const feedbackEntry = adminRoute(`/business-cases/${id}/reporting/final-report`);
   return {
     links: [
-      ['Plan', adminRoute(`/business-cases/${id}/plan/brainstorm`)],
-      ['Delivery', adminRoute(`/business-cases/${id}/delivery/summary`)],
-      ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
+      ['Connect', adminRoute(`/business-cases/${id}/connect`)],
+      ['Framing', framingEntry],
+      ['Planning', planningEntry],
+      ['Feedback', feedbackEntry],
     ],
-    currentIndex: ({ plan: 0, deliver: 1, reporting: 2, closed: 2 }[stage] ?? 0),
+    currentIndex: STAGE_TO_STEP_INDEX[stage] ?? 0,
   };
 };
 
@@ -280,11 +284,10 @@ export const V3BusinessCaseStageHome = () => {
 
 const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const navigate = useNavigate();
-  const location = useLocation();
   const { id, bundle, loading } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
-  const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage, location.pathname);
+  const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage);
   return (
     <div className="v3-stage-shell space-y-5" data-testid="business-case-flow-page">
       <div className="flex flex-wrap items-center gap-2">
@@ -1812,6 +1815,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const [draft, setDraft] = useState(null);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [sendPopup, setSendPopup] = useState(null);
+  const [generating, setGenerating] = useState(false);
   const [frameRefreshCount, setFrameRefreshCount] = useState(0);
   const stage = bundle?.business_case?.stage;
   const brand = getBrand(bundle);
@@ -1821,7 +1825,14 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const preparingFrame = Boolean(location.state?.preparingFrame);
 
   useEffect(() => {
-    setDraft(cloneAlignmentSnapshot(snapshot));
+    // Defensive: only adopt the persisted snapshot when it actually has content.
+    // Never overwrite a populated local draft with a null/empty bundle value -
+    // that's what caused the "snapshot disappears on refresh" symptom whenever
+    // a reload race produced a transient null alignment_snapshot in the bundle.
+    const next = cloneAlignmentSnapshot(snapshot);
+    if (next && (next.title || next.meta || (next.sections || []).length)) {
+      setDraft(next);
+    }
   }, [snapshot]);
 
   useEffect(() => {
@@ -1852,7 +1863,9 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   const generateSnapshot = async () => {
+    if (generating) return;
     setNotice(null);
+    setGenerating(true);
     try {
       const generated = await v3GenerateAlignmentQuestions(id);
       setDraft(cloneAlignmentSnapshot(generated));
@@ -1865,6 +1878,8 @@ export const V3BusinessCaseFrameSnapshot = () => {
       } else {
         setNotice(detail || 'Could not generate the Alignment Snapshot. Please try again.');
       }
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -1982,12 +1997,12 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   return (
-    <FlowShell title="Alignment Snapshot" subtitle="Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand, review comments or approval, then move to Plan.">
+    <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 4. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand. Once approved, Framing continues into Brainstorm, Creative Brief, and Creative Snapshot.">
       <InfoCard
         title="Alignment Snapshot"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
-            <button data-testid="alignment-generate-btn" onClick={generateSnapshot} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Generate Snapshot</button>
+            <button data-testid="alignment-generate-btn" onClick={generateSnapshot} disabled={generating} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"><Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> {generating ? 'Generating…' : (hasSnapshot ? 'Regenerate Snapshot' : 'Generate Snapshot')}</button>
             <button data-testid="alignment-preview-btn" onClick={openPreview} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Preview</button>
             <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
           </div>
@@ -2001,7 +2016,17 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
         {!hasSnapshot ? (
           <div className="rounded-[8px] border border-dashed border-[#D7CBB8] bg-[#FBFAF7] p-5 text-[13px] text-[#6E6657]">
-            {preparingFrame ? 'Preparing the Frame phase and Alignment Snapshot from the Connect transcripts. This will appear here shortly.' : 'Generate the Alignment Snapshot so the brand can review it against the Connect call before admin approval.'}
+            {generating
+              ? 'Generating the Alignment Snapshot from the Connect call. This can take up to a minute on the first run — please keep this page open.'
+              : preparingFrame
+                ? 'Preparing the Frame phase and Alignment Snapshot from the Connect transcripts. This will appear here shortly.'
+                : bundle?.business_case?.frame?.alignment_snapshot_id ? (
+                  <span>
+                    A saved Alignment Snapshot exists for this Business Case but isn't loading right now.{' '}
+                    <button type="button" onClick={() => reload()} className="underline font-medium text-[#1F4A3A]" data-testid="alignment-reload-btn">Click to reload</button>
+                    {' '}or regenerate from the Connect call.
+                  </span>
+                ) : 'Generate the Alignment Snapshot so the brand can review it against the Connect call before admin approval.'}
           </div>
         ) : (
           <div className="space-y-4" data-testid="alignment-snapshot-editor">
@@ -2532,7 +2557,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
   if (!round) {
     return (
-      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60-90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 4. 60-90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
         {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
         <InfoCard title="Start brainstorm round">
           <p className="text-[13px] text-[#6E6657] mb-3">A new round will scaffold all 7 phases of the TTA Snapshot Brainstorm template. You can save progress between phases.</p>
@@ -2551,7 +2576,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const p7 = round.phase_7_recommendation || {};
 
   return (
-    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="A 60-90 minute session for building a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 4. A 60-90 minute session for building a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
       <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-[#E8E4DB] -mx-1 px-1 py-2 flex flex-wrap items-center gap-2">
         <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save'}</button>
@@ -2918,7 +2943,7 @@ export const V3BusinessCasePlanBrief = () => {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
   return (
-    <FlowShell title="Creative Brief Studio" subtitle="Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
+    <FlowShell title="Creative Brief Studio" subtitle="Framing step 3 of 4. Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Selected creator briefs" action={<button onClick={generateAll} className="v3-btn-primary" data-testid="brief-generate-all-btn"><Sparkles className="w-3.5 h-3.5" /> Generate AI briefs</button>}>
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end">
@@ -3306,7 +3331,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   };
 
   return (
-    <FlowShell title="Strategy Snapshot Studio" subtitle="Generate, view, send to the brand portal/email, and approve before Delivery." nextAction="Review the Strategy Snapshot that will be sent to the brand.">
+    <FlowShell title="Creative Snapshot Studio" subtitle="Framing step 4 of 4. Generate, view, send to the brand portal/email, and approve. Planning only starts after the brand approves this Creative Snapshot AND the Strategy Development Fee is received." nextAction="Review the Creative Snapshot that will be sent to the brand.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={generate} disabled={generating} className="v3-btn-primary" data-testid="strategy-generate-btn">
@@ -3470,7 +3495,7 @@ export const V3BusinessCaseDeliverySummary = () => {
     return Array.isArray(exec?.rows) ? exec.rows : [];
   })();
   return (
-    <FlowShell title="Delivery Summary" subtitle="Full project context before contract generation." nextAction="Open contract page to generate brand and creator agreements.">
+    <FlowShell title="Planning Summary" subtitle="Planning covers budgeting, timelines, contracts, invoicing, deliverables, and feedback. Confirm the full project context before contract generation." nextAction="Open contract page to generate brand and creator agreements.">
       <InfoCard title="Project at a glance">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{cleanV1Text(bc.title)}</div>
@@ -4173,7 +4198,7 @@ export const V3BusinessCaseFinalReport = () => {
   const feedback = report?.feedback;
 
   return (
-    <FlowShell title="Final Report Studio" subtitle="Review the automatically generated final report and feedback, send them to the right email, then close the project.">
+    <FlowShell title="Final Report and Feedback" subtitle="Closing stage. Review the automatically generated final report and feedback, send them to the right email, then close the project.">
       {closePopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" data-testid="close-project-popup">
           <div className="v3-card w-full max-w-sm bg-white p-5 text-center shadow-2xl">

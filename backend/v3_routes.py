@@ -79,6 +79,34 @@ def _temporary_password() -> str:
     return f"TASCK-{uuid.uuid4().hex[:4].upper()}-{uuid.uuid4().hex[:4].upper()}"
 
 
+def app_base_url() -> str:
+    """Single source of truth for the frontend URL used in emails and portal links.
+
+    Reads FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL. In non-local environments
+    (APP_ENV in {"staging","production","prod"}) we refuse to fall back to localhost
+    so a missing env var fails loudly in logs instead of silently shipping bad links.
+    """
+    raw = (
+        os.getenv("FRONTEND_URL")
+        or os.getenv("PUBLIC_APP_URL")
+        or os.getenv("APP_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+    if raw:
+        return raw
+    env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
+    if env in {"staging", "production", "prod"}:
+        # Don't break the request, but make the bad link obvious in logs.
+        import logging
+        logging.getLogger(__name__).error(
+            "FRONTEND_URL/PUBLIC_APP_URL/APP_BASE_URL is not set in %s environment. "
+            "Outgoing links will be unusable.",
+            env,
+        )
+        return "https://app.invalid"
+    return "http://localhost:7159"
+
+
 def _brand_created_at_key(brand: Dict[str, Any]) -> str:
     # Pure chronological sort - most recently created brand first.
     created_at = brand.get("created_at") or brand.get("updated_at") or brand.get("imported_at") or ""
@@ -407,9 +435,17 @@ You are TASCK's Connect-to-Frame Alignment Snapshot analyst.
 
 Read the CRM context and every Connect transcript. Extract only what is supported by the evidence. Do not invent facts, numbers, dates, audiences, priorities, or goals. If a field is unclear, say exactly what the brand should confirm. Produce polished Nigerian business English suitable for sending to a brand for review.
 
+CRITICAL - about_the_organisation MUST be a rich, specific 4 to 6 sentence paragraph that covers:
+  (a) who the organisation is and what category/sector it operates in,
+  (b) the products, services, programmes, or value it delivers,
+  (c) who it primarily serves (the audience, beneficiaries, customers, or partners) and how,
+  (d) what makes it distinctive in its market or why its work matters now,
+  (e) the current commercial or cultural context the brand is operating in if the transcripts mention it.
+Never return a one-liner, never use generic phrases like "a consumer culture organisation", and never repeat the brand name in every sentence. Read the transcripts carefully and reflect the brand's actual language.
+
 Return JSON only, no markdown, with exactly these keys:
 {
-  "about_the_organisation": "string",
+  "about_the_organisation": "string (rich 4-6 sentence paragraph as described above)",
   "core_focus_areas": "string",
   "key_customers_beneficiaries": "string",
   "key_goals_metrics": "string",
@@ -426,23 +462,49 @@ Confidence should reflect how many of the eight fields are clearly supported. Ne
 
 
 def _alignment_tool_user_message(brand: Dict[str, Any], case: Dict[str, Any], combined_text: str) -> str:
+    def _safe(value: Any) -> str:
+        text = "" if value is None else str(value).strip()
+        return text or "(not captured)"
+
+    def _list(value: Any) -> str:
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            return ", ".join(cleaned) if cleaned else "(not captured)"
+        return _safe(value)
+
+    connect = case.get("connect", {}) or {}
+    mi_existing = connect.get("marketing_intelligence", {}) or {}
+
     return f"""
 CRM BRAND CONTEXT
-- Brand name: {brand.get("company") or brand.get("name") or case.get("brand_name") or ""}
-- Category/industry: {brand.get("category") or brand.get("industry") or brand.get("sector") or ""}
-- Website: {brand.get("website") or ""}
-- Stored about: {brand.get("about") or brand.get("brand_about") or brand.get("description") or ""}
-- Contact: {brand.get("primary_contact") or brand.get("contact_name") or ""} {brand.get("email") or ""}
+- Brand name: {_safe(brand.get("company") or brand.get("name") or case.get("brand_name"))}
+- Category/industry/sector: {_safe(brand.get("category") or brand.get("industry") or brand.get("sector"))}
+- Website: {_safe(brand.get("website"))}
+- Headquarters/location: {_safe(brand.get("location") or brand.get("country") or brand.get("city"))}
+- Stored "about" description: {_safe(brand.get("about") or brand.get("brand_about") or brand.get("description"))}
+- Marketing budget on record: {_safe(brand.get("marketing_budget"))}
+- Stored marketing focus: {_safe(brand.get("key_marketing_focus"))}
+- Stored marketing channels: {_list(brand.get("key_marketing_channels"))}
+- Stored marketing KPIs: {_list(brand.get("marketing_kpis"))}
+- CRM notes from RM: {_safe(brand.get("notes"))}
+- Primary contact: {_safe(brand.get("primary_contact") or brand.get("contact_name"))} ({_safe(brand.get("role"))}) - {_safe(brand.get("email"))} {_safe(brand.get("phone"))}
 
 BUSINESS CASE CONTEXT
-- Title: {case.get("title") or ""}
-- Stage: {case.get("stage") or ""}
-- Estimated value: {case.get("estimated_value") or ""}
+- Title: {_safe(case.get("title"))}
+- Stage: {_safe(case.get("stage"))}
+- Engagement track: {_safe(case.get("engagement_track"))}
+- Estimated value: {_safe(case.get("estimated_value"))}
+- Stated intent from Connect: {_safe(connect.get("stated_intent"))}
+- Connect status: {_safe(connect.get("connect_status"))}
+- Existing extracted marketing focus: {_safe(mi_existing.get("key_marketing_focus"))}
+- Existing extracted target audience: {_safe(mi_existing.get("primary_target_audience"))}
+- Existing extracted challenge: {_safe(mi_existing.get("current_marketing_challenge"))}
+- Existing extracted timeline: {_safe(mi_existing.get("timeline"))}
 
 CONNECT TRANSCRIPTS
-{combined_text}
+{combined_text or "(no transcripts captured yet - use only the CRM context above, and call out anything that needs the brand to confirm)"}
 
-Extract the eight Alignment Snapshot fields from the transcripts and CRM context. If the transcripts contradict CRM context, prefer the transcript and mention the uncertainty in evidence_notes.
+Use ALL of the CRM context above, not just the transcripts. The about_the_organisation paragraph should weave together the brand's category, what they actually do, who they serve, their stated focus or challenge, and what makes them distinctive - drawing from the stored description, RM notes, and transcripts. If the transcripts contradict CRM context, prefer the transcript and mention the uncertainty in evidence_notes.
 """.strip()
 
 
@@ -462,20 +524,35 @@ async def _call_alignment_analysis_tool(
     custom_base = (os.getenv("ALIGNMENT_ANALYZER_LLM_BASE_URL") or os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
     openai_key = os.getenv("OPENAI_API_KEY")
 
-    try:
-        if emergent_key:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
+    # Client decision: free Gemini Flash locally, paid Claude on staging/prod.
+    # APP_ENV (or ENVIRONMENT) drives provider preference; ALIGNMENT_ANALYZER_PROVIDER
+    # forces a specific provider for tests/overrides.
+    _env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
+    _forced = (os.getenv("ALIGNMENT_ANALYZER_PROVIDER") or "").strip().lower()
+    _prefer_anthropic = _forced == "anthropic" or (not _forced and _env in {"staging", "production", "prod"})
 
-            provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
-            model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.0-flash"
-            chat = LlmChat(
-                api_key=emergent_key,
-                session_id=f"alignment-analyzer-{uuid.uuid4()}",
-                system_message=system_prompt,
-            ).with_model(provider, model)
-            response = await chat.send_message(UserMessage(text=user_message))
-            parsed = _parse_json_object(_response_to_text(response))
-            return _normalise_alignment_tool_result({**parsed, "analysis_source": f"emergent:{provider}/{model}"})
+    async def _call_emergent() -> Optional[Dict[str, Any]]:
+        if not emergent_key:
+            return None
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
+        model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.0-flash"
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=f"alignment-analyzer-{uuid.uuid4()}",
+            system_message=system_prompt,
+        ).with_model(provider, model)
+        response = await chat.send_message(UserMessage(text=user_message))
+        parsed = _parse_json_object(_response_to_text(response))
+        return _normalise_alignment_tool_result({**parsed, "analysis_source": f"emergent:{provider}/{model}"})
+
+    try:
+        # If staging/prod and Anthropic is available, prefer Claude (handled by _call_http_model below).
+        # Otherwise prefer Gemini (free) via emergent.
+        if not _prefer_anthropic:
+            emergent_result = await _call_emergent()
+            if emergent_result is not None:
+                return emergent_result
 
         def _call_http_model() -> Optional[Dict[str, Any]]:
             if anthropic_key:
@@ -543,7 +620,13 @@ async def _call_alignment_analysis_tool(
 
             return None
 
-        return await asyncio.to_thread(_call_http_model)
+        http_result = await asyncio.to_thread(_call_http_model)
+        if http_result is not None:
+            return http_result
+        # Final fallback: try emergent (Gemini) if we hadn't already tried it above.
+        if _prefer_anthropic:
+            return await _call_emergent()
+        return None
     except Exception as exc:
         logger.warning("Alignment analysis tool failed for business case %s: %s", case.get("id"), exc)
         return None
@@ -1300,8 +1383,8 @@ def make_v3_router(db):
         }
         await db.v3_brand_accounts.insert_one({**account_doc})
 
-        app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
-        brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{app_base_url}/brand").rstrip("/")
+        base_url = app_base_url()
+        brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{base_url}/brand").rstrip("/")
         welcome = await queue_email(
             to=username,
             subject="Your TASCK brand access",
@@ -1492,8 +1575,8 @@ def make_v3_router(db):
         }
         await db.v3_brand_accounts.insert_one({**account_doc})
         company_name = brand.get("company") or brand.get("name") or "your brand"
-        app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
-        brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{app_base_url}/brand").rstrip("/")
+        base_url = app_base_url()
+        brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{base_url}/brand").rstrip("/")
         welcome = await queue_email(
             to=username,
             subject="Your TASCK brand access",
@@ -1585,14 +1668,20 @@ def make_v3_router(db):
     @router.post("/auth/brand-login")
     async def login_brand_account(payload: PortalLoginPayload):
         username = payload.email.strip().lower()
-        account = await db.v3_brand_accounts.find_one({"username": username}, {"_id": 0})
+        # Username on account docs is always stored lowercased, but legacy/CRM-imported
+        # brands may have mixed-case email fields. Match case-insensitively.
+        email_regex = {"$regex": f"^{re.escape(username)}$", "$options": "i"}
+        account = await db.v3_brand_accounts.find_one(
+            {"$or": [{"username": username}, {"username": email_regex}]},
+            {"_id": 0},
+        )
         if not account:
             brand_match = await db.v3_brands.find_one(
                 {"$or": [
-                    {"email": username},
-                    {"contact_email": username},
-                    {"primary_contact_email": username},
-                    {"brand_contact_snapshot.email": username},
+                    {"email": email_regex},
+                    {"contact_email": email_regex},
+                    {"primary_contact_email": email_regex},
+                    {"brand_contact_snapshot.email": email_regex},
                 ]},
                 {"_id": 0},
             )
@@ -1600,8 +1689,10 @@ def make_v3_router(db):
                 account = await db.v3_brand_accounts.find_one({"brand_id": brand_match.get("id")}, {"_id": 0})
         if not account or account.get("status") not in {None, "active"}:
             raise HTTPException(401, "Invalid brand login details")
-        accepted_passwords = {account.get("password"), account.get("temporary_password")}
-        if payload.password not in accepted_passwords:
+        # Trim incoming password — clients sometimes paste with trailing whitespace.
+        submitted_password = (payload.password or "").strip()
+        accepted_passwords = {p for p in {account.get("password"), account.get("temporary_password")} if p}
+        if submitted_password not in accepted_passwords:
             raise HTTPException(401, "Invalid brand login details")
         brand = await db.v3_brands.find_one({"id": account.get("brand_id")}, {"_id": 0})
         if not brand:
@@ -1637,13 +1728,17 @@ def make_v3_router(db):
     @router.post("/auth/creator-login")
     async def login_creator_account(payload: PortalLoginPayload):
         username = payload.email.strip().lower()
-        account = await db.v3_creator_accounts.find_one({"username": username}, {"_id": 0})
+        email_regex = {"$regex": f"^{re.escape(username)}$", "$options": "i"}
+        account = await db.v3_creator_accounts.find_one(
+            {"$or": [{"username": username}, {"username": email_regex}]},
+            {"_id": 0},
+        )
         if not account:
             creator_match = await db.v3_creators.find_one(
                 {"$or": [
-                    {"email": username},
-                    {"manager_email": username},
-                    {"contact_email": username},
+                    {"email": email_regex},
+                    {"manager_email": email_regex},
+                    {"contact_email": email_regex},
                 ]},
                 {"_id": 0},
             )
@@ -1651,8 +1746,9 @@ def make_v3_router(db):
                 account = await db.v3_creator_accounts.find_one({"creator_id": creator_match.get("id")}, {"_id": 0})
         if not account or account.get("status") not in {None, "active"}:
             raise HTTPException(401, "Invalid creator login details")
-        accepted_passwords = {account.get("password"), account.get("temporary_password")}
-        if payload.password not in accepted_passwords:
+        submitted_password = (payload.password or "").strip()
+        accepted_passwords = {p for p in {account.get("password"), account.get("temporary_password")} if p}
+        if submitted_password not in accepted_passwords:
             raise HTTPException(401, "Invalid creator login details")
         creator = await db.v3_creators.find_one({"id": account.get("creator_id")}, {"_id": 0})
         if not creator:
@@ -2190,6 +2286,14 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
         creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
         alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        # Defensive fallback: if the business_case_id lookup misses but the case
+        # has a snapshot_id stored on it, try that. Prevents the "snapshot
+        # disappeared" symptom if business_case_id was ever stored with a different
+        # cast/whitespace.
+        if not alignment:
+            stored_snapshot_id = (case.get("frame") or {}).get("alignment_snapshot_id")
+            if stored_snapshot_id:
+                alignment = await db.v3_alignment_snapshots.find_one({"id": stored_snapshot_id}, {"_id": 0})
         brief = await db.v3_creative_briefs.find_one({"business_case_id": bc_id}, {"_id": 0})
         snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         contract = await db.v3_contracts.find_one({"business_case_id": bc_id}, {"_id": 0})
@@ -2426,11 +2530,16 @@ def make_v3_router(db):
     # STAGE ADVANCEMENT
     # ------------------------------------------------------------------------
     STAGE_ORDER = ["connect", "frame", "plan", "deliver", "closed"]
+    # Stage vocabulary aligned with the client-approved workflow:
+    #   Connect -> Framing (Alignment Snapshot, Brainstorm, Creative Brief, Creative Snapshot)
+    #   -> Planning (budgeting, timelines, contracts, invoicing, deliverables) -> Feedback.
+    # Backend stage keys stay the same to avoid data migration; only the user-facing
+    # copy reflects the new structure.
     STAGE_NEXT_ACTIONS = {
-        "frame": "Generate, edit, and send the Alignment Snapshot questions for brand response.",
-        "plan": "Select creatives, send the brief, capture the creative discussion, and draft the Strategy Snapshot.",
-        "deliver": "Generate contracts, manage budget and timeline planning, and track campaign delivery.",
-        "closed": "Generate the final report, collect feedback, and close the project.",
+        "frame": "Framing: generate, edit, and send the Alignment Snapshot for brand approval.",
+        "plan": "Framing continues: brainstorm, send the Creative Brief, capture the creative discussion, and draft the Creative Snapshot for brand approval.",
+        "deliver": "Planning: budget, timelines, contracts, invoicing, deliverables, and feedback. Only starts after Creative Snapshot approval AND payment received.",
+        "closed": "Feedback and closure: generate the final report, collect feedback, and close the project.",
     }
 
     class AdvancePayload(BaseModel):
@@ -2457,19 +2566,24 @@ def make_v3_router(db):
                 if case.get("connect", {}).get("connect_status") != "qualified_to_frame":
                     gate_errors.append("Connect status must be `qualified_to_frame` before moving to Frame.")
             elif next_stage == "plan":
+                # Within Framing: Alignment Snapshot must be approved before moving
+                # into Brainstorm / Creative Brief / Creative Snapshot work.
                 frame = case.get("frame", {})
                 if frame.get("alignment_snapshot_status") != "approved":
-                    gate_errors.append("Alignment Snapshot must be approved.")
+                    gate_errors.append("Alignment Snapshot must be approved before Framing continues with Brainstorm, Creative Brief, and Creative Snapshot.")
                 if frame.get("scope_flags_resolved", 0) < frame.get("scope_flags_total", 0):
-                    gate_errors.append("All scope flags must be resolved.")
+                    gate_errors.append("All scope flags must be resolved before Framing continues.")
             elif next_stage == "deliver":
+                # Framing -> Planning. Client rule: Planning starts only after the
+                # Creative Snapshot is approved AND the Strategy Development Fee
+                # has been received. Contract signature still required for paid track.
                 plan = case.get("plan", {})
                 if not plan.get("creative_snapshot_approved_at"):
-                    gate_errors.append("Strategy Snapshot must be approved before Deliver.")
-                if not plan.get("contract_signed_at"):
-                    gate_errors.append("Contract must be signed before Deliver.")
+                    gate_errors.append("Creative Snapshot must be approved before Planning starts.")
                 if case.get("engagement_track") == "paid" and not case.get("frame", {}).get("strategy_development_fee_paid"):
-                    gate_errors.append("Strategy Development Fee must be paid before Deliver.")
+                    gate_errors.append("Strategy Development Fee payment must be received before Planning starts.")
+                if not plan.get("contract_signed_at"):
+                    gate_errors.append("Contract must be signed before Planning starts.")
             elif next_stage == "closed":
                 closure = case.get("closure", {})
                 if closure.get("closure_pct", 0) < 100:
@@ -2697,16 +2811,36 @@ def make_v3_router(db):
         )
         return doc
 
+    async def _safe_refresh_transcripts(bc_id: str) -> None:
+        """Background-task safe wrapper around analyze_all_connect_transcripts.
+
+        Swallows exceptions so a failed LLM call never crashes the worker; the next
+        click of "Regenerate Snapshot" will retry. Defined before the endpoint that
+        uses it but after analyze_all_connect_transcripts is closed over below.
+        """
+        try:
+            await analyze_all_connect_transcripts(bc_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Background alignment refresh failed for %s: %s", bc_id, exc)
+
     @router.post("/business-cases/{bc_id}/ai/alignment/questions")
-    async def generate_alignment_questions_for_v1(bc_id: str):
+    async def generate_alignment_questions_for_v1(bc_id: str, fast: bool = True):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
         if case.get("stage") != "frame":
             raise HTTPException(400, "Alignment Snapshot is only generated in the Frame stage.")
 
-        await analyze_all_connect_transcripts(bc_id)
-        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or case
+        # Speed up the V1 admin "Generate Snapshot" click: by default we DON'T await
+        # the LLM transcript analysis. We build the snapshot from cached analysis and
+        # kick the LLM run off in the background. The admin can hit "Regenerate
+        # Snapshot" once it finishes to pull in the richer content. Pass ?fast=0 to
+        # force the synchronous (legacy) behaviour.
+        if fast:
+            asyncio.create_task(_safe_refresh_transcripts(bc_id))
+        else:
+            await analyze_all_connect_transcripts(bc_id)
+            case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or case
         existing = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
         connect = case.get("connect", {}) or {}
@@ -2855,14 +2989,60 @@ def make_v3_router(db):
                 f"The brand should review the wording carefully, add nuance where needed, and correct anything that does not fully represent the discussion before approval.{evidence}"
             )
 
-        about_answer = _detailed_alignment_answer("About The Organisation", about_answer, "what the organisation does, who it serves, and why the market should care")
-        core_focus_answer = _detailed_alignment_answer("the Core Focus Areas", core_focus_answer, "the business, communication, product, or cultural focus areas TASCK should build around")
-        customers_answer = _detailed_alignment_answer("the Key Customers/Beneficiaries", customers_answer, "the specific audience groups, beneficiaries, buyers, communities, or decision makers the work must influence")
-        goals_answer = _detailed_alignment_answer("the Key Goals or Metrics that are Tracked", goals_answer, "the measurable targets, commercial goals, engagement goals, and reporting metrics that define success")
-        success_answer = _detailed_alignment_answer("What Success Looks Like / Timeline", success_answer, "the success picture, timing, launch window, reporting period, and any hard deadlines")
-        focus_answer = _detailed_alignment_answer("Focus", focus_answer, "the channels, cultural territories, formats, and communication focus TASCK should prioritise")
-        priority_answer = _detailed_alignment_answer("Priority", priority_answer, "what matters most first and how urgent this work is for the brand")
-        date_answer = _detailed_alignment_answer("Date of connect", date_answer, "the correct date and session context for the Connect conversation")
+        # ---- Approved-template fields (narrative, not the legacy field table) ----
+        def _af(key: str) -> str:
+            return str(alignment_fields.get(key) or "").strip() if isinstance(alignment_fields, dict) else ""
+
+        # 1. Our Understanding of the Organisation - one rich, specific paragraph.
+        org_about = _usable_text(
+            _af("about_the_organisation") or brand.get("about") or brand.get("brand_about") or brand.get("description") or about_answer,
+            f"{brand_company} is a {brand_industry} organisation. Please confirm a short description of who you are, what you do, and who you serve.",
+        )
+        org_understanding = org_about
+        org_understanding += f" {brand_company} operates in {brand_industry}, working with {audience}."
+        if source_excerpt:
+            org_understanding += f" Context from our conversation: {source_excerpt}"
+        org_understanding += " We have summarised this as our current understanding and would like you to confirm, correct, or sharpen it."
+
+        # 2. What we understand you are trying to achieve.
+        goal_statement = _usable_text(_af("core_focus_areas") or core_focus_answer, focus)
+
+        # 3. The core problem / opportunity.
+        core_problem = challenge
+
+        # 4. Priority audience / beneficiary.
+        primary_audience = _usable_text(_af("key_customers_beneficiaries") or customers_answer, audience)
+        audience_example = _usable_text(
+            _af("audience_example") or connect.get("audience_example"),
+            f"For example, a member of this audience who already engages with {brand_industry} content but has not yet chosen {brand_company}. Please confirm a real, representative example.",
+        )
+        current_behaviour = _usable_text(
+            _af("current_behaviour") or connect.get("current_behaviour") or connect.get("pain_point"),
+            challenge,
+        )
+        desired_behaviour = _usable_text(
+            _af("desired_behaviour") or connect.get("desired_behaviour"),
+            f"Move from awareness into consideration and action - choosing, trusting, and engaging {brand_company} at the right decision moment.",
+        )
+
+        # 5. Desired outcomes and success metrics (Metrics | Success Looks Like).
+        metric_rows = []
+        for item in kpis[:6]:
+            if isinstance(item, dict):
+                metric = str(item.get("kpi") or item.get("label") or item.get("metric") or "Metric").strip()
+                success = str(item.get("target") or item.get("value") or item.get("success") or "Confirm target with brand.").strip()
+            else:
+                metric, success = str(item).strip(), "Confirm target with brand."
+            metric_rows.append([metric, success])
+        if not metric_rows:
+            metric_rows = [["Qualified reach", "Confirm target with brand."]]
+
+        # 7. Recommended next step.
+        next_step = (
+            "Once this Alignment Snapshot is confirmed, TASCK can move into the proposal stage. "
+            "The next document will translate this alignment into a clear project framework, including recommended strategy, "
+            "creative direction, creator/talent options, campaign structure, budget, timeline, roles, deliverables, and measurement plan."
+        )
 
         scope_flags = [
             {"text": "Brand review", "reason": "Brand must review, comment, or approve the Alignment Snapshot before admin approval."},
@@ -2882,29 +3062,42 @@ def make_v3_router(db):
             "approved_by_party": None,
             "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
             "title": f"{brand_company} - Alignment Snapshot",
-            "meta": "Alignment Snapshot for brand review. TASCK sends this to the brand so they can confirm it aligns with the Connect call, add comments if anything is off, or approve it before Plan.",
+            "meta": (
+                f"This Alignment Snapshot captures TASCK's current understanding of {brand_company} - your organisation, project goals, "
+                "priority audience, desired outcomes, and possible areas of support. It is designed to help us understand the opportunity "
+                "correctly. Please review this document and help us confirm, correct, or sharpen our thinking."
+            ),
             "marketing_intelligence": mi,
             "alignment_analysis_source": alignment_fields.get("analysis_source") if isinstance(alignment_fields, dict) else "deterministic_fallback",
             "brand_comments": (existing or {}).get("brand_comments", []),
             "sections": [
-                {"heading": "1. ALIGNMENT SNAPSHOT", "type": "questions", "content": (
-                    "Brand should review each alignment field below, comment where anything does not match the Connect call, or approve when accurate."
-                ), "columns": ["Alignment field", "Brand response / comment"], "rows": [
-                    {"Alignment field": "About The Organisation", "Brand response / comment": about_answer},
-                    {"Alignment field": "What are the Core Focus Areas", "Brand response / comment": core_focus_answer},
-                    {"Alignment field": "Who are The Key Customers/Beneficiaries", "Brand response / comment": customers_answer},
-                    {"Alignment field": "Key Goals or Metrics that are Tracked", "Brand response / comment": goals_answer},
-                    {"Alignment field": "What Success Looks Like / Timeline", "Brand response / comment": success_answer},
-                    {"Alignment field": "Focus", "Brand response / comment": focus_answer},
-                    {"Alignment field": "Priority", "Brand response / comment": priority_answer},
-                    {"Alignment field": "Date of connect", "Brand response / comment": date_answer},
+                {"heading": "Our Understanding of your Organisation", "type": "prose", "content": org_understanding},
+                {"heading": "What We Understand You Are Trying to Achieve", "type": "prose", "content": (
+                    f"We understand that the main goal of this project is to: {goal_statement}"
+                )},
+                {"heading": "The Core Problem / Opportunity", "type": "prose", "content": core_problem},
+                {"heading": "Priority Audience / Beneficiary", "type": "bullets", "content": "The priority audience appears to be:", "items": [
+                    f"Primary Audience: {primary_audience}",
+                    f"Audience Example: {audience_example}",
+                    f"Current behaviour / pain point: {current_behaviour}",
+                    f"Desired behaviour: {desired_behaviour}",
                 ]},
-                {"heading": "2. HOW THE BRAND SHOULD REVIEW THIS", "type": "numbered", "content": "This Alignment Snapshot is sent to the brand for review, comments, or approval before TASCK admin moves into Plan.", "items": [
-                    "Review each Alignment Snapshot field against the Connect call.",
-                    "Add comments wherever the snapshot does not align with the call.",
-                    "Send comments back to TASCK or approve the snapshot if it is accurate.",
-                    "Admin sees the brand approval or comments before moving the Business Case into Plan.",
+                {"heading": "Desired Outcomes and Success Metrics", "type": "table", "content": (
+                    "The outcomes below are our current view of what success should look like. Please confirm or adjust the targets."
+                ), "columns": ["Metrics", "Success Looks Like"], "rows": metric_rows},
+                {"heading": "Open Questions for Client Confirmation", "type": "numbered", "content": "To sharpen the next stage, we would like to confirm the following:", "items": [
+                    "Have we understood your organisation correctly?",
+                    "Have we understood the main goal of this project correctly?",
+                    "What is the single most important outcome you want this project to achieve?",
+                    "Is this the correct priority audience?",
+                    "Have we understood their current behaviour, pain point, or need correctly?",
+                    "Which success outcome matters most for this project?",
+                    "Are there existing targets, KPIs, funder expectations, or partner expectations we should align with?",
+                    "Are there any existing data, benchmarks, or previous campaign results we should review?",
+                    "What would make this project feel successful to your internal team?",
+                    "What would make this project feel successful to your external stakeholders or audience?",
                 ]},
+                {"heading": "Recommended Next Step", "type": "prose", "content": next_step},
             ],
             "scope_flags": scope_flags,
         }
@@ -3142,6 +3335,29 @@ def make_v3_router(db):
                     + "".join(rows)
                     + "</w:tbl>"
                 )
+            elif section.get("rows"):
+                table_source = section.get("rows", []) or []
+                headers = section.get("columns") or []
+                if not headers and table_source and isinstance(table_source[0], dict):
+                    headers = list(table_source[0].keys())
+                table_rows = []
+                if headers:
+                    table_rows.append("<w:tr>" + "".join(_docx_cell(header, bold=True) for header in headers) + "</w:tr>")
+                for row in table_source:
+                    values = row if isinstance(row, list) else [row.get(header, "") for header in headers]
+                    table_rows.append("<w:tr>" + "".join(_docx_cell(str(value)) for value in values) + "</w:tr>")
+                blocks.append(
+                    '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>'
+                    '<w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:left w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:right w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="B8AA96"/>'
+                    "</w:tblBorders></w:tblPr>"
+                    + "".join(table_rows)
+                    + "</w:tbl>"
+                )
             elif section.get("items"):
                 for item in section.get("items", []) or []:
                     blocks.append(_docx_paragraph(f"- {item}"))
@@ -3272,8 +3488,8 @@ def make_v3_router(db):
         recipient = (payload.recipient_email if payload and payload.recipient_email else "") or brand.get("email") or account.get("username") or ""
         if not recipient:
             raise HTTPException(400, "Brand email is required before sending the Alignment Snapshot.")
-        app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
-        review_link = f"{app_base_url}/brand/approvals"
+        base_url = app_base_url()
+        review_link = f"{base_url}/brand/approvals"
         project_title = _clean_document_text(case.get("title") or snap.get("title") or "Alignment Snapshot", "Alignment Snapshot")
         sent_at = _now_iso()
         await db.v3_alignment_snapshots.update_one(
@@ -3291,6 +3507,7 @@ def make_v3_router(db):
                 if section.get("type") == "questions"
                 or "ALIGNMENT SNAPSHOT" in section.get("heading", "")
                 or "BRAND COMPLETION QUESTIONS" in section.get("heading", "")
+                or "OPEN QUESTIONS" in section.get("heading", "").upper()
             ),
             None,
         )
@@ -3301,6 +3518,14 @@ def make_v3_router(db):
                     completion_questions.append(str(row[0]))
                 elif isinstance(row, dict):
                     question = row.get("Alignment field") or row.get("Question") or row.get("question")
+                    if question:
+                        completion_questions.append(str(question))
+            # Approved-template "Open Questions" section carries questions as a list of items.
+            for item in completion_section.get("items", []) or []:
+                if isinstance(item, str) and item.strip():
+                    completion_questions.append(item.strip())
+                elif isinstance(item, dict):
+                    question = item.get("text") or item.get("question") or item.get("label")
                     if question:
                         completion_questions.append(str(question))
         password = account.get("temporary_password") or "Use your current TASCK password"
@@ -3399,6 +3624,7 @@ def make_v3_router(db):
             section.get("type") == "questions"
             or "ALIGNMENT SNAPSHOT" in section.get("heading", "")
             or "BRAND COMPLETION QUESTIONS" in section.get("heading", "")
+            or "OPEN QUESTIONS" in section.get("heading", "").upper()
             for section in snap.get("sections", [])
         )
         if question_snapshot:
@@ -3528,8 +3754,8 @@ def make_v3_router(db):
                 business_case_id=payload.business_case_id,
             )
         creator_account = await ensure_creator_account(creator)
-        app_base_url = (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL") or "http://localhost:7159").rstrip("/")
-        creator_portal_url = f"{app_base_url}/creator"
+        base_url = app_base_url()
+        creator_portal_url = f"{base_url}/creator"
         email = await queue_email(
             to=creator_email,
             subject=doc["subject"],
@@ -3707,7 +3933,7 @@ def make_v3_router(db):
                 "",
                 "Please log in to your existing TASCK brand page and review the strategy carefully. You can add comments if any section does not align with the campaign direction, or approve it straight away so TASCK can proceed into Delivery. The attached Google Docs-compatible copy is included for easier review, internal circulation, and comment capture.",
                 "",
-                f"Brand portal: {(os.getenv('FRONTEND_URL') or os.getenv('PUBLIC_APP_URL') or os.getenv('APP_BASE_URL') or 'http://localhost:7159').rstrip('/')}/brand/approvals",
+                f"Brand portal: {app_base_url()}/brand/approvals",
                 "",
                 "This email does not include new login details. Please use the brand portal login already issued by TASCK.",
             ]),

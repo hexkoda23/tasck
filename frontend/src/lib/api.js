@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Keep this in sync with v3api.js so a missing REACT_APP_BACKEND_URL at build
+// time doesn't silently break login and all v1 API calls.
+const DEFAULT_BACKEND_URL = 'https://tasck-live-demo-1.emergent.host';
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/, '');
 const API = `${BACKEND_URL}/api`;
 
 // Create axios instance
