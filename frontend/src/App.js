@@ -427,12 +427,27 @@ function AppRoutes() {
         <Route path="business-cases/:id/frame/waiting-brand" element={<V1BusinessCaseFrameWaitingBrand />} />
         <Route path="business-cases/:id/frame/admin-review" element={<V1BusinessCaseFrameAdminReview />} />
         <Route path="business-cases/:id/frame/approved" element={<V1BusinessCaseFrameApproved />} />
+        {/* Framing sub-steps (per Chioma's clarification): Brainstorm, Creator
+            Selection, Brief, Strategy Snapshot all live under /frame/* even
+            though the backend stores them under `plan.*`. The legacy /plan/*
+            paths remain as aliases so existing links keep working. */}
+        <Route path="business-cases/:id/frame/brainstorm" element={<V1BusinessCasePlanBrainstorm />} />
+        <Route path="business-cases/:id/frame/creator-scan" element={<V1BusinessCasePlanCreatorScan />} />
+        <Route path="business-cases/:id/frame/brief" element={<V1BusinessCasePlanBrief />} />
+        <Route path="business-cases/:id/frame/creator-briefing-call" element={<V1BusinessCasePlanCreatorBriefingCall />} />
+        <Route path="business-cases/:id/frame/strategy-snapshot" element={<V1BusinessCasePlanStrategySnapshot />} />
+        <Route path="business-cases/:id/frame/waiting-brand-strategy" element={<V1BusinessCasePlanWaitingBrand />} />
+        {/* Legacy /plan/* aliases - kept so old bookmarks/emails still resolve. */}
         <Route path="business-cases/:id/plan/brainstorm" element={<V1BusinessCasePlanBrainstorm />} />
         <Route path="business-cases/:id/plan/creator-scan" element={<V1BusinessCasePlanCreatorScan />} />
         <Route path="business-cases/:id/plan/brief" element={<V1BusinessCasePlanBrief />} />
         <Route path="business-cases/:id/plan/creator-briefing-call" element={<V1BusinessCasePlanCreatorBriefingCall />} />
         <Route path="business-cases/:id/plan/strategy-snapshot" element={<V1BusinessCasePlanStrategySnapshot />} />
         <Route path="business-cases/:id/plan/waiting-brand" element={<V1BusinessCasePlanWaitingBrand />} />
+        {/* Planning (Business Case area): budgeting, timelines, contracts,
+            invoicing, deliverables, feedback - all on one page until each gets
+            its own dedicated UI. */}
+        <Route path="business-cases/:id/plan/planning" element={<V1BusinessCaseDeliverySummary />} />
         <Route path="business-cases/:id/delivery/summary" element={<V1BusinessCaseDeliverySummary />} />
         <Route path="business-cases/:id/delivery/contracts" element={<V1BusinessCaseContractStudio />} />
         <Route path="business-cases/:id/delivery/waiting-signatures" element={<V1BusinessCaseDeliveryWaitingSignatures />} />

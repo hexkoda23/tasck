@@ -219,31 +219,46 @@ const connectStatusUpdatedAt = (bundle) => {
   return time ? new Date(time).toISOString() : '';
 };
 
-// Client-aligned workflow: one stepper with four conceptual stages.
-//   1. Connect          - covers backend stage `connect`
-//   2. Framing          - covers backend stages `frame` (Alignment Snapshot) AND `plan`
-//                         (Brainstorm, Creative Brief, Creative Snapshot).
-//                         The client groups Alignment + Brainstorm/Brief/Creative Snapshot
-//                         under "Framing".
-//   3. Planning         - covers backend stage `deliver` (contracts, deliverables,
-//                         budget/timeline/invoicing). Only unlocks after Creative
-//                         Snapshot approval AND Strategy Development Fee payment.
-//   4. Feedback         - covers backend `reporting` / `closed` (final report + feedback).
-const STAGE_TO_STEP_INDEX = { connect: 0, frame: 1, plan: 1, deliver: 2, reporting: 3, closed: 3 };
-
-const stepperConfig = (id, stage) => {
-  // Land each step on a sensible entry page that the user is allowed to view.
-  const framingEntry = adminRoute(`/business-cases/${id}/frame/snapshot`);
-  const planningEntry = adminRoute(`/business-cases/${id}/delivery/summary`);
-  const feedbackEntry = adminRoute(`/business-cases/${id}/reporting/final-report`);
+// Client-clarified workflow (Chioma's feedback): two distinct areas.
+//
+// CRM area: Connect + Framing.
+//   Framing chains 5 sub-steps:
+//     1. Alignment Snapshot   (backend `frame` stage)
+//     2. Brainstorm           (backend `plan` stage, sub-step 1)
+//     3. Creator Selection    (backend `plan` stage, sub-step 2)
+//     4. Creative Brief       (backend `plan` stage, sub-step 3)
+//     5. Strategy Snapshot    (backend `plan` stage, sub-step 4) - sent to both
+//                             brand AND creatives for approval.
+//   Admin only leaves Framing once Strategy Snapshot is approved AND the
+//   Strategy Development Fee is paid.
+//
+// Business Case area: Planning -> Delivery -> Reporting.
+//   Planning prepares budget/timeline/contracts/invoicing/deliverables/feedback.
+//     Feedback page is reusable - admin returns to regenerate and send.
+//   Delivery executes (approve budget, generate/send/sign contracts, deliverables).
+//   Reporting generates final report.
+//
+// Backend stage keys are unchanged; only the UI grouping reflects the client's
+// vocabulary so no data migration is needed.
+const stepperConfig = (id, stage, pathname) => {
+  const inCrmPhase = /\/(connect|frame)(\/|$)/.test(pathname || '');
+  if (inCrmPhase) {
+    return {
+      links: [
+        ['Connect', adminRoute(`/business-cases/${id}/connect`)],
+        ['Framing', adminRoute(`/business-cases/${id}/frame/snapshot`)],
+      ],
+      // Backend `frame` AND `plan` both belong to the Framing area in the UI.
+      currentIndex: ({ connect: 0, frame: 1, plan: 1 }[stage] ?? 1),
+    };
+  }
   return {
     links: [
-      ['Connect', adminRoute(`/business-cases/${id}/connect`)],
-      ['Framing', framingEntry],
-      ['Planning', planningEntry],
-      ['Feedback', feedbackEntry],
+      ['Planning', adminRoute(`/business-cases/${id}/plan/planning`)],
+      ['Delivery', adminRoute(`/business-cases/${id}/delivery/summary`)],
+      ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
     ],
-    currentIndex: STAGE_TO_STEP_INDEX[stage] ?? 0,
+    currentIndex: ({ deliver: 1, reporting: 2, closed: 2 }[stage] ?? 0),
   };
 };
 
@@ -252,18 +267,18 @@ export const businessCasePhasePath = (id, bc = {}) => {
   if (stage === 'closed' || stage === 'reporting') return adminRoute(`/business-cases/${id}/reporting/final-report`);
   if (stage === 'deliver') return adminRoute(`/business-cases/${id}/delivery/summary`);
   if (stage === 'plan') {
+    // Framing sub-steps 2..5 live on backend `plan` but UI shows them under /frame/*.
     const plan = bc.plan || {};
-    if (!plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/plan/brainstorm`);
-    if (!Array.isArray(plan.selected_creator_ids) || plan.selected_creator_ids.length === 0) return adminRoute(`/business-cases/${id}/plan/creator-scan`);
-    if (!plan.creative_brief_id) return adminRoute(`/business-cases/${id}/plan/brief`);
-    if (!plan.creator_briefing_status) return adminRoute(`/business-cases/${id}/plan/creator-briefing-call`);
-    if (!plan.creative_snapshot_id && !plan.strategy_snapshot_status) return adminRoute(`/business-cases/${id}/plan/strategy-snapshot`);
-    return adminRoute(`/business-cases/${id}/plan/strategy-snapshot`);
+    if (!plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm`);
+    if (!Array.isArray(plan.selected_creator_ids) || plan.selected_creator_ids.length === 0) return adminRoute(`/business-cases/${id}/frame/creator-scan`);
+    if (!plan.creative_brief_id) return adminRoute(`/business-cases/${id}/frame/brief`);
+    if (!plan.creative_snapshot_id && !plan.strategy_snapshot_status) return adminRoute(`/business-cases/${id}/frame/strategy-snapshot`);
+    return adminRoute(`/business-cases/${id}/frame/strategy-snapshot`);
   }
   if (stage === 'frame') {
     const frame = bc.frame || {};
     const status = frame.alignment_snapshot_status || frame.status || '';
-    if (status === 'approved') return adminRoute(`/business-cases/${id}/frame/approved`);
+    if (status === 'approved') return adminRoute(`/business-cases/${id}/frame/brainstorm`);
     if (status === 'sent' || status === 'waiting_brand' || status === 'pending_brand_review') return adminRoute(`/business-cases/${id}/frame/waiting-brand`);
     if (frame.brand_comments || frame.admin_comments || Number(frame.comment_count || 0) > 0) return adminRoute(`/business-cases/${id}/frame/admin-review`);
     return adminRoute(`/business-cases/${id}/frame/snapshot`);
@@ -284,10 +299,11 @@ export const V3BusinessCaseStageHome = () => {
 
 const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { id, bundle, loading } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
-  const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage);
+  const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage, location.pathname);
   return (
     <div className="v3-stage-shell space-y-5" data-testid="business-case-flow-page">
       <div className="flex flex-wrap items-center gap-2">
@@ -1895,20 +1911,22 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
   const approveSnapshot = async () => {
     setNotice(null);
-    setSendPopup({ title: 'Approving', message: 'Approving the Alignment Snapshot and moving this brand into the Business Case area...', tone: 'pending' });
+    setSendPopup({ title: 'Approving', message: 'Approving the Alignment Snapshot and opening Brainstorm (still in Framing)…', tone: 'pending' });
     try {
       await persistDraft();
       await v3ApproveAlignmentAs(id, 'admin', 'admin');
+      // The backend stage advances frame -> plan so the Brainstorm/Brief/Strategy
+      // Snapshot data slots become writable. The UI keeps the user in Framing.
       if (stage === 'frame') {
         await v3AdvanceBusinessCase(id, {
           actor: 'admin',
           override: true,
-          reason: 'Alignment Snapshot approved by admin.',
+          reason: 'Alignment Snapshot approved by admin. Continue Framing in Brainstorm.',
         });
       }
       await reload();
-      setSendPopup({ title: 'Moving to Business Cases', message: 'Snapshot approved. This brand is now in Plan — opening the Business Cases area.', tone: 'success' });
-      window.setTimeout(() => navigate(adminRoute('/business-cases')), 450);
+      setSendPopup({ title: 'Opening Brainstorm', message: 'Snapshot approved. Continuing Framing in Brainstorm.', tone: 'success' });
+      window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`)), 450);
     } catch (e) {
       setSendPopup(null);
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve the Alignment Snapshot. Generate it first.');
@@ -1997,7 +2015,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   return (
-    <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 4. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand. Once approved, Framing continues into Brainstorm, Creative Brief, and Creative Snapshot.">
+    <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 5. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand. Once approved, Framing continues into Brainstorm, Creator Selection, Creative Brief, and Strategy Snapshot.">
       <InfoCard
         title="Alignment Snapshot"
         action={(
@@ -2279,7 +2297,7 @@ export const V3BusinessCaseFrameApproved = () => {
   const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const snap = bundle?.alignment_snapshot || {};
-  return <FlowShell title="Alignment Approved" subtitle="Confirm admin approval. This brand has moved into Plan and now lives in the Business Case area."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute('/business-cases'))} className="v3-btn-primary mt-4">Open Business Cases</button></InfoCard></FlowShell>;
+  return <FlowShell title="Alignment Approved" subtitle="Framing continues. The Alignment Snapshot is approved; the next Framing step is Brainstorm."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`))} className="v3-btn-primary mt-4">Continue to Brainstorm</button></InfoCard></FlowShell>;
 };
 
 export const V1BusinessCaseFrameTranscripts = () => {
@@ -2547,7 +2565,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
         scored_creators: round.scored_creators,
       });
       setNotice('Brainstorming saved.');
-      if (advance) navigate(adminRoute(`/business-cases/${id}/plan/creator-scan`));
+      if (advance) navigate(adminRoute(`/business-cases/${id}/frame/creator-scan`));
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not save brainstorm.');
     } finally {
@@ -2557,7 +2575,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
   if (!round) {
     return (
-      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 4. 60-90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 5. 60-90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
         {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
         <InfoCard title="Start brainstorm round">
           <p className="text-[13px] text-[#6E6657] mb-3">A new round will scaffold all 7 phases of the TTA Snapshot Brainstorm template. You can save progress between phases.</p>
@@ -2576,7 +2594,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const p7 = round.phase_7_recommendation || {};
 
   return (
-    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 4. A 60-90 minute session for building a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 5. A 60-90 minute session for building a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
       <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-[#E8E4DB] -mx-1 px-1 py-2 flex flex-wrap items-center gap-2">
         <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save'}</button>
@@ -2753,11 +2771,11 @@ export const V3BusinessCasePlanCreatorScan = () => {
       setNotice('Select at least one creator before generating briefs.');
       return;
     }
-    navigate(adminRoute(`/business-cases/${id}/plan/brief?creators=${selectedCreatorQuery(selectedIds)}`));
+    navigate(adminRoute(`/business-cases/${id}/frame/brief?creators=${selectedCreatorQuery(selectedIds)}`));
   };
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
   return (
-    <FlowShell title="Creator Match Scanner" subtitle="Scan creators, manually choose creatives from the full V3 database, and prepare more than one creator for briefing." nextAction="Pick one or more creators, then generate editable briefs for each selected creator.">
+    <FlowShell title="Creator Match Scanner" subtitle="Framing step 3 of 5. Scan creators, manually choose creatives from the full database, and prepare one or more creators for briefing." nextAction="Pick one or more creators, then generate editable briefs for each selected creator.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Matching criteria">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[12px] text-[#4F3E2F]">
@@ -2943,7 +2961,7 @@ export const V3BusinessCasePlanBrief = () => {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
   return (
-    <FlowShell title="Creative Brief Studio" subtitle="Framing step 3 of 4. Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
+    <FlowShell title="Creative Brief Studio" subtitle="Framing step 4 of 5. Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Selected creator briefs" action={<button onClick={generateAll} className="v3-btn-primary" data-testid="brief-generate-all-btn"><Sparkles className="w-3.5 h-3.5" /> Generate AI briefs</button>}>
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end">
@@ -3001,7 +3019,7 @@ export const V3BusinessCasePlanBrief = () => {
             {allBriefsSent ? 'All selected creator briefs have been sent. Open the Strategy Snapshot that will be prepared for the brand.' : 'Open the Strategy Snapshot now, then send creator briefs when they are ready.'}
           </p>
           <button
-            onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/strategy-snapshot`))}
+            onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/strategy-snapshot`))}
             className="v3-btn-primary"
             data-testid="brief-open-strategy-snapshot-btn"
           >
@@ -3279,17 +3297,35 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   };
   const approve = async () => {
     setNotice('');
-    setSendPopup({ title: 'Approving', message: 'Approving Strategy Snapshot and preparing Delivery...', tone: 'pending' });
+    setSendPopup({ title: 'Approving', message: 'Approving Strategy Snapshot. Will open Planning once payment is received.', tone: 'pending' });
     try {
       await v3ApproveSnapshot(id, 'admin');
+      // Try to advance frame -> plan completion (backend `plan` -> `deliver`).
+      // This will only succeed if the Strategy Development Fee is already paid;
+      // otherwise the backend gate rejects with a clear error.
+      let advanced = false;
       try {
         if (getCase(bundle).stage === 'plan') {
-          await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Strategy Snapshot approved by admin.' });
+          await v3AdvanceBusinessCase(id, { actor: 'admin', override: false, reason: 'Strategy Snapshot approved by admin.' });
+          advanced = true;
         }
-      } catch (_err) { /* already advanced */ }
+      } catch (advErr) {
+        // Gate not met (most likely the Strategy Development Fee is still
+        // unpaid). Keep the admin on the Strategy Snapshot page and surface
+        // the exact reason from the backend.
+        const detail = advErr?.response?.data?.detail;
+        const errors = Array.isArray(detail?.errors) ? detail.errors.join(' ') : (typeof detail === 'string' ? detail : '');
+        setSendPopup({
+          title: 'Approved — waiting for payment',
+          message: errors || 'Strategy Snapshot approved. Planning will open once the Strategy Development Fee is received.',
+          tone: 'pending',
+        });
+      }
       await reload();
-      setSendPopup({ title: 'Opening next phase', message: 'Strategy Snapshot approved. Opening Delivery now.', tone: 'success' });
-      window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/delivery/summary`)), 450);
+      if (advanced) {
+        setSendPopup({ title: 'Opening Planning', message: 'Strategy Snapshot approved and fee received. Opening the Planning phase in the Business Case area.', tone: 'success' });
+        window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/plan/planning`)), 600);
+      }
     } catch (e) {
       setSendPopup(null);
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve Strategy Snapshot yet.');
@@ -3331,7 +3367,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   };
 
   return (
-    <FlowShell title="Creative Snapshot Studio" subtitle="Framing step 4 of 4. Generate, view, send to the brand portal/email, and approve. Planning only starts after the brand approves this Creative Snapshot AND the Strategy Development Fee is received." nextAction="Review the Creative Snapshot that will be sent to the brand.">
+    <FlowShell title="Strategy Snapshot Studio" subtitle="Framing step 5 of 5. Generate, view, send to BOTH the brand and the creatives for approval. Planning only starts after the brand approves the Strategy Snapshot AND the Strategy Development Fee is received." nextAction="Review the Strategy Snapshot, send it to brand and creatives, then approve.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <div className="flex flex-wrap items-center gap-2">
         <button onClick={generate} disabled={generating} className="v3-btn-primary" data-testid="strategy-generate-btn">
@@ -3451,7 +3487,7 @@ export const V3BusinessCasePlanWaitingBrand = () => {
   const { id, bundle, loading } = useBusinessCaseBundle();
   useEffect(() => {
     if (!loading && bundle) {
-      navigate(adminRoute(`/business-cases/${id}/plan/strategy-snapshot`), { replace: true });
+      navigate(adminRoute(`/business-cases/${id}/frame/strategy-snapshot`), { replace: true });
     }
   }, [bundle, id, loading, navigate]);
   return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studio...</div>;
@@ -3495,7 +3531,7 @@ export const V3BusinessCaseDeliverySummary = () => {
     return Array.isArray(exec?.rows) ? exec.rows : [];
   })();
   return (
-    <FlowShell title="Planning Summary" subtitle="Planning covers budgeting, timelines, contracts, invoicing, deliverables, and feedback. Confirm the full project context before contract generation." nextAction="Open contract page to generate brand and creator agreements.">
+    <FlowShell title="Planning" subtitle="Plan the project: budgeting, timelines, contracts, invoicing, deliverables, and a reusable Feedback page TASCK uses to collect feedback from brands and creatives regularly. Confirm the project context here, then Delivery handles execution." nextAction="Once planning is locked, move to Delivery for budget approval, contract generation, and deliverables tracking.">
       <InfoCard title="Project at a glance">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{cleanV1Text(bc.title)}</div>
@@ -4198,7 +4234,7 @@ export const V3BusinessCaseFinalReport = () => {
   const feedback = report?.feedback;
 
   return (
-    <FlowShell title="Final Report and Feedback" subtitle="Closing stage. Review the automatically generated final report and feedback, send them to the right email, then close the project.">
+    <FlowShell title="Final Report and Feedback" subtitle="Reporting stage. Generate the final report and the feedback summary, share both with the right contacts at brand and creatives, then close the project. The reusable Planning Feedback page can be used throughout to keep collecting feedback as the project runs.">
       {closePopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" data-testid="close-project-popup">
           <div className="v3-card w-full max-w-sm bg-white p-5 text-center shadow-2xl">

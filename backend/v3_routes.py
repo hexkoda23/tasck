@@ -1574,31 +1574,16 @@ def make_v3_router(db):
             "password_changed_at": None,
         }
         await db.v3_brand_accounts.insert_one({**account_doc})
-        company_name = brand.get("company") or brand.get("name") or "your brand"
-        base_url = app_base_url()
-        brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{base_url}/brand").rstrip("/")
-        welcome = await queue_email(
-            to=username,
-            subject="Your TASCK brand access",
-            body=(
-                f"Hello {brand.get('primary_contact') or 'Marketing Team'},\n\n"
-                "Welcome to TASCK.\n\n"
-                f"We have prepared brand portal access for {company_name} so your team can review project documents, respond to approval requests, and keep communication with TASCK in one place.\n\n"
-                f"Brand portal: {brand_portal_url}\n"
-                f"Email: {username}\n"
-                f"Access code: {temp_password}\n\n"
-                "For security, please sign in and change this access code before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
-                "Regards,\n"
-                "TASCK"
-            ),
-            kind="brand_welcome",
-            brand_id=brand["id"],
-        )
+        # Per product rule (Chioma feedback): the only auto-email is the brand
+        # welcome on the explicit brand-creation endpoint. Lazy account creation
+        # here (called from alignment send, brief send, snapshot send, etc.) must
+        # NOT silently email the brand. Admin sends credentials separately if
+        # they want to share them via the dedicated send endpoints.
         return {
             "username": username,
             "temporary_password": temp_password,
             "must_change_password": True,
-            "welcome_email_id": welcome["id"],
+            "welcome_email_id": None,
         }
 
     async def ensure_creator_account(creator: Dict[str, Any]) -> Dict[str, Any]:
@@ -2530,16 +2515,23 @@ def make_v3_router(db):
     # STAGE ADVANCEMENT
     # ------------------------------------------------------------------------
     STAGE_ORDER = ["connect", "frame", "plan", "deliver", "closed"]
-    # Stage vocabulary aligned with the client-approved workflow:
-    #   Connect -> Framing (Alignment Snapshot, Brainstorm, Creative Brief, Creative Snapshot)
-    #   -> Planning (budgeting, timelines, contracts, invoicing, deliverables) -> Feedback.
-    # Backend stage keys stay the same to avoid data migration; only the user-facing
-    # copy reflects the new structure.
+    # Stage vocabulary aligned with the client-clarified workflow:
+    #   CRM area:
+    #     connect  -> Connect (call, transcripts, AI analysis)
+    #     frame    -> Framing step 1 of 5: Alignment Snapshot.
+    #     plan     -> Framing steps 2-5: Brainstorm, Creator Selection,
+    #                 Creative Brief, Strategy Snapshot.
+    #   Business Case area (only after Strategy Snapshot approved + fee paid):
+    #     deliver  -> Planning + Delivery (budget, timelines, contracts,
+    #                 invoicing, deliverables, feedback).
+    #     closed   -> Reporting and closure.
+    # Backend stage keys stay the same to avoid data migration; only the
+    # user-facing copy reflects the new structure.
     STAGE_NEXT_ACTIONS = {
-        "frame": "Framing: generate, edit, and send the Alignment Snapshot for brand approval.",
-        "plan": "Framing continues: brainstorm, send the Creative Brief, capture the creative discussion, and draft the Creative Snapshot for brand approval.",
-        "deliver": "Planning: budget, timelines, contracts, invoicing, deliverables, and feedback. Only starts after Creative Snapshot approval AND payment received.",
-        "closed": "Feedback and closure: generate the final report, collect feedback, and close the project.",
+        "frame": "Framing step 1 of 5: generate, edit, and send the Alignment Snapshot for brand approval.",
+        "plan": "Framing continues (steps 2-5): brainstorm, pick creators, send Creative Briefs, and draft the Strategy Snapshot for brand AND creatives.",
+        "deliver": "Business Case opens. Plan budget/timeline/contracts/invoicing/deliverables/feedback, then execute in Delivery (approve budget, generate and sign contracts, run deliverables).",
+        "closed": "Reporting and closure: generate the final report and close the project. Feedback is collected on the reusable Feedback page throughout.",
     }
 
     class AdvancePayload(BaseModel):
@@ -3742,17 +3734,10 @@ def make_v3_router(db):
                 "frame.strategy_development_fee_paid": False,
                 "frame.strategy_development_fee_due_stage": "before_delivery",
             }
-            await queue_email(
-                to=(brand or {}).get("email", ""),
-                subject=f"Strategy Development Fee issued - {project_title}",
-                body=(
-                    f"The creator brief for {project_title} has been sent. "
-                    "The Strategy Development Fee has been issued for commercial approval and will be tracked before Delivery."
-                ),
-                kind="strategy_development_fee_invoice",
-                brand_id=case["brand_id"],
-                business_case_id=payload.business_case_id,
-            )
+            # Do NOT auto-email the brand about the invoice. Per product rule
+            # (Chioma feedback): the only auto-email is the brand welcome on
+            # creation. The invoice is created silently; admin emails it via
+            # an explicit Send action from the invoice page when ready.
         creator_account = await ensure_creator_account(creator)
         base_url = app_base_url()
         creator_portal_url = f"{base_url}/creator"
@@ -7900,30 +7885,11 @@ Produce the opportunity card JSON.
                     {"id": payload.business_case_id},
                     {"$addToSet": {"creator_fit_meeting_ids": mid, "plan.creator_fit_meeting_ids": mid}, "$set": {"updated_at": _now_iso(), "plan.creator_briefing_status": "scheduled"}},
                 )
-        if payload.scheduled_for and payload.contact_email:
-            kind = {
-                "qualification": "qualification_call_invite",
-                "connector": "business_call_invite",
-                "business_call": "business_call_invite",
-                "creator_fit": "creator_fit_call_invite",
-                "creator_briefing": "creator_briefing_call_invite",
-            }.get(payload.meeting_type, "meeting_invite")
-            await queue_email(
-                to=payload.contact_email,
-                subject=f"TASCK meeting: {doc['title']}",
-                body=(
-                    f"Hello {payload.contact_name or 'there'},\n\n"
-                    f"We have scheduled your TASCK meeting.\n\n"
-                    f"Date and time: {_format_email_datetime(payload.scheduled_for)}\n"
-                    f"Meeting link: {payload.meeting_link or 'To be shared by TASCK'}\n\n"
-                    f"Purpose: {payload.agenda or doc['title']}\n\n"
-                    "Please reply to confirm this works for you."
-                ),
-                kind=kind,
-                brand_id=payload.brand_id,
-                creator_id=payload.creator_id,
-                business_case_id=payload.business_case_id,
-            )
+        # Per product rule (Chioma feedback): scheduling a meeting must NOT
+        # auto-email the brand or creator. Admin must explicitly send the
+        # invite via the meeting page's Send button. The invite endpoints
+        # /business-cases/{bc_id}/connect/send-meeting-email and
+        # /business-cases/{bc_id}/connect/send-reschedule-email handle that.
         return await _hydrate_meeting(doc)
 
     class MeetingContactUpdate(BaseModel):
