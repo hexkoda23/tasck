@@ -491,6 +491,32 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Transcript analysis "failed" toast fix — frontend axios timeout was killing Claude calls mid-flight)
+
+### Bug
+Admin reported "AI analysis failed" toast every time they clicked "Analyze all transcripts" on the Connect page, even though the backend was successfully running the Claude analysis to completion.
+
+### Root cause
+The frontend axios client (`frontend/src/lib/v3api.js` line 10) was configured with a global `timeout: 45000` (45 seconds). The new Claude-powered analyzer (`POST /connect/analyze-all`) consistently takes 30-75 seconds for multi-transcript bundles — well over the 45s axios cap. So:
+- Backend ran Claude successfully, wrote the analysis to the DB.
+- Frontend axios threw `ECONNABORTED` at 45s.
+- The `catch` block at `V1BusinessCaseFlowPages.js:1424` displayed "AI analysis failed" even though the backend completed normally a few seconds later.
+
+This was a pure UX regression — the actual analysis was always succeeding on the backend.
+
+### Fix
+- `v3AnalyzeAllTranscripts`: per-call `timeout: 180000` (3 minutes) — comfortably above the 75s backend ALIGNMENT_ANALYZER_TIMEOUT_SECONDS cap.
+- `v3GetAnalyzeAllJob`: per-call `timeout: 30000` (30s) since these polling reads are cheap.
+
+The global 45s default is preserved for every other endpoint — only the analyzer endpoints (where the LLM call has to actually complete) get the longer timeout.
+
+### Verified live
+- Wall-clock POST `/connect/analyze-all` on `bc-0703881b2c`: **38.5s**, `ok: true`, `analysis_source: anthropic:claude-sonnet-4-5`, full 8-field alignment snapshot returned. Within the new 180s ceiling, well over the old 45s cap.
+
+### Files touched
+- `/app/frontend/src/lib/v3api.js` — added per-call timeouts on the analyzer endpoints.
+
+
 ## Update — 25 Feb 2026 (Removed duplicate "About the brand" row from CRM brand profile grid)
 
 ### Change
