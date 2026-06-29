@@ -482,11 +482,15 @@ You are TASCK's Connect-to-Frame Alignment Snapshot analyst.
 
 Read the CRM context and every Connect transcript. Extract only what is supported by the evidence. Do not invent facts, numbers, dates, audiences, priorities, or goals. If a field is unclear, say exactly what the brand should confirm. Produce polished Nigerian business English suitable for sending to a brand for review.
 
-ABSOLUTE RULE - NO PERSON NAMES:
+ABSOLUTE RULE - NO TRANSCRIPT ARTIFACTS:
 - NEVER include the names of individual people (attendees, hosts, presenters, founders, staff, TASCK team members, callers, speakers) anywhere in any field.
 - Do not write "Adeleke said", "Tunde mentioned", "Chioma highlighted", "Funke explained", "John from TASCK", "the founder Mary", or any similar attribution.
+- NEVER include speaker labels or speaker turns from the transcript (e.g. "Speaker 1:", "Host:", "Interviewer:", "Brand rep:", "Adeleke:", "[John]"). Strip them all.
+- NEVER include timestamps (e.g. "[00:14:32]", "(03:45)", "00:14:32 -->"), recording markers, stage directions (e.g. "[laughter]", "[crosstalk]", "[inaudible]"), or call/meeting metadata ("On the call: ...", "Attendees:", "Joined at 10:05", "Recorded by ...").
+- NEVER include verbatim quotes that begin with a person's name, position, or "we", "I", "you guys", "they said" attribution that exposes who spoke.
 - Refer to the organisation, the brand, the leadership team, the marketing team, the partner, the funder, or the audience instead.
-- Strip first names, last names, nicknames, and email-style names (e.g. "kehinde@") from anything you write. If you cannot describe something without naming a person, leave the underlying point in but rewrite the sentence to attribute it to the organisation or team.
+- Strip first names, last names, nicknames, and email-style names (e.g. "kehinde@") from anything you write.
+- If you cannot describe a point without naming a person or using a transcript artifact, leave the underlying business insight in but rewrite the sentence to attribute it to the organisation or team. Convert dialog into clean third-person business prose.
 
 WRITING LENGTH AND DEPTH:
 - about_the_organisation MUST be a rich, specific 4 to 6 sentence paragraph that covers:
@@ -562,6 +566,175 @@ CONNECT TRANSCRIPTS
 
 Use ALL of the CRM context above, not just the transcripts. The about_the_organisation paragraph should weave together the brand's category, what they actually do, who they serve, their stated focus or challenge, and what makes them distinctive - drawing from the stored description, RM notes, and transcripts. If the transcripts contradict CRM context, prefer the transcript and mention the uncertainty in evidence_notes.
 """.strip()
+
+
+# ============================================================================
+# Brand About - LLM-cleaned brand description from raw web scrape
+# ============================================================================
+#
+# Why this exists:
+# The naive scrape grabs og:description / meta description / first paragraph,
+# which are usually CAMPAIGN-specific or APP-STORE boilerplate, not what the
+# brand IS. Examples we saw in production:
+#   - "Download we.yan by we.yan ltd on the App Store. See screenshots..."
+#   - "Every mum is a hero...nominate her as the next Three Crowns Mum..."
+# Neither describes the brand. We send the raw page text to the configured
+# LLM (Gemini Flash locally, Claude on staging) and ask for a clean 2-3
+# sentence brand description, with explicit bans on the noise above.
+#
+# Falls back to whatever the meta scrape produced if no LLM key is set or
+# the LLM call fails.
+# ============================================================================
+
+def _brand_about_system_prompt() -> str:
+    return """
+You are TASCK's Brand Description Analyst.
+
+You will be given the raw website text for a brand. Your job is to produce a CLEAN, 2 to 3 sentence brand description in polished Nigerian business English that explains what the BRAND IS - the organisation, not the current marketing campaign.
+
+The description MUST cover:
+  (a) what kind of organisation the brand is (company, label, agency, programme, NGO, retailer, manufacturer, etc.) and its category or sector,
+  (b) what they primarily make, sell, distribute, or do,
+  (c) who they primarily serve (audience or market), if it can be inferred.
+
+ABSOLUTE RULES - never include any of the following:
+  - App store boilerplate: "Download X on the App Store", "Available on Google Play", "See screenshots, ratings and reviews", "Download for free", "Get it on...".
+  - Specific campaign / promotional copy: "Now's your chance to nominate", "Honour that incredible woman", "Tag a friend", "Click to win", "Buy two, get one free", "Mum of the Year", competition rules, voucher offers, hashtags.
+  - Calls to action: "Sign up", "Subscribe", "Visit our store", "Download our app".
+  - Tagline-only descriptions ("Refreshingly Yours") unless paired with what the brand actually does.
+  - Verbatim quotes, hashtags, emoji, social handles, prices, or dates.
+  - Any first or last names of specific people.
+
+If the raw text is dominated by campaign content and there is no clear brand description, write a short factual paragraph based ONLY on what you can confidently infer about the brand's category. Mark uncertainty with "appears to" or "based on the website". Never invent specific facts (founder, year founded, headcount, awards).
+
+Return JSON only, no markdown, exactly this shape:
+{
+  "about": "string - the 2-3 sentence brand description",
+  "confidence": integer 0-100
+}
+""".strip()
+
+
+def _brand_about_user_message(brand_name: str, brand_industry: str, page_text: str) -> str:
+    return f"""
+BRAND NAME: {brand_name or "(unknown)"}
+STATED INDUSTRY / CATEGORY: {brand_industry or "(unknown)"}
+
+RAW WEBSITE TEXT (homepage and any /about pages, concatenated and de-duplicated):
+{page_text[:12000]}
+
+Produce the brand description.
+""".strip()
+
+
+async def _call_brand_about_tool(
+    brand_name: str,
+    brand_industry: str,
+    page_text: str,
+) -> Optional[str]:
+    """Return a cleaned brand description, or None when no LLM is available
+    or the call fails. Same provider preference as the alignment analyzer."""
+    if not (page_text or "").strip():
+        return None
+
+    system_prompt = _brand_about_system_prompt()
+    user_message = _brand_about_user_message(brand_name, brand_industry, page_text)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("BRAND_ABOUT_EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+
+    _env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
+    _prefer_anthropic = _env in {"staging", "production", "prod"}
+
+    async def _call_emergent() -> Optional[str]:
+        if not emergent_key:
+            return None
+        try:
+            from emergentintegrations.llm.chat import LlmChat, UserMessage
+            provider = os.getenv("BRAND_ABOUT_EMERGENT_PROVIDER") or "gemini"
+            model = os.getenv("BRAND_ABOUT_EMERGENT_MODEL") or "gemini-2.0-flash"
+            chat = LlmChat(
+                api_key=emergent_key,
+                session_id=f"brand-about-{uuid.uuid4()}",
+                system_message=system_prompt,
+            ).with_model(provider, model)
+            response = await chat.send_message(UserMessage(text=user_message))
+            parsed = _parse_json_object(_response_to_text(response))
+            if isinstance(parsed, dict):
+                text = str(parsed.get("about") or "").strip()
+                return text or None
+            return None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Brand-about emergent call failed for %s: %s", brand_name, exc)
+            return None
+
+    def _call_http_model() -> Optional[str]:
+        if anthropic_key:
+            model = os.getenv("BRAND_ABOUT_LLM_MODEL") or "claude-sonnet-4-20250514"
+            try:
+                response = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": anthropic_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 800,
+                        "temperature": 0.1,
+                        "system": system_prompt,
+                        "messages": [{"role": "user", "content": user_message}],
+                    },
+                    timeout=30,
+                )
+                response.raise_for_status()
+                data = response.json()
+                text_response = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+                parsed = _parse_json_object(text_response)
+                if isinstance(parsed, dict):
+                    return str(parsed.get("about") or "").strip() or None
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Brand-about anthropic call failed for %s: %s", brand_name, exc)
+        if openai_key:
+            model = os.getenv("BRAND_ABOUT_LLM_MODEL") or "gpt-4o-mini"
+            try:
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {openai_key}", "content-type": "application/json"},
+                    json={
+                        "model": model,
+                        "temperature": 0.1,
+                        "max_tokens": 800,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message},
+                        ],
+                    },
+                    timeout=30,
+                )
+                response.raise_for_status()
+                text_response = response.json()["choices"][0]["message"]["content"]
+                parsed = _parse_json_object(text_response)
+                if isinstance(parsed, dict):
+                    return str(parsed.get("about") or "").strip() or None
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Brand-about openai call failed for %s: %s", brand_name, exc)
+        return None
+
+    try:
+        if not _prefer_anthropic:
+            result = await _call_emergent()
+            if result:
+                return result
+        http_result = await asyncio.to_thread(_call_http_model)
+        if http_result:
+            return http_result
+        if _prefer_anthropic:
+            return await _call_emergent()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Brand-about LLM pipeline failed for %s: %s", brand_name, exc)
+    return None
 
 
 async def _call_alignment_analysis_tool(
@@ -1592,6 +1765,36 @@ def make_v3_router(db):
                         if match:
                             scraped_budget = " ".join(match.group(0).split())[:180]
                             break
+
+                    # ---- Pass 4: LLM-cleaned brand about ----
+                    # The regex-based scrape often grabs campaign copy or
+                    # app-store boilerplate. Try fetching common about pages
+                    # and feed the combined text to the LLM for a clean
+                    # 2-3 sentence brand description. If the LLM call
+                    # succeeds, it OVERRIDES whatever meta tags produced -
+                    # this is the canonical source.
+                    about_text_for_llm = page_text[:6000]
+                    for about_path in ["/about", "/about-us", "/about_us", "/who-we-are", "/our-story", "/company"]:
+                        try:
+                            about_resp = await client.get(urljoin(final_url, about_path), headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            if about_resp.status_code >= 400:
+                                continue
+                            about_html = about_resp.text
+                            extracted = html_module.unescape(_re.sub(r'<[^>]+>', ' ', about_html))
+                            extracted = " ".join(extracted.split())
+                            if len(extracted) >= 200:
+                                about_text_for_llm = (about_text_for_llm + "\n\n--- " + about_path + " ---\n" + extracted[:6000])[:12000]
+                                # Most sites have one canonical about URL - first match is enough.
+                                break
+                        except Exception:  # noqa: BLE001
+                            continue
+                    llm_about = await _call_brand_about_tool(
+                        brand_name=brand_name,
+                        brand_industry=str(brand.get("category") or brand.get("industry") or brand.get("sector") or ""),
+                        page_text=about_text_for_llm,
+                    )
+                    if llm_about:
+                        scraped_about = llm_about[:1500]
             except httpx.HTTPError as exc:
                 # Network / 4xx / 5xx / SSL / timeout. Log with full context so
                 # we can debug from production logs instead of guessing.
@@ -5642,6 +5845,144 @@ def make_v3_router(db):
             })
 
         # Sort newest first and cap.
+        def _ts(item: Dict[str, Any]) -> str:
+            return str(item.get("when") or "")
+        notifications.sort(key=_ts, reverse=True)
+        return notifications[:100]
+
+    # ------------------------------------------------------------------------
+    # BRAND PORTAL NOTIFICATIONS
+    # ------------------------------------------------------------------------
+    # Brand-facing version of the admin notifications: tells the brand when
+    # TASCK has approved their Alignment Snapshot, when the Strategy Snapshot
+    # is ready for review, when their contract is ready to sign, and when the
+    # creator has responded to the brief. Scoped to one brand only.
+    # Uses the same NOTIFICATIONS_LOOKBACK_DAYS window and the same defensive
+    # name filtering so demo seed records never reach the brand portal.
+    @router.get("/brands/{brand_id}/notifications")
+    async def brand_notifications(brand_id: str):
+        try:
+            lookback_days = max(1, int(os.getenv("NOTIFICATIONS_LOOKBACK_DAYS", "7")))
+        except (TypeError, ValueError):
+            lookback_days = 7
+        cutoff_dt = datetime.now(timezone.utc) - _td(days=lookback_days)
+
+        def _within_window(value: Any) -> bool:
+            text = str(value or "").strip()
+            if not text:
+                return False
+            cleaned = text.replace("Z", "+00:00") if text.endswith("Z") else text
+            try:
+                parsed = datetime.fromisoformat(cleaned)
+            except ValueError:
+                return False
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed >= cutoff_dt
+
+        brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0, "company": 1, "name": 1}) or {}
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+
+        # Find every Business Case that belongs to this brand.
+        cases = await db.v3_business_cases.find(
+            {"brand_id": brand_id},
+            {"_id": 0, "id": 1, "title": 1},
+        ).to_list(200)
+        case_titles = {case["id"]: case.get("title") for case in cases if case.get("title")}
+        if not case_titles:
+            return []
+        case_ids = list(case_titles.keys())
+
+        notifications: List[Dict[str, Any]] = []
+
+        # 1. Alignment Snapshot approved by ADMIN (this is what the brand
+        #    wants to know - "TASCK has approved your snapshot, you're moving
+        #    to the next stage").
+        alignments = await db.v3_alignment_snapshots.find(
+            {
+                "business_case_id": {"$in": case_ids},
+                "approved_at": {"$ne": None},
+                "approved_by_party": "admin",
+            },
+            {"_id": 0, "id": 1, "business_case_id": 1, "approved_at": 1},
+        ).sort("approved_at", -1).to_list(50)
+        for row in alignments:
+            if not _within_window(row.get("approved_at")):
+                continue
+            case_title = case_titles.get(row.get("business_case_id"))
+            if not case_title:
+                continue
+            notifications.append({
+                "id": f"brand_alignment_approved:{row.get('id')}",
+                "kind": "alignment_approved",
+                "actor": "admin",
+                "when": row.get("approved_at"),
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case_title,
+                "title": "TASCK approved your Alignment Snapshot",
+                "message": f"TASCK has approved the Alignment Snapshot for {case_title} and is moving the project to the next stage.",
+                "link": "/brand/projects",
+            })
+
+        # 2. Strategy / Creative Snapshot sent to the brand for review.
+        snapshots = await db.v3_creative_snapshots.find(
+            {
+                "business_case_id": {"$in": case_ids},
+                "sent_to_brand_at": {"$ne": None},
+            },
+            {"_id": 0, "id": 1, "business_case_id": 1, "sent_to_brand_at": 1, "status": 1},
+        ).sort("sent_to_brand_at", -1).to_list(50)
+        for row in snapshots:
+            if not _within_window(row.get("sent_to_brand_at")):
+                continue
+            if row.get("status") in {"approved"}:
+                # Once approved by the brand themselves, they don't need a "ready for review" alert.
+                continue
+            case_title = case_titles.get(row.get("business_case_id"))
+            if not case_title:
+                continue
+            notifications.append({
+                "id": f"brand_strategy_ready:{row.get('id')}",
+                "kind": "strategy_ready",
+                "actor": "admin",
+                "when": row.get("sent_to_brand_at"),
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case_title,
+                "title": "Strategy Snapshot ready for your review",
+                "message": f"TASCK has shared the Strategy Snapshot for {case_title}. Please review and approve in the brand portal.",
+                "link": "/brand/strategy-snapshot",
+            })
+
+        # 3. Contracts ready for the brand to sign.
+        contracts = await db.v3_contracts.find(
+            {
+                "business_case_id": {"$in": case_ids},
+                "sent_to_brand_at": {"$ne": None},
+            },
+            {"_id": 0, "id": 1, "business_case_id": 1, "sent_to_brand_at": 1, "signed_at": 1, "template": 1, "title": 1},
+        ).sort("sent_to_brand_at", -1).to_list(50)
+        for row in contracts:
+            if not _within_window(row.get("sent_to_brand_at")):
+                continue
+            if row.get("signed_at"):
+                continue
+            case_title = case_titles.get(row.get("business_case_id"))
+            if not case_title:
+                continue
+            template = (row.get("template") or "contract").replace("_", " ").title()
+            notifications.append({
+                "id": f"brand_contract_ready:{row.get('id')}",
+                "kind": "contract_ready",
+                "actor": "admin",
+                "when": row.get("sent_to_brand_at"),
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case_title,
+                "title": f"{template} ready to sign",
+                "message": f"TASCK has shared the {template} for {case_title}. Please review and sign in the brand portal.",
+                "link": "/brand/contracts",
+            })
+
         def _ts(item: Dict[str, Any]) -> str:
             return str(item.get("when") or "")
         notifications.sort(key=_ts, reverse=True)

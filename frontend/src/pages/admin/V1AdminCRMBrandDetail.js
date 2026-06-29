@@ -301,6 +301,10 @@ const V1AdminCRMBrandDetail = () => {
   const [projectChoiceOpen, setProjectChoiceOpen] = useState(false);
   const [projectChoiceDismissed, setProjectChoiceDismissed] = useState(false);
   const [newProjectTitle, setNewProjectTitle] = useState('');
+  // Two-step UI: the title input only appears after the admin picks one of the
+  // "Start new" options. startNewTarget is "connect" or "frame" while we are
+  // capturing the title for that path; null when the initial choice row is shown.
+  const [startNewTarget, setStartNewTarget] = useState(null);
 
   const reloadData = async () => {
     try {
@@ -948,36 +952,60 @@ const V1AdminCRMBrandDetail = () => {
               <p className="mt-1 text-[#6E6657]">Stage: {statusLabel(activeBusinessCase.stage)}</p>
               <p className="mt-1 text-[#8A8A8A]">Updated: {formatDateTime(activeBusinessCase.updated_at || activeBusinessCase.created_at)}</p>
             </div>
-            <label className="mt-4 block text-[10px] uppercase tracking-wider text-[#8A8A8A]">
-              New business case name
-              <input
-                type="text"
-                value={newProjectTitle}
-                onChange={(event) => setNewProjectTitle(event.target.value)}
-                className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] normal-case tracking-normal text-[#1A1A1A] focus:outline-none focus:border-[#1F4A3A]"
-                placeholder={`${brandName(brand)} - New campaign / project name`}
-                data-testid="brand-new-project-title"
-              />
-            </label>
-            <p className="mt-1 text-[11px] leading-5 text-[#8A8A8A]">Leave blank to use the default V3 business case name.</p>
-            <div className="mt-5 grid gap-2 sm:grid-cols-2">
-              <button type="button" onClick={continueExistingProject} className="v3-btn-primary justify-center" data-testid="brand-continue-project">
-                Continue
-              </button>
-              <button type="button" onClick={() => startBrandProject('connect', true)} disabled={moving} className="v3-btn-secondary justify-center" data-testid="brand-start-new-call">
-                Start new: move to call
-              </button>
-              <button type="button" onClick={() => startBrandProject('frame', true)} disabled={moving} className="v3-btn-secondary justify-center sm:col-span-2" style={{ borderColor: '#C49B5F', color: '#C49B5F' }} data-testid="brand-start-new-frame">
-                Start new: move to frame
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => { setProjectChoiceOpen(false); setProjectChoiceDismissed(true); }}
-              className="mt-4 w-full text-center text-[12px] text-[#8A8A8A] hover:text-[#1F4A3A]"
-            >
-              Stay on brand details
-            </button>
+            {/* Two-step flow:
+                Step 1 (startNewTarget == null) - Continue, Start new options.
+                Step 2 (startNewTarget set)     - title input + Confirm / Back. */}
+            {!startNewTarget ? (
+              <>
+                <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                  <button type="button" onClick={continueExistingProject} className="v3-btn-primary justify-center" data-testid="brand-continue-project">
+                    Continue
+                  </button>
+                  <button type="button" onClick={() => { setNewProjectTitle(''); setStartNewTarget('connect'); }} disabled={moving} className="v3-btn-secondary justify-center" data-testid="brand-start-new-call">
+                    Start new: move to call
+                  </button>
+                  <button type="button" onClick={() => { setNewProjectTitle(''); setStartNewTarget('frame'); }} disabled={moving} className="v3-btn-secondary justify-center sm:col-span-2" style={{ borderColor: '#C49B5F', color: '#C49B5F' }} data-testid="brand-start-new-frame">
+                    Start new: move to frame
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setProjectChoiceOpen(false); setProjectChoiceDismissed(true); }}
+                  className="mt-4 w-full text-center text-[12px] text-[#8A8A8A] hover:text-[#1F4A3A]"
+                >
+                  Stay on brand details
+                </button>
+              </>
+            ) : (
+              <>
+                <label className="mt-5 block text-[10px] uppercase tracking-wider text-[#8A8A8A]">
+                  New business case name
+                  <input
+                    type="text"
+                    value={newProjectTitle}
+                    onChange={(event) => setNewProjectTitle(event.target.value)}
+                    className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] normal-case tracking-normal text-[#1A1A1A] focus:outline-none focus:border-[#1F4A3A]"
+                    placeholder={`${brandName(brand)} - new campaign / project name`}
+                    autoFocus
+                    data-testid="brand-new-project-title"
+                  />
+                </label>
+                <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => startBrandProject(startNewTarget, true)}
+                    disabled={moving}
+                    className="v3-btn-primary justify-center"
+                    data-testid="brand-confirm-start-new"
+                  >
+                    {moving ? 'Starting…' : `Confirm: move to ${startNewTarget === 'frame' ? 'frame' : 'call'}`}
+                  </button>
+                  <button type="button" onClick={() => setStartNewTarget(null)} className="v3-btn-secondary justify-center" data-testid="brand-back-to-choices">
+                    Back
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

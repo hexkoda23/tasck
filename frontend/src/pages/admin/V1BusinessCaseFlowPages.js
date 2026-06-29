@@ -782,9 +782,14 @@ const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
   const leadName = bc.relationship_manager_name || brand.relationship_manager_name || 'TTA project lead';
   const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
   const planningValue = (label, fallback) => String(planningFields[label] || fallback || '').trim();
+  // Per Chioma's feedback: drop the AI-style parenthetical helpers like
+  // "(Creator Version)", "(summary)", "(Signal Only)", instruction phrases
+  // like "Describe responsibility, not outputs" / "No schedules. No
+  // milestones." / "No breakdown required at this stage.", and meta lines
+  // like "Internal name: ...". Keep the substantive structure that the
+  // creator actually fills in.
   return [
-    'TTA - Creative Alignment Brief (Creator Version)',
-    'Internal name: Creator Brief for Fee Confirmation',
+    'TTA - Creative Alignment Brief',
     '',
     '1. Project Reference',
     `Brand / Organisation: ${brandName}`,
@@ -794,8 +799,8 @@ const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
     `Creator: ${creatorName(creator)}`,
     `Creator contact: ${creatorContact(creator) || 'To be confirmed'}`,
     '',
-    '2. Context (High-Level)',
-    `Brand objective (summary): ${planningValue('Campaign core idea', marketing.key_marketing_focus || bc.stated_intent || `Position ${brandName} with a credible creator-led cultural idea that supports the approved business case.`)}`,
+    '2. Context',
+    `Brand objective: ${planningValue('Campaign core idea', marketing.key_marketing_focus || bc.stated_intent || `Position ${brandName} with a credible creator-led cultural idea that supports the approved business case.`)}`,
     `Why this project is happening now: ${planningValue('Audience and behavior', marketing.current_marketing_challenge || marketing.primary_target_audience || 'The brand is preparing a creator partnership and needs pricing/fit confirmation before final scope approval.')}`,
     '',
     '3. Role of the Creative',
@@ -805,9 +810,8 @@ const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
     '- Talent & cultural translator',
     '- Executional partner',
     `Primary responsibility: ${planningValue('Creator direction', `${creatorName(creator)} should help translate the brand opportunity through ${creatorSpecialty(creator)} while keeping the idea credible to their audience.`)}`,
-    'Describe responsibility, not outputs.',
     '',
-    '4. Expected Scope (Signal Only)',
+    '4. Expected Scope',
     'This engagement may include:',
     '- Content creation',
     '- Appearances / representation',
@@ -815,14 +819,12 @@ const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
     '- Performance / activation involvement',
     '- Other',
     `Scope signal from planning: ${planningValue('Content/deliverables idea log', 'Creator involvement is being explored for planning and pricing alignment only.')}`,
-    'Important Inclusion:',
     '- Specific deliverables are not yet defined',
     '- Final scope is subject to brand approval',
     '',
     '5. Indicative Timeline',
     `Proposed engagement period: ${planningValue('Timeline inference', marketing.timeline || 'To be confirmed after brand approval and creator availability check.')}`,
     'Known timing constraints: Confirm availability, blackout dates, production constraints, and any campaign launch windows.',
-    'No schedules. No milestones.',
     '',
     '6. Working Assumptions',
     '- TTA will coordinate engagement and act as administrative lead',
@@ -831,10 +833,9 @@ const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
     '- Reporting and brand liaison handled by TTA',
     '',
     '7. Fee Indication Request',
-    `Fee for engagement (range or fixed): ${planningValue('Budget planning', 'Creator to propose a fee range or fixed fee for the engagement signal above.')}`,
+    `Fee for engagement: ${planningValue('Budget planning', 'Creator to propose a fee range or fixed fee for the engagement signal above.')}`,
     'Fee basis: Project-based / Time-based / Retainer-style',
     'What fee covers: Please state what your indication includes, including content, appearances, concept contribution, usage, exclusivity, production support, or management fees where relevant.',
-    'No breakdown required at this stage.',
     '',
     '8. Availability & Conditions',
     'Are you available within proposed period? Yes / Conditional / No',
@@ -2641,15 +2642,21 @@ const BS_TIMING = ['Immediate', 'Gradual'];
 // every brainstorm phase. cleanV1Text() is a display-time sanitizer for
 // static rendering (smart-quote -> dash, encoding fixes); editable inputs
 // must use the raw value so the user can type freely.
+//
+// We always render a <textarea>, even for rows=1 - that way pressing Enter
+// inserts a newline instead of doing nothing (bare HTML <input>) or
+// accidentally submitting a form.
 const BSField = ({ label, hint, value, onChange, rows = 2, placeholder = '' }) => (
   <label className="block">
     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
     {hint && <span className="block text-[11px] text-[#6E6657] mt-0.5">{hint}</span>}
-    {rows === 1 ? (
-      <input value={value || ''} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none" />
-    ) : (
-      <textarea value={value || ''} placeholder={placeholder} rows={rows} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed" />
-    )}
+    <textarea
+      value={value || ''}
+      placeholder={placeholder}
+      rows={rows}
+      onChange={(e) => onChange(e.target.value)}
+      className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed"
+    />
   </label>
 );
 

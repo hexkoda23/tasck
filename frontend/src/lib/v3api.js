@@ -151,6 +151,10 @@ export const v3UpdateBusinessCasePhase = (bcId, phase) => v3.patch(`/business-ca
 // the V1 admin layout to surface toasts + the Overview "Needs attention"
 // card.
 export const v3ListAdminNotifications = () => v3.get('/admin/notifications').then(r => r.data);
+// Brand-side notifications: admin-initiated actions the brand should know
+// about (admin approved Alignment Snapshot, Strategy Snapshot is ready for
+// review, contract is ready to sign). Used by the V1 brand overview.
+export const v3ListBrandNotifications = (brandId) => v3.get(`/brands/${brandId}/notifications`).then(r => r.data);
 
 // -------- Deliver stage --------
 export const v3ListDeliverables = (bcId) => v3.get('/deliverables', { params: { business_case_id: bcId } }).then(r => r.data);
