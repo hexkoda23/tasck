@@ -614,7 +614,7 @@ const V1AdminCRMBrandDetail = () => {
               <Send className="h-3.5 w-3.5" /> {moving ? 'Opening call page...' : 'Move to call page'}
             </button>
             <button type="button" onClick={moveToFramePage} disabled={moving} className="v3-btn-secondary w-full flex items-center justify-center gap-1.5" style={{ borderColor: '#C49B5F', color: '#C49B5F' }} data-testid="v1-move-to-frame">
-              <BriefcaseBusiness className="h-3.5 w-3.5" /> {moving ? 'Opening transcripts...' : 'Move to frame'}
+              <BriefcaseBusiness className="h-3.5 w-3.5" /> {moving ? 'Opening transcripts...' : 'Add transcript'}
             </button>
           </div>
         </div>
@@ -1046,7 +1046,7 @@ const V1AdminCRMBrandDetail = () => {
                     className="v3-btn-primary justify-center"
                     data-testid="brand-confirm-start-new"
                   >
-                    {moving ? 'Starting…' : `Confirm: move to ${startNewTarget === 'frame' ? 'frame' : 'call'}`}
+                    {moving ? 'Starting…' : (startNewTarget === 'frame' ? 'Add transcript' : 'Confirm: move to call')}
                   </button>
                   <button type="button" onClick={() => setStartNewTarget(null)} className="v3-btn-secondary justify-center" data-testid="brand-back-to-choices">
                     Back

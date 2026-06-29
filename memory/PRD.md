@@ -491,6 +491,17 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Brand-detail "Move to frame" and popup "Confirm: move to frame" both relabelled to "Add transcript")
+
+### Change
+On `/admin/crm/{brand_id}`:
+- **Header action button** under "Move to call page": label changed from `Move to frame` → **`Add transcript`** (data-testid `v1-move-to-frame` unchanged for backwards compat).
+- **Modal confirm button** that appears in step 2 of the "Continue or start a new project?" flow when the admin chooses Upload new transcript: label changed from `Confirm: move to frame` → **`Add transcript`**. The "call" branch still reads `Confirm: move to call`.
+
+### Files touched
+- `/app/frontend/src/pages/admin/V1AdminCRMBrandDetail.js` — two text-only edits.
+
+
 ## Update — 25 Feb 2026 (Brand-detail "Continue or start a new project?" popup buttons relabelled + Stay on brand details made prominent)
 
 ### Change
