@@ -478,9 +478,15 @@ def _normalise_alignment_tool_result(card: Dict[str, Any]) -> Dict[str, Any]:
 
 def _alignment_tool_system_prompt() -> str:
     return """
-You are TASCK's Connect-to-Frame Alignment Snapshot analyst.
+You are TASCK's Connect-to-Frame Alignment Snapshot analyst, writing for a paying enterprise client. The output is shown to TASCK admin and then sent to the brand's senior marketing team for review. Quality and precision matter - this is a paid analysis, not a draft.
 
-Read the CRM context and every Connect transcript. Extract only what is supported by the evidence. Do not invent facts, numbers, dates, audiences, priorities, or goals. If a field is unclear, say exactly what the brand should confirm. Produce polished Nigerian business English suitable for sending to a brand for review.
+Read the CRM context and every Connect transcript carefully. Extract only what is supported by the evidence. Do not invent facts, numbers, dates, audiences, priorities, or goals. If a field is unclear, say exactly what the brand should confirm. Produce polished Nigerian business English suitable for sending to a brand for review.
+
+QUALITY BAR:
+- Every prose field must use concrete nouns and verbs from the actual conversation. Avoid filler like "various", "leading", "innovative", "best-in-class" unless the source uses them.
+- Cite the BRAND'S OWN category language back to them where the transcript supports it.
+- Resolve ambiguity in the source by writing the most defensible interpretation AND noting it in evidence_notes.
+- Each prose field should read like a sharp page from a strategist's briefing, not a summary of a meeting.
 
 ABSOLUTE RULE - NO TRANSCRIPT ARTIFACTS:
 - NEVER include the names of individual people (attendees, hosts, presenters, founders, staff, TASCK team members, callers, speakers) anywhere in any field.
@@ -588,7 +594,19 @@ Use ALL of the CRM context above, not just the transcripts. The about_the_organi
 # ============================================================================
 
 def _resolve_ai_provider(per_feature_env_var: str) -> bool:
-    """Return True if Anthropic should be preferred for this call."""
+    """Return True if Anthropic (Claude) should be preferred for this call.
+
+    Resolution order, highest priority first:
+      1. Per-feature env var explicit value
+         (ALIGNMENT_ANALYZER_PROVIDER / CREATOR_MATCH_PROVIDER / BRAND_ABOUT_PROVIDER).
+      2. TASCK_AI_PROVIDER explicit value.
+      3. ANTHROPIC_API_KEY is set      -> Anthropic (lets a single key
+         deployment "just work" with Claude, no other env vars needed).
+      4. APP_ENV / ENVIRONMENT staging|prod -> Anthropic.
+      5. Default                       -> Emergent (Gemini).
+
+    Accepts "anthropic" / "claude" or "emergent" / "gemini" as values.
+    """
     per_feature = (os.getenv(per_feature_env_var) or "").strip().lower()
     if per_feature in {"anthropic", "claude"}:
         return True
@@ -599,6 +617,11 @@ def _resolve_ai_provider(per_feature_env_var: str) -> bool:
         return True
     if global_pref in {"emergent", "gemini"}:
         return False
+    # If the operator has set ANTHROPIC_API_KEY at all, prefer Claude. This is
+    # the path the user uses for production: drop in the Claude key and every
+    # LLM call routes through it automatically.
+    if (os.getenv("ANTHROPIC_API_KEY") or "").strip():
+        return True
     env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
     return env in {"staging", "production", "prod"}
 
@@ -623,14 +646,21 @@ def _resolve_ai_provider(per_feature_env_var: str) -> bool:
 
 def _brand_about_system_prompt() -> str:
     return """
-You are TASCK's Brand Description Analyst.
+You are TASCK's Brand Description Analyst. You are doing this for a paying enterprise client; the output is shown to TASCK admin and forwarded to the brand's marketing team. Quality matters.
 
-You will be given the raw website text for a brand. Your job is to produce a CLEAN, 2 to 3 sentence brand description in polished Nigerian business English that explains what the BRAND IS - the organisation, not the current marketing campaign.
+You will be given the raw website text for a brand. Your job is to produce a CLEAN, RICH, 3 to 5 sentence brand description in polished Nigerian business English that explains what the BRAND IS - the organisation, not the current marketing campaign.
 
-The description MUST cover:
+The description MUST cover, in this order:
   (a) what kind of organisation the brand is (company, label, agency, programme, NGO, retailer, manufacturer, etc.) and its category or sector,
-  (b) what they primarily make, sell, distribute, or do,
-  (c) who they primarily serve (audience or market), if it can be inferred.
+  (b) what they primarily make, sell, distribute, or do, including their flagship product lines or service categories where the source supports it,
+  (c) who they primarily serve (audience, market, geography), if it can be inferred from the source,
+  (d) what makes them notable in their market (heritage, scale, parent company, distinctive positioning) ONLY if the source supports it; never invent.
+
+QUALITY BAR:
+  - Write tight, well-formed sentences with concrete nouns. No vague hand-waving like "a leading brand", "a well-known organisation", or "various products".
+  - Use the brand's actual category vocabulary from the source text.
+  - Read like a corporate one-paragraph "About Us" written by an analyst, not a press release.
+  - Never start with "The brand" or repeat the brand name in every sentence.
 
 ABSOLUTE RULES - never include any of the following:
   - App store boilerplate: "Download X on the App Store", "Available on Google Play", "See screenshots, ratings and reviews", "Download for free", "Get it on...".
@@ -639,12 +669,13 @@ ABSOLUTE RULES - never include any of the following:
   - Tagline-only descriptions ("Refreshingly Yours") unless paired with what the brand actually does.
   - Verbatim quotes, hashtags, emoji, social handles, prices, or dates.
   - Any first or last names of specific people.
+  - Invented facts (year founded, founder, headcount, awards, market share) unless explicitly stated in the source.
 
-If the raw text is dominated by campaign content and there is no clear brand description, write a short factual paragraph based ONLY on what you can confidently infer about the brand's category. Mark uncertainty with "appears to" or "based on the website". Never invent specific facts (founder, year founded, headcount, awards).
+If the raw text is dominated by campaign content and there is no clear brand description, write a short factual paragraph based ONLY on what you can confidently infer about the brand's category. Mark uncertainty with "appears to" or "based on the website".
 
 Return JSON only, no markdown, exactly this shape:
 {
-  "about": "string - the 2-3 sentence brand description",
+  "about": "string - the 3-5 sentence brand description",
   "confidence": integer 0-100
 }
 """.strip()
@@ -715,7 +746,7 @@ async def _call_brand_about_tool(
                     },
                     json={
                         "model": model,
-                        "max_tokens": 800,
+                        "max_tokens": 1500,
                         "temperature": 0.1,
                         "system": system_prompt,
                         "messages": [{"role": "user", "content": user_message}],
@@ -739,7 +770,7 @@ async def _call_brand_about_tool(
                     json={
                         "model": model,
                         "temperature": 0.1,
-                        "max_tokens": 800,
+                        "max_tokens": 1500,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
@@ -826,7 +857,7 @@ async def _call_alignment_analysis_tool(
                     },
                     json={
                         "model": model,
-                        "max_tokens": 1200,
+                        "max_tokens": 2400,
                         "temperature": 0.1,
                         "system": system_prompt,
                         "messages": [{"role": "user", "content": user_message}],
@@ -846,7 +877,7 @@ async def _call_alignment_analysis_tool(
                     json={
                         "model": model,
                         "temperature": 0.1,
-                        "max_tokens": 1200,
+                        "max_tokens": 2400,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
@@ -866,7 +897,7 @@ async def _call_alignment_analysis_tool(
                     json={
                         "model": model,
                         "temperature": 0.1,
-                        "max_tokens": 1200,
+                        "max_tokens": 2400,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
