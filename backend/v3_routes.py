@@ -1250,6 +1250,218 @@ async def _call_creator_match_tool(
         return None
 
 
+# ============================================================================
+# Brainstorm Transcript Analysis - Claude fills the entire TTA Snapshot
+# Brainstorm from an uploaded brainstorm-session transcript.
+# ============================================================================
+
+# Curated questions the admin can ask during the brainstorm session. These
+# are template-grounded (the TTA Snapshot Brainstorm structure) and shown on
+# the upload page before/while the session happens.
+BRAINSTORM_SUGGESTED_QUESTIONS = [
+    "What is the single most important business outcome this project must drive?",
+    "What specific action do we need the audience to take that they are not taking now?",
+    "What is the biggest barrier stopping that action today - trust, awareness, price, habit, or relevance?",
+    "When was the last time the audience did the target action, and what stopped them from doing it more often?",
+    "Who does the audience currently listen to or trust for this category?",
+    "What kind of creator voice fits best - an authority, a peer, an entertainer, or a niche specialist?",
+    "Do we need reach, trust, conversion, or community most from the creator relationship?",
+    "Which content format will carry the idea best - short-form, long-form, live, or a series?",
+    "What does success look like in numbers, and over what timeframe?",
+    "What is the realistic budget level - low, mid, or premium - and what efficiency do we expect from it?",
+    "What are the top two risks to executing this well, and how do we de-risk them?",
+    "What language does the audience actually use when they talk about this category?",
+    "What cultural moment, tension, or behaviour can the brand credibly tap into right now?",
+    "If we could only tell the audience one thing, what would it be?",
+]
+
+
+def _brainstorm_analysis_system_prompt() -> str:
+    return """
+You are TASCK's TTA Snapshot Brainstorm analyst, working for a paying enterprise client. You will be given the transcript of a 60-90 minute creator-strategy brainstorm session. Your job is to read it carefully and fill in the entire TTA Snapshot Brainstorm template with rich, specific, defensible content drawn ONLY from the transcript.
+
+Write polished Nigerian business English. Use concrete nouns and the actual language used in the session. Do NOT invent creators, numbers, budgets, or facts not supported by the transcript - if something was not discussed, write a short, clearly-marked placeholder like "Not covered in session - confirm with team." rather than fabricating.
+
+ABSOLUTE RULES:
+- Never include speaker names, speaker labels (e.g. "Tunde:", "Speaker 1:"), timestamps, or stage directions. Convert dialog into clean third-person strategic prose.
+- Never include the names of individual people.
+
+Return JSON only, no markdown, with EXACTLY this shape (fill every string; use "" only when truly nothing applies):
+{
+  "pre_work": {
+    "client_brief_summary": {"objective": "string", "target_audience": "string", "constraints": "string"},
+    "initial_hypothesis": "string",
+    "research_inputs": {"past_campaigns": "string", "market_context": "string", "focus_group_insights": "string"}
+  },
+  "phase_0_focus_group": {
+    "objective": "string",
+    "answers": ["string", "string", "string", "string"]
+  },
+  "phase_1_problem": {
+    "core_business_objective": "string",
+    "specific_action": "string",
+    "primary_barrier": "string",
+    "type_of_influence": "string",
+    "observable_behavior_change": "string",
+    "project_truth": "string (one sentence: [Target audience] currently [barrier]. To achieve [goal], they must [action]. This requires [type of influence].)"
+  },
+  "phase_2_archetype": {
+    "voice_type": "Authority | Peer | Entertainer | Niche Specialist",
+    "audience_relationship": "Trust | Reach | Conversion | Community",
+    "format_strength": "Short-form | Long-form | Live | Series",
+    "creator_archetype_statement": "string (We need a [voice type] creator with [audience relationship] who is strong in [format].)"
+  },
+  "phase_5_execution": {
+    "test_questions_answered": {
+      "brand_involvement": "string",
+      "execution_speed": "string",
+      "repeatable_or_one_off": "string",
+      "top_risks": "string"
+    },
+    "snapshot_notes": "string (Effort / Speed / Scale / Key risks per option)"
+  },
+  "phase_6_commercial": {
+    "budget_level": "Low | Mid | Premium",
+    "expected_efficiency": "High conversion | High reach | Balanced",
+    "time_to_impact": "Immediate | Gradual",
+    "commercial_positioning_statement": "string"
+  },
+  "phase_7_recommendation": {
+    "selected_option": "string",
+    "rationale": "string (conversion potential / execution feasibility / commercial efficiency)",
+    "key_reason": "string",
+    "insight_summary": {
+      "top_3_barriers": ["string", "string", "string"],
+      "key_behavioral_triggers": ["string", "string"],
+      "language_people_use": ["string", "string"]
+    }
+  },
+  "confidence": integer 0-100
+}
+""".strip()
+
+
+def _brainstorm_analysis_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi: Dict[str, Any], transcript: str) -> str:
+    def _safe(value: Any) -> str:
+        text = "" if value is None else str(value).strip()
+        return text or "(not captured)"
+
+    return f"""
+BRAND: {_safe(brand.get("company") or brand.get("name") or case.get("brand_name"))}
+INDUSTRY / CATEGORY: {_safe(brand.get("category") or brand.get("industry") or brand.get("sector"))}
+PROJECT: {_safe(case.get("title"))}
+APPROVED MARKETING FOCUS: {_safe(mi.get("key_marketing_focus"))}
+APPROVED TARGET AUDIENCE: {_safe(mi.get("primary_target_audience"))}
+
+BRAINSTORM SESSION TRANSCRIPT:
+{transcript[:24000]}
+
+Fill the entire TTA Snapshot Brainstorm template from this transcript.
+""".strip()
+
+
+async def _call_brainstorm_analysis_tool(
+    brand: Dict[str, Any],
+    case: Dict[str, Any],
+    mi: Dict[str, Any],
+    transcript: str,
+) -> Optional[Dict[str, Any]]:
+    if not (transcript or "").strip():
+        return None
+
+    system_prompt = _brainstorm_analysis_system_prompt()
+    user_message = _brainstorm_analysis_user_message(brand, case, mi, transcript)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("BRAINSTORM_EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    _prefer_anthropic = _resolve_ai_provider("BRAINSTORM_PROVIDER")
+
+    async def _call_emergent() -> Optional[Dict[str, Any]]:
+        if not emergent_key:
+            return None
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        provider = os.getenv("BRAINSTORM_EMERGENT_PROVIDER") or "gemini"
+        model = os.getenv("BRAINSTORM_EMERGENT_MODEL") or "gemini-2.0-flash"
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=f"brainstorm-{uuid.uuid4()}",
+            system_message=system_prompt,
+        ).with_model(provider, model)
+        response = await chat.send_message(UserMessage(text=user_message))
+        parsed = _parse_json_object(_response_to_text(response))
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"emergent:{provider}/{model}"
+            return parsed
+        return None
+
+    def _call_http_model() -> Optional[Dict[str, Any]]:
+        if anthropic_key:
+            model = os.getenv("BRAINSTORM_LLM_MODEL") or "claude-sonnet-4-20250514"
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": anthropic_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": 3500,
+                    "temperature": 0.2,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_message}],
+                },
+                timeout=90,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+            parsed = _parse_json_object(text)
+            if isinstance(parsed, dict):
+                parsed["analysis_source"] = f"anthropic:{model}"
+                return parsed
+            return None
+        if openai_key:
+            model = os.getenv("BRAINSTORM_LLM_MODEL") or "gpt-4o-mini"
+            response = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {openai_key}", "content-type": "application/json"},
+                json={
+                    "model": model,
+                    "temperature": 0.2,
+                    "max_tokens": 3500,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=90,
+            )
+            response.raise_for_status()
+            text = response.json()["choices"][0]["message"]["content"]
+            parsed = _parse_json_object(text)
+            if isinstance(parsed, dict):
+                parsed["analysis_source"] = f"openai:{model}"
+                return parsed
+            return None
+        return None
+
+    try:
+        if not _prefer_anthropic:
+            er = await _call_emergent()
+            if er is not None:
+                return er
+        http_result = await asyncio.to_thread(_call_http_model)
+        if http_result is not None:
+            return http_result
+        if _prefer_anthropic:
+            return await _call_emergent()
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Brainstorm analysis tool failed for business case %s: %s", case.get("id"), exc)
+        return None
+
+
 def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
     """Deterministic transcript extraction used by the transcript analysis layer.
 
@@ -6012,6 +6224,82 @@ def make_v3_router(db):
     async def list_brainstorms(business_case_id: Optional[str] = None):
         query = {"business_case_id": business_case_id} if business_case_id else {}
         return await db.v3_brainstorm_rounds.find(query, {"_id": 0}).to_list(100)
+
+    # ------------------------------------------------------------------------
+    # BRAINSTORM TRANSCRIPT ANALYSIS (Claude fills the whole template)
+    # ------------------------------------------------------------------------
+    @router.get("/business-cases/{bc_id}/brainstorm/suggested-questions")
+    async def brainstorm_suggested_questions(bc_id: str):
+        """Static, template-grounded questions the admin can ask during the
+        brainstorm session. Shown on the transcript-upload page."""
+        return {"questions": BRAINSTORM_SUGGESTED_QUESTIONS}
+
+    class BrainstormTranscriptPayload(BaseModel):
+        transcript: str
+
+    @router.post("/business-cases/{bc_id}/brainstorm/analyze-transcript")
+    async def analyze_brainstorm_transcript(bc_id: str, payload: BrainstormTranscriptPayload):
+        """Read the brainstorm-session transcript with the LLM and fill the
+        entire TTA Snapshot Brainstorm. Creates the brainstorm round if it
+        doesn't exist yet, otherwise updates it in place. Returns the round."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        transcript = (payload.transcript or "").strip()
+        if len(transcript) < 40:
+            raise HTTPException(400, "Please paste or upload a fuller brainstorm transcript before analyzing.")
+
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        mi = _marketing_intelligence_from_case(case)
+
+        analyzed = await _call_brainstorm_analysis_tool(brand, case, mi, transcript)
+        if not isinstance(analyzed, dict):
+            raise HTTPException(
+                502,
+                "The AI analysis did not return a usable result. Confirm ANTHROPIC_API_KEY (or EMERGENT_LLM_KEY) is set, then try again.",
+            )
+
+        analysis_source = str(analyzed.get("analysis_source") or "llm")
+
+        # Find or create the round.
+        existing = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0})
+        if not existing:
+            created = await create_brainstorm(BrainstormCreate(business_case_id=bc_id, scored_creators=[]))
+            round_id = created["id"]
+            existing = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0}) or created
+        round_id = existing["id"]
+
+        # Merge analyzed fields onto the round, preserving the scaffolding
+        # (scored_creators, phases, strategy_mapping) that the round already has.
+        def _section(key: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
+            val = analyzed.get(key)
+            if isinstance(val, dict):
+                merged = dict(existing.get(key) or fallback)
+                merged.update({k: v for k, v in val.items() if v is not None})
+                return merged
+            return existing.get(key) or fallback
+
+        updates: Dict[str, Any] = {
+            "pre_work": _section("pre_work", {}),
+            "phase_0_focus_group": _section("phase_0_focus_group", {}),
+            "phase_1_problem": _section("phase_1_problem", {}),
+            "phase_2_archetype": _section("phase_2_archetype", {}),
+            "phase_5_execution": _section("phase_5_execution", {}),
+            "phase_6_commercial": _section("phase_6_commercial", {}),
+            "phase_7_recommendation": _section("phase_7_recommendation", {}),
+            "transcript": transcript,
+            "transcript_analyzed_at": _now_iso(),
+            "transcript_analysis_source": analysis_source,
+            "status": "in_progress",
+            "updated_at": _now_iso(),
+        }
+        await db.v3_brainstorm_rounds.update_one({"id": round_id}, {"$set": updates})
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.brainstorm_round_id": round_id, "plan.brainstorm_transcript_analyzed_at": _now_iso(), "updated_at": _now_iso()}},
+        )
+        result = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0})
+        return {"ok": True, "analysis_source": analysis_source, "brainstorm_round": result}
 
     # ------------------------------------------------------------------------
     # FINAL REPORT + CLOSURE

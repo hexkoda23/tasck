@@ -97,6 +97,7 @@ import {
   V3BusinessCaseFrameApproved as V1BusinessCaseFrameApproved,
   V1BusinessCaseFrameTranscripts,
   V3BusinessCasePlanBrainstorm as V1BusinessCasePlanBrainstorm,
+  V3BusinessCasePlanBrainstormTranscript as V1BusinessCasePlanBrainstormTranscript,
   V3BusinessCasePlanCreatorScan as V1BusinessCasePlanCreatorScan,
   V3BusinessCasePlanBrief as V1BusinessCasePlanBrief,
   V3BusinessCasePlanCreatorBriefingCall as V1BusinessCasePlanCreatorBriefingCall,
@@ -433,6 +434,7 @@ function AppRoutes() {
             Selection, Brief, Strategy Snapshot all live under /frame/* even
             though the backend stores them under `plan.*`. The legacy /plan/*
             paths remain as aliases so existing links keep working. */}
+        <Route path="business-cases/:id/frame/brainstorm-transcript" element={<V1BusinessCasePlanBrainstormTranscript />} />
         <Route path="business-cases/:id/frame/brainstorm" element={<V1BusinessCasePlanBrainstorm />} />
         <Route path="business-cases/:id/frame/creator-scan" element={<V1BusinessCasePlanCreatorScan />} />
         <Route path="business-cases/:id/frame/brief" element={<V1BusinessCasePlanBrief />} />

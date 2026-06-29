@@ -95,6 +95,8 @@ import {
   v3CreateBrainstorm,
   v3UpdateBrainstorm,
   v3ListBrainstorms,
+  v3BrainstormSuggestedQuestions,
+  v3AnalyzeBrainstormTranscript,
   v3ContractPdfUrl,
   v3AlignmentDocxUrl,
   v3CreativeBriefDocxUrl,
@@ -309,6 +311,9 @@ export const businessCasePhasePath = (id, bc = {}) => {
   if (stage === 'plan') {
     // Framing sub-steps 2..5 live on backend `plan` but UI shows them under /frame/*.
     const plan = bc.plan || {};
+    // Brainstorm starts with the transcript-upload page; once the transcript
+    // has been analysed (or a round exists), go straight to the brainstorm form.
+    if (!plan.brainstorm_transcript_analyzed_at && !plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`);
     if (!plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm`);
     if (!Array.isArray(plan.selected_creator_ids) || plan.selected_creator_ids.length === 0) return adminRoute(`/business-cases/${id}/frame/creator-scan`);
     if (!plan.creative_brief_id) return adminRoute(`/business-cases/${id}/frame/brief`);
@@ -318,7 +323,7 @@ export const businessCasePhasePath = (id, bc = {}) => {
   if (stage === 'frame') {
     const frame = bc.frame || {};
     const status = frame.alignment_snapshot_status || frame.status || '';
-    if (status === 'approved') return adminRoute(`/business-cases/${id}/frame/brainstorm`);
+    if (status === 'approved') return adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`);
     if (status === 'sent' || status === 'waiting_brand' || status === 'pending_brand_review') return adminRoute(`/business-cases/${id}/frame/waiting-brand`);
     if (frame.brand_comments || frame.admin_comments || Number(frame.comment_count || 0) > 0) return adminRoute(`/business-cases/${id}/frame/admin-review`);
     return adminRoute(`/business-cases/${id}/frame/snapshot`);
@@ -2087,8 +2092,8 @@ export const V3BusinessCaseFrameSnapshot = () => {
         });
       }
       await reload();
-      setSendPopup({ title: 'Opening Brainstorm', message: 'Snapshot approved. Continuing Framing in Brainstorm.', tone: 'success' });
-      window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`)), 450);
+      setSendPopup({ title: 'Opening Brainstorm', message: 'Snapshot approved. Opening the brainstorm transcript step.', tone: 'success' });
+      window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`)), 450);
     } catch (e) {
       setSendPopup(null);
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve the Alignment Snapshot. Generate it first.');
@@ -2459,7 +2464,7 @@ export const V3BusinessCaseFrameApproved = () => {
   const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const snap = bundle?.alignment_snapshot || {};
-  return <FlowShell title="Alignment Approved" subtitle="Framing continues. The Alignment Snapshot is approved; the next Framing step is Brainstorm."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`))} className="v3-btn-primary mt-4">Continue to Brainstorm</button></InfoCard></FlowShell>;
+  return <FlowShell title="Alignment Approved" subtitle="Framing continues. The Alignment Snapshot is approved; the next Framing step is the brainstorm transcript upload."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`))} className="v3-btn-primary mt-4">Continue to Brainstorm</button></InfoCard></FlowShell>;
 };
 
 export const V1BusinessCaseFrameTranscripts = () => {
@@ -2683,6 +2688,145 @@ const BSPhase = ({ phase, title, subtitle, children }) => (
   </div>
 );
 
+// ============================================================================
+// Brainstorm Transcript Upload (Framing step 2a - BEFORE the brainstorm form)
+// ----------------------------------------------------------------------------
+// Opens right after the Alignment Snapshot is approved. The admin:
+//   1. Reviews the suggested questions to ask during the brainstorm session.
+//   2. Pastes / uploads the brainstorm-session transcript.
+//   3. Clicks Analyze - Claude reads the transcript and fills the ENTIRE
+//      TTA Snapshot Brainstorm (all phases) automatically.
+//   4. Continues to the brainstorm form, now pre-filled, to review/edit.
+// ============================================================================
+export const V3BusinessCasePlanBrainstormTranscript = () => {
+  const navigate = useNavigate();
+  const { id } = useBusinessCaseBundle();
+  const [transcript, setTranscript] = useState('');
+  const [questions, setQuestions] = useState([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [popup, setPopup] = useState(null); // { status, message }
+
+  useEffect(() => {
+    if (!id) return;
+    v3BrainstormSuggestedQuestions(id)
+      .then((data) => setQuestions(Array.isArray(data?.questions) ? data.questions : []))
+      .catch(() => setQuestions([]));
+  }, [id]);
+
+  const uploadFile = async (file) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setTranscript((prev) => (prev ? `${prev}\n\n${text}` : text));
+      setNotice(`${file.name} loaded into the transcript box.`);
+    } catch (e) {
+      setNotice('Could not read that file. Paste the transcript text instead.');
+    }
+  };
+
+  const analyze = async () => {
+    if (transcript.trim().length < 40) {
+      setNotice('Paste or upload a fuller brainstorm transcript before analyzing.');
+      return;
+    }
+    setNotice('');
+    setAnalyzing(true);
+    setPopup({ status: 'running', message: 'Reading the brainstorm transcript and filling the TTA Snapshot Brainstorm…' });
+    try {
+      await v3AnalyzeBrainstormTranscript(id, transcript.trim());
+      setPopup({ status: 'complete', message: 'Brainstorm filled from the transcript. Opening the brainstorm to review and edit.' });
+      setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`)), 800);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e?.message || 'Could not analyze the transcript.';
+      setPopup({ status: 'failed', message: msg });
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  return (
+    <FlowShell
+      title="Brainstorm Transcript & Analysis"
+      subtitle="Framing step 2 of 5. Run the TTA Snapshot Brainstorm session using the suggested questions, then upload the transcript here. Claude will analyse it and fill the entire brainstorm for you to review."
+      nextAction="Upload the brainstorm transcript and click Analyze to auto-fill the brainstorm."
+    >
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+
+      <InfoCard title="Suggested questions for the brainstorm session">
+        <p className="text-[12px] text-[#6E6657] mb-3">Ask these during the 60-90 minute session so the transcript covers everything the brainstorm template needs.</p>
+        {questions.length === 0 ? (
+          <p className="text-[12px] text-[#8A8A8A]">Loading suggested questions…</p>
+        ) : (
+          <ol className="list-decimal ml-5 space-y-1.5 text-[13px] text-[#4F3E2F]">
+            {questions.map((q, idx) => <li key={idx}>{q}</li>)}
+          </ol>
+        )}
+      </InfoCard>
+
+      <InfoCard
+        title="Upload / paste the brainstorm transcript"
+        action={(
+          <label htmlFor="brainstorm-transcript-file" className="v3-btn-secondary text-[11px] cursor-pointer">
+            <Upload className="w-3.5 h-3.5" /> Upload file
+            <input
+              id="brainstorm-transcript-file"
+              type="file"
+              accept=".txt,.md,.vtt,.srt,text/plain"
+              className="hidden"
+              onChange={(e) => { uploadFile(e.target.files?.[0]); e.target.value = ''; }}
+            />
+          </label>
+        )}
+      >
+        <textarea
+          value={transcript}
+          onChange={(e) => setTranscript(e.target.value)}
+          rows={12}
+          placeholder="Paste the full brainstorm session transcript here, or use Upload file above. The more complete the transcript, the richer the auto-filled brainstorm."
+          className="w-full text-[13px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none leading-relaxed"
+          data-testid="brainstorm-transcript-input"
+        />
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] text-[#6E6657]">{transcript.trim().length} characters</p>
+          <button onClick={analyze} disabled={analyzing} className="v3-btn-primary disabled:opacity-60" data-testid="brainstorm-analyze-btn">
+            <Sparkles className={`w-3.5 h-3.5 ${analyzing ? 'animate-spin' : ''}`} /> {analyzing ? 'Analyzing…' : 'Analyze & fill brainstorm'}
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`))}
+          className="mt-3 text-[12px] text-[#1F4A3A] underline hover:no-underline"
+          data-testid="brainstorm-skip-to-form"
+        >
+          Skip and fill the brainstorm manually instead
+        </button>
+      </InfoCard>
+
+      {popup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="brainstorm-analyze-popup">
+          <div className="w-full max-w-md rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${popup.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : popup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#EFF5F1] text-[#1F4A3A]'}`}>
+                {popup.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : popup.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+              </span>
+              <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                {popup.status === 'complete' ? 'Brainstorm filled' : popup.status === 'failed' ? 'Analysis failed' : 'Analyzing transcript'}
+              </h3>
+            </div>
+            <p className="text-[13px] leading-6 text-[#4F3E2F]">{popup.message}</p>
+            {popup.status === 'failed' && (
+              <div className="mt-4 flex justify-end">
+                <button type="button" onClick={() => setPopup(null)} className="v3-btn-primary" data-testid="brainstorm-analyze-popup-close">OK</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </FlowShell>
+  );
+};
+
 export const V3BusinessCasePlanBrainstorm = () => {
   const navigate = useNavigate();
   const { id } = useBusinessCaseBundle();
@@ -2779,7 +2923,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const p7 = round.phase_7_recommendation || {};
 
   return (
-    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 5. A 60-90 minute session for building a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Review and edit the brainstorm. If you uploaded a transcript, these fields were auto-filled by Claude - check each one before continuing.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
 
       <BSPhase phase="pre-work" title="Pre-work (Mandatory before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
