@@ -491,6 +491,45 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Transcript Analysis now Claude-powered, lengthy, accurate, and name-free at the input layer)
+
+### Bug
+Admin reported that the analyse-all transcript analyzer was:
+- Not consistently routing to Claude (`ALIGNMENT_ANALYZER_MODEL` env var was being read as `ALIGNMENT_ANALYZER_LLM_MODEL`; default model `claude-sonnet-4-20250514` doesn't exist → silent timeout → deterministic fallback).
+- Producing thin 2-4 sentence outputs that read like generic strategist notes instead of rich corporate prose.
+- Risking name/timestamp leakage from the transcript even though the system prompt forbade it — the LLM was being given raw transcripts with `Meeting on 2026-01-15:` headers, `@0:13 - Jude Abaga (TASCK)` speaker tags, and CRM contact names — relying on prompt obedience alone to keep them out of the output.
+
+### Fix (`backend/v3_routes.py` + `backend/.env`)
+1. **Claude as default + correct model name.** `_call_alignment_analysis_tool` now resolves model as `ALIGNMENT_ANALYZER_LLM_MODEL → ALIGNMENT_ANALYZER_MODEL → OPPORTUNITY_SCANNER_LLM_MODEL → claude-sonnet-4-5` (was `claude-sonnet-4-20250514`). `max_tokens` bumped 2400 → 4000 to support the longer output target. Per-call HTTP timeout 45s → 60s.
+2. **Input-layer sanitization.** New `_sanitize_transcript_for_llm(text, brand, case)` strips, before the transcript ever reaches Claude:
+   - `Meeting on <date>:` / `Transcript - <header>` blocks (no more meeting-date leakage).
+   - `[HH:MM:SS]` / `(00:14:32)` / `00:14:32 -->` / `@0:13` timestamps in any position.
+   - `[laughter]` / `[crosstalk]` / `[inaudible]` / `[attendees: ...]` stage directions and metadata.
+   - `Speaker 1:` / `Speaker A:` patterns.
+   - 22 role labels (`Host:`, `Interviewer:`, `Brand:`, `Tasck:`, `CEO:`, `Founder:`, `Marketing:`, `Guest:`, …).
+   - `[Name]:` / `<Name>:` speaker tags.
+   - Plain `Name:` / `Name (Role):` / `Dr Tunde Adeleke:` attributions at line start.
+   - **CRM-known names**: pulls `primary_contact`, `contact_name`, `rm_name`, `relationship_manager.name` + aliases from the brand and case records, then replaces every occurrence (and every individual name token) with `[redacted]` — multi-word names handled longest-first.
+   - Email addresses (which carry full names) → `[redacted-email]`.
+3. **No more date-leaking transcript concatenation.** `POST /connect/analyze-all` was joining transcripts with `Meeting on {scheduled_for}:` headers. Replaced with date-free `--- Transcript ---` divider so even if sanitization missed a header pattern, no real date can survive.
+4. **Strengthened prompt for lengthy + accurate output.**
+   - `about_the_organisation`: target **700-1500 chars** across **6-9 sentences** covering (a) org type + sector, (b) products/services with concrete sub-brand names, (c) primary audience, (d) distinctiveness, (e) current market context, (f) recent strategic direction.
+   - Six other prose fields (core_focus_areas, key_customers_beneficiaries, key_goals_metrics, success_timeline, focus, priority): each **400-900 chars** across **4-6 sentences** of evidence-grounded prose.
+   - Explicit hardened rule list: no person names, no role attributions, no meeting dates, no timestamps, no speaker turns, no "Adeleke said" / "the CEO Y" patterns — convert every piece of dialog into clean third-person business prose attributed to the organisation, team, or audience.
+5. **Per-field length cap** in `_normalise_alignment_tool_result` raised 1400 → 2400 chars (was truncating the new richer fields).
+6. **Default timeout** raised: `ALIGNMENT_ANALYZER_TIMEOUT_SECONDS=28 → 75` (long transcripts of 30K+ chars need more wall-clock time on Claude Sonnet 4.5).
+
+### Verified live (preview) on `bc-0703881b2c` (Pernod Ricard - Chivas Regal)
+- `analysis_source = anthropic:claude-sonnet-4-5` ✅
+- `about_the_organisation`: **1,438 chars**, 8 sentences covering Pernod Ricard / Chivas Regal premium spirits positioning, Nigerian market dynamics, digital + OOH channels, aspirational middle-class + HNW audience, brand-differentiation challenge, current strategic direction. ✅
+- `core_focus_areas`: 1,093 chars · `key_customers_beneficiaries`: 1,246 chars · `key_goals_metrics`: 1,212 chars · `success_timeline`: 980 chars · `focus`: 1,118 chars · `priority`: 1,107 chars. ✅
+- Zero name leakage. Zero timestamp leakage. Zero "Meeting on…" / `@0:13` leakage. No `Adeleke said` / `the founder Y` / role-with-name patterns. Every claim attributed to "the organisation", "the marketing team", "the brand". ✅
+
+### Files touched
+- `/app/backend/v3_routes.py` — added `_TRANSCRIPT_ROLE_LABELS` + `_sanitize_transcript_for_llm`, wired into `_call_alignment_analysis_tool`, rewrote `_alignment_tool_system_prompt` for length budgets, removed date-leaking header in `analyze-all`, fixed Anthropic model env + raised max_tokens + per-field cap.
+- `/app/backend/.env` — `ALIGNMENT_ANALYZER_TIMEOUT_SECONDS=28 → 75`.
+
+
 ## Update — 25 Feb 2026 (Brand About is now lengthy + accurate — Coca Cola gets corporate-grade description)
 
 ### Bug

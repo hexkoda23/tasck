@@ -450,7 +450,9 @@ def _normalise_alignment_tool_result(card: Dict[str, Any]) -> Dict[str, Any]:
     fields: Dict[str, Any] = {}
     for label, key in ALIGNMENT_SNAPSHOT_FIELD_SPECS:
         value = str(card.get(key) or "").strip()
-        fields[key] = value[:1400] if value else f"This detail needs brand confirmation before approval. Please confirm {label.lower()}."
+        # Cap at 2400 chars (about_the_organisation can go up to 1500 chars +
+        # buffer for the other prose fields that target 400-900 chars each).
+        fields[key] = value[:2400] if value else f"This detail needs brand confirmation before approval. Please confirm {label.lower()}."
 
     try:
         confidence = int(float(card.get("confidence", 0)))
@@ -490,37 +492,40 @@ QUALITY BAR:
 
 ABSOLUTE RULE - NO TRANSCRIPT ARTIFACTS:
 - NEVER include the names of individual people (attendees, hosts, presenters, founders, staff, TASCK team members, callers, speakers) anywhere in any field.
-- Do not write "Adeleke said", "Tunde mentioned", "Chioma highlighted", "Funke explained", "John from TASCK", "the founder Mary", or any similar attribution.
+- Do not write "Adeleke said", "Tunde mentioned", "Chioma highlighted", "Funke explained", "John from TASCK", "the founder Mary", or any similar attribution. Do not write "the CEO", "the founder", "the marketing lead" with a name attached.
 - NEVER include speaker labels or speaker turns from the transcript (e.g. "Speaker 1:", "Host:", "Interviewer:", "Brand rep:", "Adeleke:", "[John]"). Strip them all.
-- NEVER include timestamps (e.g. "[00:14:32]", "(03:45)", "00:14:32 -->"), recording markers, stage directions (e.g. "[laughter]", "[crosstalk]", "[inaudible]"), or call/meeting metadata ("On the call: ...", "Attendees:", "Joined at 10:05", "Recorded by ...").
+- NEVER include timestamps (e.g. "[00:14:32]", "(03:45)", "00:14:32 -->", "at 10:05"), recording markers, stage directions (e.g. "[laughter]", "[crosstalk]", "[inaudible]"), or call/meeting metadata ("On the call: ...", "Attendees:", "Joined at 10:05", "Recorded by ...", "Meeting on 2026-01-15").
+- NEVER include meeting dates, call dates, scheduled-for dates, or any temporal markers that reveal WHEN the conversation happened. The reader should not be able to tell whether this came from one call or four, or when those calls happened.
 - NEVER include verbatim quotes that begin with a person's name, position, or "we", "I", "you guys", "they said" attribution that exposes who spoke.
 - Refer to the organisation, the brand, the leadership team, the marketing team, the partner, the funder, or the audience instead.
 - Strip first names, last names, nicknames, and email-style names (e.g. "kehinde@") from anything you write.
-- If you cannot describe a point without naming a person or using a transcript artifact, leave the underlying business insight in but rewrite the sentence to attribute it to the organisation or team. Convert dialog into clean third-person business prose.
+- Convert every piece of dialog into clean third-person business prose. The output should read like an independent analyst wrote it from public knowledge of the brand plus the captured discussion points — never like a meeting minutes summary.
 
 WRITING LENGTH AND DEPTH:
-- about_the_organisation MUST be a rich, specific 4 to 6 sentence paragraph that covers:
+- about_the_organisation MUST be a rich, specific 6 to 9 sentence paragraph (target 700-1500 characters) that covers:
     (a) who the organisation is and what category/sector it operates in,
-    (b) the products, services, programmes, or value it delivers,
+    (b) the products, services, programmes, or value it delivers, with concrete names of product lines or programmes drawn from the transcript,
     (c) who it primarily serves (the audience, beneficiaries, customers, or partners) and how,
     (d) what makes it distinctive in its market or why its work matters now,
-    (e) the current commercial or cultural context the brand is operating in if the transcripts mention it.
+    (e) the current commercial or cultural context the brand is operating in if the transcripts mention it,
+    (f) any recent strategic direction, expansion plans, or partnerships that the transcripts surface.
 - Never return a one-liner, never use generic phrases like "a consumer culture organisation", and never repeat the brand name in every sentence.
-- core_focus_areas, key_customers_beneficiaries, key_goals_metrics, success_timeline, focus, priority should each be 2 to 4 sentences of concrete, evidence-grounded prose - not bullet labels.
+- core_focus_areas, key_customers_beneficiaries, key_goals_metrics, success_timeline, focus, priority should each be 4 to 6 sentences of concrete, evidence-grounded prose (target 400-900 characters per field) — not bullet labels.
 - Mirror the brand's actual language and category vocabulary from the transcript without quoting people by name.
+- If the transcript mentions specific numbers, KPIs, channels, partners, geographies, sub-brands, or product names, INCLUDE them — that is the value-add.
 
 Return JSON only, no markdown, with exactly these keys:
 {
-  "about_the_organisation": "string (rich 4-6 sentence paragraph as described above)",
-  "core_focus_areas": "string (2-4 sentences)",
-  "key_customers_beneficiaries": "string (2-4 sentences)",
-  "key_goals_metrics": "string (2-4 sentences)",
-  "success_timeline": "string (2-4 sentences)",
-  "focus": "string (2-4 sentences)",
-  "priority": "string (2-4 sentences)",
-  "date_of_connect": "string",
+  "about_the_organisation": "string (rich 6-9 sentence paragraph as described above)",
+  "core_focus_areas": "string (4-6 sentences)",
+  "key_customers_beneficiaries": "string (4-6 sentences)",
+  "key_goals_metrics": "string (4-6 sentences)",
+  "success_timeline": "string (4-6 sentences, no specific dates copied from the transcript)",
+  "focus": "string (4-6 sentences)",
+  "priority": "string (4-6 sentences)",
+  "date_of_connect": "string (use the brand's stated qualifier - e.g. 'recent Connect call', 'multi-session Connect engagement' - never a literal date)",
   "confidence": integer 0-100,
-  "evidence_notes": ["short evidence note"]
+  "evidence_notes": ["short evidence note - do not include any person's name"]
 }
 
 Confidence should reflect how many of the eight fields are clearly supported. Never use 100 unless all eight fields are explicit and risk-free.
@@ -567,8 +572,8 @@ BUSINESS CASE CONTEXT
 - Existing extracted challenge: {_safe(mi_existing.get("current_marketing_challenge"))}
 - Existing extracted timeline: {_safe(mi_existing.get("timeline"))}
 
-CONNECT TRANSCRIPTS
-{combined_text or "(no transcripts captured yet - use only the CRM context above, and call out anything that needs the brand to confirm)"}
+CONNECT TRANSCRIPTS (pre-sanitised: names, speaker labels, timestamps, and meeting dates have been redacted at the input layer — do not infer or reinsert them)
+{combined_text[:30000] if combined_text else "(no transcripts captured yet - use only the CRM context above, and call out anything that needs the brand to confirm)"}
 
 Use ALL of the CRM context above, not just the transcripts. The about_the_organisation paragraph should weave together the brand's category, what they actually do, who they serve, their stated focus or challenge, and what makes them distinctive - drawing from the stored description, RM notes, and transcripts. If the transcripts contradict CRM context, prefer the transcript and mention the uncertainty in evidence_notes.
 """.strip()
@@ -806,6 +811,118 @@ async def _call_brand_about_tool(
     return None
 
 
+# Common speaker-label / role keywords that should be treated as label markers even
+# without surrounding brackets (e.g. "Host:", "Interviewer:", "Brand:").
+_TRANSCRIPT_ROLE_LABELS = (
+    "host", "speaker", "interviewer", "interviewee", "moderator", "facilitator",
+    "brand", "brand rep", "brand lead", "rm", "client", "tasck", "tasck team",
+    "agency", "founder", "ceo", "cmo", "cto", "coo", "marketing", "marketing lead",
+    "team lead", "panellist", "panelist", "guest", "audience", "participant",
+)
+
+
+def _sanitize_transcript_for_llm(
+    combined_text: str,
+    brand: Optional[Dict[str, Any]] = None,
+    case: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Strip names, speaker labels, timestamps, stage directions, and
+    meeting-date headers from a raw transcript before sending it to the LLM.
+
+    The system prompt also instructs the LLM to never leak these, but stripping
+    at the input layer means leakage is mathematically impossible — the LLM
+    literally cannot quote a name it never saw.
+    """
+    if not (combined_text or "").strip():
+        return ""
+
+    text = str(combined_text)
+
+    # 1) Strip ``Meeting on <date>:`` style headers that our backend prepends
+    #    when concatenating multiple transcripts.
+    text = re.sub(r'(?im)^\s*meeting on [^\n:]{1,80}:\s*', '', text)
+    text = re.sub(r'(?im)^\s*(transcript|call|connect|session)\s*\d*\s*[-–—]\s*[^\n]+\n', '', text)
+
+    # 2) Strip ``[HH:MM:SS]`` / ``(00:14:32)`` / ``00:14:32 -->`` style timestamps
+    #    anywhere in the body.
+    text = re.sub(r'\[?\(?\b\d{1,2}:\d{2}(?::\d{2})?\b\)?\]?(?:\s*-->\s*\d{1,2}:\d{2}(?::\d{2})?)?', '', text)
+
+    # 3) Strip stage directions and bracketed metadata.
+    text = re.sub(r'\[(?:laughter|crosstalk|inaudible|background noise|silence|pause|cough|music|applause|sigh|noise)\]', '', text, flags=re.I)
+    text = re.sub(r'\[\s*(?:attendees?|recorded by|joined at|left at|present)\s*[:\-][^\]\n]{1,200}\]', '', text, flags=re.I)
+
+    # 4) Strip ``Speaker 1:``, ``Speaker A:`` patterns.
+    text = re.sub(r'(?im)^\s*speaker\s*[a-z0-9]{1,5}\s*[:\-]\s*', '', text)
+
+    # 5) Strip generic role-label prefixes (``Host:``, ``Interviewer:``, etc).
+    role_pattern = r'(?im)^\s*(?:' + r'|'.join(_TRANSCRIPT_ROLE_LABELS) + r')\s*[:\-]\s*'
+    text = re.sub(role_pattern, '', text)
+
+    # 6) Strip ``[Name]:`` / ``<Name>:`` style speaker tags.
+    text = re.sub(r'(?m)^\s*[\[<]([A-Z][a-zA-Z\.\- ]{1,40})[\]>]\s*[:\-]\s*', '', text)
+
+    # 7) Strip ``Name:`` / ``Name said:`` / ``Name (Role):`` plain attributions at line start.
+    #    Matches up to 4 capitalised tokens (first/last/middle names + optional title).
+    text = re.sub(
+        r'(?m)^\s*(?:(?:Mr|Mrs|Ms|Mx|Dr|Prof|Sir|Madam|Engr|Chief|Alh|Alhaji|Hajia)\.?\s+)?'
+        r'(?:[A-Z][a-z\'\-]{1,20}\.?\s+){0,4}[A-Z][a-z\'\-]{1,20}\s*(?:\([^)]{1,40}\))?\s*[:\-]\s+',
+        '',
+        text,
+    )
+
+    # 8) Strip explicit known names from the CRM context (primary contact, RM,
+    #    contacts on the case). These come from structured CRM data so we can
+    #    safely treat them as the people most likely to appear by name in the
+    #    transcript.
+    candidates: List[str] = []
+    if brand:
+        for key in ("primary_contact", "contact_name", "contact_full_name", "rm_name", "relationship_manager_name"):
+            val = brand.get(key) if isinstance(brand, dict) else None
+            if val:
+                candidates.append(str(val))
+        rm = brand.get("relationship_manager") if isinstance(brand, dict) else None
+        if isinstance(rm, dict):
+            nm = rm.get("name") or rm.get("full_name")
+            if nm:
+                candidates.append(str(nm))
+            aliases = rm.get("aliases") or []
+            if isinstance(aliases, list):
+                candidates.extend([str(a) for a in aliases if a])
+    if case:
+        connect = case.get("connect") if isinstance(case, dict) else None
+        if isinstance(connect, dict):
+            for key in ("primary_contact", "contact_name", "rm_name"):
+                val = connect.get(key)
+                if val:
+                    candidates.append(str(val))
+
+    # Build a regex that strips each captured name (and the tokens that make it up).
+    name_tokens: set[str] = set()
+    for cand in candidates:
+        # Strip role/title from "Dr Tunde Adeleke" -> "Tunde Adeleke"
+        cleaned = re.sub(r'\b(?:Mr|Mrs|Ms|Mx|Dr|Prof|Sir|Madam|Engr|Chief|Alh|Alhaji|Hajia)\.?\s+', '', cand, flags=re.I)
+        for tok in re.split(r'[\s,/]+', cleaned):
+            tok = tok.strip(".,-_'")
+            if len(tok) >= 3 and tok[0].isalpha():
+                name_tokens.add(tok)
+    if name_tokens:
+        # Build a single alternation, sorted longest-first so multi-token names
+        # are stripped before their individual components.
+        ordered = sorted(name_tokens, key=lambda s: -len(s))
+        name_re = re.compile(r'\b(?:' + r'|'.join(re.escape(t) for t in ordered) + r')\b', re.I)
+        text = name_re.sub('[redacted]', text)
+
+    # 9) Strip explicit email addresses (which carry full names).
+    text = re.sub(r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b', '[redacted-email]', text)
+
+    # 10) Collapse runs of whitespace introduced by the stripping above.
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+
+
 async def _call_alignment_analysis_tool(
     combined_text: str,
     brand: Dict[str, Any],
@@ -814,8 +931,14 @@ async def _call_alignment_analysis_tool(
     if not (combined_text or "").strip():
         return None
 
+    # Pre-sanitize the transcript so the LLM never sees names, timestamps, or
+    # speaker labels in the first place. Belt-and-braces: the system prompt also
+    # forbids leaking these into the output, but stripping at the input layer
+    # is the most reliable defence.
+    sanitized_text = _sanitize_transcript_for_llm(combined_text, brand=brand, case=case)
+
     system_prompt = _alignment_tool_system_prompt()
-    user_message = _alignment_tool_user_message(brand, case, combined_text)
+    user_message = _alignment_tool_user_message(brand, case, sanitized_text)
     emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("ALIGNMENT_ANALYZER_EMERGENT_LLM_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     custom_key = os.getenv("ALIGNMENT_ANALYZER_LLM_API_KEY") or os.getenv("OPPORTUNITY_SCANNER_LLM_API_KEY")
@@ -851,7 +974,7 @@ async def _call_alignment_analysis_tool(
 
         def _call_http_model() -> Optional[Dict[str, Any]]:
             if anthropic_key:
-                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "claude-sonnet-4-20250514"
+                model = os.getenv("ALIGNMENT_ANALYZER_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or os.getenv("OPPORTUNITY_SCANNER_LLM_MODEL") or "claude-sonnet-4-5"
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -861,12 +984,12 @@ async def _call_alignment_analysis_tool(
                     },
                     json={
                         "model": model,
-                        "max_tokens": 2400,
+                        "max_tokens": 4000,
                         "temperature": 0.1,
                         "system": system_prompt,
                         "messages": [{"role": "user", "content": user_message}],
                     },
-                    timeout=45,
+                    timeout=60,
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -6816,8 +6939,10 @@ def make_v3_router(db):
         for m in meetings:
             t = (m.get("transcript") or "").strip()
             if t:
-                # Add separating headers if multiple
-                transcripts.append(f"Meeting on {m.get('scheduled_for') or 'unspecified date'}:\n{t}")
+                # Use a generic, date-free divider so the LLM cannot leak meeting
+                # dates into the analysis output. The reader of the snapshot should
+                # not be able to tell which call a point came from or when.
+                transcripts.append(f"--- Transcript ---\n{t}")
             if m.get("scheduled_for"):
                 meeting_dates.append(m.get("scheduled_for"))
 
