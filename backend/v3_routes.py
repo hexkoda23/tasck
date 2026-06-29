@@ -79,12 +79,65 @@ def _temporary_password() -> str:
     return f"TASCK-{uuid.uuid4().hex[:4].upper()}-{uuid.uuid4().hex[:4].upper()}"
 
 
+# Hard-coded live demo URL used as the default fallback in emails so brands
+# always get a working portal link even when no env vars are set. Local dev
+# can override by exporting FRONTEND_URL=http://localhost:7159 or setting
+# APP_ENV=local with a FRONTEND_URL.
+PROD_FRONTEND_URL = "https://thcodemo.space"
+
+
+def brand_login_url() -> str:
+    """Return the EXACT brand login URL for use in emails.
+
+    Per Chioma's rule: a brand opening the email link must land on the
+    brand login form, NOT on the V1 role selector that exposes Admin /
+    Creator / TASCK Staff options. We therefore force the URL to end in
+    /brand/login regardless of how the operator configured the env vars.
+
+    Honoured env vars (first non-empty wins):
+        V1_BRAND_PORTAL_URL, BRAND_PORTAL_URL
+
+    Acceptable formats and what we produce:
+        unset                       -> {app_base_url}/brand/login
+        https://thcodemo.space       -> https://thcodemo.space/brand/login
+        https://thcodemo.space/brand -> https://thcodemo.space/brand/login
+        https://thcodemo.space/brand/login -> unchanged
+    """
+    raw = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or "").strip().rstrip("/")
+    base = raw if raw else f"{app_base_url()}/brand"
+    # Normalize: ensure exactly one /brand segment.
+    if base.endswith("/brand/login"):
+        return base
+    if base.endswith("/brand"):
+        return f"{base}/login"
+    if "/brand" in base.split("//", 1)[-1]:
+        # has /brand somewhere but doesn't end cleanly - trust it and append /login
+        return f"{base.rstrip('/')}/login" if not base.endswith("/login") else base
+    # Bare domain - add the canonical /brand/login.
+    return f"{base}/brand/login"
+
+
+def creator_login_url() -> str:
+    """Same idea as brand_login_url() but for the creator portal."""
+    raw = (os.getenv("V1_CREATOR_PORTAL_URL") or os.getenv("CREATOR_PORTAL_URL") or "").strip().rstrip("/")
+    base = raw if raw else f"{app_base_url()}/creator"
+    if base.endswith("/creator/login"):
+        return base
+    if base.endswith("/creator"):
+        return f"{base}/login"
+    if "/creator" in base.split("//", 1)[-1]:
+        return f"{base.rstrip('/')}/login" if not base.endswith("/login") else base
+    return f"{base}/creator/login"
+
 def app_base_url() -> str:
     """Single source of truth for the frontend URL used in emails and portal links.
 
-    Reads FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL. In non-local environments
-    (APP_ENV in {"staging","production","prod"}) we refuse to fall back to localhost
-    so a missing env var fails loudly in logs instead of silently shipping bad links.
+    Resolution order:
+      1. FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL (explicit override).
+      2. http://localhost:7159 when APP_ENV is "local" (or unset AND we have
+         no production hint - see (3)).
+      3. PROD_FRONTEND_URL for everything else, so emails sent from the demo
+         deploy always include a working URL even when env vars are missing.
     """
     raw = (
         os.getenv("FRONTEND_URL")
@@ -94,17 +147,11 @@ def app_base_url() -> str:
     ).strip().rstrip("/")
     if raw:
         return raw
-    env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
-    if env in {"staging", "production", "prod"}:
-        # Don't break the request, but make the bad link obvious in logs.
-        import logging
-        logging.getLogger(__name__).error(
-            "FRONTEND_URL/PUBLIC_APP_URL/APP_BASE_URL is not set in %s environment. "
-            "Outgoing links will be unusable.",
-            env,
-        )
-        return "https://app.invalid"
-    return "http://localhost:7159"
+    env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
+    if env in {"local", "dev", "development"}:
+        return "http://localhost:7159"
+    # Default to the live demo so emails never go out with localhost in them.
+    return PROD_FRONTEND_URL
 
 
 def _brand_created_at_key(brand: Dict[str, Any]) -> str:
@@ -631,6 +678,209 @@ async def _call_alignment_analysis_tool(
         logger.warning("Alignment analysis tool failed for business case %s: %s", case.get("id"), exc)
         return None
 
+
+# ============================================================================
+# Creator Match - LLM-backed ranker (mirrors the alignment analyzer pattern)
+# ============================================================================
+#
+# Inputs : compact JSON brief of the opportunity (brand + marketing intel) and
+#          a list of pre-shortlisted creators (top N from the deterministic
+#          scorer) with their id, name, categories, audience, platforms,
+#          fit_score, reliability, and rate_card.
+# Output : JSON with a `matches` array of objects:
+#            { creator_id, score (0-100), reasons[1..3], risk_notes[0..3] }
+#          ranked descending by score. The model is told to use the haystack
+#          words and creator profile evidence to justify each pick.
+#
+# Provider preference (same as alignment analyzer):
+#   APP_ENV=staging|production -> Anthropic Claude (paid, higher quality)
+#   APP_ENV=local|unset        -> Emergent Gemini Flash (free)
+#   CREATOR_MATCH_PROVIDER=anthropic|emergent forces a specific provider.
+# Falls back to the other provider if the preferred one's key is missing or
+# the HTTP call fails. Final fallback: returns None so the endpoint can use
+# the deterministic ranking.
+# ============================================================================
+
+def _creator_match_system_prompt() -> str:
+    return """
+You are TASCK's Creator Match Analyst. Your job is to rank creators for a brand opportunity using ONLY the evidence in the brief and the creator profiles given. Do not invent facts or audiences. If a creator's fit is weak or unclear, say so in the reasons and lower the score.
+
+For each creator you decide to include, write 1 to 3 SHORT reasons that cite specific words from the brief (audience, channel, category, focus) and from the creator profile (categories, platforms, audience, genre). Each reason should be one sentence.
+
+Add risk_notes for anything an admin must validate before shortlisting: missing rate card, untested category, audience mismatch, contact gap, exclusivity uncertainty, etc.
+
+Score band guidance:
+  90 to 99 -> strong fit on both audience AND category, with confident evidence
+  75 to 89 -> good fit but at least one gap to confirm
+  60 to 74 -> partial fit; admin should validate before shortlisting
+  below 60 -> not recommended
+
+Return JSON only, no markdown, with exactly this shape:
+{
+  "matches": [
+    {"creator_id": "string (must match an id from the input)", "score": 0-100 integer, "reasons": ["string", ...], "risk_notes": ["string", ...]}
+  ]
+}
+
+Sort matches descending by score. Return at most 8. Never include a creator_id that was not in the input list.
+""".strip()
+
+
+def _creator_match_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi: Dict[str, Any], creators: List[Dict[str, Any]]) -> str:
+    def _safe(value: Any) -> str:
+        text = "" if value is None else str(value).strip()
+        return text or "(not captured)"
+
+    def _list(value: Any) -> str:
+        if isinstance(value, list):
+            cleaned = [str(item).strip() for item in value if str(item).strip()]
+            return ", ".join(cleaned) if cleaned else "(not captured)"
+        return _safe(value)
+
+    # Compact creator profiles - small and stable shape so the LLM can rank.
+    compact_creators = []
+    for cr in creators:
+        compact_creators.append({
+            "id": cr.get("id"),
+            "name": cr.get("name") or "",
+            "genre": cr.get("genre") or "",
+            "categories": cr.get("categories") or [],
+            "platforms": cr.get("platforms") or [],
+            "audience": cr.get("audience") or "",
+            "fit_score_baseline": cr.get("fit_score"),
+            "reliability": cr.get("reliability"),
+            "rate_card": cr.get("rate_card") or "TBD",
+            "has_contact": bool(cr.get("manager_email") or cr.get("email")),
+        })
+
+    return f"""
+BRAND OPPORTUNITY
+- Brand: {_safe(brand.get("company") or brand.get("name") or case.get("brand_name"))}
+- Industry / category: {_safe(brand.get("category") or brand.get("industry") or brand.get("sector"))}
+- Project title: {_safe(case.get("title"))}
+- Stated focus: {_safe(mi.get("key_marketing_focus"))}
+- Primary target audience: {_safe(mi.get("primary_target_audience"))}
+- Key marketing channels: {_list(mi.get("key_marketing_channels"))}
+- KPIs / outcomes admin wants: {_list([(k.get("kpi") if isinstance(k, dict) else k) for k in (mi.get("marketing_kpis") or [])])}
+- Brand "about" notes: {_safe(brand.get("about") or brand.get("description"))}
+
+CREATORS TO RANK (preselected from the database by deterministic keyword overlap)
+{json.dumps(compact_creators, ensure_ascii=False, indent=2)}
+
+Pick the strongest fits, rank descending by score, and cite evidence in reasons. Never include a creator_id that was not in this list.
+""".strip()
+
+
+async def _call_creator_match_tool(
+    brand: Dict[str, Any],
+    case: Dict[str, Any],
+    mi: Dict[str, Any],
+    candidate_creators: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not candidate_creators:
+        return None
+
+    system_prompt = _creator_match_system_prompt()
+    user_message = _creator_match_user_message(brand, case, mi, candidate_creators)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("CREATOR_MATCH_EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+
+    _env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
+    _forced = (os.getenv("CREATOR_MATCH_PROVIDER") or "").strip().lower()
+    _prefer_anthropic = _forced == "anthropic" or (not _forced and _env in {"staging", "production", "prod"})
+
+    async def _call_emergent() -> Optional[Dict[str, Any]]:
+        if not emergent_key:
+            return None
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        provider = os.getenv("CREATOR_MATCH_EMERGENT_PROVIDER") or "gemini"
+        model = os.getenv("CREATOR_MATCH_EMERGENT_MODEL") or "gemini-2.0-flash"
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=f"creator-match-{uuid.uuid4()}",
+            system_message=system_prompt,
+        ).with_model(provider, model)
+        response = await chat.send_message(UserMessage(text=user_message))
+        parsed = _parse_json_object(_response_to_text(response))
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"emergent:{provider}/{model}"
+            return parsed
+        return None
+
+    try:
+        if not _prefer_anthropic:
+            er = await _call_emergent()
+            if er is not None:
+                return er
+
+        def _call_http_model() -> Optional[Dict[str, Any]]:
+            if anthropic_key:
+                model = os.getenv("CREATOR_MATCH_LLM_MODEL") or "claude-sonnet-4-20250514"
+                response = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": anthropic_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 1600,
+                        "temperature": 0.1,
+                        "system": system_prompt,
+                        "messages": [{"role": "user", "content": user_message}],
+                    },
+                    timeout=45,
+                )
+                response.raise_for_status()
+                data = response.json()
+                text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+                parsed = _parse_json_object(text)
+                if isinstance(parsed, dict):
+                    parsed["analysis_source"] = f"anthropic:{model}"
+                    return parsed
+                return None
+
+            if openai_key:
+                model = os.getenv("CREATOR_MATCH_LLM_MODEL") or "gpt-4o-mini"
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {openai_key}", "content-type": "application/json"},
+                    json={
+                        "model": model,
+                        "temperature": 0.1,
+                        "max_tokens": 1600,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message},
+                        ],
+                    },
+                    timeout=45,
+                )
+                response.raise_for_status()
+                text = response.json()["choices"][0]["message"]["content"]
+                parsed = _parse_json_object(text)
+                if isinstance(parsed, dict):
+                    parsed["analysis_source"] = f"openai:{model}"
+                    return parsed
+                return None
+
+            return None
+
+        http_result = await asyncio.to_thread(_call_http_model)
+        if http_result is not None:
+            return http_result
+
+        # Final fallback: try emergent if we hadn't already.
+        if _prefer_anthropic:
+            return await _call_emergent()
+        return None
+    except Exception as exc:
+        logger.warning("Creator match tool failed for business case %s: %s", case.get("id"), exc)
+        return None
+
+
 def _extract_marketing_intelligence(content: str) -> Dict[str, Any]:
     """Deterministic transcript extraction used by the transcript analysis layer.
 
@@ -1089,18 +1339,50 @@ def make_v3_router(db):
 
     @router.post("/brands/{brand_id}/scrape")
     async def scrape_brand_details(brand_id: str):
-        """Scrape the web for source-grounded brand details."""
+        """Scrape the web for source-grounded brand details.
+
+        Robust enough for the common cases that previously returned empty:
+          - Google tracking params (srsltid, utm_*, gclid, fbclid) are stripped
+            before fetch so we hit the canonical page.
+          - JSON-LD blocks (`<script type="application/ld+json">`) are parsed
+            and Organization.description / Organization.logo / Organization.name
+            are picked up - this is how Shopify, WooCommerce, and most modern
+            sites expose brand metadata.
+          - Extra meta tag variants (twitter:description, og:site_name) read.
+          - Failure modes are logged with the actual error so we can debug
+            instead of silently returning "Not captured yet".
+        """
         import html as html_module
         import httpx
+        import json as _json
         import re as _re
-        from urllib.parse import urljoin
+        from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
 
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
 
+        # Strip noise tracking params from any inbound URL so we fetch the
+        # canonical page. Google Shopping in particular adds `srsltid` which
+        # can route the request through a tracking redirect.
+        def _strip_tracking_params(raw_url: str) -> str:
+            if not raw_url:
+                return raw_url
+            try:
+                parsed = urlparse(raw_url)
+                if not parsed.scheme and not parsed.netloc:
+                    return raw_url
+                bad_keys = {"srsltid", "gclid", "fbclid", "mc_eid", "mc_cid", "_ga", "yclid", "msclkid"}
+                kept = [(k, v) for (k, v) in parse_qsl(parsed.query, keep_blank_values=True)
+                        if k.lower() not in bad_keys and not k.lower().startswith("utm_")]
+                return urlunparse(parsed._replace(query=urlencode(kept, doseq=True)))
+            except Exception:  # noqa: BLE001
+                return raw_url
+
         source_url = brand.get("source_url") or brand.get("source") or brand.get("lead_source") or brand.get("scrape_source") or ""
-        website = _website_from_brand_inputs(website=brand.get("website") or brand.get("url") or brand.get("brand_url"), email=brand.get("email"), source_url=source_url)
+        raw_website = brand.get("website") or brand.get("url") or brand.get("brand_url")
+        raw_website = _strip_tracking_params(raw_website or "") or raw_website
+        website = _website_from_brand_inputs(website=raw_website, email=brand.get("email"), source_url=_strip_tracking_params(source_url))
         brand_name = brand.get("company") or brand.get("name") or brand.get("brand_name") or "Brand"
         scraped_about = ""
         scraped_logo = ""
@@ -1152,13 +1434,72 @@ def make_v3_router(db):
                         if src:
                             script_urls.append(urljoin(final_url, src))
 
+                    # ---- Pass 1: standard description meta tags ----
                     og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
                     meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                    twitter_desc = _re.search(r'<meta[^>]*name=["\']twitter:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
                     if og_desc:
                         scraped_about = html_module.unescape(og_desc.group(1)).strip()
                     elif meta_desc:
                         scraped_about = html_module.unescape(meta_desc.group(1)).strip()
-                    else:
+                    elif twitter_desc:
+                        scraped_about = html_module.unescape(twitter_desc.group(1)).strip()
+
+                    # ---- Pass 2: JSON-LD blocks (Organization / Brand schema) ----
+                    # Shopify, WooCommerce, Squarespace, Wix, and most CMSes embed
+                    # a structured Organization block here. This typically has the
+                    # richest brand description and a clean logo URL.
+                    jsonld_about = ""
+                    jsonld_logos: List[str] = []
+                    for jsonld_match in _re.findall(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re.I | _re.S):
+                        raw = jsonld_match.strip()
+                        if not raw:
+                            continue
+                        try:
+                            data = _json.loads(raw)
+                        except (_json.JSONDecodeError, ValueError):
+                            continue
+                        nodes = data if isinstance(data, list) else [data]
+                        for node in nodes:
+                            if not isinstance(node, dict):
+                                continue
+                            # @graph wraps multiple top-level entities
+                            graph = node.get("@graph") if isinstance(node.get("@graph"), list) else None
+                            for sub in (graph or [node]):
+                                if not isinstance(sub, dict):
+                                    continue
+                                t = sub.get("@type")
+                                if isinstance(t, list):
+                                    types = {str(x).lower() for x in t}
+                                else:
+                                    types = {str(t).lower()} if t else set()
+                                if not (types & {"organization", "corporation", "brand", "localbusiness", "website"}):
+                                    continue
+                                # description
+                                desc = sub.get("description") or sub.get("slogan")
+                                if isinstance(desc, str) and len(desc.strip()) >= 40 and not jsonld_about:
+                                    jsonld_about = html_module.unescape(desc.strip())[:700]
+                                # logo - can be a string OR an ImageObject dict
+                                logo = sub.get("logo") or sub.get("image")
+                                if isinstance(logo, str) and logo:
+                                    jsonld_logos.append(logo)
+                                elif isinstance(logo, dict):
+                                    candidate = logo.get("url") or logo.get("contentUrl")
+                                    if candidate:
+                                        jsonld_logos.append(str(candidate))
+                                elif isinstance(logo, list):
+                                    for item in logo:
+                                        if isinstance(item, str):
+                                            jsonld_logos.append(item)
+                                        elif isinstance(item, dict):
+                                            candidate = item.get("url") or item.get("contentUrl")
+                                            if candidate:
+                                                jsonld_logos.append(str(candidate))
+                    if jsonld_about and (not scraped_about or len(jsonld_about) > len(scraped_about) * 1.2):
+                        scraped_about = jsonld_about
+
+                    # ---- Pass 3: visible paragraphs as a last resort ----
+                    if not scraped_about:
                         paragraphs = _re.findall(r'<p[^>]*>(.*?)</p>', html, _re.I | _re.S)
                         for paragraph in paragraphs:
                             clean_paragraph = " ".join(_re.sub(r'<[^>]+>', ' ', paragraph).split())
@@ -1223,6 +1564,10 @@ def make_v3_router(db):
                             _add_logo(_attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"), 92 if "logo" in haystack else 68)
                     for match in _re.findall(r'"logo"\s*:\s*(?:"([^"\n]+)"|\{[^}]*"url"\s*:\s*"([^"\n]+)")', html, _re.I | _re.S):
                         _add_logo(next((item for item in match if item), ""), 96)
+                    # JSON-LD Organization.logo gets the highest score - it's
+                    # the explicit, brand-curated logo.
+                    for jl_logo in jsonld_logos:
+                        _add_logo(jl_logo, 110)
                     if logo_candidates:
                         logo_candidates.sort(key=lambda item: item[0], reverse=True)
                         scraped_logo = _brand_logo_from_source(final_url, logo_candidates[0][1])
@@ -1238,8 +1583,15 @@ def make_v3_router(db):
                         if match:
                             scraped_budget = " ".join(match.group(0).split())[:180]
                             break
-            except (httpx.HTTPError, ValueError) as exc:
-                logger.warning("Scrape failed for %s: %s", url, exc)
+            except httpx.HTTPError as exc:
+                # Network / 4xx / 5xx / SSL / timeout. Log with full context so
+                # we can debug from production logs instead of guessing.
+                logger.warning("Scrape HTTP error for %s (%s): %s", url, brand_name, exc)
+            except (ValueError, KeyError, TypeError) as exc:
+                logger.warning("Scrape parse error for %s (%s): %s", url, brand_name, exc)
+            except Exception as exc:  # noqa: BLE001
+                # Catch-all so a single bad page doesn't 500 the whole endpoint.
+                logger.warning("Scrape unexpected error for %s (%s): %s", url, brand_name, exc)
 
         if not scraped_about:
             scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
@@ -1383,8 +1735,9 @@ def make_v3_router(db):
         }
         await db.v3_brand_accounts.insert_one({**account_doc})
 
-        base_url = app_base_url()
-        brand_portal_url = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or f"{base_url}/brand").rstrip("/")
+        # Always link directly to /brand/login so the brand never sees the
+        # V1 role selector (Admin / Creator / TASCK staff options).
+        brand_login_link = brand_login_url()
         welcome = await queue_email(
             to=username,
             subject="Your TASCK brand access",
@@ -1392,7 +1745,7 @@ def make_v3_router(db):
                 f"Hello {payload.primary_contact},\n\n"
                 "Welcome to TASCK.\n\n"
                 f"We have prepared brand portal access for {payload.company} so your team can review project documents, respond to approval requests, and keep communication with TASCK in one place.\n\n"
-                f"Brand portal: {brand_portal_url}\n"
+                f"Click here to sign in: {brand_login_link}\n"
                 f"Email: {username}\n"
                 f"Access code: {temp_password}\n\n"
                 "For security, please sign in and change this access code before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
@@ -2132,6 +2485,25 @@ def make_v3_router(db):
 
     @router.post("/business-cases/{bc_id}/ai/creator-matches")
     async def suggest_creator_matches(bc_id: str):
+        """Rank creators for a Business Case.
+
+        Strategy (per Chioma's clarification 2026-06-29):
+          1. Run the existing deterministic keyword-overlap scorer over every
+             approved creator to get cheap, stable preselection scores.
+          2. Send the top 25 preselected candidates + the brand opportunity
+             brief to the configured LLM (Gemini local / Claude staging via
+             APP_ENV). The LLM re-ranks with evidence-cited reasons.
+          3. If the LLM returns nothing (no key, timeout, parse failure), fall
+             back to the deterministic top 8 so the page never blocks.
+
+        Response shape:
+          {
+            "business_case_id": str,
+            "matches": [{creator, score, reasons[], risk_notes[]}, ...],   # top 8
+            "analysis_source": "emergent:gemini/..." | "anthropic:..." |
+                               "openai:..." | "deterministic_keyword_overlap"
+          }
+        """
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
@@ -2153,7 +2525,9 @@ def make_v3_router(db):
         fashion_terms = {"fashion", "clothing", "apparel", "wear", "wears", "streetwear", "style", "styling", "boutique", "fabric", "beauty", "lifestyle"}
         fashion_project = any(term in brand_context for term in fashion_terms)
         fashion_creator_terms = {"musician", "music", "artist", "artiste", "singer", "rapper", "stylist", "fashion", "style", "streetwear", "model", "visual", "lifestyle", "culture"}
-        matches = []
+
+        # ---------- 1. Deterministic preselection ----------
+        deterministic_matches = []
         for cr in creators:
             score = int(cr.get("fit_score", 70))
             reasons = []
@@ -2182,18 +2556,83 @@ def make_v3_router(db):
             if cr.get("manager_email") or cr.get("email"):
                 score += 2
                 reasons.append("Contact route is available for immediate brief send.")
-            matches.append({
+            deterministic_matches.append({
                 "creator": cr,
                 "score": min(score, 99),
                 "reasons": reasons or ["Strong general fit; admin should validate audience and fee conditions."],
                 "risk_notes": [] if cr.get("rate_card") != "TBD" else ["Rate card is not confirmed yet."],
             })
-        matches.sort(key=lambda m: m["score"], reverse=True)
+        deterministic_matches.sort(key=lambda m: m["score"], reverse=True)
+
+        # ---------- 2. LLM re-rank over preselected top 25 ----------
+        candidate_creators = [m["creator"] for m in deterministic_matches[:25]]
+        creator_by_id = {cr.get("id"): cr for cr in candidate_creators}
+        analysis_source = "deterministic_keyword_overlap"
+        llm_matches = None
+
+        if candidate_creators:
+            try:
+                llm_timeout_seconds = max(
+                    3.0,
+                    float(os.getenv("CREATOR_MATCH_TIMEOUT_SECONDS", "20")),
+                )
+            except ValueError:
+                llm_timeout_seconds = 20.0
+            try:
+                llm_result = await asyncio.wait_for(
+                    _call_creator_match_tool(brand, case, mi, candidate_creators),
+                    timeout=llm_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Creator match LLM timed out for business case %s after %ss", bc_id, llm_timeout_seconds)
+                llm_result = None
+
+            if isinstance(llm_result, dict) and isinstance(llm_result.get("matches"), list):
+                # Re-hydrate full creator docs, drop any unknown ids, cap reasons/risks.
+                hydrated = []
+                for item in llm_result["matches"]:
+                    if not isinstance(item, dict):
+                        continue
+                    cid = item.get("creator_id") or item.get("id")
+                    cr = creator_by_id.get(cid)
+                    if not cr:
+                        continue
+                    try:
+                        score = int(item.get("score") or 0)
+                    except (TypeError, ValueError):
+                        score = 0
+                    score = max(0, min(score, 99))
+                    reasons = [str(r).strip() for r in (item.get("reasons") or []) if str(r).strip()][:3]
+                    risk_notes = [str(r).strip() for r in (item.get("risk_notes") or []) if str(r).strip()][:3]
+                    # Always surface "Rate card TBD" as a baseline risk if applicable.
+                    if cr.get("rate_card") == "TBD" and not any("rate card" in r.lower() for r in risk_notes):
+                        risk_notes.append("Rate card is not confirmed yet.")
+                    hydrated.append({
+                        "creator": cr,
+                        "score": score,
+                        "reasons": reasons or ["LLM rank with no explicit reason - validate manually."],
+                        "risk_notes": risk_notes,
+                    })
+                if hydrated:
+                    hydrated.sort(key=lambda m: m["score"], reverse=True)
+                    llm_matches = hydrated[:8]
+                    analysis_source = str(llm_result.get("analysis_source") or "llm")
+
+        final_matches = llm_matches if llm_matches is not None else deterministic_matches[:8]
+
         await db.v3_business_cases.update_one(
             {"id": bc_id},
-            {"$set": {"plan.ai_creator_match_generated_at": _now_iso(), "updated_at": _now_iso()}},
+            {"$set": {
+                "plan.ai_creator_match_generated_at": _now_iso(),
+                "plan.ai_creator_match_source": analysis_source,
+                "updated_at": _now_iso(),
+            }},
         )
-        return {"business_case_id": bc_id, "matches": matches[:8]}
+        return {
+            "business_case_id": bc_id,
+            "matches": final_matches,
+            "analysis_source": analysis_source,
+        }
 
     # ------------------------------------------------------------------------
     # BUSINESS CASES (the central primitive)
@@ -2269,7 +2708,20 @@ def make_v3_router(db):
             raise HTTPException(404, "Business case not found")
         # Hydrate related artifacts so the UI gets the full doc chain in one call.
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
-        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+        # Primary creator resolution order:
+        #   1. Explicit case.creator_id (legacy / manual link).
+        #   2. First id in case.plan.selected_creator_ids (this is what the
+        #      Creator Match Scanner + Creative Brief flow actually writes -
+        #      previously the Planning page Creator card was always empty
+        #      because we only looked at #1).
+        creator = None
+        creator_id = case.get("creator_id")
+        if not creator_id:
+            selected_ids = ((case.get("plan") or {}).get("selected_creator_ids") or [])
+            if isinstance(selected_ids, list) and selected_ids:
+                creator_id = selected_ids[0]
+        if creator_id:
+            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0})
         alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         # Defensive fallback: if the business_case_id lookup misses but the case
         # has a snapshot_id stored on it, try that. Prevents the "snapshot

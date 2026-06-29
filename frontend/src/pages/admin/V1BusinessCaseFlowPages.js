@@ -1165,6 +1165,31 @@ export const V3BusinessCaseConnectSchedule = () => {
   const [analysisResult, setAnalysisResult] = useState(null);
   const inFlightRef = useRef(false);
   const [lastAddedTranscriptId, setLastAddedTranscriptId] = useState(null);
+  // Modal popup for transcript analysis progress (Chioma's feedback: the
+  // inline "Starting transcript analysis..." was too quiet and confusing).
+  // Shape: { open, progress (0-100), message, status: 'running'|'complete'|'failed', error }
+  const [analysisPopup, setAnalysisPopup] = useState({ open: false, progress: 0, message: '', status: 'running' });
+  // Tick simulator for sync mode (no job_id) so the progress bar never sits
+  // at 0% while the request is in flight. Cleared on completion / failure.
+  const progressTickRef = useRef(null);
+  const stopProgressTick = () => {
+    if (progressTickRef.current) {
+      clearInterval(progressTickRef.current);
+      progressTickRef.current = null;
+    }
+  };
+  const startProgressTick = (startAt = 5, ceiling = 92) => {
+    stopProgressTick();
+    progressTickRef.current = setInterval(() => {
+      setAnalysisPopup((prev) => {
+        if (!prev.open || prev.status !== 'running') return prev;
+        const next = prev.progress < ceiling ? prev.progress + 1 : ceiling;
+        return { ...prev, progress: next };
+      });
+    }, 600);
+    setAnalysisPopup((prev) => ({ ...prev, progress: Math.max(prev.progress, startAt) }));
+  };
+  useEffect(() => () => stopProgressTick(), []);
 
   const loadMeetings = useCallback(async () => {
     try {
@@ -1279,72 +1304,100 @@ export const V3BusinessCaseConnectSchedule = () => {
     // Poll every 2.5s for up to ~5 minutes; bail early on completed/failed.
     const POLL_INTERVAL_MS = 2500;
     const MAX_POLLS = 120;
+    // We have a real job_id so we can show the backend's actual progress
+    // value in the popup. Stop the sync-mode tick simulator.
+    stopProgressTick();
     for (let i = 0; i < MAX_POLLS; i++) {
       // If the user navigated away or analysis was cancelled, stop.
       if (!inFlightRef.current) return;
       try {
         const job = await v3GetAnalyzeAllJob(id, jobId);
-        const progress = job.progress || 0;
-        const message = job.message || `Analyzing... ${progress}%`;
+        const progress = Math.max(0, Math.min(100, job.progress || 0));
+        const message = job.message || `Analyzing transcripts… ${progress}%`;
         setSaveNotice(message);
+        setAnalysisPopup((prev) => prev.open ? { ...prev, progress: Math.max(prev.progress, progress), message, status: 'running' } : prev);
         if (job.status === 'completed') {
           if (job.recommendation) setAnalysisResult(job.recommendation);
           await reload();
           const base = 'AI analysis complete from the saved Connect transcripts.';
           setSaveNotice(partialFailure ? `${base} (Warning: ${partialFailure})` : base);
+          setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: 'Analysis complete. Check below for the analysed transcript.' }));
           return;
         }
         if (job.status === 'failed') {
           const fallbackRec = job.recommendation;
           if (fallbackRec) setAnalysisResult(fallbackRec);
           await reload();
-          setSaveNotice(`Claude analysis failed — showing safe fallback. (${job.error || job.message || 'unknown error'})`);
+          const errorMsg = job.error || job.message || 'unknown error';
+          setSaveNotice(`Claude analysis failed — showing safe fallback. (${errorMsg})`);
+          setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: errorMsg, message: 'Analysis failed. A safe fallback is shown below.' }));
           return;
         }
       } catch (err) {
         // Transient poll error — keep trying unless explicitly 404
         if (err?.response?.status === 404) {
           setSaveNotice('Analysis job missing on server. Please retry.');
+          setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: 'Analysis job missing on server.', message: 'Analysis failed. Please retry.' }));
           return;
         }
       }
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     }
     setSaveNotice('Analysis is taking longer than expected. It will keep running on the server — refresh the page later to see results.');
+    setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: 'Timed out waiting for the server.', message: 'Analysis is taking longer than expected. It is still running on the server — refresh the page later to see results.' }));
   };
 
   const runCombinedAnalysis = async () => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     setAnalyzing(true);
+    // Open the popup FIRST so the user sees something happen immediately.
+    setAnalysisPopup({ open: true, progress: 2, message: 'Saving transcripts…', status: 'running', error: undefined });
     setSaveNotice('Saving transcripts before analysis...');
     try {
       const savedSessions = await saveTranscriptSessions();
-      if (!savedSessions.length) return;
+      if (!savedSessions.length) {
+        setAnalysisPopup({ open: false, progress: 0, message: '', status: 'running' });
+        return;
+      }
       if (savedSessions.partialFailure) {
         setSaveNotice(savedSessions.partialFailure);
       }
       setSaveNotice('Starting transcript analysis...');
+      setAnalysisPopup((prev) => ({ ...prev, open: true, progress: Math.max(prev.progress, 8), message: 'Starting transcript analysis…', status: 'running' }));
+      // Kick a simulated tick so the bar moves even if the server doesn't
+      // expose a real progress value (sync mode). The poll updater will
+      // call stopProgressTick() once it gets a real number.
+      startProgressTick(10, 92);
+
       const res = await v3AnalyzeAllTranscripts(id);
       if (!res?.ok) {
         setSaveNotice('AI analysis failed.');
+        stopProgressTick();
+        setAnalysisPopup((prev) => ({ ...prev, status: 'failed', error: 'AI analysis failed.', message: 'Analysis failed. Please retry.' }));
         return;
       }
       // Background-job mode → poll until completed/failed
       if (res.mode === 'background_job' && res.job_id) {
         setSaveNotice(res.message || `Analyzing ${res.transcript_count || ''} transcripts in the background...`);
+        setAnalysisPopup((prev) => ({ ...prev, open: true, message: res.message || 'Analyzing transcripts in the background…' }));
         await pollAnalysisJob(res.job_id, savedSessions.partialFailure);
         return;
       }
       // Sync mode → result already inline
+      stopProgressTick();
       if (res.recommendation) setAnalysisResult(res.recommendation);
-      setSaveNotice((current) => {
+      setSaveNotice(() => {
         const base = 'AI analysis complete from the saved Connect transcripts.';
         return savedSessions.partialFailure ? `${base} (Warning: ${savedSessions.partialFailure})` : base;
       });
+      setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: 'Analysis complete. Check below for the analysed transcript.' }));
       await reload();
     } catch (e) {
-      setSaveNotice(e?.response?.data?.detail || e?.message || 'AI analysis failed.');
+      const msg = e?.response?.data?.detail || e?.message || 'AI analysis failed.';
+      setSaveNotice(msg);
+      stopProgressTick();
+      setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: msg, message: 'Analysis failed. Please retry.' }));
     } finally {
       setSaving(false);
       setAnalyzing(false);
@@ -1419,6 +1472,61 @@ export const V3BusinessCaseConnectSchedule = () => {
           onReschedule={() => navigate(adminRoute(`/business-cases/${id}/connect/reschedule`))}
         />
       </InfoCard>
+
+      {/* ============================================================
+          Transcript analysis progress popup.
+          Per Chioma's feedback: the inline "Starting transcript
+          analysis..." was too quiet; admins thought nothing was
+          happening. This popup makes the work visible, shows the
+          actual server progress (or a simulated tick in sync mode),
+          and ends with a clear "check below for the analysed
+          transcript" message instead of disappearing silently.
+          ============================================================ */}
+      {analysisPopup.open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="connect-analysis-popup">
+          <div className="w-full max-w-md rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${analysisPopup.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : analysisPopup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#EFF5F1] text-[#1F4A3A]'}`}>
+                {analysisPopup.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : analysisPopup.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+              </span>
+              <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                {analysisPopup.status === 'complete' ? 'Analysis complete' : analysisPopup.status === 'failed' ? 'Analysis failed' : 'Loading transcript analysis'}
+              </h3>
+              <span className="ml-auto text-[12px] font-semibold text-[#4F3E2F]" data-testid="connect-analysis-popup-percent">
+                {analysisPopup.progress}%
+              </span>
+            </div>
+
+            <div className="h-2 w-full rounded-full bg-[#F4F2EC] overflow-hidden mb-3">
+              <div
+                className={`h-full transition-all duration-300 ease-out ${analysisPopup.status === 'failed' ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
+                style={{ width: `${Math.max(2, analysisPopup.progress)}%` }}
+                data-testid="connect-analysis-popup-bar"
+              />
+            </div>
+
+            <p className="text-[13px] leading-6 text-[#4F3E2F]" data-testid="connect-analysis-popup-message">
+              {analysisPopup.message || (analysisPopup.status === 'running' ? 'Working on it…' : '')}
+            </p>
+            {analysisPopup.status === 'running' && (
+              <p className="mt-1 text-[11px] text-[#6E6657]">Please keep this page open while TASCK runs the analysis.</p>
+            )}
+
+            {(analysisPopup.status === 'complete' || analysisPopup.status === 'failed') && (
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAnalysisPopup((prev) => ({ ...prev, open: false }))}
+                  className="v3-btn-primary"
+                  data-testid="connect-analysis-popup-close"
+                >
+                  OK
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </FlowShell>
   );
 };
@@ -2633,10 +2741,6 @@ export const V3BusinessCasePlanBrainstorm = () => {
   return (
     <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 5. A 60-90 minute session for building a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
-      <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-[#E8E4DB] -mx-1 px-1 py-2 flex flex-wrap items-center gap-2">
-        <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving...' : 'Save'}</button>
-        <button onClick={() => save(true)} disabled={saving} className="v3-btn-primary" data-testid="brainstorm-save-advance-btn"><ArrowRight className="w-3.5 h-3.5" /> Save & open Creator Scan</button>
-      </div>
 
       <BSPhase phase="pre-work" title="Pre-work (Mandatory before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
         <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Client Brief Summary (1 page max)</p>
@@ -2764,6 +2868,21 @@ export const V3BusinessCasePlanBrainstorm = () => {
           </table>
         </div>
       </InfoCard>
+
+      {/* Per Chioma's feedback: Save / Save & open Creator Scan now live at
+          the BOTTOM of the page, not in a sticky top bar. Admin fills the
+          whole brainstorm template and then hits Save once at the end. */}
+      <InfoCard title="Save brainstorm">
+        <p className="text-[12px] text-[#6E6657] mb-3">Save your progress at any point, or save and move on to the next Framing step (Creator Match Scanner).</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn">
+            <Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button onClick={() => save(true)} disabled={saving} className="v3-btn-primary" data-testid="brainstorm-save-advance-btn">
+            <ArrowRight className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save & open Creator Scan'}
+          </button>
+        </div>
+      </InfoCard>
     </FlowShell>
   );
 };
@@ -2791,18 +2910,33 @@ export const V3BusinessCasePlanCreatorScan = () => {
     setNotice('');
   };
   const removeCreator = (creatorId) => setSelectedIds((current) => current.filter((idValue) => idValue !== creatorId));
+  // analysisSource records which engine produced the current matches.
+  // Possible values:
+  //   "emergent:gemini/..." | "anthropic:claude-..." | "openai:..."
+  //   "deterministic_keyword_overlap" (fallback when no LLM key is set
+  //   or the LLM call timed out / failed to parse).
+  const [analysisSource, setAnalysisSource] = useState('');
   const runScan = async () => {
     setNotice('');
     setScanning(true);
     try {
       const data = await v3SuggestCreatorMatches(id);
       setMatches(Array.isArray(data?.matches) ? data.matches : []);
+      setAnalysisSource(data?.analysis_source || '');
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.');
     } finally {
       setScanning(false);
     }
   };
+  const analysisSourceLabel = (() => {
+    if (!analysisSource) return '';
+    if (analysisSource === 'deterministic_keyword_overlap') return 'Deterministic keyword fallback (no LLM key configured or the LLM did not respond in time).';
+    if (analysisSource.startsWith('emergent:')) return `LLM ranking via Emergent (${analysisSource.replace('emergent:', '')}) - evidence-cited.`;
+    if (analysisSource.startsWith('anthropic:')) return `LLM ranking via Anthropic Claude (${analysisSource.replace('anthropic:', '')}) - evidence-cited.`;
+    if (analysisSource.startsWith('openai:')) return `LLM ranking via OpenAI (${analysisSource.replace('openai:', '')}) - evidence-cited.`;
+    return `Ranking source: ${analysisSource}.`;
+  })();
   const continueToBrief = () => {
     if (selectedIds.length === 0) {
       setNotice('Select at least one creator before generating briefs.');
@@ -2835,6 +2969,14 @@ export const V3BusinessCasePlanCreatorScan = () => {
         </div>
       </InfoCard>
       <InfoCard title="AI database scan" action={<button onClick={runScan} disabled={scanning} className="v3-btn-primary" data-testid="creator-ai-scan-btn"><Sparkles className="w-3.5 h-3.5" /> {scanning ? 'Scanning...' : 'Run AI scan'}</button>}>
+        {analysisSourceLabel && (
+          <p
+            className={`mb-3 text-[11px] rounded-md border px-2.5 py-1.5 ${analysisSource === 'deterministic_keyword_overlap' ? 'border-[#E5C99A] bg-[#FBF4E4] text-[#7A5A1E]' : 'border-[#CFE0D6] bg-[#EFF5F1] text-[#1F4A3A]'}`}
+            data-testid="creator-ai-scan-source"
+          >
+            {analysisSourceLabel}
+          </p>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {(matches.length ? matches : creators.slice(0, 8).map((creator) => ({ creator, score: creator.fit_score || creator.reliability || 70, reasons: [creatorSpecialty(creator)] }))).map((match) => {
             const creator = match.creator || match;
@@ -4444,6 +4586,11 @@ export const V3BusinessCaseContractStudio = () => {
   const { id, bundle } = useBusinessCaseBundle();
   const [contracts, setContracts] = useState([]);
   const [notice, setNotice] = useState('');
+  // Auto-generate both contracts on page open. Tracks the bootstrap so we
+  // only attempt it once per mount and surface a loading popup while the
+  // backend creates whichever templates are missing.
+  const [bootstrapState, setBootstrapState] = useState({ open: false, progress: 0, message: '', status: 'idle', error: '' });
+  const bootstrapAttempted = useRef(false);
   const value = numericProjectValue(getCase(bundle).estimated_value) || valueFromStrategySnapshot(bundle?.creative_snapshot || {}) || 0;
   const brand = getBrand(bundle);
   const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';
@@ -4451,21 +4598,62 @@ export const V3BusinessCaseContractStudio = () => {
   const refreshContracts = async () => {
     const rows = await v3ListContracts(id);
     setContracts(Array.isArray(rows) ? rows : []);
+    return Array.isArray(rows) ? rows : [];
   };
-  useEffect(() => { v3ListContracts(id).then((rows) => setContracts(Array.isArray(rows) ? rows : [])); }, [id]);
-
   const hasTemplate = (tpl) => contracts.some((c) => c.template === tpl);
-  const create = async (template) => {
+
+  // Internal: create a single contract from a template. Returns the created
+  // doc on success; throws on failure (caller decides how to surface).
+  const createOne = async (template) => {
+    const parties = template === 'brand_msa'
+      ? ['TASCK', brandDisplayName(brand)]
+      : ['TASCK', creatorName(bundle?.creator)];
+    return v3CreateContract({ business_case_id: id, template, value, parties });
+  };
+
+  // Bootstrap: load any existing contracts, then auto-generate the two
+  // expected templates if missing. Pops a modal so admin sees progress and
+  // doesn't think the page is frozen.
+  useEffect(() => {
+    if (!id || !bundle || bootstrapAttempted.current) return;
+    bootstrapAttempted.current = true;
+    (async () => {
+      try {
+        const existing = await refreshContracts();
+        const haveBrand = existing.some((c) => c.template === 'brand_msa');
+        const haveCreator = existing.some((c) => c.template === 'creator_principal');
+        if (haveBrand && haveCreator) {
+          // Nothing to do - both contracts already exist; skip popup.
+          return;
+        }
+        setBootstrapState({ open: true, progress: 10, message: 'Loading contracts…', status: 'running', error: '' });
+        // Generate the missing one(s). Progress jumps in two steps.
+        if (!haveBrand) {
+          setBootstrapState((p) => ({ ...p, message: 'Drafting Brand Service Agreement…', progress: 30 }));
+          await createOne('brand_msa');
+        }
+        if (!haveCreator) {
+          setBootstrapState((p) => ({ ...p, message: 'Drafting Creator Agreement…', progress: 70 }));
+          await createOne('creator_principal');
+        }
+        await refreshContracts();
+        setBootstrapState({ open: true, progress: 100, message: 'Contracts ready. You can review and edit them below.', status: 'complete', error: '' });
+      } catch (e) {
+        const msg = e?.response?.data?.detail || e?.message || 'Could not auto-generate contracts.';
+        setBootstrapState({ open: true, progress: 100, message: msg, status: 'failed', error: msg });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, bundle]);
+
+  const regenerate = async (template) => {
     setNotice('');
     try {
-      const parties = template === 'brand_msa'
-        ? ['TASCK', brandDisplayName(brand)]
-        : ['TASCK', creatorName(bundle?.creator)];
-      const doc = await v3CreateContract({ business_case_id: id, template, value, parties });
-      setContracts([doc, ...contracts.filter((c) => c.template !== template)]);
-      setNotice(`${template === 'brand_msa' ? 'Brand Service Agreement' : 'Creator Agreement'} generated from template. Edit if needed before sending.`);
+      const doc = await createOne(template);
+      setContracts((prev) => [doc, ...prev.filter((c) => c.template !== template)]);
+      setNotice(`${template === 'brand_msa' ? 'Brand Service Agreement' : 'Creator Agreement'} regenerated. Edit if needed before sending.`);
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not generate contract yet.');
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not regenerate contract.');
     }
   };
   const updateContract = async (cid, payload) => {
@@ -4526,17 +4714,16 @@ ${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`
   };
 
   return (
-    <FlowShell title="Contract Page" subtitle="Generate, edit, and share brand & creator contracts before deliverables begin.">
+    <FlowShell title="Contract Page" subtitle="Brand and Creator contracts are drafted automatically from the approved templates when you open this page. Edit any clause before sending.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="contract-notice">{notice}</div>}
-      <InfoCard title="Generate contracts from templates">
-        <p className="text-[12px] text-[#6E6657] mb-3">Each contract is pre-filled from the approved template. You can edit any clause before sending or downloading.</p>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => create('brand_msa')} className="v3-btn-primary" data-testid="generate-brand-contract-btn"><FileSignature className="w-3.5 h-3.5" /> {hasTemplate('brand_msa') ? 'Regenerate Brand (Service) Contract' : 'Generate Brand (Service) Contract'}</button>
-          <button onClick={() => create('creator_principal')} className="v3-btn-secondary" data-testid="generate-creator-contract-btn"><FileSignature className="w-3.5 h-3.5" /> {hasTemplate('creator_principal') ? 'Regenerate Creator Contract' : 'Generate Creator Contract'}</button>
-        </div>
-      </InfoCard>
       {contracts.length === 0 ? (
-        <InfoCard title="Contracts"><p className="text-[13px] text-[#8A8A8A]">No contracts drafted yet. Use the buttons above to generate brand and creator contracts.</p></InfoCard>
+        <InfoCard title="Contracts">
+          <p className="text-[13px] text-[#8A8A8A]">
+            {bootstrapState.open && bootstrapState.status === 'running'
+              ? 'Drafting contracts from the approved templates - this only takes a moment.'
+              : 'No contracts drafted yet for this Business Case.'}
+          </p>
+        </InfoCard>
       ) : (
         <InfoCard title={`Drafted contracts (${contracts.length})`}>
           {contracts.map((c) => (
@@ -4553,12 +4740,78 @@ ${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`
           ))}
         </InfoCard>
       )}
+      {/* Quiet "Regenerate" controls. Auto-generation runs on page open; these
+          are only here for the rare case where admin wants to start over from
+          the template after editing the project value or creator. */}
+      {contracts.length > 0 && (
+        <InfoCard title="Regenerate from template">
+          <p className="text-[12px] text-[#6E6657] mb-3">Contracts are pre-filled automatically when this page opens. Use these only if you want to discard your edits and restart from the approved template.</p>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => regenerate('brand_msa')} className="v3-btn-secondary text-[11px]" data-testid="regenerate-brand-contract-btn">
+              <RotateCcw className="w-3.5 h-3.5" /> {hasTemplate('brand_msa') ? 'Regenerate Brand (Service) Contract' : 'Generate Brand (Service) Contract'}
+            </button>
+            <button onClick={() => regenerate('creator_principal')} className="v3-btn-secondary text-[11px]" data-testid="regenerate-creator-contract-btn">
+              <RotateCcw className="w-3.5 h-3.5" /> {hasTemplate('creator_principal') ? 'Regenerate Creator Contract' : 'Generate Creator Contract'}
+            </button>
+          </div>
+        </InfoCard>
+      )}
       <InfoCard title="Next delivery page">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <p className="text-[13px] text-[#6E6657]">Open Deliverables once contracts have been sent.</p>
           <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/deliverables`))} className="v3-btn-primary" data-testid="contracts-open-deliverables-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Deliverables</button>
         </div>
       </InfoCard>
+
+      {/* ====================================================================
+          Contract bootstrap loading popup.
+          Auto-runs on page open. Status moves through:
+            running  -> "Loading contracts..." with progress bar
+            complete -> "Contracts ready. You can review and edit them below."
+            failed   -> error message + OK to dismiss
+          ==================================================================== */}
+      {bootstrapState.open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="contract-bootstrap-popup">
+          <div className="w-full max-w-md rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${bootstrapState.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : bootstrapState.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#EFF5F1] text-[#1F4A3A]'}`}>
+                {bootstrapState.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : bootstrapState.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+              </span>
+              <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                {bootstrapState.status === 'complete' ? 'Contracts ready' : bootstrapState.status === 'failed' ? 'Could not draft contracts' : 'Loading contracts'}
+              </h3>
+              <span className="ml-auto text-[12px] font-semibold text-[#4F3E2F]" data-testid="contract-bootstrap-percent">
+                {bootstrapState.progress}%
+              </span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-[#F4F2EC] overflow-hidden mb-3">
+              <div
+                className={`h-full transition-all duration-300 ease-out ${bootstrapState.status === 'failed' ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
+                style={{ width: `${Math.max(2, bootstrapState.progress)}%` }}
+                data-testid="contract-bootstrap-bar"
+              />
+            </div>
+            <p className="text-[13px] leading-6 text-[#4F3E2F]" data-testid="contract-bootstrap-message">
+              {bootstrapState.message || (bootstrapState.status === 'running' ? 'Working on it…' : '')}
+            </p>
+            {bootstrapState.status === 'running' && (
+              <p className="mt-1 text-[11px] text-[#6E6657]">Please keep this page open while TASCK drafts the contracts.</p>
+            )}
+            {(bootstrapState.status === 'complete' || bootstrapState.status === 'failed') && (
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBootstrapState((prev) => ({ ...prev, open: false }))}
+                  className="v3-btn-primary"
+                  data-testid="contract-bootstrap-close"
+                >
+                  OK
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </FlowShell>
   );
 };

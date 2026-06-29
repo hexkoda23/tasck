@@ -12,7 +12,6 @@ import {
   LogOut,
   MessageSquare,
   Moon,
-  Palette,
   Search,
   Settings,
   Sun,
@@ -24,8 +23,12 @@ import {
 const portalConfig = {
   brand: {
     label: 'Brand Portal',
-    exitPath: '/v1',
+    // Brand portal users must never get bounced back to the V1 role selector
+    // (which exposes Admin login). The logo click and the bottom nav button
+    // stay inside /brand. Logout is reachable via the top-bar Logout button.
+    exitPath: '/brand',
     loginPath: '/brand/login',
+    homePath: '/brand',
     items: [
       { path: '/brand', label: 'Overview', icon: LayoutDashboard, exact: true },
       { path: '/brand/projects', label: 'Projects', icon: FolderOpen },
@@ -39,8 +42,11 @@ const portalConfig = {
   },
   creator: {
     label: 'Creator Portal',
-    exitPath: '/v1',
+    // Same lock-down as the brand portal - creators should not be able to
+    // bounce out to the role selector and see Admin login.
+    exitPath: '/creator',
     loginPath: '/creator/login',
+    homePath: '/creator',
     items: [
       { path: '/creator', label: 'Overview', icon: LayoutDashboard, exact: true },
       { path: '/creator/briefs', label: 'Briefs', icon: Briefcase },
@@ -80,7 +86,9 @@ const V1PortalLayout = ({ portal }) => {
     <div className={`v3-shell ${darkMode ? 'v3-dark' : ''}`} data-testid={`v1-${portal}-layout`}>
       <aside className="v3-sidebar" data-testid={`v1-${portal}-sidebar`}>
         <div className="p-5 pb-3">
-          <div className="cursor-pointer" onClick={() => navigate('/v1')}>
+          {/* Logo click stays inside this portal so brand/creator users can't
+              bounce out to the V1 role selector (which exposes Admin login). */}
+          <div className="cursor-pointer" onClick={() => navigate(config.homePath || '/')}>
             <Logo variant="light" size="sm" />
           </div>
           <div className="mt-3 px-1">
@@ -102,9 +110,16 @@ const V1PortalLayout = ({ portal }) => {
         </nav>
 
         <div className="p-4 border-t border-[#E8E4DB]">
-          <button onClick={() => navigate(config.exitPath)} className="v3-nav-item text-[#8A8A8A] hover:text-[#5C5C5C]" data-testid={`v1-${portal}-exit`}>
-            <Palette className="w-4 h-4" strokeWidth={1.5} />
-            <span className="text-[13px]">Exit Portal</span>
+          {/* Sign out instead of "Exit Portal" so brand/creator users have a
+              clear logout action that returns them to their OWN login page,
+              not the V1 role selector. */}
+          <button
+            onClick={() => { logout(); navigate(config.loginPath); }}
+            className="v3-nav-item text-[#8A8A8A] hover:text-[#5C5C5C]"
+            data-testid={`v1-${portal}-exit`}
+          >
+            <LogOut className="w-4 h-4" strokeWidth={1.5} />
+            <span className="text-[13px]">Sign out</span>
           </button>
         </div>
       </aside>
