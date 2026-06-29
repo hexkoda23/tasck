@@ -735,7 +735,7 @@ async def _call_brand_about_tool(
 
     def _call_http_model() -> Optional[str]:
         if anthropic_key:
-            model = os.getenv("BRAND_ABOUT_LLM_MODEL") or "claude-sonnet-4-20250514"
+            model = os.getenv("BRAND_ABOUT_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
             try:
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
@@ -1868,27 +1868,90 @@ def make_v3_router(db):
                         # LLM unavailable but JSON-LD has a curated description.
                         scraped_about = jsonld_about[:1500]
                         about_source = "jsonld"
+                    elif scraped_about:
+                        # LLM unavailable. Keep whatever Pass 1/3/manifest captured —
+                        # og:description / meta description / twitter:description /
+                        # visible paragraph / manifest.json are all authored by the
+                        # brand and are valid "about" copy. Better to surface this
+                        # than to wipe to empty just because the LLM is down.
+                        about_source = "meta_or_page"
+                        scraped_about = scraped_about[:1500]
                     else:
-                        # No trustworthy source - DO NOT keep the meta/paragraph
-                        # noise that pass 1 / pass 3 set.
-                        scraped_about = ""
+                        # No source at all - leave empty and log so the admin can
+                        # debug LLM connectivity.
                         about_source = "none"
                         logger.warning(
-                            "Brand about scrape for %s produced no trustworthy result. "
-                            "LLM call returned None and no JSON-LD Organization.description "
-                            "was found. Check that TASCK_AI_PROVIDER and the matching key "
-                            "(EMERGENT_LLM_KEY or ANTHROPIC_API_KEY) are set.",
-                            brand_name,
+                            "Brand about scrape for %s produced no result. LLM unavailable "
+                            "and no og/meta/jsonld/paragraph/manifest description found on %s. "
+                            "Check TASCK_AI_PROVIDER and key envs (EMERGENT_LLM_KEY / ANTHROPIC_API_KEY).",
+                            brand_name, url,
                         )
             except httpx.HTTPError as exc:
                 # Network / 4xx / 5xx / SSL / timeout. Log with full context so
                 # we can debug from production logs instead of guessing.
                 logger.warning("Scrape HTTP error for %s (%s): %s", url, brand_name, exc)
+                website_fetch_failed = True
             except (ValueError, KeyError, TypeError) as exc:
                 logger.warning("Scrape parse error for %s (%s): %s", url, brand_name, exc)
+                website_fetch_failed = True
             except Exception as exc:  # noqa: BLE001
                 # Catch-all so a single bad page doesn't 500 the whole endpoint.
                 logger.warning("Scrape unexpected error for %s (%s): %s", url, brand_name, exc)
+                website_fetch_failed = True
+            else:
+                website_fetch_failed = False
+        else:
+            website_fetch_failed = True
+
+        # ---- SerpAPI rediscovery fallback ----
+        # If we couldn't reach the configured website (dead domain like
+        # `www.cocacola.org` for Coca Cola), use SerpAPI to find the real
+        # official site and retry the scrape ONCE. Without this fallback the
+        # admin sees "About: Not captured yet" for any brand whose CRM record
+        # has a stale or wrong domain.
+        if website_fetch_failed and not scraped_about and os.getenv("SERPAPI_API_KEY", "").strip():
+            try:
+                params = {"engine": "google", "q": f"{brand_name} official website", "api_key": os.getenv("SERPAPI_API_KEY", "").strip(), "num": 5}
+                search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
+                search_response.raise_for_status()
+                search_data = search_response.json()
+                blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com", "apps.apple.com", "play.google.com"}
+                current_domain = _domain_from_url(website or "")
+                candidate_url = ""
+                for result in search_data.get("organic_results") or []:
+                    link = str(result.get("link") or "")
+                    domain = _domain_from_url(link)
+                    if not domain or domain == current_domain:
+                        continue
+                    if any(domain.endswith(blocked) for blocked in blocked_domains):
+                        continue
+                    candidate_url = _normalise_website_url(link)
+                    break
+                if candidate_url:
+                    logger.info("Brand %s primary site %s unreachable; retrying scrape via SerpAPI-discovered URL %s", brand_name, website, candidate_url)
+                    retry_url = candidate_url if candidate_url.startswith("http") else f"https://{candidate_url}"
+                    try:
+                        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                            resp = await client.get(retry_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            resp.raise_for_status()
+                            final_url = str(resp.url).rstrip("/")
+                            html = resp.text
+                            og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                            meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                            twitter_desc = _re.search(r'<meta[^>]*name=["\']twitter:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                            if og_desc:
+                                scraped_about = html_module.unescape(og_desc.group(1)).strip()[:1500]
+                                about_source = "serpapi_meta"
+                            elif meta_desc:
+                                scraped_about = html_module.unescape(meta_desc.group(1)).strip()[:1500]
+                                about_source = "serpapi_meta"
+                            elif twitter_desc:
+                                scraped_about = html_module.unescape(twitter_desc.group(1)).strip()[:1500]
+                                about_source = "serpapi_meta"
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("SerpAPI rediscovery scrape failed for %s (%s): %s", brand_name, retry_url, exc)
+            except requests.RequestException as exc:
+                logger.warning("SerpAPI rediscovery request failed for %s: %s", brand_name, exc)
 
         if not scraped_about:
             scraped_about = str(brand.get("about") or brand.get("brand_about") or "")

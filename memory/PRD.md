@@ -491,6 +491,32 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Brand About scraping always populates accurately — Coca Cola dead-domain + LLM-failure wipe fixed)
+
+### Bug
+Admin reported `About the brand` field staying empty on brand detail pages even after clicking "Scrape for brand details". Two distinct backend bugs were combining:
+
+1. **LLM-failure wipe was discarding valid meta content** (`v3_routes.py` ~L1867-1882). Pass 1 (og:description), Pass 2 (JSON-LD), Pass 3 (visible paragraphs) and the manifest.json description were captured into `scraped_about` correctly. But the LLM-summary step at L1867 then wiped `scraped_about = ""` whenever the LLM call returned None AND no JSON-LD `Organization.description` was present — even though the og/meta/twitter description, paragraph text and PWA manifest descriptions are all authored content explicitly written by the brand. Net effect: when the Anthropic key or Emergent key was down for even a second, the admin saw "Not captured yet" instead of the brand's own published copy.
+
+2. **No SerpAPI rediscovery when the configured website is dead.** Coca Cola's CRM record has `website='www.cocacola.org'` which is unreachable (DNS / 4xx). The existing SerpAPI fallback only fires when `not website`, so a wrong/stale domain produced zero scrape data forever — even though the canonical Coca-Cola site `www.coca-cola.com` is fully scrapable.
+
+3. **`BRAND_ABOUT_LLM_MODEL` default pointed at a non-existent model** (`claude-sonnet-4-20250514`) so every Anthropic call returned 404 even though the key was valid. The alignment analyzer correctly uses `claude-sonnet-4-5` from env.
+
+### Fix (`backend/v3_routes.py`)
+- `_call_brand_about_tool`: Anthropic model now defaults to `os.getenv("BRAND_ABOUT_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"` (was `claude-sonnet-4-20250514`).
+- Brand-about pipeline now **never wipes valid meta/jsonld/paragraph content when LLM fails**. The order of preference is now: LLM-summarised (`about_source=llm`) → JSON-LD `Organization.description` (`about_source=jsonld`) → og/meta/twitter/paragraph/manifest (`about_source=meta_or_page`) → empty (`about_source=none`, logged).
+- **SerpAPI rediscovery fallback**: when the configured website returns a network/HTTP error AND no about was captured, the route now issues a `{brand_name} official website` query to SerpAPI, picks the first non-blocked organic result that isn't the same dead domain, retries the scrape against the discovered URL, and captures the new og/meta/twitter description. Tagged as `about_source=serpapi_meta`. The discovered URL also overwrites `website` so the dead `www.cocacola.org` is upgraded to `https://www.coca-cola.com/us/en`.
+
+### Verified live (preview)
+- `POST /api/v3/brands/brand-75922272db/scrape` (Coca Cola, dead site) → about="Explore ways you can be closer to the ones you love with meals worth sharing, festive playlists, and more holiday magic from Coke®." (162 chars, `about_source=serpapi_meta`). Website upgraded to `https://www.coca-cola.com/us/en`.
+- `POST /api/v3/brands/brand-ae9b4d59/scrape` (We Yan, LLM now works) → about=687 chars LLM-summarised description of "mobile technology platform that integrates encrypted messaging, digital payments, e-commerce, and logistics services into a single application…" (`about_source=llm`).
+- `POST /api/v3/brands/brand-484ce2bc64/scrape` (CJID, control) → about=510 chars LLM-summarised (`about_source=llm`).
+- UI smoke: `/admin/crm/brand-75922272db` brand detail header now shows the iconic Coca-Cola logo and the About-the-brand field is fully populated.
+
+### Files touched
+- `/app/backend/v3_routes.py` (3 edits: model default + LLM-failure fallthrough + SerpAPI rediscovery branch).
+
+
 ## Update — 25 Feb 2026 (Brand logos on CRM page now resolve properly — We Yan / Coca Cola / global fix)
 
 ### Bug
