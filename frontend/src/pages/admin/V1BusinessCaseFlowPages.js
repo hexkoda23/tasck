@@ -256,8 +256,13 @@ const stepperConfig = (id, stage, pathname) => {
   }
   return {
     links: [
+      // Planning lands on its summary page (project value, brand/creator
+      // info, timelines, invoicing, links to Contract Studio + Feedback).
+      // Delivery lands directly on the Deliverables page - per Chioma's
+      // mapping, that is the only page in the Delivery phase. Reporting
+      // covers the Final Report.
       ['Planning', adminRoute(`/business-cases/${id}/plan/planning`)],
-      ['Delivery', adminRoute(`/business-cases/${id}/delivery/summary`)],
+      ['Delivery', adminRoute(`/business-cases/${id}/delivery/deliverables`)],
       ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
     ],
     currentIndex: ({ deliver: 1, reporting: 2, closed: 2 }[stage] ?? 0),
@@ -267,7 +272,9 @@ const stepperConfig = (id, stage, pathname) => {
 export const businessCasePhasePath = (id, bc = {}) => {
   const stage = bc.stage || 'connect';
   if (stage === 'closed' || stage === 'reporting') return adminRoute(`/business-cases/${id}/reporting/final-report`);
-  if (stage === 'deliver') return adminRoute(`/business-cases/${id}/delivery/summary`);
+  // Backend `deliver` stage is the Business Case area (Planning -> Delivery
+  // -> Reporting). Default landing is the Planning summary page.
+  if (stage === 'deliver') return adminRoute(`/business-cases/${id}/plan/planning`);
   if (stage === 'plan') {
     // Framing sub-steps 2..5 live on backend `plan` but UI shows them under /frame/*.
     const plan = bc.plan || {};
@@ -3512,178 +3519,301 @@ export const V3BusinessCasePlanWaitingBrand = () => {
   return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studio...</div>;
 };
 
-// Planning (Business Case area, separate from Delivery).
-// Per Chioma: Planning covers six topics - budgeting, timelines, contracts,
-// invoicing, deliverables, feedback. Each card summarises the planned scope
-// and links into Delivery for execution. The Feedback card is reusable -
-// admin stays on the page and re-sends feedback requests as needed.
-export const V3BusinessCasePlanPlanning = () => {
+// ============================================================================
+// Planning - Feedback Page (V3BusinessCasePlanFeedback)
+// ============================================================================
+//
+// What this page is for
+// ---------------------
+// A dedicated, reusable Feedback page that sits inside the Planning phase of
+// the Business Case area. Per Chioma's clarification (2026-06-29): TASCK
+// should be able to request feedback from BOTH brand and creative
+// REGULARLY during a project, and the Feedback page MUST NOT open a new
+// page on send - admin keeps composing and sending from here.
+//
+// Backend contract
+// ----------------
+// POST /api/v3/business-cases/{bc_id}/feedback/request
+//   payload: { target: "brand" | "creator", body: string, subject?: string }
+//   side effects:
+//     - queues an email via queue_email() to the brand/creator email on file
+//     - inserts a v3_feedback_requests document
+//   returns: { ok, feedback_request, email }
+//
+// GET /api/v3/business-cases/{bc_id}/feedback/requests
+//   returns: latest 100 v3_feedback_requests for this Business Case (DESC)
+//
+// Page guarantees
+// ---------------
+//   1. Admin can target either Brand or Creator with a radio toggle.
+//   2. Subject is optional - the backend supplies a sensible default if
+//      omitted ("TASCK feedback request - {project_title}").
+//   3. The page reloads the history after every send so the most recent
+//      request appears at the top without a manual refresh.
+//   4. The page does NOT navigate away on a successful send. The textarea
+//      is cleared and a green confirmation message replaces it.
+//   5. Validation:
+//        - body is required (frontend + backend both enforce non-empty)
+//        - the selected target must have an email on file (backend 400 if not)
+//
+// Where to find related pieces
+// ----------------------------
+//   - Backend endpoint: backend/v3_routes.py - search "feedback/request"
+//   - API helpers:      frontend/src/lib/v3api.js - v3SendFeedbackRequest,
+//                       v3ListFeedbackRequests
+//   - Route mount:      frontend/src/App.js - /admin/business-cases/:id/plan/feedback
+//   - Sister Planning pages: Delivery Summary (the Planning landing) and
+//     Contract Studio - they sit alongside this page in Planning. Admin can
+//     come back to this Feedback page at any time during the project.
+// ============================================================================
+export const V3BusinessCasePlanFeedback = () => {
   const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const creator = bundle?.creator || {};
-  const brainstorm = bundle?.brainstorm_round || {};
-  const snapshot = bundle?.creative_snapshot || {};
-  const deliverables = Array.isArray(bundle?.deliverables) ? bundle.deliverables : [];
-  const invoices = Array.isArray(bundle?.invoices) ? bundle.invoices : [];
-  const contract = bundle?.contract || null;
-  const projectValue = numericProjectValue(bc.estimated_value) || valueFromStrategySnapshot(snapshot);
+  const brandEmail = brand?.email || bc?.brand_contact_snapshot?.email || '';
+  const creatorEmail = creator?.email || creator?.contact_email || '';
 
-  const budgetPlan = Array.isArray(brainstorm.budget_plan) ? brainstorm.budget_plan : [];
-  const timelinePlan = brainstorm.phase_5_execution || brainstorm.timeline || null;
+  // Compose state. We deliberately keep these as local component state so
+  // navigating away from /plan/feedback and coming back resets the form,
+  // but the history (from the backend) re-fetches and stays accurate.
+  const [target, setTarget] = useState('brand');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [sending, setSending] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
-  // Feedback card state - sticks within this page; no navigation.
-  const [feedbackTarget, setFeedbackTarget] = useState('brand');
-  const [feedbackBody, setFeedbackBody] = useState('');
-  const [feedbackSending, setFeedbackSending] = useState(false);
-  const [feedbackNotice, setFeedbackNotice] = useState('');
-  const [feedbackHistory, setFeedbackHistory] = useState([]);
-  useEffect(() => {
-    if (!id) return;
-    v3ListFeedbackRequests(id).then((rows) => {
-      setFeedbackHistory(Array.isArray(rows) ? rows : []);
-    }).catch(() => setFeedbackHistory([]));
+  // Load the request history on mount and whenever the business case id
+  // changes. Wrapped so the Refresh button below can reuse it.
+  const loadHistory = useCallback(() => {
+    if (!id) return Promise.resolve();
+    setHistoryLoading(true);
+    return v3ListFeedbackRequests(id)
+      .then((rows) => setHistory(Array.isArray(rows) ? rows : []))
+      .catch(() => setHistory([]))
+      .finally(() => setHistoryLoading(false));
   }, [id]);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  // Quick-fill templates so admin doesn't always start from a blank textarea.
+  // Picking a template populates the body input; admin can still edit before
+  // sending. These are intentionally short so the brand/creator reads them.
+  const templates = [
+    {
+      key: 'midpoint',
+      label: 'Midpoint check-in',
+      body: 'We are at the midpoint of the project. How is the collaboration feeling so far? Anything we should adjust before the next phase?',
+    },
+    {
+      key: 'post_milestone',
+      label: 'Post-milestone',
+      body: 'Now that we have hit this milestone, please share what worked, what did not, and any blockers you are seeing for the next round.',
+    },
+    {
+      key: 'pre_launch',
+      label: 'Pre-launch',
+      body: 'Before launch, please confirm everything reads correctly from your end and share any final concerns about the deliverables, timing, or approvals.',
+    },
+    {
+      key: 'general',
+      label: 'General check-in',
+      body: 'Sharing this short note to ask for your honest feedback on how TASCK is supporting the project so far. What is going well? What should we improve?',
+    },
+  ];
+
   const sendFeedback = async () => {
-    setFeedbackNotice('');
-    if (!feedbackBody.trim()) {
-      setFeedbackNotice('Write a short message before sending.');
+    setNotice('');
+    const trimmed = body.trim();
+    if (!trimmed) {
+      setNotice('Write a short message before sending.');
       return;
     }
-    setFeedbackSending(true);
+    setSending(true);
     try {
-      const result = await v3SendFeedbackRequest(id, { target: feedbackTarget, body: feedbackBody.trim() });
-      setFeedbackBody('');
-      setFeedbackNotice(result?.email?.status === 'sent'
-        ? `Feedback request sent to ${result?.feedback_request?.recipient || feedbackTarget}.`
-        : `Feedback request queued for ${result?.feedback_request?.recipient || feedbackTarget}.`);
-      const updated = await v3ListFeedbackRequests(id);
-      setFeedbackHistory(Array.isArray(updated) ? updated : []);
+      const result = await v3SendFeedbackRequest(id, {
+        target,
+        body: trimmed,
+        ...(subject.trim() ? { subject: subject.trim() } : {}),
+      });
+      // Keep the admin on this page. Clear the body but keep the target +
+      // subject so they can fire a follow-up message quickly.
+      setBody('');
+      const status = result?.email?.status || 'queued';
+      const recipient = result?.feedback_request?.recipient || target;
+      const deliveryError = result?.email?.delivery_error;
+      if (status === 'sent') {
+        setNotice(`Feedback request sent to ${recipient}.`);
+      } else if (status === 'delivery_failed') {
+        setNotice(`Email queued but delivery failed: ${deliveryError || 'unknown reason'}.`);
+      } else {
+        setNotice(`Feedback request queued for ${recipient} (status: ${status}).`);
+      }
+      await loadHistory();
     } catch (e) {
-      setFeedbackNotice(e?.response?.data?.detail || e?.message || 'Could not send feedback request.');
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not send the feedback request.');
     } finally {
-      setFeedbackSending(false);
+      setSending(false);
     }
   };
 
   return (
     <FlowShell
-      title="Planning"
-      subtitle="Plan the project across six areas: budgeting, timelines, contracts, invoicing, deliverables, and feedback. Open Delivery to execute. The Feedback card stays on this page so you can come back to request feedback from brand and creatives at any point."
-      nextAction="Open Delivery when planning is locked, to approve budget, generate and sign contracts, and run deliverables."
+      title="Feedback (Planning)"
+      subtitle="Request feedback from the brand and creatives at any point during the project. Coming back to this page sends another round - it never opens a new screen."
+      nextAction="Use this page regularly. Past requests are logged below."
     >
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* 1. Budgeting */}
-        <InfoCard title="Budgeting">
-          <p className="text-[12px] text-[#6E6657] mb-2">Approved value: <strong>{projectValue ? formatNairaV3(projectValue) : 'Not approved yet'}</strong></p>
-          {budgetPlan.length === 0 ? (
-            <p className="text-[12px] text-[#8A8A8A]">No budget breakdown captured yet during Brainstorm.</p>
-          ) : (
-            <ul className="text-[12px] text-[#4F3E2F] list-disc ml-5 space-y-1">
-              {budgetPlan.slice(0, 6).map((row, idx) => (
-                <li key={idx}>{row.line || row.label || 'Budget line'}: <strong>{row.amount ? formatNairaV3(row.amount) : 'TBD'}</strong>{row.owner ? ` — ${row.owner}` : ''}</li>
-              ))}
-            </ul>
-          )}
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/summary`))} className="v3-btn-secondary mt-3 text-[11px]" data-testid="planning-budget-open-delivery">
-            <ArrowRight className="w-3.5 h-3.5" /> Approve budget in Delivery
-          </button>
-        </InfoCard>
+      {/* Compose card */}
+      <InfoCard title="Send a feedback request">
+        {/* Recipient picker */}
+        <div className="flex flex-wrap items-center gap-3 mb-2">
+          <label className="text-[12px] flex items-center gap-1.5" data-testid="feedback-target-brand-label">
+            <input
+              type="radio"
+              name="feedback-target"
+              value="brand"
+              checked={target === 'brand'}
+              onChange={() => setTarget('brand')}
+              data-testid="feedback-target-brand"
+            />
+            Brand{brandEmail ? ` (${brandEmail})` : ' (no email on file)'}
+          </label>
+          <label className="text-[12px] flex items-center gap-1.5" data-testid="feedback-target-creator-label">
+            <input
+              type="radio"
+              name="feedback-target"
+              value="creator"
+              checked={target === 'creator'}
+              onChange={() => setTarget('creator')}
+              data-testid="feedback-target-creator"
+            />
+            Creator{creatorEmail ? ` (${creatorEmail})` : ' (no email on file)'}
+          </label>
+        </div>
 
-        {/* 2. Timelines */}
-        <InfoCard title="Timelines">
-          {timelinePlan ? (
-            <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{typeof timelinePlan === 'string' ? timelinePlan : (timelinePlan.timeline || timelinePlan.schedule || JSON.stringify(timelinePlan).slice(0, 240))}</p>
-          ) : (
-            <p className="text-[12px] text-[#8A8A8A]">No timeline captured yet — capture milestones during Brainstorm or below.</p>
-          )}
-          <p className="text-[11px] text-[#6E6657] mt-2">Use this to lock the launch window and the brand/creator approval rhythm before Delivery starts.</p>
-        </InfoCard>
+        {/* Optional subject override */}
+        <label className="block text-[11px] text-[#6E6657] mb-1">Subject (optional)</label>
+        <input
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          placeholder={`TASCK feedback request - ${bc.title || 'this project'}`}
+          className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none mb-2"
+          data-testid="feedback-subject"
+        />
 
-        {/* 3. Contracts */}
-        <InfoCard title="Contracts">
-          <p className="text-[12px] text-[#4F3E2F]">
-            {contract ? <>Status: <strong>{humanStatus(contract.status || 'draft')}</strong>{contract.template ? ` (${humanStatus(contract.template)})` : ''}</> : 'No contract drafted yet.'}
-          </p>
-          <p className="text-[11px] text-[#6E6657] mt-1">Contracts are generated, sent, and signed inside Delivery.</p>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/contracts`))} className="v3-btn-secondary mt-3 text-[11px]" data-testid="planning-contract-open">
-            <ArrowRight className="w-3.5 h-3.5" /> Open Contract Studio
-          </button>
-        </InfoCard>
-
-        {/* 4. Invoicing */}
-        <InfoCard title="Invoicing">
-          {invoices.length === 0 ? (
-            <p className="text-[12px] text-[#8A8A8A]">No invoices on record yet.</p>
-          ) : (
-            <ul className="text-[12px] text-[#4F3E2F] list-disc ml-5 space-y-1">
-              {invoices.slice(0, 5).map((inv) => (
-                <li key={inv.id}>{humanStatus(inv.kind || 'invoice')}: <strong>{inv.amount ? formatNairaV3(inv.amount) : 'TBD'}</strong> — {humanStatus(inv.status || 'issued')}{inv.paid_at ? ` (paid ${formatDateTime(inv.paid_at)})` : ''}</li>
-              ))}
-            </ul>
-          )}
-          <p className="text-[11px] text-[#6E6657] mt-2">Invoices can be paid off-platform. Mark paid from the invoice row when confirmation is received.</p>
-        </InfoCard>
-
-        {/* 5. Deliverables */}
-        <InfoCard title="Deliverables">
-          <p className="text-[12px] text-[#4F3E2F]">{deliverables.length} deliverable{deliverables.length === 1 ? '' : 's'} planned.</p>
-          {deliverables.length > 0 && (
-            <ul className="text-[12px] text-[#4F3E2F] list-disc ml-5 mt-2 space-y-1">
-              {deliverables.slice(0, 5).map((d) => (
-                <li key={d.id}>{d.title || d.item || 'Deliverable'} — {humanStatus(d.status || 'planned')}</li>
-              ))}
-            </ul>
-          )}
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/deliverables`))} className="v3-btn-secondary mt-3 text-[11px]" data-testid="planning-deliverables-open">
-            <ArrowRight className="w-3.5 h-3.5" /> Open Deliverables
-          </button>
-        </InfoCard>
-
-        {/* 6. Feedback - reusable, no navigation */}
-        <InfoCard title="Feedback (reusable)">
-          <p className="text-[11px] text-[#6E6657] mb-2">Request feedback from {brand?.company || 'the brand'} or {creator?.name || 'the creator'} at any point during the project. Come back to this card whenever a new round of feedback is needed.</p>
-          <div className="flex flex-wrap items-center gap-2 mb-2">
-            <label className="text-[12px] flex items-center gap-1.5">
-              <input type="radio" name="feedback-target" value="brand" checked={feedbackTarget === 'brand'} onChange={() => setFeedbackTarget('brand')} data-testid="planning-feedback-target-brand" /> Brand
-            </label>
-            <label className="text-[12px] flex items-center gap-1.5">
-              <input type="radio" name="feedback-target" value="creator" checked={feedbackTarget === 'creator'} onChange={() => setFeedbackTarget('creator')} data-testid="planning-feedback-target-creator" /> Creator
-            </label>
-          </div>
-          <textarea
-            value={feedbackBody}
-            onChange={(e) => setFeedbackBody(e.target.value)}
-            rows={3}
-            placeholder="What feedback are you looking for? E.g. 'How is the creator collaboration feeling so far? Anything we should adjust before the next phase?'"
-            className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
-            data-testid="planning-feedback-body"
-          />
-          <div className="flex flex-wrap items-center gap-2 mt-2">
-            <button onClick={sendFeedback} disabled={feedbackSending} className="v3-btn-primary text-[11px]" data-testid="planning-feedback-send">
-              <Mail className="w-3.5 h-3.5" /> {feedbackSending ? 'Sending…' : `Send to ${feedbackTarget}`}
+        {/* Quick-fill templates */}
+        <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Quick start</p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {templates.map((tpl) => (
+            <button
+              key={tpl.key}
+              type="button"
+              onClick={() => setBody(tpl.body)}
+              className="v3-btn-secondary text-[11px]"
+              data-testid={`feedback-template-${tpl.key}`}
+            >
+              {tpl.label}
             </button>
-          </div>
-          {feedbackNotice && <p className="mt-2 text-[11px] text-[#1F4A3A]">{feedbackNotice}</p>}
-          {feedbackHistory.length > 0 && (
-            <div className="mt-3 border-t border-[#E8E4DB] pt-2">
-              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Recent requests</p>
-              <ul className="text-[11px] text-[#4F3E2F] space-y-1">
-                {feedbackHistory.slice(0, 5).map((row) => (
-                  <li key={row.id}>
-                    <strong>{row.target}</strong> · {formatDateTime(row.created_at)} · {humanStatus(row.email_status || 'queued')}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </InfoCard>
-      </div>
+          ))}
+        </div>
+
+        {/* Body */}
+        <label className="block text-[11px] text-[#6E6657] mb-1">Message</label>
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={5}
+          placeholder="What feedback are you looking for? Be specific so the brand/creator can respond directly."
+          className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
+          data-testid="feedback-body"
+        />
+
+        {/* Send + status notice */}
+        <div className="flex flex-wrap items-center gap-2 mt-3">
+          <button
+            type="button"
+            onClick={sendFeedback}
+            disabled={sending}
+            className="v3-btn-primary text-[12px]"
+            data-testid="feedback-send"
+          >
+            <Mail className="w-3.5 h-3.5" /> {sending ? 'Sending…' : `Send to ${target}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/summary`))}
+            className="v3-btn-secondary text-[11px]"
+            data-testid="feedback-back-to-planning"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to Planning
+          </button>
+        </div>
+        {notice && (
+          <p className="mt-2 text-[12px] text-[#1F4A3A]" data-testid="feedback-notice">{notice}</p>
+        )}
+      </InfoCard>
+
+      {/* History */}
+      <InfoCard
+        title="Recent feedback requests"
+        action={(
+          <button type="button" onClick={() => loadHistory()} className="v3-btn-secondary text-[11px]" data-testid="feedback-refresh">
+            Refresh
+          </button>
+        )}
+      >
+        {historyLoading ? (
+          <p className="text-[12px] text-[#8A8A8A]">Loading history…</p>
+        ) : history.length === 0 ? (
+          <p className="text-[12px] text-[#8A8A8A]">No feedback requests sent yet for this Business Case. Use the form above to send the first one.</p>
+        ) : (
+          <ul className="text-[12px] text-[#4F3E2F] space-y-2 max-h-[420px] overflow-y-auto pr-1" data-testid="feedback-history-list">
+            {history.map((row) => (
+              <li key={row.id} className="border border-[#E8E4DB] rounded-md p-2 bg-[#FBFAF7]">
+                <p className="text-[11px] text-[#6E6657]">
+                  <strong>{row.target === 'brand' ? 'Brand' : 'Creator'}</strong>
+                  {' · '}
+                  {row.recipient || 'no recipient'}
+                  {' · '}
+                  {formatDateTime(row.created_at)}
+                  {' · '}
+                  <span className={row.email_status === 'sent' ? 'text-[#1F4A3A]' : 'text-[#7A5A1E]'}>
+                    {humanStatus(row.email_status || 'queued')}
+                  </span>
+                </p>
+                <p className="text-[11px] text-[#4F3E2F] mt-1 whitespace-pre-wrap">{row.body}</p>
+                {row.delivery_error && (
+                  <p className="text-[10px] text-[#B54A37] mt-1">Delivery error: {row.delivery_error}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </InfoCard>
     </FlowShell>
   );
 };
 
+
+// ============================================================================
+// Planning landing (V3BusinessCaseDeliverySummary)
+// ============================================================================
+//
+// Despite its V3-era function name, this component IS the Planning phase
+// landing page in the V1 admin (mounted at /plan/planning and at the legacy
+// /delivery/summary alias). Per Chioma's latest mapping the Planning phase
+// groups three pages:
+//   1. This page (Planning summary) - project at a glance, brand + creator
+//      details, brainstorming concept, TIMELINES, and INVOICING.
+//   2. Contract Studio (/delivery/contracts) - linked from here.
+//   3. Feedback (/plan/feedback) - V3BusinessCasePlanFeedback above.
+//
+// Delivery phase contains the Deliverables page only. Reporting contains
+// the Final Report. The stepper handles those links.
+// ============================================================================
 export const V3BusinessCaseDeliverySummary = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
@@ -3693,11 +3823,21 @@ export const V3BusinessCaseDeliverySummary = () => {
   const creator = bundle?.creator || {};
   const snapshot = bundle?.creative_snapshot || {};
   const alignment = bundle?.alignment_snapshot || {};
+  const brainstorm = bundle?.brainstorm_round || {};
+  const invoices = Array.isArray(bundle?.invoices) ? bundle.invoices : [];
   const approvedValue = numericProjectValue(bc.estimated_value);
   const strategyValue = valueFromStrategySnapshot(snapshot);
   const projectValue = approvedValue || strategyValue;
   const [projectValueInput, setProjectValueInput] = useState(projectValue ? String(projectValue) : '');
   const [valueNotice, setValueNotice] = useState('');
+  // Timelines: prefer Phase 5 execution plan from the brainstorm round, then
+  // fall back to any stored timeline string on the round itself.
+  const timelinePlan = brainstorm.phase_5_execution || brainstorm.timeline || null;
+  const timelineText = (() => {
+    if (!timelinePlan) return '';
+    if (typeof timelinePlan === 'string') return timelinePlan;
+    return timelinePlan.timeline || timelinePlan.schedule || timelinePlan.summary || '';
+  })();
   useEffect(() => {
     setProjectValueInput(projectValue ? String(projectValue) : '');
   }, [projectValue]);
@@ -3722,7 +3862,11 @@ export const V3BusinessCaseDeliverySummary = () => {
     return Array.isArray(exec?.rows) ? exec.rows : [];
   })();
   return (
-    <FlowShell title="Delivery Summary" subtitle="Execution view for this Business Case. Approve the budget, generate and sign contracts, and track deliverables." nextAction="Open Contract Studio to generate and send brand & creator agreements.">
+    <FlowShell
+      title="Planning"
+      subtitle="Planning phase landing. Confirm the project value, review brand & creator details, lock timelines, manage invoicing, and open the Contract Studio or Feedback page when needed."
+      nextAction="Lock the timeline and invoicing here, generate contracts in Contract Studio, request feedback from the Feedback page. Move to Delivery when deliverables start."
+    >
       <InfoCard title="Project at a glance">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{cleanV1Text(bc.title)}</div>
@@ -3782,11 +3926,60 @@ export const V3BusinessCaseDeliverySummary = () => {
           </div>
         )}
       </InfoCard>
-      <InfoCard title="Next">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[13px] text-[#6E6657]">Open the contract page to generate brand and creator agreements from approved templates.</p>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/contracts`))} className="v3-btn-primary" data-testid="delivery-open-contract-btn"><FileSignature className="w-3.5 h-3.5" /> Open contract page</button>
+      {/* Timelines (Planning) - lock the schedule before Delivery starts. */}
+      <InfoCard title="Timelines">
+        {timelineText ? (
+          <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap">{timelineText}</p>
+        ) : (
+          <p className="text-[13px] text-[#8A8A8A]">No timeline captured yet. Add the launch window, approval rhythm, production windows, and reporting period during the Brainstorm round so it appears here.</p>
+        )}
+        <p className="mt-2 text-[11px] text-[#6E6657]">Lock the launch window and approval rhythm here. Delivery uses these dates when running deliverables.</p>
+      </InfoCard>
+
+      {/* Invoicing (Planning) - issued and paid status. Invoices can be paid off-platform. */}
+      <InfoCard title="Invoicing">
+        {invoices.length === 0 ? (
+          <p className="text-[13px] text-[#8A8A8A]">No invoices on record yet for this Business Case.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
+            <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
+              <thead className="bg-[#F4F2EC] text-[#6E6657]">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Kind</th>
+                  <th className="px-3 py-2 font-semibold">Amount</th>
+                  <th className="px-3 py-2 font-semibold">Status</th>
+                  <th className="px-3 py-2 font-semibold">Issued</th>
+                  <th className="px-3 py-2 font-semibold">Paid</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#E8E4DB] bg-white text-[#4F3E2F]">
+                {invoices.map((inv) => (
+                  <tr key={inv.id}>
+                    <td className="px-3 py-2 align-top">{humanStatus(inv.kind || 'invoice')}</td>
+                    <td className="px-3 py-2 align-top">{inv.amount ? formatNairaV3(inv.amount) : 'TBD'}</td>
+                    <td className="px-3 py-2 align-top">{humanStatus(inv.status || 'issued')}</td>
+                    <td className="px-3 py-2 align-top">{inv.issued_at ? formatDateTime(inv.issued_at) : '-'}</td>
+                    <td className="px-3 py-2 align-top">{inv.paid_at ? formatDateTime(inv.paid_at) : 'Not paid'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="mt-2 text-[11px] text-[#6E6657]">Invoices can be paid off-platform. Mark them paid from the invoice record when confirmation is received.</p>
+      </InfoCard>
+
+      {/* Other Planning pages */}
+      <InfoCard title="Other Planning pages">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/contracts`))} className="v3-btn-primary justify-start" data-testid="planning-open-contract-btn">
+            <FileSignature className="w-3.5 h-3.5" /> Open Contract Studio
+          </button>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/feedback`))} className="v3-btn-secondary justify-start" data-testid="planning-open-feedback-btn">
+            <Mail className="w-3.5 h-3.5" /> Open Feedback page
+          </button>
         </div>
+        <p className="mt-2 text-[11px] text-[#6E6657]">Contract Studio generates brand & creator agreements from approved templates. The Feedback page is reusable - admin can return at any time to send fresh feedback requests.</p>
       </InfoCard>
     </FlowShell>
   );
@@ -4605,7 +4798,7 @@ export const V3BusinessCaseFinalReport = () => {
           </div>
         </>
       )}
-      <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/summary`))} className="text-[12px] text-[#1F4A3A] hover:underline mt-4 inline-flex items-center gap-1"><ArrowLeft className="w-3.5 h-3.5" /> Back to Delivery Summary</button>
+      <button onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))} className="text-[12px] text-[#1F4A3A] hover:underline mt-4 inline-flex items-center gap-1"><ArrowLeft className="w-3.5 h-3.5" /> Back to Planning</button>
     </FlowShell>
   );
 };

@@ -101,7 +101,7 @@ import {
   V3BusinessCasePlanCreatorBriefingCall as V1BusinessCasePlanCreatorBriefingCall,
   V3BusinessCasePlanStrategySnapshot as V1BusinessCasePlanStrategySnapshot,
   V3BusinessCasePlanWaitingBrand as V1BusinessCasePlanWaitingBrand,
-  V3BusinessCasePlanPlanning as V1BusinessCasePlanPlanning,
+  V3BusinessCasePlanFeedback as V1BusinessCasePlanFeedback,
   V3BusinessCaseDeliverySummary as V1BusinessCaseDeliverySummary,
   V3BusinessCaseContractStudio as V1BusinessCaseContractStudio,
   V3BusinessCaseDeliveryWaitingSignatures as V1BusinessCaseDeliveryWaitingSignatures,
@@ -445,10 +445,16 @@ function AppRoutes() {
         <Route path="business-cases/:id/plan/creator-briefing-call" element={<V1BusinessCasePlanCreatorBriefingCall />} />
         <Route path="business-cases/:id/plan/strategy-snapshot" element={<V1BusinessCasePlanStrategySnapshot />} />
         <Route path="business-cases/:id/plan/waiting-brand" element={<V1BusinessCasePlanWaitingBrand />} />
-        {/* Planning (Business Case area): budgeting, timelines, contracts,
-            invoicing, deliverables, feedback - on a dedicated page distinct
-            from Delivery. */}
-        <Route path="business-cases/:id/plan/planning" element={<V1BusinessCasePlanPlanning />} />
+        {/* Planning phase (Business Case area). Three pages:
+              1. /plan/planning -> Planning landing (project value, brand/
+                 creator details, timelines, invoicing). Same component as
+                 the legacy /delivery/summary alias.
+              2. /delivery/contracts -> Contract Studio. Conceptually part of
+                 Planning even though the URL still says /delivery.
+              3. /plan/feedback -> dedicated reusable Feedback page.
+            Delivery phase has Deliverables only. Reporting has Final Report. */}
+        <Route path="business-cases/:id/plan/planning" element={<V1BusinessCaseDeliverySummary />} />
+        <Route path="business-cases/:id/plan/feedback" element={<V1BusinessCasePlanFeedback />} />
         <Route path="business-cases/:id/delivery/summary" element={<V1BusinessCaseDeliverySummary />} />
         <Route path="business-cases/:id/delivery/contracts" element={<V1BusinessCaseContractStudio />} />
         <Route path="business-cases/:id/delivery/waiting-signatures" element={<V1BusinessCaseDeliveryWaitingSignatures />} />
