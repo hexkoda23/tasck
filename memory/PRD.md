@@ -491,6 +491,32 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Brand About is now lengthy + accurate — Coca Cola gets corporate-grade description)
+
+### Bug
+Coca Cola scrape returned just the marketing tagline "Explore ways you can be closer to the ones you love with meals worth sharing, festive playlists, and more holiday magic from Coke®. Shop all Coca-Cola sodas here." — that's homepage seasonal campaign copy, not an accurate corporate "About Us". Root cause: the SerpAPI-rediscovery branch only pulled the rediscovered URL's homepage og/meta description and skipped the LLM enrichment + multi-page corpus that the normal-domain path uses.
+
+### Fix
+1. **SerpAPI-rediscovery branch now mirrors the rich-corpus + LLM path** (not just meta-tag grab). After rediscovering the canonical URL (e.g. `coca-cola.com` for Coca Cola), the route now:
+   - Strips `<script>` / `<style>` and pulls homepage text (up to 6000 chars).
+   - Fetches and appends `/about-us`, `/about`, `/who-we-are`, `/our-story`, `/company`, `/our-company`, `/our-business`, `/heritage`, `/sustainability` (multiple pages, not just the first match).
+   - Prepends SerpAPI **knowledge-graph description** if present + appends top-4 organic-search snippets — gives Claude authoritative third-party context for well-known brands.
+   - Runs `_call_brand_about_tool` over the 18K-char corpus.
+   - Falls back to meta description only if LLM fails. Tagged as `about_source=serpapi_llm` (or `serpapi_meta` on LLM failure).
+
+2. **Brand-about prompt rewritten to demand 6–9 sentences, 600–1500 chars** with concrete coverage: organisation type/sector/parent, HQ + geographic markets, flagship products + sub-brands by name, primary audience, notable scale/heritage/positioning, strategic direction/partnerships. Explicitly blocks holiday marketing copy ("festive playlists", "holiday magic", "meals worth sharing") that was previously slipping through.
+
+3. **Anthropic + OpenAI `max_tokens` raised from 1500 → 2500** to support the longer output target. About-field length cap raised from 1500 → 2400 chars.
+
+### Verified live
+- Coca Cola: **1,294 chars**. Covers global beverage corporation HQ'd in Atlanta, portfolio (Coca-Cola flagship + Fanta + Gold Peak sub-brands), retail/vending/D2C channels, US retail store locations (Atlanta, Orlando, Las Vegas, World of Coca-Cola), 140-year heritage, +one rewards app, sustainability commitments, FIFA World Cup partnership. `about_source=serpapi_llm`.
+- We Yan: **1,361 chars**. Pan-African fintech super-app covering encrypted messaging + digital wallet + in-app marketplace + merchant tools + logistics. Includes its self-positioning quote "Africa's digital village in your pocket" and pan-African mission framing. `about_source=llm`.
+- CJID: **1,148 chars**. Honest description that acknowledges thin source content (WordPress technical metadata) and surfaces only what can be inferred from .org domain + technical signals — no fabrication.
+
+### Files touched
+- `/app/backend/v3_routes.py` — `_brand_about_system_prompt` (rewritten for 6–9 sentences with concrete coverage list), `_brand_about_user_message` (18K char window), Anthropic + OpenAI `max_tokens=2500`, SerpAPI-rediscovery branch now builds 18K-char corpus (homepage + multiple /about pages + KG + snippets) and runs LLM, about-length cap 2400.
+
+
 ## Update — 25 Feb 2026 (Brand About scraping always populates accurately — Coca Cola dead-domain + LLM-failure wipe fixed)
 
 ### Bug

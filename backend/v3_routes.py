@@ -648,34 +648,38 @@ def _brand_about_system_prompt() -> str:
     return """
 You are TASCK's Brand Description Analyst. You are doing this for a paying enterprise client; the output is shown to TASCK admin and forwarded to the brand's marketing team. Quality matters.
 
-You will be given the raw website text for a brand. Your job is to produce a CLEAN, RICH, 3 to 5 sentence brand description in polished Nigerian business English that explains what the BRAND IS - the organisation, not the current marketing campaign.
+You will be given the raw website text (and where available, search-engine knowledge-graph + top news snippets) for a brand. Your job is to produce a CLEAN, RICH, AUTHORITATIVE 6 to 9 sentence brand description in polished Nigerian business English that explains what the BRAND IS — the organisation, not the current marketing campaign.
 
-The description MUST cover, in this order:
-  (a) what kind of organisation the brand is (company, label, agency, programme, NGO, retailer, manufacturer, etc.) and its category or sector,
-  (b) what they primarily make, sell, distribute, or do, including their flagship product lines or service categories where the source supports it,
-  (c) who they primarily serve (audience, market, geography), if it can be inferred from the source,
-  (d) what makes them notable in their market (heritage, scale, parent company, distinctive positioning) ONLY if the source supports it; never invent.
+The description MUST cover, in this order, in separate sentences:
+  (a) what kind of organisation the brand is (company, label, agency, programme, NGO, retailer, manufacturer, beverage company, telco, fintech, etc.), its category / sector, and its parent company / group if applicable,
+  (b) headquarters / country of origin and the geographic markets it serves (continent, region, key countries),
+  (c) what they primarily make, sell, distribute, manufacture, or do, including their flagship product lines, service categories, or programme areas explicitly named in the source,
+  (d) who they primarily serve (audience, market, customer segment, beneficiaries),
+  (e) what makes them notable in their market — heritage / year founded if explicitly stated, scale (number of countries, employees, partners) if explicitly stated, distinctive positioning, awards or rankings — ONLY if the source supports it; never invent,
+  (f) (when supported by the source) recent strategic direction, sustainability commitments, social impact programmes, or major partnerships.
 
 QUALITY BAR:
-  - Write tight, well-formed sentences with concrete nouns. No vague hand-waving like "a leading brand", "a well-known organisation", or "various products".
-  - Use the brand's actual category vocabulary from the source text.
+  - Aim for 600–1500 characters across 6–9 well-formed sentences. Longer is better as long as every claim is supported by the source.
+  - Use the brand's actual category vocabulary from the source text. Quote specific product names, programme names, sub-brands, country counts, and partner names when present in the source.
   - Read like a corporate one-paragraph "About Us" written by an analyst, not a press release.
-  - Never start with "The brand" or repeat the brand name in every sentence.
+  - Never start with "The brand" or repeat the brand name in every sentence. Vary the subject (the company, the firm, the organisation, its parent).
+  - If the source contains rich detail (e.g. Wikipedia knowledge-graph snippet + heritage page + product page), USE that detail — concrete numbers, founding year, parent company, country count.
 
-ABSOLUTE RULES - never include any of the following:
+ABSOLUTE RULES — never include any of the following:
   - App store boilerplate: "Download X on the App Store", "Available on Google Play", "See screenshots, ratings and reviews", "Download for free", "Get it on...".
   - Specific campaign / promotional copy: "Now's your chance to nominate", "Honour that incredible woman", "Tag a friend", "Click to win", "Buy two, get one free", "Mum of the Year", competition rules, voucher offers, hashtags.
-  - Calls to action: "Sign up", "Subscribe", "Visit our store", "Download our app".
-  - Tagline-only descriptions ("Refreshingly Yours") unless paired with what the brand actually does.
-  - Verbatim quotes, hashtags, emoji, social handles, prices, or dates.
-  - Any first or last names of specific people.
-  - Invented facts (year founded, founder, headcount, awards, market share) unless explicitly stated in the source.
+  - Calls to action: "Sign up", "Subscribe", "Visit our store", "Download our app", "Shop now".
+  - Tagline-only descriptions ("Refreshingly Yours", "Open Happiness") unless paired with what the brand actually does.
+  - Holiday / seasonal marketing copy ("festive playlists", "holiday magic", "meals worth sharing") — these are campaigns, not the brand.
+  - Verbatim quotes, hashtags, emoji, social handles, prices, or dates of promotions.
+  - Any first or last names of specific employees (CEOs only if explicitly named in the source and integral to the description).
+  - Invented facts (year founded, founder, headcount, awards, market share, country count) unless explicitly stated in the source.
 
-If the raw text is dominated by campaign content and there is no clear brand description, write a short factual paragraph based ONLY on what you can confidently infer about the brand's category. Mark uncertainty with "appears to" or "based on the website".
+If the raw text is dominated by campaign content and there is no clear brand description, write a factual paragraph based on what you can confidently infer about the brand's category from any signals in the source, and mark uncertainty with "appears to" or "based on publicly available information".
 
 Return JSON only, no markdown, exactly this shape:
 {
-  "about": "string - the 3-5 sentence brand description",
+  "about": "string - the 6-9 sentence brand description",
   "confidence": integer 0-100
 }
 """.strip()
@@ -686,10 +690,10 @@ def _brand_about_user_message(brand_name: str, brand_industry: str, page_text: s
 BRAND NAME: {brand_name or "(unknown)"}
 STATED INDUSTRY / CATEGORY: {brand_industry or "(unknown)"}
 
-RAW WEBSITE TEXT (homepage and any /about pages, concatenated and de-duplicated):
-{page_text[:12000]}
+RAW WEBSITE TEXT (homepage, /about pages, knowledge-graph + top search snippets, concatenated and de-duplicated):
+{page_text[:18000]}
 
-Produce the brand description.
+Produce the brand description as a 6 to 9 sentence corporate "About Us" paragraph. Aim for 600-1500 characters. Use only facts present in the raw text above.
 """.strip()
 
 
@@ -746,7 +750,7 @@ async def _call_brand_about_tool(
                     },
                     json={
                         "model": model,
-                        "max_tokens": 1500,
+                        "max_tokens": 2500,
                         "temperature": 0.1,
                         "system": system_prompt,
                         "messages": [{"role": "user", "content": user_message}],
@@ -770,7 +774,7 @@ async def _call_brand_about_tool(
                     json={
                         "model": model,
                         "temperature": 0.1,
-                        "max_tokens": 1500,
+                        "max_tokens": 2500,
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_message},
@@ -1862,11 +1866,11 @@ def make_v3_router(db):
                         page_text=about_text_for_llm,
                     )
                     if llm_about:
-                        scraped_about = llm_about[:1500]
+                        scraped_about = llm_about[:2400]
                         about_source = "llm"
                     elif jsonld_about:
                         # LLM unavailable but JSON-LD has a curated description.
-                        scraped_about = jsonld_about[:1500]
+                        scraped_about = jsonld_about[:2400]
                         about_source = "jsonld"
                     elif scraped_about:
                         # LLM unavailable. Keep whatever Pass 1/3/manifest captured —
@@ -1875,7 +1879,7 @@ def make_v3_router(db):
                         # brand and are valid "about" copy. Better to surface this
                         # than to wipe to empty just because the LLM is down.
                         about_source = "meta_or_page"
-                        scraped_about = scraped_about[:1500]
+                        scraped_about = scraped_about[:2400]
                     else:
                         # No source at all - leave empty and log so the admin can
                         # debug LLM connectivity.
@@ -1936,17 +1940,65 @@ def make_v3_router(db):
                             resp.raise_for_status()
                             final_url = str(resp.url).rstrip("/")
                             html = resp.text
+                            # Pull meta descriptions as a baseline (used only if /about pages + LLM all fail).
                             og_desc = _re.search(r'<meta[^>]*property=["\']og:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
                             meta_desc = _re.search(r'<meta[^>]*name=["\']description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
                             twitter_desc = _re.search(r'<meta[^>]*name=["\']twitter:description["\'][^>]*content=["\']([^"\'>]+)', html, _re.I)
+                            meta_fallback = ""
                             if og_desc:
-                                scraped_about = html_module.unescape(og_desc.group(1)).strip()[:1500]
-                                about_source = "serpapi_meta"
+                                meta_fallback = html_module.unescape(og_desc.group(1)).strip()
                             elif meta_desc:
-                                scraped_about = html_module.unescape(meta_desc.group(1)).strip()[:1500]
-                                about_source = "serpapi_meta"
+                                meta_fallback = html_module.unescape(meta_desc.group(1)).strip()
                             elif twitter_desc:
-                                scraped_about = html_module.unescape(twitter_desc.group(1)).strip()[:1500]
+                                meta_fallback = html_module.unescape(twitter_desc.group(1)).strip()
+
+                            # Build a rich text corpus from the homepage + /about pages so the
+                            # LLM can produce an accurate, lengthy company description rather
+                            # than just the homepage marketing tagline.
+                            homepage_text = html_module.unescape(_re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', html, flags=_re.I | _re.S))
+                            homepage_text = " ".join(_re.sub(r'<[^>]+>', ' ', homepage_text).split())[:6000]
+                            corpus = homepage_text
+                            for about_path in ["/about-us", "/about", "/who-we-are", "/our-story", "/company", "/our-company", "/our-business", "/heritage", "/sustainability"]:
+                                try:
+                                    about_resp = await client.get(urljoin(final_url, about_path), headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                                    if about_resp.status_code >= 400:
+                                        continue
+                                    extracted = html_module.unescape(_re.sub(r'<(script|style)[^>]*>.*?</\1>', ' ', about_resp.text, flags=_re.I | _re.S))
+                                    extracted = " ".join(_re.sub(r'<[^>]+>', ' ', extracted).split())
+                                    if len(extracted) >= 200:
+                                        corpus = (corpus + "\n\n--- " + about_path + " ---\n" + extracted[:6000])[:18000]
+                                        # Keep going so the LLM has multiple about-style pages to draw from.
+                                except Exception:  # noqa: BLE001
+                                    continue
+                            # Also pull SerpAPI knowledge-graph + top-3 snippets so well-known
+                            # brands (Coca-Cola, MTN, etc.) get an authoritative description even
+                            # when their homepage is mostly marketing tagline copy.
+                            try:
+                                kg = search_data.get("knowledge_graph") or {}
+                                kg_desc = str(kg.get("description") or "").strip()
+                                if kg_desc:
+                                    corpus = (kg_desc + "\n\n" + corpus)[:18000]
+                                snippet_pieces = []
+                                for result in (search_data.get("organic_results") or [])[:4]:
+                                    snippet = str(result.get("snippet") or "").strip()
+                                    if snippet:
+                                        snippet_pieces.append(snippet)
+                                if snippet_pieces:
+                                    corpus = (corpus + "\n\n--- Search snippets ---\n" + " ".join(snippet_pieces))[:18000]
+                            except Exception:  # noqa: BLE001
+                                pass
+
+                            # LLM summarisation over the rich corpus.
+                            llm_about_retry = await _call_brand_about_tool(
+                                brand_name=brand_name,
+                                brand_industry=str(brand.get("category") or brand.get("industry") or brand.get("sector") or ""),
+                                page_text=corpus,
+                            )
+                            if llm_about_retry:
+                                scraped_about = llm_about_retry[:2400]
+                                about_source = "serpapi_llm"
+                            elif meta_fallback:
+                                scraped_about = meta_fallback[:1500]
                                 about_source = "serpapi_meta"
                     except Exception as exc:  # noqa: BLE001
                         logger.warning("SerpAPI rediscovery scrape failed for %s (%s): %s", brand_name, retry_url, exc)
