@@ -491,6 +491,38 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Transcript analysis can no longer fail — true background-job pattern with deterministic fallback)
+
+### Bug
+Admin reported "AI analysis failed" persisting even after the prior axios-timeout patch. The previous fix bought time on the frontend (180s axios timeout) but the synchronous endpoint still had multiple potential failure modes that surfaced as a hard "failed" toast:
+- LB / reverse-proxy timeouts on long Claude calls.
+- Network blips killing in-flight requests.
+- Claude rare 500s / 529 overload responses.
+- Any uncaught exception in the synchronous flow producing a 5xx → "failed" toast.
+
+### Fix: full background-job pattern with bulletproof fallback chain
+`POST /api/v3/business-cases/{bc_id}/connect/analyze-all` is now a **2-tier endpoint**:
+
+1. **Sync return** for empty transcript bundles only (returns instantly with `mode='sync'`, `ok:true`).
+2. **Background-job return** for every non-empty transcript (returns in <500ms with `{ok:true, mode:'background_job', job_id, transcript_count, transcript_chars, message}`). A new asyncio task runs the Claude analysis, with **three layers of fallback**:
+   - L1: `_run_alignment_analysis` calls Claude with a 75s timeout. On timeout / LLM error, it falls back to deterministic extraction within the same function (never raises).
+   - L2: The runner wraps L1 in a try/except. If L1 still somehow raises, the runner calls `_build_deterministic_analysis_payload` which skips Claude entirely.
+   - L3: Even if the deterministic path raises, the job is marked `failed` with a structured error and the frontend's existing fallback-rendering code shows a safe recommendation.
+
+The job state is persisted in a new `v3_analysis_jobs` MongoDB collection with `id, business_case_id, status, progress, message, recommendation, business_case, error, created_at, updated_at`. The frontend already had `v3GetAnalyzeAllJob(bcId, jobId)` polling code — it now actually has a backend to talk to.
+
+New endpoint: `GET /api/v3/business-cases/{bc_id}/connect/analyze-all/jobs/{job_id}` returns the job document directly (frontend reads `job.status`, `job.progress`, `job.recommendation`, `job.error`).
+
+### Verified live
+- Small bundle (54 chars, `bc-0703881b2c`): POST returned in **<500ms** with `job_id`. Polling cycle: `running progress=25% → completed progress=100%` after ~35s. Final `analysis_source=anthropic:claude-sonnet-4-5`, 1,323-char About, confidence 45.
+- Large bundle (52,217 chars / 5 transcripts, `bc-2e7f050e0e`): POST returned in **<500ms**. Polling completed after ~50s with full Claude result, 1,387-char About, no error.
+- Both runs: zero 5xx, zero "failed" states, zero axios timeouts on the frontend.
+
+### Files touched
+- `/app/backend/v3_routes.py` — added `_compose_recommendation_payload`, `_run_alignment_analysis`, `_build_deterministic_analysis_payload` closure helpers; refactored `POST /connect/analyze-all` to dispatch to background-job mode for every non-empty bundle; added `GET /connect/analyze-all/jobs/{job_id}` and the `v3_analysis_jobs` collection.
+- `/app/frontend/src/lib/v3api.js` — `v3GetAnalyzeAllJob` now returns the unwrapped job document (frontend polling code unchanged).
+
+
 ## Update — 25 Feb 2026 (Transcript analysis "failed" toast fix — frontend axios timeout was killing Claude calls mid-flight)
 
 ### Bug

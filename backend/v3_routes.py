@@ -6925,62 +6925,32 @@ def make_v3_router(db):
         contact_name: Optional[str] = None
         agenda: Optional[str] = None
 
-    @router.post("/business-cases/{bc_id}/connect/analyze-all")
-    async def analyze_all_connect_transcripts(bc_id: str):
-        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
-        if not case:
-            raise HTTPException(404, "Business case not found")
-
-        # Get all meetings for this business case under stage "connect"
-        meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
-
-        transcripts = []
-        meeting_dates = []
-        for m in meetings:
-            t = (m.get("transcript") or "").strip()
-            if t:
-                # Use a generic, date-free divider so the LLM cannot leak meeting
-                # dates into the analysis output. The reader of the snapshot should
-                # not be able to tell which call a point came from or when.
-                transcripts.append(f"--- Transcript ---\n{t}")
-            if m.get("scheduled_for"):
-                meeting_dates.append(m.get("scheduled_for"))
-
-        combined_text = "\n\n".join(transcripts).strip()
-
-        # Run transcript analysis. Use the configured model-backed analyzer for the
-        # Alignment Snapshot fields; keep deterministic extraction as the fallback.
+    # ------------------------------------------------------------------
+    # Alignment-analysis helpers (closures over `db`). One does the LLM
+    # call + persists, one skips the LLM and uses deterministic
+    # extraction only. Both ALWAYS return a successful payload (with
+    # ok-shaped recommendation) so the calling route can never see a
+    # half-built result.
+    # ------------------------------------------------------------------
+    async def _compose_recommendation_payload(
+        bc_id: str,
+        meetings: List[Dict[str, Any]],
+        case: Dict[str, Any],
+        brand: Dict[str, Any],
+        combined_text: str,
+        meeting_dates: List[str],
+        alignment_tool_result: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
         mi = _extract_marketing_intelligence(combined_text)
-        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
-        alignment_tool_result = None
-        if combined_text:
-            try:
-                alignment_timeout_seconds = max(
-                    3.0,
-                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "10")),
-                )
-            except ValueError:
-                alignment_timeout_seconds = 10.0
-            try:
-                alignment_tool_result = await asyncio.wait_for(
-                    _call_alignment_analysis_tool(combined_text, brand, case),
-                    timeout=alignment_timeout_seconds,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Alignment analysis tool timed out for business case %s after %.1fs; using deterministic fallback.",
-                    bc_id,
-                    alignment_timeout_seconds,
-                )
         if alignment_tool_result:
             mi = {
                 **mi,
                 "alignment_snapshot_fields": alignment_tool_result,
                 "analysis_source": alignment_tool_result.get("analysis_source"),
-                "extraction_confidence": alignment_tool_result.get("confidence", 0) / 100,
+                "extraction_confidence": (alignment_tool_result.get("confidence", 0) or 0) / 100,
             }
-        # Score Connect readiness against the V1 Alignment Snapshot question set.
-        lower = combined_text.lower()
+
+        lower = (combined_text or "").lower()
         alignment_requirements = [
             ("About The Organisation", ["about the organisation", "about the organization", "organisation", "organization", "company", "brand", "business", "product", "service", "we are"]),
             ("What are the Core Focus Areas", ["core focus", "focus area", "focus", "objective", "goal", "challenge", "priority area"]),
@@ -7012,7 +6982,7 @@ def make_v3_router(db):
         if risk_flags:
             readiness = min(readiness, 80)
 
-        summary = mi.get("source_excerpt") or combined_text[:280] or "No transcripts provided yet."
+        summary = mi.get("source_excerpt") or (combined_text[:280] if combined_text else "") or "No transcripts provided yet."
 
         if not combined_text:
             ai_recommendation = "reschedule"
@@ -7052,7 +7022,6 @@ def make_v3_router(db):
         }
 
         now = _now_iso()
-        # Save results in the business case connect object
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {
@@ -7070,10 +7039,193 @@ def make_v3_router(db):
 
         updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         return {
-            "ok": True,
             "recommendation": recommendation,
             "business_case": updated,
         }
+
+    async def _run_alignment_analysis(
+        bc_id: str,
+        meetings: List[Dict[str, Any]],
+        case: Dict[str, Any],
+        brand: Dict[str, Any],
+        combined_text: str,
+        meeting_dates: List[str],
+    ) -> Dict[str, Any]:
+        """LLM-backed alignment analysis. Falls back to deterministic-only
+        on LLM timeout or exception so this coroutine never raises."""
+        alignment_tool_result: Optional[Dict[str, Any]] = None
+        if combined_text:
+            try:
+                alignment_timeout_seconds = max(
+                    20.0,
+                    float(os.getenv("ALIGNMENT_ANALYZER_TIMEOUT_SECONDS", "75")),
+                )
+            except ValueError:
+                alignment_timeout_seconds = 75.0
+            try:
+                alignment_tool_result = await asyncio.wait_for(
+                    _call_alignment_analysis_tool(combined_text, brand, case),
+                    timeout=alignment_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Alignment analysis tool timed out for business case %s after %.1fs; using deterministic fallback.",
+                    bc_id,
+                    alignment_timeout_seconds,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Alignment analysis tool errored for business case %s (%s); using deterministic fallback.",
+                    bc_id, exc,
+                )
+        return await _compose_recommendation_payload(
+            bc_id, meetings, case, brand, combined_text, meeting_dates, alignment_tool_result,
+        )
+
+    async def _build_deterministic_analysis_payload(
+        bc_id: str,
+        meetings: List[Dict[str, Any]],
+        case: Dict[str, Any],
+        brand: Dict[str, Any],
+        combined_text: str,
+        meeting_dates: List[str],
+    ) -> Dict[str, Any]:
+        """Skip the LLM entirely. Used as the safety net when even
+        _run_alignment_analysis (which has its own LLM fallback) raises."""
+        return await _compose_recommendation_payload(
+            bc_id, meetings, case, brand, combined_text, meeting_dates, None,
+        )
+
+    @router.post("/business-cases/{bc_id}/connect/analyze-all")
+    async def analyze_all_connect_transcripts(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+
+        # Get all meetings for this business case under stage "connect"
+        meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
+
+        transcripts = []
+        meeting_dates = []
+        for m in meetings:
+            t = (m.get("transcript") or "").strip()
+            if t:
+                # Use a generic, date-free divider so the LLM cannot leak meeting
+                # dates into the analysis output.
+                transcripts.append(f"--- Transcript ---\n{t}")
+            if m.get("scheduled_for"):
+                meeting_dates.append(m.get("scheduled_for"))
+
+        combined_text = "\n\n".join(transcripts).strip()
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
+
+        # ------------------------------------------------------------------
+        # Hybrid sync / background-job routing.
+        #
+        # The LLM call (Claude) typically takes 20-60 seconds for a multi-
+        # transcript bundle, which is well over the HTTP request budget of most
+        # reverse proxies / load balancers (and the frontend axios default).
+        # So:
+        #   - empty/short bundles run inline (sync) and return the full
+        #     recommendation in < 2s.
+        #   - everything else is queued as a background job. The endpoint
+        #     returns `{ok:true, mode:'background_job', job_id, ...}` instantly
+        #     and the frontend polls `GET /connect/analyze-all/jobs/{job_id}`
+        #     until the job's status flips to `completed`. The job itself is
+        #     guaranteed to write a result (deterministic fallback) even if
+        #     the LLM call raises, so the UI never sees a hard failure.
+        # ------------------------------------------------------------------
+        # ALL non-empty transcripts go background-job. Even short ones can
+        # take 20-40s on Claude, which is poor UX in a synchronous request.
+        # Only the trivially-empty case stays sync (it has nothing to LLM
+        # anyway, so it returns instantly).
+        if not combined_text:
+            try:
+                result = await _run_alignment_analysis(bc_id, meetings, case, brand, combined_text, meeting_dates)
+                return {"ok": True, "mode": "sync", **result}
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Sync alignment analysis failed for %s (falling back to deterministic): %s", bc_id, exc)
+                fallback = await _build_deterministic_analysis_payload(bc_id, meetings, case, brand, combined_text, meeting_dates)
+                return {"ok": True, "mode": "sync", **fallback}
+
+        # Background-job mode.
+        job_id = f"analysis-job-{uuid.uuid4().hex[:10]}"
+        job_doc = {
+            "id": job_id,
+            "business_case_id": bc_id,
+            "status": "pending",
+            "progress": 5,
+            "message": f"Queued analysis of {len(transcripts)} transcript{'s' if len(transcripts) != 1 else ''}.",
+            "transcript_count": len(transcripts),
+            "transcript_chars": len(combined_text),
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "result": None,
+            "error": None,
+        }
+        await db.v3_analysis_jobs.insert_one(job_doc)
+
+        async def _runner():
+            try:
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "running", "progress": 25, "message": "Running Claude alignment analysis…", "updated_at": _now_iso()}},
+                )
+                result = await _run_alignment_analysis(bc_id, meetings, case, brand, combined_text, meeting_dates)
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {
+                        "status": "completed",
+                        "progress": 100,
+                        "message": "Analysis complete.",
+                        "recommendation": result.get("recommendation"),
+                        "business_case": result.get("business_case"),
+                        "updated_at": _now_iso(),
+                    }},
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Never fail the job from the user's perspective. Run the
+                # deterministic fallback and mark the job complete, but record
+                # the LLM error in `error` for diagnostics.
+                logger.exception("Background analysis failed for %s — falling back to deterministic: %s", bc_id, exc)
+                try:
+                    fallback = await _build_deterministic_analysis_payload(bc_id, meetings, case, brand, combined_text, meeting_dates)
+                    await db.v3_analysis_jobs.update_one(
+                        {"id": job_id},
+                        {"$set": {
+                            "status": "completed",
+                            "progress": 100,
+                            "message": "Analysis complete (deterministic fallback).",
+                            "recommendation": fallback.get("recommendation"),
+                            "business_case": fallback.get("business_case"),
+                            "error": str(exc)[:500],
+                            "updated_at": _now_iso(),
+                        }},
+                    )
+                except Exception as inner_exc:  # noqa: BLE001
+                    logger.exception("Deterministic fallback ALSO failed for %s: %s", bc_id, inner_exc)
+                    await db.v3_analysis_jobs.update_one(
+                        {"id": job_id},
+                        {"$set": {"status": "failed", "progress": 100, "message": "Analysis failed. Please retry.", "error": f"{exc}; fallback: {inner_exc}"[:500], "updated_at": _now_iso()}},
+                    )
+
+        asyncio.create_task(_runner())
+
+        return {
+            "ok": True,
+            "mode": "background_job",
+            "job_id": job_id,
+            "transcript_count": len(transcripts),
+            "transcript_chars": len(combined_text),
+            "message": f"Analyzing {len(transcripts)} transcript{'s' if len(transcripts) != 1 else ''} in the background…",
+        }
+
+    @router.get("/business-cases/{bc_id}/connect/analyze-all/jobs/{job_id}")
+    async def get_analyze_all_job(bc_id: str, job_id: str):
+        job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
+        if not job:
+            raise HTTPException(404, "Analysis job not found")
+        return {"ok": True, "job": job}
 
     @router.post("/business-cases/{bc_id}/connect/promote")
     async def promote_connect_to_frame(bc_id: str, payload: ConnectActionPayload = ConnectActionPayload()):
