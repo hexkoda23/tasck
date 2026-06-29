@@ -4,16 +4,47 @@ import { Building2, BriefcaseBusiness, ChevronLeft, Home, LogIn, LogOut, Moon, S
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 
+// Per Chioma's clarification: Connect + Framing (Alignment Snapshot,
+// Brainstorm, Creator Selection, Creative Brief, Strategy Snapshot) belong
+// to the "CRM Brands" area in the top nav, even though their routes live
+// under /admin/business-cases/:id/connect/... and /admin/business-cases/:id/frame/...
+// The Business Case tab only lights up for Planning, Delivery, and Reporting.
+const CRM_BC_SUBPATH_RE = /^\/admin\/business-cases\/[^/]+\/(connect|frame)(\/|$)/;
+const BC_BC_SUBPATH_RE = /^\/admin\/business-cases\/[^/]+\/(plan|delivery|reporting)(\/|$)/;
+
 const navItems = [
   { path: '/admin', label: 'Overview', icon: Home, exact: true },
-  { path: '/admin/crm-brands', label: 'CRM Brands', icon: Building2, aliases: ['/admin/crm'] },
-  { path: '/admin/business-cases', label: 'Business Cases', icon: BriefcaseBusiness },
+  {
+    path: '/admin/crm-brands',
+    label: 'CRM Brands',
+    icon: Building2,
+    aliases: ['/admin/crm'],
+    // Framing sub-pages still live under /admin/business-cases/:id/(connect|frame)/...
+    matchesPath: (pathname) => CRM_BC_SUBPATH_RE.test(pathname),
+  },
+  {
+    path: '/admin/business-cases',
+    label: 'Business Cases',
+    icon: BriefcaseBusiness,
+    // Only Planning, Delivery, and Reporting count as Business Case work.
+    // The list page (/admin/business-cases) and the stage-home redirect
+    // (/admin/business-cases/:id) also belong here.
+    matchesPath: (pathname) => (
+      pathname === '/admin/business-cases'
+      || /^\/admin\/business-cases\/[^/]+\/?$/.test(pathname)
+      || BC_BC_SUBPATH_RE.test(pathname)
+    ),
+    // Suppress the default startsWith match so /connect|/frame sub-paths
+    // don't accidentally light this tab up.
+    suppressDefaultStartsWith: true,
+  },
   { path: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 
 const isNavActive = (pathname, item) => {
   if (item.exact) return pathname === item.path;
-  if (pathname.startsWith(item.path)) return true;
+  if (item.matchesPath && item.matchesPath(pathname)) return true;
+  if (!item.suppressDefaultStartsWith && pathname.startsWith(item.path)) return true;
   return (item.aliases || []).some((alias) => pathname === alias || pathname.startsWith(`${alias}/`));
 };
 

@@ -2566,16 +2566,13 @@ def make_v3_router(db):
                 if frame.get("scope_flags_resolved", 0) < frame.get("scope_flags_total", 0):
                     gate_errors.append("All scope flags must be resolved before Framing continues.")
             elif next_stage == "deliver":
-                # Framing -> Planning. Client rule: Planning starts only after the
-                # Creative Snapshot is approved AND the Strategy Development Fee
-                # has been received. Contract signature still required for paid track.
+                # Framing -> Planning. Per Chioma's clarification: the Strategy
+                # Development Fee can be paid off-platform, and contracts are
+                # generated in Delivery (not pre-required to enter Planning).
+                # The only hard gate is that the Strategy Snapshot is approved.
                 plan = case.get("plan", {})
                 if not plan.get("creative_snapshot_approved_at"):
-                    gate_errors.append("Creative Snapshot must be approved before Planning starts.")
-                if case.get("engagement_track") == "paid" and not case.get("frame", {}).get("strategy_development_fee_paid"):
-                    gate_errors.append("Strategy Development Fee payment must be received before Planning starts.")
-                if not plan.get("contract_signed_at"):
-                    gate_errors.append("Contract must be signed before Planning starts.")
+                    gate_errors.append("Strategy Snapshot must be approved before Planning starts.")
             elif next_stage == "closed":
                 closure = case.get("closure", {})
                 if closure.get("closure_pct", 0) < 100:

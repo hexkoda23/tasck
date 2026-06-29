@@ -304,19 +304,32 @@ const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const bc = getCase(bundle);
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
   const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage, location.pathname);
+  // Framing pages (Connect + Frame sub-steps) live under the CRM Brands tab
+  // conceptually. Strip the Business Case context chip and point the second
+  // back-button at the CRM Brands list instead of the Business Cases list so
+  // the page feels purely CRM-flavoured.
+  const isCrmPage = /\/(connect|frame)(\/|$)/.test(location.pathname || '');
   return (
     <div className="v3-stage-shell space-y-5" data-testid="business-case-flow-page">
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => navigate(-1)} className="v3-btn-secondary text-[11px]" data-testid="business-case-back-btn">
           <ArrowLeft className="w-3.5 h-3.5" /> Back
         </button>
-        <button type="button" onClick={() => navigate(adminRoute('/business-cases'))} className="v3-btn-secondary text-[11px]" data-testid="business-case-list-btn">
-          <ArrowLeft className="w-3.5 h-3.5" /> Business Cases
-        </button>
+        {isCrmPage ? (
+          <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]" data-testid="business-case-crm-brands-btn">
+            <ArrowLeft className="w-3.5 h-3.5" /> CRM Brands
+          </button>
+        ) : (
+          <button type="button" onClick={() => navigate(adminRoute('/business-cases'))} className="v3-btn-secondary text-[11px]" data-testid="business-case-list-btn">
+            <ArrowLeft className="w-3.5 h-3.5" /> Business Cases
+          </button>
+        )}
       </div>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-1">{bc.title}</p>
+          {!isCrmPage && (
+            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-1">{bc.title}</p>
+          )}
           <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>{title}</h1>
           <p className="text-[13px] text-[#6E6657] mt-1 max-w-3xl">{subtitle}</p>
         </div>
@@ -2514,24 +2527,33 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const [round, setRound] = useState(null);
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
+  // Auto-create the round on page open so the admin never sees a "Start"
+  // button - per Chioma's feedback the brainstorm should just appear.
+  const [bootstrapping, setBootstrapping] = useState(true);
 
   useEffect(() => {
-    v3ListBrainstorms(id).then((rows) => {
-      const latest = Array.isArray(rows) && rows.length ? rows[rows.length - 1] : null;
-      if (latest) setRound(latest);
-    });
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await v3ListBrainstorms(id);
+        const latest = Array.isArray(rows) && rows.length ? rows[rows.length - 1] : null;
+        if (cancelled) return;
+        if (latest) {
+          setRound(latest);
+        } else {
+          // No round yet -> create one silently and use it.
+          const doc = await v3CreateBrainstorm({ business_case_id: id, scored_creators: [] });
+          if (cancelled) return;
+          setRound(doc);
+        }
+      } catch (e) {
+        if (!cancelled) setNotice(e?.response?.data?.detail || e?.message || 'Could not load brainstorm round.');
+      } finally {
+        if (!cancelled) setBootstrapping(false);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [id]);
-
-  const startRound = async () => {
-    setNotice('');
-    try {
-      const doc = await v3CreateBrainstorm({ business_case_id: id, scored_creators: [] });
-      setRound(doc);
-      setNotice('Brainstorm round started. Fill in each phase as you work through the 60-90 minute session.');
-    } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not start brainstorm round.');
-    }
-  };
 
   const updateField = (phaseKey, field, value) => {
     setRound((prev) => ({ ...prev, [phaseKey]: { ...prev[phaseKey], [field]: value } }));
@@ -2575,11 +2597,12 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
   if (!round) {
     return (
-      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 5. 60-90 minute session that produces a defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 5.">
         {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
-        <InfoCard title="Start brainstorm round">
-          <p className="text-[13px] text-[#6E6657] mb-3">A new round will scaffold all 7 phases of the TTA Snapshot Brainstorm template. You can save progress between phases.</p>
-          <button onClick={startRound} className="v3-btn-primary"><Sparkles className="w-3.5 h-3.5" /> Start brainstorm round</button>
+        <InfoCard title={bootstrapping ? 'Loading brainstorm…' : 'Brainstorm unavailable'}>
+          <p className="text-[13px] text-[#6E6657]">
+            {bootstrapping ? 'Opening the TTA Snapshot Brainstorm for this Business Case…' : 'Could not load or create the brainstorm round. Please refresh the page.'}
+          </p>
         </InfoCard>
       </FlowShell>
     );
@@ -3257,18 +3280,31 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   const snapshot = bundle?.creative_snapshot || null;
   const brandComments = Array.isArray(snapshot?.brand_comments) ? snapshot.brand_comments : [];
 
-  const generate = async () => {
-    setNotice('');
-    setGenerating(true);
-    try {
-      await v3CreateSnapshot({ business_case_id: id });
-      await reload();
-      setNotice('Strategy Snapshot generated. Review it before sending to the brand.');
-    } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not generate Strategy Snapshot yet.');
-    }
-    setGenerating(false);
-  };
+  // Auto-generate the Strategy Snapshot on first open. Admin shouldn't have
+  // to click a "Generate" button - a loading popup shows while it's being
+  // prepared, then the snapshot renders. Guarded so we don't spam the API
+  // on re-renders.
+  const autoGenAttempted = useRef(false);
+  useEffect(() => {
+    if (!bundle || snapshot || generating || autoGenAttempted.current) return;
+    autoGenAttempted.current = true;
+    (async () => {
+      setGenerating(true);
+      setSendPopup({ title: 'Loading Strategy Snapshot', message: 'Preparing the Strategy Snapshot for this Business Case…', tone: 'pending' });
+      try {
+        await v3CreateSnapshot({ business_case_id: id });
+        await reload();
+        setSendPopup(null);
+      } catch (e) {
+        setSendPopup(null);
+        setNotice(e?.response?.data?.detail || e?.message || 'Could not load the Strategy Snapshot.');
+        // Allow retry on the next mount/reload.
+        autoGenAttempted.current = false;
+      } finally {
+        setGenerating(false);
+      }
+    })();
+  }, [bundle, snapshot, generating, id, reload]);
   const sendToBrand = async () => {
     setNotice('');
     setSendPopup({ title: 'Sending', message: 'Sending Strategy Snapshot to the registered brand email...', tone: 'pending' });
@@ -3297,35 +3333,19 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   };
   const approve = async () => {
     setNotice('');
-    setSendPopup({ title: 'Approving', message: 'Approving Strategy Snapshot. Will open Planning once payment is received.', tone: 'pending' });
+    setSendPopup({ title: 'Approving', message: 'Approving Strategy Snapshot and opening Planning…', tone: 'pending' });
     try {
       await v3ApproveSnapshot(id, 'admin');
-      // Try to advance frame -> plan completion (backend `plan` -> `deliver`).
-      // This will only succeed if the Strategy Development Fee is already paid;
-      // otherwise the backend gate rejects with a clear error.
-      let advanced = false;
+      // Per Chioma: fee can be paid off-platform and contract is handled in
+      // Delivery, so the Planning area should open immediately on approval.
       try {
         if (getCase(bundle).stage === 'plan') {
-          await v3AdvanceBusinessCase(id, { actor: 'admin', override: false, reason: 'Strategy Snapshot approved by admin.' });
-          advanced = true;
+          await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Strategy Snapshot approved by admin.' });
         }
-      } catch (advErr) {
-        // Gate not met (most likely the Strategy Development Fee is still
-        // unpaid). Keep the admin on the Strategy Snapshot page and surface
-        // the exact reason from the backend.
-        const detail = advErr?.response?.data?.detail;
-        const errors = Array.isArray(detail?.errors) ? detail.errors.join(' ') : (typeof detail === 'string' ? detail : '');
-        setSendPopup({
-          title: 'Approved — waiting for payment',
-          message: errors || 'Strategy Snapshot approved. Planning will open once the Strategy Development Fee is received.',
-          tone: 'pending',
-        });
-      }
+      } catch (_advErr) { /* already advanced or backend not required */ }
       await reload();
-      if (advanced) {
-        setSendPopup({ title: 'Opening Planning', message: 'Strategy Snapshot approved and fee received. Opening the Planning phase in the Business Case area.', tone: 'success' });
-        window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/plan/planning`)), 600);
-      }
+      setSendPopup({ title: 'Opening Planning', message: 'Strategy Snapshot approved. Opening the Planning phase.', tone: 'success' });
+      window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/plan/planning`)), 450);
     } catch (e) {
       setSendPopup(null);
       setNotice(e?.response?.data?.detail || e?.message || 'Could not approve Strategy Snapshot yet.');
@@ -3367,12 +3387,9 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   };
 
   return (
-    <FlowShell title="Strategy Snapshot Studio" subtitle="Framing step 5 of 5. Generate, view, send to BOTH the brand and the creatives for approval. Planning only starts after the brand approves the Strategy Snapshot AND the Strategy Development Fee is received." nextAction="Review the Strategy Snapshot, send it to brand and creatives, then approve.">
+    <FlowShell title="Strategy Snapshot Studio" subtitle="Framing step 5 of 5." nextAction="Review, send to brand and creatives, then approve.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <div className="flex flex-wrap items-center gap-2">
-        <button onClick={generate} disabled={generating} className="v3-btn-primary" data-testid="strategy-generate-btn">
-          <Sparkles className="w-3.5 h-3.5" /> {generating ? 'Generating...' : (snapshot ? 'Regenerate Strategy Snapshot' : 'Generate Strategy Snapshot')}
-        </button>
         {snapshot && !editing && (
           <button onClick={startEditing} className="v3-btn-secondary" data-testid="strategy-edit-btn">
             <Edit3 className="w-3.5 h-3.5" /> Edit
