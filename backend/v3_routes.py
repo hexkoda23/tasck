@@ -569,6 +569,41 @@ Use ALL of the CRM context above, not just the transcripts. The about_the_organi
 
 
 # ============================================================================
+# AI provider switch (shared by every LLM call in the codebase)
+# ============================================================================
+#
+# Easy one-knob control for the entire system. Set TASCK_AI_PROVIDER to:
+#   - "emergent"  -> always use Emergent Gemini (free local key)
+#   - "anthropic" -> always use Anthropic Claude (paid)
+#
+# When the per-feature override env var is set (ALIGNMENT_ANALYZER_PROVIDER,
+# CREATOR_MATCH_PROVIDER, BRAND_ABOUT_PROVIDER), that wins for THAT feature
+# only. Otherwise TASCK_AI_PROVIDER applies. If neither is set, we fall
+# back to APP_ENV-based preference (staging/prod -> Anthropic, otherwise
+# Emergent).
+#
+# This means an admin who just wants "everything on Claude" can set a
+# single env var (TASCK_AI_PROVIDER=anthropic) without touching the per-
+# feature toggles.
+# ============================================================================
+
+def _resolve_ai_provider(per_feature_env_var: str) -> bool:
+    """Return True if Anthropic should be preferred for this call."""
+    per_feature = (os.getenv(per_feature_env_var) or "").strip().lower()
+    if per_feature in {"anthropic", "claude"}:
+        return True
+    if per_feature in {"emergent", "gemini"}:
+        return False
+    global_pref = (os.getenv("TASCK_AI_PROVIDER") or "").strip().lower()
+    if global_pref in {"anthropic", "claude"}:
+        return True
+    if global_pref in {"emergent", "gemini"}:
+        return False
+    env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
+    return env in {"staging", "production", "prod"}
+
+
+# ============================================================================
 # Brand About - LLM-cleaned brand description from raw web scrape
 # ============================================================================
 #
@@ -643,8 +678,7 @@ async def _call_brand_about_tool(
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
 
-    _env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
-    _prefer_anthropic = _env in {"staging", "production", "prod"}
+    _prefer_anthropic = _resolve_ai_provider("BRAND_ABOUT_PROVIDER")
 
     async def _call_emergent() -> Optional[str]:
         if not emergent_key:
@@ -753,12 +787,9 @@ async def _call_alignment_analysis_tool(
     custom_base = (os.getenv("ALIGNMENT_ANALYZER_LLM_BASE_URL") or os.getenv("OPPORTUNITY_SCANNER_LLM_BASE_URL") or "").rstrip("/")
     openai_key = os.getenv("OPENAI_API_KEY")
 
-    # Client decision: free Gemini Flash locally, paid Claude on staging/prod.
-    # APP_ENV (or ENVIRONMENT) drives provider preference; ALIGNMENT_ANALYZER_PROVIDER
-    # forces a specific provider for tests/overrides.
-    _env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
-    _forced = (os.getenv("ALIGNMENT_ANALYZER_PROVIDER") or "").strip().lower()
-    _prefer_anthropic = _forced == "anthropic" or (not _forced and _env in {"staging", "production", "prod"})
+    # Single knob: TASCK_AI_PROVIDER=anthropic|emergent overrides everything;
+    # ALIGNMENT_ANALYZER_PROVIDER overrides for this analyzer only.
+    _prefer_anthropic = _resolve_ai_provider("ALIGNMENT_ANALYZER_PROVIDER")
 
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
@@ -968,9 +999,7 @@ async def _call_creator_match_tool(
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
 
-    _env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "local").strip().lower()
-    _forced = (os.getenv("CREATOR_MATCH_PROVIDER") or "").strip().lower()
-    _prefer_anthropic = _forced == "anthropic" or (not _forced and _env in {"staging", "production", "prod"})
+    _prefer_anthropic = _resolve_ai_provider("CREATOR_MATCH_PROVIDER")
 
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
@@ -1569,6 +1598,12 @@ def make_v3_router(db):
         scraped_about = ""
         scraped_logo = ""
         scraped_budget = ""
+        # Tracks where scraped_about came from. Useful for diagnosing when the
+        # admin sees rubbish in the field:
+        #   "llm"      - the LLM produced a clean description (good)
+        #   "jsonld"   - LLM unavailable, used JSON-LD Organization.description
+        #   "none"     - no trustworthy source, scraped_about left empty
+        about_source = "none"
         final_url = website
 
         if not website and os.getenv("SERPAPI_API_KEY", "").strip():
@@ -1756,23 +1791,25 @@ def make_v3_router(db):
 
                     page_text = html_module.unescape(_re.sub(r'<[^>]+>', ' ', html))
                     page_text = " ".join(page_text.split())
-                    budget_patterns = [
-                        r'(?:marketing|campaign|media|advertising)\s+(?:budget|spend)[^.\n]{0,100}(?:₦|NGN|N|USD|\$|£)?\s?[\d,.]+\s?(?:k|m|bn|million|billion|thousand)?',
-                        r'(?:₦|NGN|N|USD|\$|£)\s?[\d,.]+\s?(?:k|m|bn|million|billion|thousand)?[^.\n]{0,100}(?:marketing|campaign|media|advertising|budget|spend)',
-                    ]
-                    for pattern in budget_patterns:
-                        match = _re.search(pattern, page_text, _re.I)
-                        if match:
-                            scraped_budget = " ".join(match.group(0).split())[:180]
-                            break
+                    # NOTE on marketing budget: the previous regex matched
+                    # things like "...N. Any unauthorized access..." because a
+                    # bare "N" was allowed as a currency sign. Public
+                    # marketing budgets are basically never published on
+                    # corporate websites anyway - so we now leave this empty
+                    # and always show "No public marketing budget found.
+                    # Confirm during Connect call." in the UI rather than
+                    # surface noisy regex hits.
 
                     # ---- Pass 4: LLM-cleaned brand about ----
                     # The regex-based scrape often grabs campaign copy or
-                    # app-store boilerplate. Try fetching common about pages
-                    # and feed the combined text to the LLM for a clean
-                    # 2-3 sentence brand description. If the LLM call
-                    # succeeds, it OVERRIDES whatever meta tags produced -
-                    # this is the canonical source.
+                    # app-store boilerplate. We DROP whatever the meta-tag /
+                    # paragraph passes produced, fetch a real about page,
+                    # and ask the LLM to write a clean brand description.
+                    # If the LLM is unavailable, we fall back ONLY to JSON-LD
+                    # Organization.description (which is curated structured
+                    # data) - never to meta descriptions or random
+                    # paragraphs, because those are the source of the
+                    # rubbish admin keeps seeing.
                     about_text_for_llm = page_text[:6000]
                     for about_path in ["/about", "/about-us", "/about_us", "/who-we-are", "/our-story", "/company"]:
                         try:
@@ -1795,6 +1832,23 @@ def make_v3_router(db):
                     )
                     if llm_about:
                         scraped_about = llm_about[:1500]
+                        about_source = "llm"
+                    elif jsonld_about:
+                        # LLM unavailable but JSON-LD has a curated description.
+                        scraped_about = jsonld_about[:1500]
+                        about_source = "jsonld"
+                    else:
+                        # No trustworthy source - DO NOT keep the meta/paragraph
+                        # noise that pass 1 / pass 3 set.
+                        scraped_about = ""
+                        about_source = "none"
+                        logger.warning(
+                            "Brand about scrape for %s produced no trustworthy result. "
+                            "LLM call returned None and no JSON-LD Organization.description "
+                            "was found. Check that TASCK_AI_PROVIDER and the matching key "
+                            "(EMERGENT_LLM_KEY or ANTHROPIC_API_KEY) are set.",
+                            brand_name,
+                        )
             except httpx.HTTPError as exc:
                 # Network / 4xx / 5xx / SSL / timeout. Log with full context so
                 # we can debug from production logs instead of guessing.
@@ -1833,6 +1887,7 @@ def make_v3_router(db):
         return {
             "ok": True,
             "about": scraped_about,
+            "about_source": about_source,
             "logo_url": scraped_logo,
             "brand_logo_url": scraped_logo,
             "marketing_budget": scraped_budget,
@@ -2205,6 +2260,78 @@ def make_v3_router(db):
         )
         return {"ok": True, "must_change_password": False}
 
+    # Admin tool: regenerate a temporary password for a brand and resend the
+    # welcome email. Use when a brand says the credentials from their original
+    # welcome email no longer work (typo, email-client mangling, password
+    # rotated, etc.). Returns the new temporary password to the admin in case
+    # the email queue has issues.
+    class BrandResendCredentialsPayload(BaseModel):
+        brand_id: str
+
+    @router.post("/brand-accounts/resend-credentials")
+    async def resend_brand_credentials(payload: BrandResendCredentialsPayload):
+        brand = await db.v3_brands.find_one({"id": payload.brand_id}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        account = await db.v3_brand_accounts.find_one({"brand_id": payload.brand_id}, {"_id": 0})
+        new_temp = _temporary_password()
+        if not account:
+            # Materialise an account on demand using the same shape as
+            # ensure_brand_account, then send the welcome.
+            username = (brand.get("email") or f"{_slug(brand.get('company'))}@brand.tasck.local").lower()
+            account_doc = {
+                "id": f"acct-{uuid.uuid4().hex[:8]}",
+                "brand_id": payload.brand_id,
+                "role": "brand",
+                "username": username,
+                "temporary_password": new_temp,
+                "password": new_temp,
+                "must_change_password": True,
+                "status": "active",
+                "created_at": _now_iso(),
+                "last_login_at": None,
+                "password_changed_at": None,
+            }
+            await db.v3_brand_accounts.insert_one({**account_doc})
+            account = account_doc
+        else:
+            await db.v3_brand_accounts.update_one(
+                {"id": account["id"]},
+                {"$set": {
+                    "password": new_temp,
+                    "temporary_password": new_temp,
+                    "must_change_password": True,
+                    "password_changed_at": _now_iso(),
+                }},
+            )
+
+        company = brand.get("company") or brand.get("name") or "your brand"
+        primary_contact = brand.get("primary_contact") or "Marketing Team"
+        username = account.get("username")
+        login_link = brand_login_url()
+        email = await queue_email(
+            to=username,
+            subject="Your TASCK brand access (resent)",
+            body=(
+                f"Hello {primary_contact},\n\n"
+                "TASCK has reset the access code for your brand portal account.\n\n"
+                f"Brand portal: {login_link}\n"
+                f"Email: {username}\n"
+                f"Access code: {new_temp}\n\n"
+                "For security, please sign in and change this access code immediately.\n\n"
+                "Regards,\n"
+                "TASCK"
+            ),
+            kind="brand_welcome",
+            brand_id=payload.brand_id,
+        )
+        return {
+            "ok": True,
+            "username": username,
+            "temporary_password": new_temp,
+            "email": email,
+        }
+
     class PortalLoginPayload(BaseModel):
         email: str
         password: str
@@ -2217,9 +2344,14 @@ def make_v3_router(db):
 
     @router.post("/auth/brand-login")
     async def login_brand_account(payload: PortalLoginPayload):
-        username = payload.email.strip().lower()
-        # Username on account docs is always stored lowercased, but legacy/CRM-imported
-        # brands may have mixed-case email fields. Match case-insensitively.
+        raw_email = str(payload.email or "")
+        # Normalise the inbound email: trim, lowercase, strip zero-width and
+        # non-printable noise some email clients add when admins copy from a
+        # mailto link.
+        username = raw_email.strip().lower()
+        # Drop common invisible characters that survive copy/paste from emails.
+        for bad in ("​", "‌", "‍", "﻿"):
+            username = username.replace(bad, "")
         email_regex = {"$regex": f"^{re.escape(username)}$", "$options": "i"}
         account = await db.v3_brand_accounts.find_one(
             {"$or": [{"username": username}, {"username": email_regex}]},
@@ -2237,12 +2369,46 @@ def make_v3_router(db):
             )
             if brand_match:
                 account = await db.v3_brand_accounts.find_one({"brand_id": brand_match.get("id")}, {"_id": 0})
-        if not account or account.get("status") not in {None, "active"}:
+        if not account:
+            logger.warning("brand-login: no account for username=%s", username[:80])
             raise HTTPException(401, "Invalid brand login details")
-        # Trim incoming password — clients sometimes paste with trailing whitespace.
-        submitted_password = (payload.password or "").strip()
-        accepted_passwords = {p for p in {account.get("password"), account.get("temporary_password")} if p}
-        if submitted_password not in accepted_passwords:
+        if account.get("status") not in {None, "active"}:
+            logger.warning("brand-login: account %s is not active (status=%s)", account.get("id"), account.get("status"))
+            raise HTTPException(401, "Invalid brand login details")
+
+        # Build candidate inbound passwords:
+        #   raw, trimmed, trimmed+collapsed-internal-whitespace.
+        # Emails sometimes wrap long lines and the receiver pastes the wrapped
+        # form. Collapsing internal whitespace recovers the original code.
+        raw_pw = payload.password or ""
+        trimmed_pw = raw_pw.strip()
+        # Drop the same zero-width characters from the password.
+        cleaned_pw = trimmed_pw
+        for bad in ("​", "‌", "‍", "﻿"):
+            cleaned_pw = cleaned_pw.replace(bad, "")
+        collapsed_pw = re.sub(r"\s+", "", cleaned_pw)
+        submitted_variants = {raw_pw, trimmed_pw, cleaned_pw, collapsed_pw}
+
+        # Build stored variants too: the database password, plus the same with
+        # internal whitespace collapsed (defensive against legacy inserts).
+        stored_pws = [account.get("password"), account.get("temporary_password")]
+        accepted_passwords: set = set()
+        for p in stored_pws:
+            if not p:
+                continue
+            accepted_passwords.add(p)
+            accepted_passwords.add(p.strip())
+            accepted_passwords.add(re.sub(r"\s+", "", p))
+
+        if not (submitted_variants & accepted_passwords):
+            logger.warning(
+                "brand-login: password mismatch for account %s (username=%s, has_password=%s, has_temp=%s, submitted_len=%d)",
+                account.get("id"),
+                account.get("username"),
+                bool(account.get("password")),
+                bool(account.get("temporary_password")),
+                len(trimmed_pw),
+            )
             raise HTTPException(401, "Invalid brand login details")
         brand = await db.v3_brands.find_one({"id": account.get("brand_id")}, {"_id": 0})
         if not brand:
@@ -2947,7 +3113,9 @@ def make_v3_router(db):
         snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         contract = await db.v3_contracts.find_one({"business_case_id": bc_id}, {"_id": 0})
         deliverables = await db.v3_deliverables.find({"business_case_id": bc_id}, {"_id": 0}).to_list(100)
-        invoices = await db.v3_invoices.find({"business_case_id": bc_id}, {"_id": 0}).to_list(100)
+        # Strip the inline base64 file blob from invoice docs so the bundle
+        # response stays small. The download endpoint serves the file on demand.
+        invoices = await db.v3_invoices.find({"business_case_id": bc_id}, {"_id": 0, "file_data_base64": 0}).to_list(100)
         final_report = await db.v3_final_reports.find_one({"business_case_id": bc_id}, {"_id": 0})
         brainstorm = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0})
         interactions = await db.v3_interactions.find({"business_case_id": bc_id}, {"_id": 0}).to_list(100)
@@ -4535,7 +4703,7 @@ def make_v3_router(db):
     @router.get("/invoices")
     async def list_invoices(business_case_id: Optional[str] = None):
         query = {"business_case_id": business_case_id} if business_case_id else {}
-        return await db.v3_invoices.find(query, {"_id": 0}).to_list(200)
+        return await db.v3_invoices.find(query, {"_id": 0, "file_data_base64": 0}).to_list(200)
 
     @router.post("/invoices/{invoice_id}/mark-paid")
     async def mark_invoice_paid(invoice_id: str):
@@ -4582,6 +4750,76 @@ def make_v3_router(db):
         }
         await db.v3_invoices.insert_one({**doc})
         return doc
+
+    # Invoice file upload. Stores the file as base64 inline on the invoice doc.
+    # One uploaded file = one invoice record. The Planning page calls this once
+    # per file when the admin selects multiple files, supporting multi-upload.
+    # Cap at 10MB to keep doc sizes sane.
+    class InvoiceUploadPayload(BaseModel):
+        business_case_id: str
+        file_name: str
+        mime_type: str = "application/octet-stream"
+        file_data_base64: str
+        kind: Optional[str] = None
+        amount: Optional[float] = None
+        notes: Optional[str] = None
+
+    @router.post("/invoices/upload")
+    async def upload_invoice(payload: InvoiceUploadPayload):
+        case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        if not payload.file_data_base64 or not payload.file_name:
+            raise HTTPException(400, "file_data_base64 and file_name are required.")
+        # Quick size guard - base64 expands by ~33%, so 13.3MB base64 ~= 10MB raw.
+        approx_bytes = (len(payload.file_data_base64) * 3) // 4
+        if approx_bytes > 10 * 1024 * 1024:
+            raise HTTPException(413, "Invoice file is larger than 10MB.")
+        inv_id = f"inv-{uuid.uuid4().hex[:8]}"
+        # Default the displayed kind to the filename if admin doesn't supply one.
+        default_kind = (payload.kind or payload.file_name.rsplit(".", 1)[0] or "invoice").strip() or "invoice"
+        doc = {
+            "id": inv_id,
+            "business_case_id": payload.business_case_id,
+            "kind": default_kind[:120],
+            "amount": float(payload.amount or 0),
+            "status": "issued",
+            "notes": (payload.notes or "").strip() or None,
+            "issued_at": _now_iso(),
+            "paid_at": None,
+            "triggered_by": "admin_planning_upload",
+            "file_name": payload.file_name[:240],
+            "file_mime_type": (payload.mime_type or "application/octet-stream")[:120],
+            "file_data_base64": payload.file_data_base64,
+            "file_size_bytes": approx_bytes,
+        }
+        await db.v3_invoices.insert_one({**doc})
+        # Return doc WITHOUT the giant base64 payload so the frontend list
+        # stays lightweight. The download endpoint streams the file on demand.
+        slim = {k: v for k, v in doc.items() if k != "file_data_base64"}
+        return slim
+
+    @router.get("/invoices/{invoice_id}/file")
+    async def download_invoice_file(invoice_id: str):
+        inv = await db.v3_invoices.find_one({"id": invoice_id}, {"_id": 0})
+        if not inv:
+            raise HTTPException(404, "Invoice not found")
+        data_b64 = inv.get("file_data_base64")
+        if not data_b64:
+            raise HTTPException(404, "No file attached to this invoice")
+        import base64
+        try:
+            raw = base64.b64decode(data_b64)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Invoice %s base64 decode failed: %s", invoice_id, exc)
+            raise HTTPException(500, "Invoice file is corrupted.")
+        mime = inv.get("file_mime_type") or "application/octet-stream"
+        filename = inv.get("file_name") or f"{invoice_id}.bin"
+        return StreamingResponse(
+            BytesIO(raw),
+            media_type=mime,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     class InvoiceUpdatePayload(BaseModel):
         kind: Optional[str] = None
@@ -7126,6 +7364,14 @@ def make_v3_router(db):
             updates["updated_at"] = _now_iso()
             await db.v3_deliverables.update_one({"id": deliverable_id}, {"$set": updates})
         return await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+
+    @router.delete("/deliverables/{deliverable_id}")
+    async def delete_deliverable(deliverable_id: str):
+        d = await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+        if not d:
+            raise HTTPException(404, "Deliverable not found")
+        await db.v3_deliverables.delete_one({"id": deliverable_id})
+        return {"ok": True}
 
     # ------------------------------------------------------------------------
     # GENERATE Final Report (templated from BC's actual artefacts)

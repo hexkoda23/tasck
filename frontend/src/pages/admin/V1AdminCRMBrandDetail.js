@@ -23,6 +23,7 @@ import {
   v3DeleteBrand,
   v3UpdateBrandDetails,
   v3ScrapeBrandDetails,
+  v3ResendBrandCredentials,
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
@@ -276,6 +277,57 @@ const activeCasesForBrand = (items = []) => [...items]
   .filter((businessCase) => !['closed', 'archived'].includes(String(businessCase?.stage || '').toLowerCase()) && businessCase?.status !== 'deleted')
   .sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a));
 
+// Brand portal account block + a "Resend credentials" button for when a brand
+// reports the original welcome-email credentials no longer work. Calls
+// POST /api/v3/brand-accounts/resend-credentials which regenerates a temp
+// password and re-sends the welcome email.
+const BrandAccountCard = ({ brandId, account }) => {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [revealedTemp, setRevealedTemp] = useState('');
+  const resend = async () => {
+    setNotice('');
+    setBusy(true);
+    try {
+      const result = await v3ResendBrandCredentials(brandId);
+      setRevealedTemp(result?.temporary_password || '');
+      const emailStatus = result?.email?.status;
+      if (emailStatus === 'sent') {
+        setNotice(`New access code sent to ${result?.username || 'the brand'}.`);
+      } else if (emailStatus === 'delivery_failed') {
+        setNotice(`Access code regenerated but email delivery failed: ${result?.email?.delivery_error || 'unknown reason'}. Share the code below directly with the brand.`);
+      } else {
+        setNotice(`Access code regenerated. Email status: ${emailStatus || 'queued'}.`);
+      }
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not resend credentials.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]" data-testid="brand-portal-account-card">
+      <div className="mb-2 flex items-center gap-2 font-semibold text-[#1A1A1A]"><User className="h-4 w-4 text-[#1F4A3A]" /> Brand portal account</div>
+      <p className="text-[#5C5C5C]">Username: {account?.username || EMPTY_VALUE}</p>
+      <p className="text-[#5C5C5C]">Status: {statusLabel(account?.status)}</p>
+      <button
+        type="button"
+        onClick={resend}
+        disabled={busy}
+        className="v3-btn-secondary text-[11px] mt-2"
+        data-testid="brand-resend-credentials-btn"
+      >
+        {busy ? 'Resending…' : 'Resend brand credentials'}
+      </button>
+      {notice && <p className="mt-2 text-[11px] text-[#1F4A3A]">{notice}</p>}
+      {revealedTemp && (
+        <p className="mt-1 text-[11px] text-[#4F3E2F]">
+          New access code: <code className="rounded bg-[#F4F2EC] px-1.5 py-0.5">{revealedTemp}</code>
+        </p>
+      )}
+    </div>
+  );
+};
 
 const V1AdminCRMBrandDetail = () => {
   const { id } = useParams();
@@ -906,11 +958,7 @@ const V1AdminCRMBrandDetail = () => {
 
         <InfoCard title="Account and emails">
           <div className="grid gap-3">
-            <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]">
-              <div className="mb-2 flex items-center gap-2 font-semibold text-[#1A1A1A]"><User className="h-4 w-4 text-[#1F4A3A]" /> Brand portal account</div>
-              <p className="text-[#5C5C5C]">Username: {account?.username || EMPTY_VALUE}</p>
-              <p className="text-[#5C5C5C]">Status: {statusLabel(account?.status)}</p>
-            </div>
+            <BrandAccountCard brandId={id} account={account} />
             <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]" data-testid="brand-deliverables-panel">
               <button type="button" onClick={() => setDeliverablesOpen((open) => !open)} className="flex w-full items-center justify-between gap-3 text-left" data-testid="brand-deliverables-toggle">
                 <span className="flex items-center gap-2 font-semibold text-[#1A1A1A]"><PackageCheck className="h-4 w-4 text-[#1F4A3A]" /> Deliverables for this brand ({deliverables.length})</span>

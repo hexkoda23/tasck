@@ -85,6 +85,7 @@ import {
 import {
   v3AcceptCreatorBriefing,
   v3AddDeliverable,
+  v3DeleteDeliverable,
   v3AdvanceBusinessCase,
   v3AnalyzeMeetingTranscript,
   v3AnalyzeAllTranscripts,
@@ -137,6 +138,8 @@ import {
   v3UpdateInvoice,
   v3DeleteInvoice,
   v3MarkInvoicePaid,
+  v3UploadInvoice,
+  v3InvoiceFileUrl,
   v3UpdatePlanningText,
   v3SendStrategySnapshotToBrand,
   v3SignContract,
@@ -4176,6 +4179,58 @@ export const V3BusinessCaseDeliverySummary = () => {
       setInvoiceBusyId(null);
     }
   };
+
+  // ----- Invoice file upload (multi-file) -----
+  // Per Chioma: the Invoicing card should let admin upload one or more
+  // invoice documents instead of typing them in. We POST one file per call
+  // to /invoices/upload (base64 encoded inline) and reload the bundle once.
+  const [invoiceUploading, setInvoiceUploading] = useState(false);
+  const [invoiceUploadProgress, setInvoiceUploadProgress] = useState(''); // "3 of 5 uploaded"
+  const fileToBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
+  const uploadInvoiceFiles = async (fileList) => {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (files.length === 0) return;
+    setInvoiceNotice('');
+    setInvoiceUploading(true);
+    setInvoiceUploadProgress(`0 of ${files.length} uploaded`);
+    let success = 0;
+    let firstError = '';
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      try {
+        const b64 = await fileToBase64(file);
+        await v3UploadInvoice({
+          business_case_id: id,
+          file_name: file.name,
+          mime_type: file.type || 'application/octet-stream',
+          file_data_base64: b64,
+        });
+        success += 1;
+        setInvoiceUploadProgress(`${success} of ${files.length} uploaded`);
+      } catch (e) {
+        if (!firstError) firstError = e?.response?.data?.detail || e?.message || `Could not upload ${file.name}.`;
+      }
+    }
+    await reload();
+    setInvoiceUploading(false);
+    setInvoiceUploadProgress('');
+    if (success === 0) {
+      setInvoiceNotice(firstError || 'No invoice files were uploaded.');
+    } else if (success < files.length) {
+      setInvoiceNotice(`${success} of ${files.length} files uploaded. First error: ${firstError}`);
+    } else {
+      setInvoiceNotice(`${success} invoice ${success === 1 ? 'file' : 'files'} uploaded.`);
+    }
+  };
   useEffect(() => {
     setProjectValueInput(projectValue ? String(projectValue) : '');
   }, [projectValue]);
@@ -4319,9 +4374,38 @@ export const V3BusinessCaseDeliverySummary = () => {
           <p className="mb-2 text-[11px] text-[#1F4A3A]" data-testid="planning-invoice-notice">{invoiceNotice}</p>
         )}
 
-        {/* New invoice composer */}
+        {/* Upload zone (multi-file). Per Chioma: admin should upload invoice
+            documents, not type them in. One file = one invoice record. */}
+        <label
+          htmlFor="planning-invoice-file-input"
+          className={`block rounded-md border-2 border-dashed bg-[#FBFAF7] p-4 text-center cursor-pointer transition-colors ${invoiceUploading ? 'border-[#D7CBB8] opacity-70' : 'border-[#D7CBB8] hover:border-[#1F4A3A]'}`}
+          data-testid="planning-invoice-upload-zone"
+        >
+          <Upload className="w-5 h-5 text-[#1F4A3A] inline-block" />
+          <p className="text-[12px] text-[#4F3E2F] mt-1 font-medium">
+            {invoiceUploading ? `Uploading… ${invoiceUploadProgress}` : 'Click to upload one or more invoice files'}
+          </p>
+          <p className="text-[11px] text-[#6E6657] mt-0.5">PDF, DOCX, PNG, JPG. Each file becomes a separate invoice record. Up to 10MB per file.</p>
+          <input
+            id="planning-invoice-file-input"
+            type="file"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*"
+            multiple
+            className="hidden"
+            disabled={invoiceUploading}
+            onChange={(e) => {
+              uploadInvoiceFiles(e.target.files);
+              // Clear the input so picking the same file again re-fires onChange.
+              e.target.value = '';
+            }}
+            data-testid="planning-invoice-file-input"
+          />
+        </label>
+
+        {/* Optional manual composer (kept behind the toggle for the rare case
+            where admin wants to record an invoice without a document yet). */}
         {newInvoiceOpen && (
-          <div className="rounded-md border border-[#D7CBB8] bg-[#FBFAF7] p-3 mb-3 grid grid-cols-1 md:grid-cols-5 gap-2 items-end" data-testid="planning-invoice-new-row">
+          <div className="rounded-md border border-[#D7CBB8] bg-[#FBFAF7] p-3 mt-3 grid grid-cols-1 md:grid-cols-5 gap-2 items-end" data-testid="planning-invoice-new-row">
             <div>
               <label className="block text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Kind</label>
               <input
@@ -4379,18 +4463,18 @@ export const V3BusinessCaseDeliverySummary = () => {
           </div>
         )}
 
-        {/* Existing invoices - editable inline */}
+        {/* Uploaded invoices list */}
         {invoices.length === 0 ? (
-          <p className="text-[13px] text-[#8A8A8A]">No invoices on record yet. Use "Add invoice" above to create one.</p>
+          <p className="text-[13px] text-[#8A8A8A] mt-3">No invoice files uploaded yet. Use the upload zone above to add one or more invoice documents.</p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
+          <div className="mt-3 overflow-x-auto rounded-lg border border-[#E8E4DB]">
             <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
               <thead className="bg-[#F4F2EC] text-[#6E6657]">
                 <tr>
-                  <th className="px-3 py-2 font-semibold">Kind</th>
+                  <th className="px-3 py-2 font-semibold">File / Kind</th>
                   <th className="px-3 py-2 font-semibold">Amount (NGN)</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
-                  <th className="px-3 py-2 font-semibold">Issued</th>
+                  <th className="px-3 py-2 font-semibold">Uploaded</th>
                   <th className="px-3 py-2 font-semibold">Paid</th>
                   <th className="px-3 py-2 font-semibold">Actions</th>
                 </tr>
@@ -4401,16 +4485,29 @@ export const V3BusinessCaseDeliverySummary = () => {
                   const isPaid = inv.status === 'paid';
                   const busy = invoiceBusyId === inv.id;
                   const hasEdits = rowHasEdits(inv.id);
+                  const hasFile = Boolean(inv.file_name);
                   return (
                     <tr key={inv.id} data-testid={`planning-invoice-row-${inv.id}`}>
-                      <td className="px-2 py-1.5 align-top">
-                        <input
-                          value={draftField(inv, 'kind')}
-                          onChange={(e) => setDraftField(inv.id, 'kind', e.target.value)}
-                          disabled={isSdf}
-                          className="w-full text-[12px] rounded-md border border-transparent hover:border-[#D7CBB8] focus:border-[#1F4A3A] bg-white px-2 py-1 disabled:bg-[#F4F2EC]"
-                          data-testid={`planning-invoice-${inv.id}-kind`}
-                        />
+                      <td className="px-3 py-1.5 align-top">
+                        {hasFile ? (
+                          <a
+                            href={v3InvoiceFileUrl(inv.id)}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[12px] text-[#1F4A3A] underline hover:no-underline inline-flex items-center gap-1"
+                            data-testid={`planning-invoice-${inv.id}-download`}
+                          >
+                            <Download className="w-3 h-3" /> {inv.file_name}
+                          </a>
+                        ) : (
+                          <input
+                            value={draftField(inv, 'kind')}
+                            onChange={(e) => setDraftField(inv.id, 'kind', e.target.value)}
+                            disabled={isSdf}
+                            className="w-full text-[12px] rounded-md border border-transparent hover:border-[#D7CBB8] focus:border-[#1F4A3A] bg-white px-2 py-1 disabled:bg-[#F4F2EC]"
+                            data-testid={`planning-invoice-${inv.id}-kind`}
+                          />
+                        )}
                       </td>
                       <td className="px-2 py-1.5 align-top">
                         <input
@@ -4419,6 +4516,7 @@ export const V3BusinessCaseDeliverySummary = () => {
                           onChange={(e) => setDraftField(inv.id, 'amount', e.target.value)}
                           className="w-full text-[12px] rounded-md border border-transparent hover:border-[#D7CBB8] focus:border-[#1F4A3A] bg-white px-2 py-1"
                           data-testid={`planning-invoice-${inv.id}-amount`}
+                          placeholder="0"
                         />
                         <p className="text-[10px] text-[#8A8A8A] mt-0.5">{inv.amount ? formatNairaV3(inv.amount) : 'TBD'}</p>
                       </td>
@@ -4464,7 +4562,7 @@ export const V3BusinessCaseDeliverySummary = () => {
             </table>
           </div>
         )}
-        <p className="mt-2 text-[11px] text-[#6E6657]">Invoices can be paid off-platform. Edit kind/amount/status inline and Save. Mark paid stamps the paid date now. Delete removes the invoice (the Strategy Development Fee invoice cannot be deleted here).</p>
+        <p className="mt-2 text-[11px] text-[#6E6657]">Upload each invoice document above. Amount and status can be edited inline; click the file name to download. Mark paid stamps the paid date. Invoices can be paid off-platform.</p>
       </InfoCard>
 
       {/* Other Planning pages */}
@@ -4937,16 +5035,39 @@ export const V3BusinessCaseDeliverables = () => {
       v3UpdateBusinessCasePhase(id, 'delivery').catch(() => { /* non-blocking */ });
     }
   }, [id, bundle]);
-  const add = async () => {
+  // Persist the current form to the backend. Used by both buttons:
+  //   - "Add deliverable"  : save + clear form (so admin can type the next).
+  //   - "Save deliverable" : save + keep form populated for review.
+  const persistDeliverable = async ({ clearForm }) => {
     if (!title.trim()) { setNotice('Add a deliverable title first.'); return; }
     setNotice('');
-    const row = await v3AddDeliverable({ business_case_id: id, title, notes, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_timeframe: deliveryTimeframe });
-    setRows([row, ...rows]);
-    setTitle('');
-    setNotes('');
-    setDeliveryDate('');
-    setDeliveryTime('');
-    setDeliveryTimeframe('');
+    try {
+      const row = await v3AddDeliverable({ business_case_id: id, title, notes, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_timeframe: deliveryTimeframe });
+      setRows([row, ...rows]);
+      setNotice(clearForm ? 'Deliverable added.' : 'Deliverable saved.');
+      if (clearForm) {
+        setTitle('');
+        setNotes('');
+        setDeliveryDate('');
+        setDeliveryTime('');
+        setDeliveryTimeframe('');
+      }
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save deliverable.');
+    }
+  };
+  const add = () => persistDeliverable({ clearForm: true });
+  const save = () => persistDeliverable({ clearForm: false });
+  const deleteRow = async (row) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Delete deliverable "${row.title || 'this row'}"? This cannot be undone.`)) return;
+    setNotice('');
+    try {
+      await v3DeleteDeliverable(row.id);
+      setRows((current) => current.filter((r) => r.id !== row.id));
+      setNotice('Deliverable deleted.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not delete deliverable.');
+    }
   };
   const openReporting = async () => {
     setNotice('');
@@ -4990,8 +5111,16 @@ export const V3BusinessCaseDeliverables = () => {
               </label>
             </div>
           </div>
-          <div className="flex justify-end">
-            <button onClick={add} className="v3-btn-primary" data-testid="deliverable-add-btn"><PackageCheck className="w-3.5 h-3.5" /> Add deliverable</button>
+          {/* Side-by-side Add + Save. Add clears the form ready for the next
+              entry; Save keeps the form populated so admin can keep tweaking
+              the same row. Both persist immediately to the backend. */}
+          <div className="flex flex-wrap justify-end gap-2">
+            <button onClick={save} className="v3-btn-secondary" data-testid="deliverable-save-btn">
+              <Save className="w-3.5 h-3.5" /> Save deliverable
+            </button>
+            <button onClick={add} className="v3-btn-primary" data-testid="deliverable-add-btn">
+              <PackageCheck className="w-3.5 h-3.5" /> Add deliverable
+            </button>
           </div>
         </div>
       </InfoCard>
@@ -5012,7 +5141,17 @@ export const V3BusinessCaseDeliverables = () => {
                       <span className="rounded bg-[#F4F2EC] px-2 py-1">Timeframe: {row.delivery_timeframe || 'Not recorded'}</span>
                     </div>
                   </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657] uppercase tracking-wider">{humanStatus(row.status)}</span>
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657] uppercase tracking-wider">{humanStatus(row.status)}</span>
+                    <button
+                      type="button"
+                      onClick={() => deleteRow(row)}
+                      className="text-[11px] text-[#B54A37] hover:underline inline-flex items-center gap-1"
+                      data-testid={`deliverable-${row.id}-delete-btn`}
+                    >
+                      <Trash2 className="w-3 h-3" /> Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}

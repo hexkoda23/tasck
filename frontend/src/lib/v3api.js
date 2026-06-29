@@ -155,6 +155,19 @@ export const v3ListAdminNotifications = () => v3.get('/admin/notifications').the
 // about (admin approved Alignment Snapshot, Strategy Snapshot is ready for
 // review, contract is ready to sign). Used by the V1 brand overview.
 export const v3ListBrandNotifications = (brandId) => v3.get(`/brands/${brandId}/notifications`).then(r => r.data);
+// Admin tool: regenerate the brand's temporary password and resend the
+// welcome email. Use when a brand reports the original credentials no
+// longer work (typo, email-client mangling, expired temp password).
+export const v3ResendBrandCredentials = (brandId) => v3.post('/brand-accounts/resend-credentials', { brand_id: brandId }).then(r => r.data);
+// Delete a deliverable from the Delivery phase Deliverables page.
+export const v3DeleteDeliverable = (deliverableId) => v3.delete(`/deliverables/${deliverableId}`).then(r => r.data);
+// Planning Invoicing card: upload an invoice file (single invoice per file,
+// multi-file upload by calling once per file). Returns the lightweight
+// invoice doc without the inline base64 blob.
+export const v3UploadInvoice = (payload) => v3.post('/invoices/upload', payload).then(r => r.data);
+// Stream URL for downloading a previously-uploaded invoice attachment.
+const _BACKEND_URL_FOR_INVOICE = (process.env.REACT_APP_BACKEND_URL || 'https://tasck-live-demo-1.emergent.host').replace(/\/$/, '');
+export const v3InvoiceFileUrl = (invoiceId) => `${_BACKEND_URL_FOR_INVOICE}/api/v3/invoices/${invoiceId}/file`;
 
 // -------- Deliver stage --------
 export const v3ListDeliverables = (bcId) => v3.get('/deliverables', { params: { business_case_id: bcId } }).then(r => r.data);
