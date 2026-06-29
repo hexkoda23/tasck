@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends, Body
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta as _td
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from io import BytesIO
 from pathlib import Path
@@ -5439,12 +5439,40 @@ def make_v3_router(db):
     async def admin_notifications():
         """Recent brand and creator actions for the V1 admin layout.
 
-        Strict filtering policy: every notification MUST resolve to a real
-        brand (with company/name) AND a real Business Case (with title). If
-        either lookup fails or returns a placeholder we DROP the row. This
-        keeps demo/seed records like "Brand approved ... for the project"
-        out of the Needs Attention card.
+        Strict filtering policy:
+          1. Every notification MUST resolve to a real brand (with
+             company/name) AND a real Business Case (with title). If either
+             lookup fails or returns a placeholder we DROP the row.
+          2. Every notification MUST be within the last
+             NOTIFICATIONS_LOOKBACK_DAYS days (default 7). Old seed records
+             with real-looking brand names like "Coca-Cola Nigeria Limited"
+             or "Nigerian Breweries PLC" are dated weeks or months ago, so
+             the time window drops them automatically while keeping genuine
+             recent customer activity visible.
         """
+        # 7-day default; override via env var if a deployment wants more headroom.
+        try:
+            lookback_days = max(1, int(os.getenv("NOTIFICATIONS_LOOKBACK_DAYS", "7")))
+        except (TypeError, ValueError):
+            lookback_days = 7
+        cutoff_dt = datetime.now(timezone.utc) - _td(days=lookback_days)
+
+        def _within_window(value: Any) -> bool:
+            """True if the ISO timestamp is newer than the cutoff. Drops rows
+            with malformed or missing timestamps so they never reach the UI."""
+            text = str(value or "").strip()
+            if not text:
+                return False
+            # Normalise Z suffix to +00:00 so fromisoformat accepts it.
+            cleaned = text.replace("Z", "+00:00") if text.endswith("Z") else text
+            try:
+                parsed = datetime.fromisoformat(cleaned)
+            except ValueError:
+                return False
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed >= cutoff_dt
+
         # Resolve brand+case names in one lookup pass to keep the response small.
         brand_cache: Dict[str, Dict[str, Any]] = {}
         case_cache: Dict[str, Dict[str, Any]] = {}
@@ -5511,6 +5539,8 @@ def make_v3_router(db):
             {"_id": 0, "id": 1, "business_case_id": 1, "approved_at": 1, "approved_by": 1, "title": 1},
         ).sort("approved_at", -1).to_list(50)
         for row in alignments:
+            if not _within_window(row.get("approved_at")):
+                continue
             resolved = await _resolve(row.get("business_case_id"))
             if not resolved:
                 continue
@@ -5534,6 +5564,8 @@ def make_v3_router(db):
             {"_id": 0, "id": 1, "business_case_id": 1, "approved_at": 1, "approved_by": 1, "title": 1},
         ).sort("approved_at", -1).to_list(50)
         for row in snapshots:
+            if not _within_window(row.get("approved_at")):
+                continue
             resolved = await _resolve(row.get("business_case_id"))
             if not resolved:
                 continue
@@ -5557,6 +5589,8 @@ def make_v3_router(db):
             {"_id": 0, "id": 1, "business_case_id": 1, "signed_at": 1, "title": 1, "template": 1},
         ).sort("signed_at", -1).to_list(50)
         for row in contracts:
+            if not _within_window(row.get("signed_at")):
+                continue
             resolved = await _resolve(row.get("business_case_id"))
             if not resolved:
                 continue
@@ -5582,6 +5616,8 @@ def make_v3_router(db):
             {"_id": 0, "id": 1, "business_case_id": 1, "creator_id": 1, "responded_at": 1, "creator_response": 1},
         ).sort("responded_at", -1).to_list(50)
         for row in briefs:
+            if not _within_window(row.get("responded_at")):
+                continue
             resolved = await _resolve(row.get("business_case_id"))
             if not resolved:
                 continue
