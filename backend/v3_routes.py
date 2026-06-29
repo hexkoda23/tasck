@@ -5437,6 +5437,14 @@ def make_v3_router(db):
     # seen via localStorage without showing the same toast twice.
     @router.get("/admin/notifications")
     async def admin_notifications():
+        """Recent brand and creator actions for the V1 admin layout.
+
+        Strict filtering policy: every notification MUST resolve to a real
+        brand (with company/name) AND a real Business Case (with title). If
+        either lookup fails or returns a placeholder we DROP the row. This
+        keeps demo/seed records like "Brand approved ... for the project"
+        out of the Needs Attention card.
+        """
         # Resolve brand+case names in one lookup pass to keep the response small.
         brand_cache: Dict[str, Dict[str, Any]] = {}
         case_cache: Dict[str, Dict[str, Any]] = {}
@@ -5459,7 +5467,43 @@ def make_v3_router(db):
             case_cache[bc_id] = doc
             return doc
 
+        _GENERIC_BRAND_VALUES = {"", "brand", "unnamed brand"}
+        _GENERIC_TITLE_VALUES = {"", "project", "the project", "business case"}
+
+        def _real_brand_name(brand: Dict[str, Any]) -> Optional[str]:
+            for key in ("company", "name"):
+                value = str(brand.get(key) or "").strip()
+                if value and value.lower() not in _GENERIC_BRAND_VALUES:
+                    return value
+            return None
+
+        def _real_case_title(case: Dict[str, Any]) -> Optional[str]:
+            value = str(case.get("title") or "").strip()
+            if value and value.lower() not in _GENERIC_TITLE_VALUES:
+                return value
+            return None
+
         notifications: List[Dict[str, Any]] = []
+
+        async def _resolve(bc_id: Optional[str]) -> Optional[Dict[str, str]]:
+            """Look up the case + brand and confirm both have real names.
+            Returns None if either piece is missing - the caller must skip
+            the row so demo placeholders never reach the admin UI."""
+            if not bc_id:
+                return None
+            case = await _case(bc_id)
+            if not case:
+                return None
+            brand = await _brand(case.get("brand_id"))
+            brand_name = _real_brand_name(brand)
+            case_title = _real_case_title(case)
+            if not brand_name or not case_title:
+                return None
+            return {
+                "brand_name": brand_name,
+                "case_title": case_title,
+                "brand_id": case.get("brand_id"),
+            }
 
         # 1. Alignment Snapshots approved by the brand.
         alignments = await db.v3_alignment_snapshots.find(
@@ -5467,20 +5511,20 @@ def make_v3_router(db):
             {"_id": 0, "id": 1, "business_case_id": 1, "approved_at": 1, "approved_by": 1, "title": 1},
         ).sort("approved_at", -1).to_list(50)
         for row in alignments:
-            case = await _case(row.get("business_case_id"))
-            brand = await _brand(case.get("brand_id"))
-            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            resolved = await _resolve(row.get("business_case_id"))
+            if not resolved:
+                continue
             notifications.append({
                 "id": f"alignment_approved_brand:{row.get('id')}",
                 "kind": "alignment_approved",
                 "actor": "brand",
                 "when": row.get("approved_at"),
-                "brand_id": case.get("brand_id"),
-                "brand_name": brand_name,
+                "brand_id": resolved["brand_id"],
+                "brand_name": resolved["brand_name"],
                 "business_case_id": row.get("business_case_id"),
-                "business_case_title": case.get("title"),
-                "title": f"{brand_name} approved the Alignment Snapshot",
-                "message": f"{brand_name} approved the Alignment Snapshot for {case.get('title') or 'the project'}.",
+                "business_case_title": resolved["case_title"],
+                "title": f"{resolved['brand_name']} approved the Alignment Snapshot",
+                "message": f"{resolved['brand_name']} approved the Alignment Snapshot for {resolved['case_title']}.",
                 "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/snapshot",
             })
 
@@ -5490,20 +5534,20 @@ def make_v3_router(db):
             {"_id": 0, "id": 1, "business_case_id": 1, "approved_at": 1, "approved_by": 1, "title": 1},
         ).sort("approved_at", -1).to_list(50)
         for row in snapshots:
-            case = await _case(row.get("business_case_id"))
-            brand = await _brand(case.get("brand_id"))
-            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            resolved = await _resolve(row.get("business_case_id"))
+            if not resolved:
+                continue
             notifications.append({
                 "id": f"strategy_approved_brand:{row.get('id')}",
                 "kind": "strategy_approved",
                 "actor": "brand",
                 "when": row.get("approved_at"),
-                "brand_id": case.get("brand_id"),
-                "brand_name": brand_name,
+                "brand_id": resolved["brand_id"],
+                "brand_name": resolved["brand_name"],
                 "business_case_id": row.get("business_case_id"),
-                "business_case_title": case.get("title"),
-                "title": f"{brand_name} approved the Strategy Snapshot",
-                "message": f"{brand_name} approved the Strategy Snapshot for {case.get('title') or 'the project'}.",
+                "business_case_title": resolved["case_title"],
+                "title": f"{resolved['brand_name']} approved the Strategy Snapshot",
+                "message": f"{resolved['brand_name']} approved the Strategy Snapshot for {resolved['case_title']}.",
                 "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/strategy-snapshot",
             })
 
@@ -5513,9 +5557,9 @@ def make_v3_router(db):
             {"_id": 0, "id": 1, "business_case_id": 1, "signed_at": 1, "title": 1, "template": 1},
         ).sort("signed_at", -1).to_list(50)
         for row in contracts:
-            case = await _case(row.get("business_case_id"))
-            brand = await _brand(case.get("brand_id"))
-            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            resolved = await _resolve(row.get("business_case_id"))
+            if not resolved:
+                continue
             template = (row.get("template") or "contract").replace("_", " ").title()
             actor = "creator" if "creator" in (row.get("template") or "").lower() else "brand"
             notifications.append({
@@ -5523,12 +5567,12 @@ def make_v3_router(db):
                 "kind": "contract_signed",
                 "actor": actor,
                 "when": row.get("signed_at"),
-                "brand_id": case.get("brand_id"),
-                "brand_name": brand_name,
+                "brand_id": resolved["brand_id"],
+                "brand_name": resolved["brand_name"],
                 "business_case_id": row.get("business_case_id"),
-                "business_case_title": case.get("title"),
-                "title": f"{template} signed",
-                "message": f"{template} for {brand_name} ({case.get('title') or 'project'}) has been signed.",
+                "business_case_title": resolved["case_title"],
+                "title": f"{template} signed - {resolved['brand_name']}",
+                "message": f"{template} for {resolved['brand_name']} ({resolved['case_title']}) has been signed.",
                 "link": f"/admin/business-cases/{row.get('business_case_id')}/delivery/contracts",
             })
 
@@ -5538,23 +5582,26 @@ def make_v3_router(db):
             {"_id": 0, "id": 1, "business_case_id": 1, "creator_id": 1, "responded_at": 1, "creator_response": 1},
         ).sort("responded_at", -1).to_list(50)
         for row in briefs:
-            case = await _case(row.get("business_case_id"))
-            brand = await _brand(case.get("brand_id"))
-            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            resolved = await _resolve(row.get("business_case_id"))
+            if not resolved:
+                continue
             creator_doc = await db.v3_creators.find_one({"id": row.get("creator_id")}, {"_id": 0, "name": 1}) or {}
-            creator_name = creator_doc.get("name") or "the creator"
+            creator_name = str(creator_doc.get("name") or "").strip()
+            if not creator_name:
+                # Without a real creator name the alert is too thin to surface.
+                continue
             response = str(row.get("creator_response") or "responded")
             notifications.append({
                 "id": f"brief_response:{row.get('id')}",
                 "kind": "brief_response",
                 "actor": "creator",
                 "when": row.get("responded_at"),
-                "brand_id": case.get("brand_id"),
-                "brand_name": brand_name,
+                "brand_id": resolved["brand_id"],
+                "brand_name": resolved["brand_name"],
                 "business_case_id": row.get("business_case_id"),
-                "business_case_title": case.get("title"),
+                "business_case_title": resolved["case_title"],
                 "title": f"{creator_name} responded to the brief",
-                "message": f"{creator_name} replied to the brief for {brand_name}: {response[:200]}",
+                "message": f"{creator_name} replied to the brief for {resolved['brand_name']}: {response[:200]}",
                 "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/brief",
             })
 
