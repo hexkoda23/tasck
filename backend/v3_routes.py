@@ -482,23 +482,32 @@ You are TASCK's Connect-to-Frame Alignment Snapshot analyst.
 
 Read the CRM context and every Connect transcript. Extract only what is supported by the evidence. Do not invent facts, numbers, dates, audiences, priorities, or goals. If a field is unclear, say exactly what the brand should confirm. Produce polished Nigerian business English suitable for sending to a brand for review.
 
-CRITICAL - about_the_organisation MUST be a rich, specific 4 to 6 sentence paragraph that covers:
-  (a) who the organisation is and what category/sector it operates in,
-  (b) the products, services, programmes, or value it delivers,
-  (c) who it primarily serves (the audience, beneficiaries, customers, or partners) and how,
-  (d) what makes it distinctive in its market or why its work matters now,
-  (e) the current commercial or cultural context the brand is operating in if the transcripts mention it.
-Never return a one-liner, never use generic phrases like "a consumer culture organisation", and never repeat the brand name in every sentence. Read the transcripts carefully and reflect the brand's actual language.
+ABSOLUTE RULE - NO PERSON NAMES:
+- NEVER include the names of individual people (attendees, hosts, presenters, founders, staff, TASCK team members, callers, speakers) anywhere in any field.
+- Do not write "Adeleke said", "Tunde mentioned", "Chioma highlighted", "Funke explained", "John from TASCK", "the founder Mary", or any similar attribution.
+- Refer to the organisation, the brand, the leadership team, the marketing team, the partner, the funder, or the audience instead.
+- Strip first names, last names, nicknames, and email-style names (e.g. "kehinde@") from anything you write. If you cannot describe something without naming a person, leave the underlying point in but rewrite the sentence to attribute it to the organisation or team.
+
+WRITING LENGTH AND DEPTH:
+- about_the_organisation MUST be a rich, specific 4 to 6 sentence paragraph that covers:
+    (a) who the organisation is and what category/sector it operates in,
+    (b) the products, services, programmes, or value it delivers,
+    (c) who it primarily serves (the audience, beneficiaries, customers, or partners) and how,
+    (d) what makes it distinctive in its market or why its work matters now,
+    (e) the current commercial or cultural context the brand is operating in if the transcripts mention it.
+- Never return a one-liner, never use generic phrases like "a consumer culture organisation", and never repeat the brand name in every sentence.
+- core_focus_areas, key_customers_beneficiaries, key_goals_metrics, success_timeline, focus, priority should each be 2 to 4 sentences of concrete, evidence-grounded prose - not bullet labels.
+- Mirror the brand's actual language and category vocabulary from the transcript without quoting people by name.
 
 Return JSON only, no markdown, with exactly these keys:
 {
   "about_the_organisation": "string (rich 4-6 sentence paragraph as described above)",
-  "core_focus_areas": "string",
-  "key_customers_beneficiaries": "string",
-  "key_goals_metrics": "string",
-  "success_timeline": "string",
-  "focus": "string",
-  "priority": "string",
+  "core_focus_areas": "string (2-4 sentences)",
+  "key_customers_beneficiaries": "string (2-4 sentences)",
+  "key_goals_metrics": "string (2-4 sentences)",
+  "success_timeline": "string (2-4 sentences)",
+  "focus": "string (2-4 sentences)",
+  "priority": "string (2-4 sentences)",
   "date_of_connect": "string",
   "confidence": integer 0-100,
   "evidence_notes": ["short evidence note"]
@@ -3714,9 +3723,35 @@ def make_v3_router(db):
     def _docx_text(value: Any) -> str:
         return html.escape(str(value or ""), quote=True)
 
-    def _docx_paragraph(value: Any, *, bold: bool = False) -> str:
-        run_props = "<w:rPr><w:b/></w:rPr>" if bold else ""
-        return f'<w:p><w:r>{run_props}<w:t xml:space="preserve">{_docx_text(value)}</w:t></w:r></w:p>'
+    # Century Gothic is the font used in Chioma's approved Alignment Snapshot
+    # template. We pin it on every paragraph run so the generated DOCX looks
+    # the same as the template the brand reviews.
+    _DOCX_FONT = "Century Gothic"
+
+    def _docx_run_props(*, bold: bool = False, size_half_pt: int = 22, color: str = "1A1A1A") -> str:
+        bold_tag = "<w:b/><w:bCs/>" if bold else ""
+        return (
+            "<w:rPr>"
+            f'<w:rFonts w:ascii="{_DOCX_FONT}" w:hAnsi="{_DOCX_FONT}" w:cs="{_DOCX_FONT}" w:eastAsia="{_DOCX_FONT}"/>'
+            f"{bold_tag}"
+            f'<w:sz w:val="{size_half_pt}"/><w:szCs w:val="{size_half_pt}"/>'
+            f'<w:color w:val="{color}"/>'
+            "</w:rPr>"
+        )
+
+    def _docx_paragraph(value: Any, *, bold: bool = False, size_half_pt: int = 22, color: str = "1A1A1A") -> str:
+        return (
+            "<w:p>"
+            f'<w:pPr><w:spacing w:after="120" w:line="300" w:lineRule="auto"/></w:pPr>'
+            "<w:r>"
+            f"{_docx_run_props(bold=bold, size_half_pt=size_half_pt, color=color)}"
+            f'<w:t xml:space="preserve">{_docx_text(value)}</w:t>'
+            "</w:r></w:p>"
+        )
+
+    def _docx_heading(value: Any) -> str:
+        # Section heading: bolder + larger + dark TASCK green.
+        return _docx_paragraph(value, bold=True, size_half_pt=26, color="1F4A3A")
 
     def _docx_cell(value: Any, *, bold: bool = False) -> str:
         return (
@@ -3735,15 +3770,84 @@ def make_v3_router(db):
             return str(question or ""), str(answer or "")
         return str(row or ""), ""
 
+    # Static template assets that match Chioma's approved Alignment Snapshot
+    # template: TASCK logo (header, top-right) + contact-strip footer + a
+    # decorative curves image. Loaded once on import so each export is fast.
+    _ALIGNMENT_TEMPLATE_DIR = Path(__file__).resolve().parent / "static" / "alignment_template"
+
+    def _read_template_asset(name: str) -> bytes:
+        path = _ALIGNMENT_TEMPLATE_DIR / name
+        if not path.exists():
+            return b""
+        try:
+            return path.read_bytes()
+        except OSError:
+            return b""
+
+    # EMU helper: 914400 EMU per inch.
+    def _emu_inch(inches: float) -> int:
+        return int(round(inches * 914400))
+
+    def _drawing_inline(rid: str, cx: int, cy: int, doc_id: int, name: str) -> str:
+        """Inline picture XML used inside header/footer paragraphs."""
+        return (
+            "<w:drawing>"
+            f'<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">'
+            f'<wp:extent cx="{cx}" cy="{cy}"/>'
+            '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
+            f'<wp:docPr id="{doc_id}" name="{name}"/>'
+            '<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+            '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+            '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+            '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+            f'<pic:nvPicPr><pic:cNvPr id="{doc_id}" name="{name}"/><pic:cNvPicPr/></pic:nvPicPr>'
+            '<pic:blipFill>'
+            f'<a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{rid}"/>'
+            '<a:stretch><a:fillRect/></a:stretch>'
+            '</pic:blipFill>'
+            '<pic:spPr>'
+            f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+            '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+            '</pic:spPr>'
+            '</pic:pic>'
+            '</a:graphicData>'
+            '</a:graphic>'
+            '</wp:inline>'
+            '</w:drawing>'
+        )
+
+    def _split_intro_paragraphs(meta: str) -> List[str]:
+        """Split the snapshot's meta string into the three intro paragraphs the
+        approved template uses. We split on sentence boundaries; if the meta
+        is short we just return it as one paragraph."""
+        text = str(meta or "").strip()
+        if not text:
+            return []
+        # Try splitting on full stops, keep up to 3 paragraphs.
+        parts = [p.strip() for p in re.split(r"(?<=\.)\s+", text) if p.strip()]
+        if len(parts) <= 1:
+            return [text]
+        return parts[:3]
+
     def alignment_snapshot_docx_bytes(case: Dict[str, Any], brand: Dict[str, Any], snap: Dict[str, Any]) -> bytes:
-        blocks = [
-            _docx_paragraph(snap.get("title") or "Alignment Snapshot", bold=True),
-            _docx_paragraph(f"Brand: {brand.get('company') or brand.get('name') or 'Brand'}"),
-            _docx_paragraph(f"Business Case: {case.get('title') or 'Business Case'}"),
-            _docx_paragraph(snap.get("meta") or "Please review the Alignment Snapshot, comment where needed, and approve when accurate."),
-        ]
+        brand_name = brand.get("company") or brand.get("name") or "Brand"
+
+        # ---- Body content ----
+        blocks: List[str] = []
+        # Title - brand name as the [Client Name] line in the template.
+        blocks.append(_docx_paragraph(brand_name, bold=True, size_half_pt=36, color="1F4A3A"))
+        # The three intro paragraphs (matches the template wording).
+        for intro_para in _split_intro_paragraphs(snap.get("meta") or ""):
+            blocks.append(_docx_paragraph(intro_para))
+        if not snap.get("meta"):
+            blocks.append(_docx_paragraph(
+                "This Alignment Snapshot captures TASCK's current understanding of your organisation, project goals, priority audience, desired outcomes, and possible areas of support."
+            ))
+            blocks.append(_docx_paragraph("It is designed to help us understand the opportunity correctly."))
+            blocks.append(_docx_paragraph("We would like you to review this document and help us confirm, correct, or sharpen our thinking."))
+
         for section in snap.get("sections", []) or []:
-            blocks.append(_docx_paragraph(section.get("heading") or "Alignment section", bold=True))
+            blocks.append(_docx_heading(section.get("heading") or "Alignment section"))
             if section.get("content"):
                 blocks.append(_docx_paragraph(section.get("content")))
             if section.get("type") == "questions":
@@ -3803,25 +3907,134 @@ def make_v3_router(db):
                 for item in section.get("items", []) or []:
                     blocks.append(_docx_paragraph(f"- {item}"))
 
+        # ---- Static template assets ----
+        # Logo size: 1.5 inches wide. Aspect from 2048x286.
+        logo_bytes = _read_template_asset("tasck_logo.png")
+        logo_cx = _emu_inch(1.5)
+        logo_cy = int(logo_cx * 286 / 2048)
+        # Footer contact strip: 6 inches wide. Aspect from 2048x180.
+        footer_bytes = _read_template_asset("footer_contact.png")
+        footer_cx = _emu_inch(6.0)
+        footer_cy = int(footer_cx * 180 / 2048)
+
+        # ---- Header XML (logo top-right) ----
+        # Drawing references rId1 inside the header part.
+        header_drawing = _drawing_inline("rId1", logo_cx, logo_cy, 1, "TASCK logo") if logo_bytes else ""
+        header_paragraph = (
+            "<w:p>"
+            '<w:pPr><w:jc w:val="right"/></w:pPr>'
+            "<w:r>" + header_drawing + "</w:r>"
+            "</w:p>"
+        ) if header_drawing else "<w:p/>"
+        header_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            + header_paragraph +
+            "</w:hdr>"
+        )
+
+        # ---- Footer XML (contact strip centred) ----
+        footer_drawing = _drawing_inline("rId1", footer_cx, footer_cy, 1, "Contact strip") if footer_bytes else ""
+        footer_paragraph = (
+            "<w:p>"
+            '<w:pPr><w:jc w:val="center"/></w:pPr>'
+            "<w:r>" + footer_drawing + "</w:r>"
+            "</w:p>"
+        ) if footer_drawing else "<w:p/>"
+        footer_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            + footer_paragraph +
+            "</w:ftr>"
+        )
+
+        # ---- Main document.xml ----
+        sectpr = (
+            "<w:sectPr>"
+            + ('<w:headerReference xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdHeader1" w:type="default"/>' if logo_bytes else "")
+            + ('<w:footerReference xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdFooter1" w:type="default"/>' if footer_bytes else "")
+            + '<w:pgSz w:w="12240" w:h="15840"/>'
+            '<w:pgMar w:top="1800" w:right="1440" w:bottom="1800" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
+            "</w:sectPr>"
+        )
         document_xml = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+            'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
             "<w:body>"
             + "".join(blocks)
-            + '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
-            '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
+            + sectpr +
             "</w:body></w:document>"
         )
+
+        # ---- Document-level relationships ----
+        doc_rels_items: List[str] = []
+        if logo_bytes:
+            doc_rels_items.append(
+                '<Relationship Id="rIdHeader1" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" '
+                'Target="header1.xml"/>'
+            )
+        if footer_bytes:
+            doc_rels_items.append(
+                '<Relationship Id="rIdFooter1" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" '
+                'Target="footer1.xml"/>'
+            )
+        document_rels_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            + "".join(doc_rels_items) +
+            "</Relationships>"
+        )
+
+        # Header/footer relationships (point to the embedded images).
+        header_rels_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+            'Target="media/tasck_logo.png"/>'
+            "</Relationships>"
+        )
+        footer_rels_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+            'Target="media/footer_contact.png"/>'
+            "</Relationships>"
+        )
+
+        # ---- Build the .docx package ----
         package = BytesIO()
         with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as docx:
+            # Content Types - declare png + header + footer.
+            content_types_overrides: List[str] = [
+                '<Override PartName="/word/document.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+            ]
+            if logo_bytes:
+                content_types_overrides.append(
+                    '<Override PartName="/word/header1.xml" '
+                    'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>'
+                )
+            if footer_bytes:
+                content_types_overrides.append(
+                    '<Override PartName="/word/footer1.xml" '
+                    'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>'
+                )
             docx.writestr(
                 "[Content_Types].xml",
                 '<?xml version="1.0" encoding="UTF-8"?>'
                 '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
                 '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
                 '<Default Extension="xml" ContentType="application/xml"/>'
-                '<Override PartName="/word/document.xml" '
-                'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                '<Default Extension="png" ContentType="image/png"/>'
+                + "".join(content_types_overrides) +
                 "</Types>",
             )
             docx.writestr(
@@ -3834,6 +4047,15 @@ def make_v3_router(db):
                 "</Relationships>",
             )
             docx.writestr("word/document.xml", document_xml)
+            docx.writestr("word/_rels/document.xml.rels", document_rels_xml)
+            if logo_bytes:
+                docx.writestr("word/header1.xml", header_xml)
+                docx.writestr("word/_rels/header1.xml.rels", header_rels_xml)
+                docx.writestr("word/media/tasck_logo.png", logo_bytes)
+            if footer_bytes:
+                docx.writestr("word/footer1.xml", footer_xml)
+                docx.writestr("word/_rels/footer1.xml.rels", footer_rels_xml)
+                docx.writestr("word/media/footer_contact.png", footer_bytes)
 
         return package.getvalue()
 
@@ -4245,6 +4467,29 @@ def make_v3_router(db):
             updates["plan.timeline_plan"] = payload.timeline_plan
         if payload.planning_notes is not None:
             updates["plan.planning_notes"] = payload.planning_notes
+        await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
+        return await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+
+    # Track which Business Case sub-phase the admin is on
+    # (Planning / Delivery / Reporting). Used by businessCasePhasePath on the
+    # frontend so opening a brand from the Business Case list lands on the
+    # right page instead of always going to Planning.
+    class BusinessCasePhasePayload(BaseModel):
+        phase: str = Field(..., pattern="^(planning|delivery|reporting)$")
+
+    @router.patch("/business-cases/{bc_id}/business-case-phase")
+    async def update_business_case_phase(bc_id: str, payload: BusinessCasePhasePayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        updates: Dict[str, Any] = {
+            "business_case_phase": payload.phase,
+            "updated_at": _now_iso(),
+        }
+        if payload.phase == "delivery" and not case.get("deliverables_started_at"):
+            updates["deliverables_started_at"] = _now_iso()
+        if payload.phase == "reporting" and not case.get("reporting_started_at"):
+            updates["reporting_started_at"] = _now_iso()
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
         return await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
 
@@ -5177,6 +5422,147 @@ def make_v3_router(db):
     async def list_feedback_requests(bc_id: str):
         rows = await db.v3_feedback_requests.find({"business_case_id": bc_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
         return rows
+
+    # ------------------------------------------------------------------------
+    # ADMIN NOTIFICATIONS
+    # ------------------------------------------------------------------------
+    # Surfaces brand and creator initiated actions across the workflow so the
+    # V1 admin layout can show a toast + the V1 Overview can render a
+    # "Needs attention" card. Includes:
+    #   - Alignment Snapshot approved by the brand
+    #   - Strategy / Creative Snapshot approved by the brand
+    #   - Creative Brief responded to by the creator
+    #   - Contract signed
+    # Each event is keyed deterministically so the frontend can mark items as
+    # seen via localStorage without showing the same toast twice.
+    @router.get("/admin/notifications")
+    async def admin_notifications():
+        # Resolve brand+case names in one lookup pass to keep the response small.
+        brand_cache: Dict[str, Dict[str, Any]] = {}
+        case_cache: Dict[str, Dict[str, Any]] = {}
+
+        async def _brand(brand_id: Optional[str]) -> Dict[str, Any]:
+            if not brand_id:
+                return {}
+            if brand_id in brand_cache:
+                return brand_cache[brand_id]
+            doc = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0, "company": 1, "name": 1}) or {}
+            brand_cache[brand_id] = doc
+            return doc
+
+        async def _case(bc_id: Optional[str]) -> Dict[str, Any]:
+            if not bc_id:
+                return {}
+            if bc_id in case_cache:
+                return case_cache[bc_id]
+            doc = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0, "title": 1, "brand_id": 1}) or {}
+            case_cache[bc_id] = doc
+            return doc
+
+        notifications: List[Dict[str, Any]] = []
+
+        # 1. Alignment Snapshots approved by the brand.
+        alignments = await db.v3_alignment_snapshots.find(
+            {"approved_at": {"$ne": None}, "approved_by_party": "brand"},
+            {"_id": 0, "id": 1, "business_case_id": 1, "approved_at": 1, "approved_by": 1, "title": 1},
+        ).sort("approved_at", -1).to_list(50)
+        for row in alignments:
+            case = await _case(row.get("business_case_id"))
+            brand = await _brand(case.get("brand_id"))
+            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            notifications.append({
+                "id": f"alignment_approved_brand:{row.get('id')}",
+                "kind": "alignment_approved",
+                "actor": "brand",
+                "when": row.get("approved_at"),
+                "brand_id": case.get("brand_id"),
+                "brand_name": brand_name,
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case.get("title"),
+                "title": f"{brand_name} approved the Alignment Snapshot",
+                "message": f"{brand_name} approved the Alignment Snapshot for {case.get('title') or 'the project'}.",
+                "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/snapshot",
+            })
+
+        # 2. Creative / Strategy Snapshots approved by the brand.
+        snapshots = await db.v3_creative_snapshots.find(
+            {"approved_at": {"$ne": None}, "approved_by_party": "brand"},
+            {"_id": 0, "id": 1, "business_case_id": 1, "approved_at": 1, "approved_by": 1, "title": 1},
+        ).sort("approved_at", -1).to_list(50)
+        for row in snapshots:
+            case = await _case(row.get("business_case_id"))
+            brand = await _brand(case.get("brand_id"))
+            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            notifications.append({
+                "id": f"strategy_approved_brand:{row.get('id')}",
+                "kind": "strategy_approved",
+                "actor": "brand",
+                "when": row.get("approved_at"),
+                "brand_id": case.get("brand_id"),
+                "brand_name": brand_name,
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case.get("title"),
+                "title": f"{brand_name} approved the Strategy Snapshot",
+                "message": f"{brand_name} approved the Strategy Snapshot for {case.get('title') or 'the project'}.",
+                "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/strategy-snapshot",
+            })
+
+        # 3. Contracts signed.
+        contracts = await db.v3_contracts.find(
+            {"signed_at": {"$ne": None}},
+            {"_id": 0, "id": 1, "business_case_id": 1, "signed_at": 1, "title": 1, "template": 1},
+        ).sort("signed_at", -1).to_list(50)
+        for row in contracts:
+            case = await _case(row.get("business_case_id"))
+            brand = await _brand(case.get("brand_id"))
+            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            template = (row.get("template") or "contract").replace("_", " ").title()
+            actor = "creator" if "creator" in (row.get("template") or "").lower() else "brand"
+            notifications.append({
+                "id": f"contract_signed:{row.get('id')}",
+                "kind": "contract_signed",
+                "actor": actor,
+                "when": row.get("signed_at"),
+                "brand_id": case.get("brand_id"),
+                "brand_name": brand_name,
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case.get("title"),
+                "title": f"{template} signed",
+                "message": f"{template} for {brand_name} ({case.get('title') or 'project'}) has been signed.",
+                "link": f"/admin/business-cases/{row.get('business_case_id')}/delivery/contracts",
+            })
+
+        # 4. Creative briefs responded to by creators.
+        briefs = await db.v3_creative_briefs.find(
+            {"responded_at": {"$ne": None}},
+            {"_id": 0, "id": 1, "business_case_id": 1, "creator_id": 1, "responded_at": 1, "creator_response": 1},
+        ).sort("responded_at", -1).to_list(50)
+        for row in briefs:
+            case = await _case(row.get("business_case_id"))
+            brand = await _brand(case.get("brand_id"))
+            brand_name = brand.get("company") or brand.get("name") or "Brand"
+            creator_doc = await db.v3_creators.find_one({"id": row.get("creator_id")}, {"_id": 0, "name": 1}) or {}
+            creator_name = creator_doc.get("name") or "the creator"
+            response = str(row.get("creator_response") or "responded")
+            notifications.append({
+                "id": f"brief_response:{row.get('id')}",
+                "kind": "brief_response",
+                "actor": "creator",
+                "when": row.get("responded_at"),
+                "brand_id": case.get("brand_id"),
+                "brand_name": brand_name,
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case.get("title"),
+                "title": f"{creator_name} responded to the brief",
+                "message": f"{creator_name} replied to the brief for {brand_name}: {response[:200]}",
+                "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/brief",
+            })
+
+        # Sort newest first and cap.
+        def _ts(item: Dict[str, Any]) -> str:
+            return str(item.get("when") or "")
+        notifications.sort(key=_ts, reverse=True)
+        return notifications[:100]
 
     @router.post("/business-cases/{bc_id}/close")
     async def close_business_case(bc_id: str):

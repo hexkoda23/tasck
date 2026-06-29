@@ -286,7 +286,6 @@ const V1AdminBusinessCases = () => {
             Business Cases
           </h1>
           <p className="text-[#8A8A8A] text-sm flex items-center gap-2">
-            One Business Case = one document chain across Connect → Frame → Plan → Deliver.
             <span className="text-[10px] inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#DDE7E2] text-[#1F4A3A]">
               <Sparkles className="w-3 h-3" /> live
             </span>

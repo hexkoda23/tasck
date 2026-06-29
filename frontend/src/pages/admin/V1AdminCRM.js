@@ -13,6 +13,36 @@ import { adminRoute, getAdminRouteBase, V1_ADMIN_ROUTE_BASE } from '../../lib/v3
 import { BrandLogo } from '../../lib/brandLogo';
 import { toast } from 'sonner';
 
+// Format a brand's last-worked-on timestamp as a real readable date+time
+// instead of the static "just now" copy that used to come back from the
+// backend. Falls back through updated_at -> created_at -> last_interaction.
+const formatBrandLastWorked = (b) => {
+  const candidates = [
+    b.last_interaction_at,
+    b.lastInteractionAt,
+    b.updated_at,
+    b.updatedAt,
+    b.crm_accepted_at,
+    b.created_at,
+    b.createdAt,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const date = new Date(candidate);
+    if (Number.isNaN(date.getTime())) continue;
+    return date.toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  }
+  // Last resort: whatever string the backend sent (e.g. "just now").
+  return b.last_interaction || b.lastInteraction || '';
+};
+
 // Normalises API brand shape for the component
 const normaliseBrand = (b) => ({
   id: b.id,
@@ -25,7 +55,8 @@ const normaliseBrand = (b) => ({
   sourceUrl: b.source_url || '',
   about: b.about || b.brand_about || b.description || b.company_description || b.notes || '',
   createdAt: b.created_at || b.createdAt || null,
-  lastInteraction: b.last_interaction || b.lastInteraction,
+  // Show a real date/time the brand was last worked on, not "just now".
+  lastInteraction: formatBrandLastWorked(b),
   engagementTrack: b.engagement_track_default || 'paid',
   rmId: b.rm_id || b.relationship_manager?.id || 'rm-temi',
   relationshipManager: b.relationship_manager || { name: b.relationship_manager_name || 'Unassigned' },

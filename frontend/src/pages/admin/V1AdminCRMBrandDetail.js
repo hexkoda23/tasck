@@ -855,10 +855,32 @@ const V1AdminCRMBrandDetail = () => {
           {businessCases.length ? (
             <div className="grid gap-2">
               {businessCases.map((businessCase) => (
-                <button key={businessCase.id} type="button" onClick={() => navigate(businessCasePhasePath(businessCase.id, businessCase))} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-left hover:border-[#1F4A3A]">
-                  <div className="flex items-center gap-2 text-[13px] font-medium text-[#1A1A1A]"><BriefcaseBusiness className="h-4 w-4 text-[#1F4A3A]" /> {businessCase.title || 'Business Case'}</div>
-                  <p className="mt-1 text-[11px] text-[#8A8A8A]">Stage: {businessCase.stage_label || statusLabel(businessCase.stage)}</p>
-                </button>
+                <div key={businessCase.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 hover:border-[#1F4A3A]">
+                  <button type="button" onClick={() => navigate(businessCasePhasePath(businessCase.id, businessCase))} className="block w-full text-left" data-testid={`brand-bc-open-${businessCase.id}`}>
+                    <div className="flex items-center gap-2 text-[13px] font-medium text-[#1A1A1A]"><BriefcaseBusiness className="h-4 w-4 text-[#1F4A3A]" /> {businessCase.title || 'Business Case'}</div>
+                    <p className="mt-1 text-[11px] text-[#8A8A8A]">Stage: {businessCase.stage_label || statusLabel(businessCase.stage)}</p>
+                  </button>
+                  {/* Direct jump links to Framing artifacts so admin can open
+                      any earlier document without having to walk back through
+                      Planning. Visible at every stage. */}
+                  <div className="mt-2 flex flex-wrap gap-1 border-t border-[#E8E4DB] pt-2">
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/snapshot`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Alignment</button>
+                    <span className="text-[10px] text-[#D7CBB8]">·</span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brainstorm`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Brainstorm</button>
+                    <span className="text-[10px] text-[#D7CBB8]">·</span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/creator-scan`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Creator Match</button>
+                    <span className="text-[10px] text-[#D7CBB8]">·</span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brief`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Brief</button>
+                    <span className="text-[10px] text-[#D7CBB8]">·</span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/strategy-snapshot`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Strategy</button>
+                    <span className="text-[10px] text-[#D7CBB8]">·</span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/plan/planning`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Planning</button>
+                    <span className="text-[10px] text-[#D7CBB8]">·</span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/delivery/deliverables`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Delivery</button>
+                    <span className="text-[10px] text-[#D7CBB8]">·</span>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/reporting/final-report`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Reporting</button>
+                  </div>
+                </div>
               ))}
             </div>
           ) : (

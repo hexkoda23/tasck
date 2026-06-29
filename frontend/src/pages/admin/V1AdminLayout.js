@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Building2, BriefcaseBusiness, ChevronLeft, Home, LogIn, LogOut, Moon, Search, Settings, Sun } from 'lucide-react';
+import { toast } from 'sonner';
+import { Bell, Building2, BriefcaseBusiness, ChevronLeft, Home, LogIn, LogOut, Moon, Search, Settings, Sun } from 'lucide-react';
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
+import { useAdminNotifications } from '../../hooks/useAdminNotifications';
 
 // Per Chioma's clarification: Connect + Framing (Alignment Snapshot,
 // Brainstorm, Creator Selection, Creative Brief, Strategy Snapshot) belong
@@ -55,6 +57,8 @@ const V1AdminLayout = () => {
   const location = useLocation();
   const { isAuthenticated, logout } = useAuth();
   const [darkMode, setDarkMode] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const notificationsBoxRef = useRef(null);
 
   const handleSessionButton = () => {
     if (isAuthenticated) {
@@ -63,6 +67,43 @@ const V1AdminLayout = () => {
       return;
     }
     navigate('/v1');
+  };
+
+  // Sonner toast on every NEW brand/creator action (alignment approved,
+  // strategy approved, contract signed, brief responded). Clicking the toast
+  // opens the related page. Toasts only fire for ids the hook has not yet
+  // announced - acknowledgement is stored in localStorage so the admin never
+  // sees the same toast twice.
+  const handleNewNotification = useCallback((item) => {
+    toast(item.title || 'Brand action', {
+      description: item.message,
+      duration: 8000,
+      action: item.link ? {
+        label: 'Open',
+        onClick: () => navigate(item.link),
+      } : undefined,
+    });
+  }, [navigate]);
+
+  const { items: notifications, unseen, markSeen, markAllSeen } = useAdminNotifications({ onNewItem: handleNewNotification });
+
+  // Close the notifications dropdown when clicking elsewhere.
+  useEffect(() => {
+    if (!notificationsOpen) return undefined;
+    const handler = (event) => {
+      if (notificationsBoxRef.current && !notificationsBoxRef.current.contains(event.target)) {
+        setNotificationsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [notificationsOpen]);
+
+  const formatNotificationWhen = (iso) => {
+    if (!iso) return '';
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return String(iso);
+    return date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
   };
 
   return (
@@ -110,6 +151,60 @@ const V1AdminLayout = () => {
             <span className="text-[12px] text-[#D4CDBF]">Search CRM brands or business cases...</span>
           </div>
           <div className="flex-1" />
+          {/* Bell + unseen badge + dropdown of recent brand/creator actions. */}
+          <div className="relative" ref={notificationsBoxRef}>
+            <button
+              type="button"
+              onClick={() => setNotificationsOpen((open) => !open)}
+              className="relative p-2 rounded-lg hover:bg-[#F4F2EC] transition-colors"
+              data-testid="v1-admin-notifications-toggle"
+              title={unseen.length ? `${unseen.length} new` : 'Notifications'}
+            >
+              <Bell className="w-4 h-4 text-[#8A8A8A]" />
+              {unseen.length > 0 && (
+                <span
+                  className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-[#B54A37] text-white text-[10px] font-semibold flex items-center justify-center"
+                  data-testid="v1-admin-notifications-count"
+                >
+                  {unseen.length > 9 ? '9+' : unseen.length}
+                </span>
+              )}
+            </button>
+            {notificationsOpen && (
+              <div className="absolute right-0 mt-2 w-80 rounded-[10px] border border-[#E8E4DB] bg-white shadow-2xl z-50" data-testid="v1-admin-notifications-dropdown">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-[#E8E4DB]">
+                  <p className="text-[12px] font-semibold text-[#1A1A1A]">Recent actions</p>
+                  {unseen.length > 0 && (
+                    <button type="button" onClick={() => { markAllSeen(); }} className="text-[11px] text-[#1F4A3A] underline hover:no-underline" data-testid="v1-admin-notifications-mark-all">
+                      Mark all seen
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-[360px] overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <p className="px-3 py-4 text-[12px] text-[#8A8A8A]">No brand or creator actions yet.</p>
+                  ) : (
+                    notifications.slice(0, 12).map((item) => {
+                      const isUnseen = unseen.some((u) => u.id === item.id);
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => { markSeen(item.id); setNotificationsOpen(false); if (item.link) navigate(item.link); }}
+                          className={`w-full text-left px-3 py-2 border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] ${isUnseen ? 'bg-[#FBF4E4]/60' : ''}`}
+                          data-testid={`v1-admin-notification-${item.id}`}
+                        >
+                          <p className="text-[12px] font-medium text-[#1A1A1A] truncate">{item.title}</p>
+                          <p className="text-[11px] text-[#6E6657] truncate">{item.message}</p>
+                          <p className="text-[10px] text-[#8A8A8A] mt-0.5">{formatNotificationWhen(item.when)}{isUnseen && ' · NEW'}</p>
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-lg hover:bg-[#F4F2EC] transition-colors" data-testid="v1-admin-dark-mode-toggle" title={darkMode ? 'Light mode' : 'Dark mode'}>
             {darkMode ? <Sun className="w-4 h-4 text-[#C49B5F]" /> : <Moon className="w-4 h-4 text-[#8A8A8A]" />}
           </button>

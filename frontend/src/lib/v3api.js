@@ -142,6 +142,15 @@ export const v3UpdatePlanningText = (bcId, payload) => v3.patch(`/business-cases
 // page Creator details card lights up immediately (instead of only after the
 // brief is sent).
 export const v3UpdateSelectedCreators = (bcId, ids) => v3.patch(`/business-cases/${bcId}/selected-creators`, { selected_creator_ids: ids }).then(r => r.data);
+// Track which Business Case sub-phase (planning / delivery / reporting) the
+// admin is on so businessCasePhasePath can land them on the right page when
+// opening a brand from the Business Case list.
+export const v3UpdateBusinessCasePhase = (bcId, phase) => v3.patch(`/business-cases/${bcId}/business-case-phase`, { phase }).then(r => r.data);
+// Admin notifications: brand/creator-initiated actions (alignment approved,
+// strategy approved, contract signed, brief responded). Polled every 30s by
+// the V1 admin layout to surface toasts + the Overview "Needs attention"
+// card.
+export const v3ListAdminNotifications = () => v3.get('/admin/notifications').then(r => r.data);
 
 // -------- Deliver stage --------
 export const v3ListDeliverables = (bcId) => v3.get('/deliverables', { params: { business_case_id: bcId } }).then(r => r.data);

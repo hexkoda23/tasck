@@ -142,6 +142,7 @@ import {
   v3SignContract,
   v3SuggestCreatorMatches,
   v3UpdateAlignment,
+  v3UpdateBusinessCasePhase,
   v3UpdateSelectedCreators,
   v3UpdateStrategySnapshot,
 } from '../../lib/v3api';
@@ -278,9 +279,30 @@ const stepperConfig = (id, stage, pathname) => {
 export const businessCasePhasePath = (id, bc = {}) => {
   const stage = bc.stage || 'connect';
   if (stage === 'closed' || stage === 'reporting') return adminRoute(`/business-cases/${id}/reporting/final-report`);
-  // Backend `deliver` stage is the Business Case area (Planning -> Delivery
-  // -> Reporting). Default landing is the Planning summary page.
-  if (stage === 'deliver') return adminRoute(`/business-cases/${id}/plan/planning`);
+  // Backend `deliver` stage covers Planning -> Delivery -> Reporting in the
+  // Business Case area. Pick the right sub-page using existing case fields so
+  // clicking on a brand opens what the admin was actually working on, not
+  // always Planning:
+  //   - business_case_phase = "reporting"          -> Reporting
+  //   - business_case_phase = "delivery"           -> Delivery (Deliverables)
+  //   - business_case_phase = "planning" (default) -> Planning
+  // Heuristic fallbacks keep older cases that pre-date business_case_phase
+  // working: a signed contract or any approved deliverables implies Delivery,
+  // a sent final report implies Reporting.
+  if (stage === 'deliver') {
+    const phase = bc.business_case_phase;
+    if (phase === 'reporting') return adminRoute(`/business-cases/${id}/reporting/final-report`);
+    if (phase === 'delivery') return adminRoute(`/business-cases/${id}/delivery/deliverables`);
+    if (phase === 'planning') return adminRoute(`/business-cases/${id}/plan/planning`);
+    // No explicit phase set - infer from artifacts.
+    if (bc.final_report_sent_at || bc.reporting_started_at) {
+      return adminRoute(`/business-cases/${id}/reporting/final-report`);
+    }
+    if ((bc.plan && bc.plan.contract_signed_at) || bc.deliverables_started_at) {
+      return adminRoute(`/business-cases/${id}/delivery/deliverables`);
+    }
+    return adminRoute(`/business-cases/${id}/plan/planning`);
+  }
   if (stage === 'plan') {
     // Framing sub-steps 2..5 live on backend `plan` but UI shows them under /frame/*.
     const plan = bc.plan || {};
@@ -4450,6 +4472,33 @@ export const V3BusinessCaseDeliverySummary = () => {
         </div>
         <p className="mt-2 text-[11px] text-[#6E6657]">Contract Studio generates brand & creator agreements from approved templates. The Feedback page is reusable - admin can return at any time to send fresh feedback requests.</p>
       </InfoCard>
+
+      {/* Framing artifacts shortcuts. Even after the Business Case has moved
+          into Planning / Delivery / Reporting, admin should be able to jump
+          back to any of the Framing documents from one place. */}
+      <InfoCard title="Framing artifacts">
+        <p className="text-[12px] text-[#6E6657] mb-3">Open any of the Framing documents drafted earlier in this Business Case.</p>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/snapshot`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-alignment-btn">
+            <FileText className="w-3.5 h-3.5" /> Alignment Snapshot
+          </button>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-brainstorm-btn">
+            <Sparkles className="w-3.5 h-3.5" /> Brainstorm
+          </button>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/creator-scan`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-creator-scan-btn">
+            <Eye className="w-3.5 h-3.5" /> Creator Match
+          </button>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brief`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-brief-btn">
+            <FileText className="w-3.5 h-3.5" /> Creative Brief
+          </button>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/strategy-snapshot`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-strategy-btn">
+            <FileText className="w-3.5 h-3.5" /> Strategy Snapshot
+          </button>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-connect-btn">
+            <Eye className="w-3.5 h-3.5" /> Connect
+          </button>
+        </div>
+      </InfoCard>
     </FlowShell>
   );
 };
@@ -4872,6 +4921,15 @@ export const V3BusinessCaseDeliverables = () => {
   const [rows, setRows] = useState([]);
   const [notice, setNotice] = useState('');
   useEffect(() => { v3ListDeliverables(id).then((data) => setRows(Array.isArray(data) ? data : [])); }, [id]);
+  // Mark this Business Case as being in the Delivery sub-phase so clicking the
+  // brand from the Business Case list later lands here, not on Planning.
+  useEffect(() => {
+    if (!id || !bundle) return;
+    const currentPhase = bundle?.business_case?.business_case_phase;
+    if (currentPhase !== 'delivery' && currentPhase !== 'reporting') {
+      v3UpdateBusinessCasePhase(id, 'delivery').catch(() => { /* non-blocking */ });
+    }
+  }, [id, bundle]);
   const add = async () => {
     if (!title.trim()) { setNotice('Add a deliverable title first.'); return; }
     setNotice('');
@@ -5042,6 +5100,14 @@ export const V3BusinessCaseFinalReport = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
   const report = bundle?.final_report;
+  // Mark this Business Case as being in the Reporting sub-phase so the next
+  // time admin opens the brand from the Business Case list it lands here.
+  useEffect(() => {
+    if (!id || !bundle) return;
+    if (bundle?.business_case?.business_case_phase !== 'reporting') {
+      v3UpdateBusinessCasePhase(id, 'reporting').catch(() => { /* non-blocking */ });
+    }
+  }, [id, bundle]);
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';

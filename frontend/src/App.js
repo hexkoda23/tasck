@@ -26,6 +26,7 @@ import V1PortalLayout from './components/v1/V1PortalLayout';
 import V3RoleSelector from './pages/v3/V3RoleSelector';
 import V3Placeholder from './pages/v3/V3Placeholder';
 import V3AdminOverview from './pages/v3/admin/V3AdminOverview';
+import V1AdminOverview from './pages/admin/V1AdminOverview';
 import V3AdminPipeline from './pages/v3/admin/V3AdminPipeline';
 import V3AdminProjects from './pages/v3/admin/V3AdminProjects';
 import V3AdminProjectDetail from './pages/v3/admin/V3AdminProjectDetail';
@@ -385,7 +386,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<V3AdminOverview />} />
+        <Route index element={<V1AdminOverview />} />
         <Route path="crm-brands" element={<V1AdminCRM />} />
         <Route path="crm-brands/:brandId/call" element={<V1AdminBrandCallRedirect />} />
         <Route path="pipeline" element={<V3AdminPipeline />} />
