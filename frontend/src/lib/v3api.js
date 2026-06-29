@@ -138,6 +138,10 @@ export const v3CreateInvoice = (payload) => v3.post('/invoices', payload).then(r
 export const v3DeleteInvoice = (invoiceId) => v3.delete(`/invoices/${invoiceId}`).then(r => r.data);
 // Planning page free-form text (timeline plan, planning notes) saved on case.plan.
 export const v3UpdatePlanningText = (bcId, payload) => v3.patch(`/business-cases/${bcId}/planning`, payload).then(r => r.data);
+// Creator Match Scanner: persist the picked-creator shortlist so the Planning
+// page Creator details card lights up immediately (instead of only after the
+// brief is sent).
+export const v3UpdateSelectedCreators = (bcId, ids) => v3.patch(`/business-cases/${bcId}/selected-creators`, { selected_creator_ids: ids }).then(r => r.data);
 
 // -------- Deliver stage --------
 export const v3ListDeliverables = (bcId) => v3.get('/deliverables', { params: { business_case_id: bcId } }).then(r => r.data);

@@ -4201,6 +4201,34 @@ def make_v3_router(db):
         await db.v3_invoices.delete_one({"id": invoice_id})
         return {"ok": True}
 
+    # Persist the creator shortlist from the Creator Match Scanner page so the
+    # Planning page Creator details card shows the picked creator immediately,
+    # without waiting for the Creative Brief to be sent. The bundle endpoint
+    # already resolves the primary creator from this array as a fallback.
+    class SelectedCreatorsPayload(BaseModel):
+        selected_creator_ids: List[str] = Field(default_factory=list)
+
+    @router.patch("/business-cases/{bc_id}/selected-creators")
+    async def update_selected_creators(bc_id: str, payload: SelectedCreatorsPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        # Filter to creators that actually exist - drop stale IDs silently so
+        # the Planning page never points at a phantom doc.
+        ids = [cid for cid in (payload.selected_creator_ids or []) if isinstance(cid, str) and cid.strip()]
+        if ids:
+            present = await db.v3_creators.find({"id": {"$in": ids}}, {"_id": 0, "id": 1}).to_list(len(ids))
+            present_ids = {row["id"] for row in present}
+            ids = [cid for cid in ids if cid in present_ids]
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {
+                "plan.selected_creator_ids": ids,
+                "updated_at": _now_iso(),
+            }},
+        )
+        return await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+
     # Planning page free-form text fields (timelines + planning notes).
     # Saved on case.plan.* so they round-trip via the existing bundle endpoint.
     class PlanningTextUpdatePayload(BaseModel):

@@ -142,6 +142,7 @@ import {
   v3SignContract,
   v3SuggestCreatorMatches,
   v3UpdateAlignment,
+  v3UpdateSelectedCreators,
   v3UpdateStrategySnapshot,
 } from '../../lib/v3api';
 import { formatNairaV3 } from '../../lib/v3data';
@@ -2611,14 +2612,21 @@ const BS_BUDGET = ['Low', 'Mid', 'Premium'];
 const BS_EFFICIENCY = ['High conversion', 'High reach', 'Balanced'];
 const BS_TIMING = ['Immediate', 'Gradual'];
 
+// IMPORTANT: do NOT run cleanV1Text() on the input/textarea value here.
+// cleanV1Text() does .trim() and collapses repeated whitespace - that breaks
+// live typing because it strips the trailing space the user just pressed
+// before the next character lands, so spaces appear to "not work" across
+// every brainstorm phase. cleanV1Text() is a display-time sanitizer for
+// static rendering (smart-quote -> dash, encoding fixes); editable inputs
+// must use the raw value so the user can type freely.
 const BSField = ({ label, hint, value, onChange, rows = 2, placeholder = '' }) => (
   <label className="block">
     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
     {hint && <span className="block text-[11px] text-[#6E6657] mt-0.5">{hint}</span>}
     {rows === 1 ? (
-      <input value={cleanV1Text(value || '')} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none" />
+      <input value={value || ''} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none" />
     ) : (
-      <textarea value={cleanV1Text(value || '')} placeholder={placeholder} rows={rows} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed" />
+      <textarea value={value || ''} placeholder={placeholder} rows={rows} onChange={(e) => onChange(e.target.value)} className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed" />
     )}
   </label>
 );
@@ -2889,11 +2897,14 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
 export const V3BusinessCasePlanCreatorScan = () => {
   const navigate = useNavigate();
-  const { id } = useBusinessCaseBundle();
+  const { id, bundle } = useBusinessCaseBundle();
   const [creators, setCreators] = useState([]);
   const [matches, setMatches] = useState([]);
   const [manualCreatorId, setManualCreatorId] = useState('');
-  const [selectedIds, setSelectedIds] = useState([]);
+  // Seed the selection from whatever the case already has on plan.selected_creator_ids
+  // so navigating back to the page shows the current shortlist.
+  const seededFromCase = (bundle?.business_case?.plan?.selected_creator_ids) || [];
+  const [selectedIds, setSelectedIds] = useState(Array.isArray(seededFromCase) ? seededFromCase : []);
   const [notice, setNotice] = useState('');
   const [scanning, setScanning] = useState(false);
   useEffect(() => {
@@ -2903,13 +2914,36 @@ export const V3BusinessCasePlanCreatorScan = () => {
       setManualCreatorId(list[0]?.id || '');
     }).catch(() => setCreators([]));
   }, []);
+  // Whenever the case loads/reloads, sync the local selection from the case
+  // so a returning admin sees their previous shortlist.
+  useEffect(() => {
+    const persisted = bundle?.business_case?.plan?.selected_creator_ids;
+    if (Array.isArray(persisted)) setSelectedIds(persisted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.business_case?.id]);
   const creatorById = (creatorId) => creators.find((creator) => creator.id === creatorId);
+  // Persist the shortlist to the backend so the Planning page Creator card
+  // shows the picked creator immediately (no need to wait for the brief).
+  // Fire-and-forget: the local UI state is the source of truth for this page.
+  const persistSelectedIds = (nextIds) => {
+    if (!id) return;
+    v3UpdateSelectedCreators(id, nextIds).catch(() => { /* non-blocking */ });
+  };
   const addCreator = (creatorId) => {
     if (!creatorId) return;
-    setSelectedIds((current) => (current.includes(creatorId) ? current : [...current, creatorId]));
+    setSelectedIds((current) => {
+      if (current.includes(creatorId)) return current;
+      const next = [...current, creatorId];
+      persistSelectedIds(next);
+      return next;
+    });
     setNotice('');
   };
-  const removeCreator = (creatorId) => setSelectedIds((current) => current.filter((idValue) => idValue !== creatorId));
+  const removeCreator = (creatorId) => setSelectedIds((current) => {
+    const next = current.filter((idValue) => idValue !== creatorId);
+    persistSelectedIds(next);
+    return next;
+  });
   // analysisSource records which engine produced the current matches.
   // Possible values:
   //   "emergent:gemini/..." | "anthropic:claude-..." | "openai:..."
@@ -3545,12 +3579,11 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   return (
     <FlowShell title="Strategy Snapshot Studio" subtitle="Framing step 5 of 5." nextAction="Review, send to brand and creatives, then approve.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
-      <div className="flex flex-wrap items-center gap-2">
-        {snapshot && !editing && (
-          <button onClick={startEditing} className="v3-btn-secondary" data-testid="strategy-edit-btn">
-            <Edit3 className="w-3.5 h-3.5" /> Edit
-          </button>
-        )}
+      {/* Top toolbar - primary action only.
+          Approve Snapshot lives on the RIGHT (the headline action).
+          Save changes / Cancel only appear here while editing.
+          Edit / Send / Download moved to the BOTTOM of the page card. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {snapshot && editing && (
           <>
             <button onClick={saveEdits} disabled={savingEdit} className="v3-btn-primary" data-testid="strategy-save-edit-btn">
@@ -3562,17 +3595,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
           </>
         )}
         {snapshot && !editing && (
-          <button onClick={sendToBrand} className="v3-btn-secondary" data-testid="strategy-send-btn">
-            <Send className="w-3.5 h-3.5" /> Send to brand
-          </button>
-        )}
-        {snapshot && !editing && (
-          <button onClick={downloadStrategyGoogleDoc} className="v3-btn-secondary" data-testid="strategy-download-google-docs-btn">
-            <Download className="w-3.5 h-3.5" /> Download Google Docs
-          </button>
-        )}
-        {snapshot && !editing && (
-          <button onClick={approve} className="v3-btn-secondary" data-testid="strategy-approve-btn">
+          <button onClick={approve} className="v3-btn-primary" data-testid="strategy-approve-btn">
             <CheckCircle2 className="w-3.5 h-3.5" /> Approve Snapshot
           </button>
         )}
@@ -3648,6 +3671,26 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
                 </p>
               </div>
             ))}
+          </div>
+        </InfoCard>
+      )}
+
+      {/* Bottom actions: Edit, Send to brand, Download Google Docs.
+          Moved here per Chioma's feedback so the page reads top-to-bottom and
+          the secondary actions don't compete with Approve Snapshot at the top. */}
+      {snapshot && !editing && (
+        <InfoCard title="Actions">
+          <p className="text-[12px] text-[#6E6657] mb-3">Edit the Strategy Snapshot, send it to the brand for review, or download a Google Docs-compatible copy.</p>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={startEditing} className="v3-btn-secondary" data-testid="strategy-edit-btn">
+              <Edit3 className="w-3.5 h-3.5" /> Edit
+            </button>
+            <button onClick={sendToBrand} className="v3-btn-secondary" data-testid="strategy-send-btn">
+              <Send className="w-3.5 h-3.5" /> Send to brand
+            </button>
+            <button onClick={downloadStrategyGoogleDoc} className="v3-btn-secondary" data-testid="strategy-download-google-docs-btn">
+              <Download className="w-3.5 h-3.5" /> Download Google Docs
+            </button>
           </div>
         </InfoCard>
       )}
