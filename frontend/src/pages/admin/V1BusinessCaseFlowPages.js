@@ -131,6 +131,8 @@ import {
   v3SendAlignmentToBrand,
   v3SendConnectMeetingEmail,
   v3SendConnectRescheduleEmail,
+  v3SendFeedbackRequest,
+  v3ListFeedbackRequests,
   v3SendStrategySnapshotToBrand,
   v3SignContract,
   v3SuggestCreatorMatches,
@@ -3510,6 +3512,178 @@ export const V3BusinessCasePlanWaitingBrand = () => {
   return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studio...</div>;
 };
 
+// Planning (Business Case area, separate from Delivery).
+// Per Chioma: Planning covers six topics - budgeting, timelines, contracts,
+// invoicing, deliverables, feedback. Each card summarises the planned scope
+// and links into Delivery for execution. The Feedback card is reusable -
+// admin stays on the page and re-sends feedback requests as needed.
+export const V3BusinessCasePlanPlanning = () => {
+  const navigate = useNavigate();
+  const { id, bundle } = useBusinessCaseBundle();
+  const bc = getCase(bundle);
+  const brand = getBrand(bundle);
+  const creator = bundle?.creator || {};
+  const brainstorm = bundle?.brainstorm_round || {};
+  const snapshot = bundle?.creative_snapshot || {};
+  const deliverables = Array.isArray(bundle?.deliverables) ? bundle.deliverables : [];
+  const invoices = Array.isArray(bundle?.invoices) ? bundle.invoices : [];
+  const contract = bundle?.contract || null;
+  const projectValue = numericProjectValue(bc.estimated_value) || valueFromStrategySnapshot(snapshot);
+
+  const budgetPlan = Array.isArray(brainstorm.budget_plan) ? brainstorm.budget_plan : [];
+  const timelinePlan = brainstorm.phase_5_execution || brainstorm.timeline || null;
+
+  // Feedback card state - sticks within this page; no navigation.
+  const [feedbackTarget, setFeedbackTarget] = useState('brand');
+  const [feedbackBody, setFeedbackBody] = useState('');
+  const [feedbackSending, setFeedbackSending] = useState(false);
+  const [feedbackNotice, setFeedbackNotice] = useState('');
+  const [feedbackHistory, setFeedbackHistory] = useState([]);
+  useEffect(() => {
+    if (!id) return;
+    v3ListFeedbackRequests(id).then((rows) => {
+      setFeedbackHistory(Array.isArray(rows) ? rows : []);
+    }).catch(() => setFeedbackHistory([]));
+  }, [id]);
+  const sendFeedback = async () => {
+    setFeedbackNotice('');
+    if (!feedbackBody.trim()) {
+      setFeedbackNotice('Write a short message before sending.');
+      return;
+    }
+    setFeedbackSending(true);
+    try {
+      const result = await v3SendFeedbackRequest(id, { target: feedbackTarget, body: feedbackBody.trim() });
+      setFeedbackBody('');
+      setFeedbackNotice(result?.email?.status === 'sent'
+        ? `Feedback request sent to ${result?.feedback_request?.recipient || feedbackTarget}.`
+        : `Feedback request queued for ${result?.feedback_request?.recipient || feedbackTarget}.`);
+      const updated = await v3ListFeedbackRequests(id);
+      setFeedbackHistory(Array.isArray(updated) ? updated : []);
+    } catch (e) {
+      setFeedbackNotice(e?.response?.data?.detail || e?.message || 'Could not send feedback request.');
+    } finally {
+      setFeedbackSending(false);
+    }
+  };
+
+  return (
+    <FlowShell
+      title="Planning"
+      subtitle="Plan the project across six areas: budgeting, timelines, contracts, invoicing, deliverables, and feedback. Open Delivery to execute. The Feedback card stays on this page so you can come back to request feedback from brand and creatives at any point."
+      nextAction="Open Delivery when planning is locked, to approve budget, generate and sign contracts, and run deliverables."
+    >
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* 1. Budgeting */}
+        <InfoCard title="Budgeting">
+          <p className="text-[12px] text-[#6E6657] mb-2">Approved value: <strong>{projectValue ? formatNairaV3(projectValue) : 'Not approved yet'}</strong></p>
+          {budgetPlan.length === 0 ? (
+            <p className="text-[12px] text-[#8A8A8A]">No budget breakdown captured yet during Brainstorm.</p>
+          ) : (
+            <ul className="text-[12px] text-[#4F3E2F] list-disc ml-5 space-y-1">
+              {budgetPlan.slice(0, 6).map((row, idx) => (
+                <li key={idx}>{row.line || row.label || 'Budget line'}: <strong>{row.amount ? formatNairaV3(row.amount) : 'TBD'}</strong>{row.owner ? ` — ${row.owner}` : ''}</li>
+              ))}
+            </ul>
+          )}
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/summary`))} className="v3-btn-secondary mt-3 text-[11px]" data-testid="planning-budget-open-delivery">
+            <ArrowRight className="w-3.5 h-3.5" /> Approve budget in Delivery
+          </button>
+        </InfoCard>
+
+        {/* 2. Timelines */}
+        <InfoCard title="Timelines">
+          {timelinePlan ? (
+            <p className="text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{typeof timelinePlan === 'string' ? timelinePlan : (timelinePlan.timeline || timelinePlan.schedule || JSON.stringify(timelinePlan).slice(0, 240))}</p>
+          ) : (
+            <p className="text-[12px] text-[#8A8A8A]">No timeline captured yet — capture milestones during Brainstorm or below.</p>
+          )}
+          <p className="text-[11px] text-[#6E6657] mt-2">Use this to lock the launch window and the brand/creator approval rhythm before Delivery starts.</p>
+        </InfoCard>
+
+        {/* 3. Contracts */}
+        <InfoCard title="Contracts">
+          <p className="text-[12px] text-[#4F3E2F]">
+            {contract ? <>Status: <strong>{humanStatus(contract.status || 'draft')}</strong>{contract.template ? ` (${humanStatus(contract.template)})` : ''}</> : 'No contract drafted yet.'}
+          </p>
+          <p className="text-[11px] text-[#6E6657] mt-1">Contracts are generated, sent, and signed inside Delivery.</p>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/contracts`))} className="v3-btn-secondary mt-3 text-[11px]" data-testid="planning-contract-open">
+            <ArrowRight className="w-3.5 h-3.5" /> Open Contract Studio
+          </button>
+        </InfoCard>
+
+        {/* 4. Invoicing */}
+        <InfoCard title="Invoicing">
+          {invoices.length === 0 ? (
+            <p className="text-[12px] text-[#8A8A8A]">No invoices on record yet.</p>
+          ) : (
+            <ul className="text-[12px] text-[#4F3E2F] list-disc ml-5 space-y-1">
+              {invoices.slice(0, 5).map((inv) => (
+                <li key={inv.id}>{humanStatus(inv.kind || 'invoice')}: <strong>{inv.amount ? formatNairaV3(inv.amount) : 'TBD'}</strong> — {humanStatus(inv.status || 'issued')}{inv.paid_at ? ` (paid ${formatDateTime(inv.paid_at)})` : ''}</li>
+              ))}
+            </ul>
+          )}
+          <p className="text-[11px] text-[#6E6657] mt-2">Invoices can be paid off-platform. Mark paid from the invoice row when confirmation is received.</p>
+        </InfoCard>
+
+        {/* 5. Deliverables */}
+        <InfoCard title="Deliverables">
+          <p className="text-[12px] text-[#4F3E2F]">{deliverables.length} deliverable{deliverables.length === 1 ? '' : 's'} planned.</p>
+          {deliverables.length > 0 && (
+            <ul className="text-[12px] text-[#4F3E2F] list-disc ml-5 mt-2 space-y-1">
+              {deliverables.slice(0, 5).map((d) => (
+                <li key={d.id}>{d.title || d.item || 'Deliverable'} — {humanStatus(d.status || 'planned')}</li>
+              ))}
+            </ul>
+          )}
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/deliverables`))} className="v3-btn-secondary mt-3 text-[11px]" data-testid="planning-deliverables-open">
+            <ArrowRight className="w-3.5 h-3.5" /> Open Deliverables
+          </button>
+        </InfoCard>
+
+        {/* 6. Feedback - reusable, no navigation */}
+        <InfoCard title="Feedback (reusable)">
+          <p className="text-[11px] text-[#6E6657] mb-2">Request feedback from {brand?.company || 'the brand'} or {creator?.name || 'the creator'} at any point during the project. Come back to this card whenever a new round of feedback is needed.</p>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <label className="text-[12px] flex items-center gap-1.5">
+              <input type="radio" name="feedback-target" value="brand" checked={feedbackTarget === 'brand'} onChange={() => setFeedbackTarget('brand')} data-testid="planning-feedback-target-brand" /> Brand
+            </label>
+            <label className="text-[12px] flex items-center gap-1.5">
+              <input type="radio" name="feedback-target" value="creator" checked={feedbackTarget === 'creator'} onChange={() => setFeedbackTarget('creator')} data-testid="planning-feedback-target-creator" /> Creator
+            </label>
+          </div>
+          <textarea
+            value={feedbackBody}
+            onChange={(e) => setFeedbackBody(e.target.value)}
+            rows={3}
+            placeholder="What feedback are you looking for? E.g. 'How is the creator collaboration feeling so far? Anything we should adjust before the next phase?'"
+            className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
+            data-testid="planning-feedback-body"
+          />
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <button onClick={sendFeedback} disabled={feedbackSending} className="v3-btn-primary text-[11px]" data-testid="planning-feedback-send">
+              <Mail className="w-3.5 h-3.5" /> {feedbackSending ? 'Sending…' : `Send to ${feedbackTarget}`}
+            </button>
+          </div>
+          {feedbackNotice && <p className="mt-2 text-[11px] text-[#1F4A3A]">{feedbackNotice}</p>}
+          {feedbackHistory.length > 0 && (
+            <div className="mt-3 border-t border-[#E8E4DB] pt-2">
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Recent requests</p>
+              <ul className="text-[11px] text-[#4F3E2F] space-y-1">
+                {feedbackHistory.slice(0, 5).map((row) => (
+                  <li key={row.id}>
+                    <strong>{row.target}</strong> · {formatDateTime(row.created_at)} · {humanStatus(row.email_status || 'queued')}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </InfoCard>
+      </div>
+    </FlowShell>
+  );
+};
+
 export const V3BusinessCaseDeliverySummary = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
@@ -3548,7 +3722,7 @@ export const V3BusinessCaseDeliverySummary = () => {
     return Array.isArray(exec?.rows) ? exec.rows : [];
   })();
   return (
-    <FlowShell title="Planning" subtitle="Plan the project: budgeting, timelines, contracts, invoicing, deliverables, and a reusable Feedback page TASCK uses to collect feedback from brands and creatives regularly. Confirm the project context here, then Delivery handles execution." nextAction="Once planning is locked, move to Delivery for budget approval, contract generation, and deliverables tracking.">
+    <FlowShell title="Delivery Summary" subtitle="Execution view for this Business Case. Approve the budget, generate and sign contracts, and track deliverables." nextAction="Open Contract Studio to generate and send brand & creator agreements.">
       <InfoCard title="Project at a glance">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{cleanV1Text(bc.title)}</div>

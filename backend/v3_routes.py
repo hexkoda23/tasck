@@ -4529,6 +4529,82 @@ def make_v3_router(db):
         await db.v3_final_reports.update_one({"id": report_id}, {"$set": {"feedback_sent_at": _now_iso()}})
         return await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
 
+    # ------------------------------------------------------------------------
+    # PLANNING - REUSABLE FEEDBACK REQUEST
+    # ------------------------------------------------------------------------
+    # Chioma's rule: admin should be able to come back to the Planning Feedback
+    # card and send feedback requests to brand or creator repeatedly, without
+    # the page opening a new screen. Each request queues an email and is
+    # appended to v3_feedback_requests so the history is visible.
+    class FeedbackRequestPayload(BaseModel):
+        target: str = Field(..., pattern="^(brand|creator)$")
+        body: str
+        subject: Optional[str] = None
+
+    @router.post("/business-cases/{bc_id}/feedback/request")
+    async def create_feedback_request(bc_id: str, payload: FeedbackRequestPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) if case.get("brand_id") else None
+        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+
+        if payload.target == "brand":
+            recipient = (brand or {}).get("email") or (case.get("brand_contact_snapshot") or {}).get("email")
+            recipient_name = (brand or {}).get("primary_contact") or "there"
+        else:
+            recipient = (creator or {}).get("email") or _fallback_creator_email(creator or {}) if creator else None
+            recipient_name = (creator or {}).get("name") or "there"
+
+        body_text = (payload.body or "").strip()
+        if not body_text:
+            raise HTTPException(400, "Feedback body is required.")
+        if not recipient:
+            raise HTTPException(400, f"No {payload.target} email on file for this Business Case.")
+
+        project_title = case.get("title") or "your TASCK project"
+        subject = payload.subject or f"TASCK feedback request - {project_title}"
+        body = (
+            f"Hello {recipient_name},\n\n"
+            f"TASCK is checking in on {project_title} and would value your feedback.\n\n"
+            f"{body_text}\n\n"
+            "Reply to this email with your feedback or comments. Thank you.\n\n"
+            "TASCK"
+        )
+
+        email = await queue_email(
+            to=recipient,
+            subject=subject,
+            body=body,
+            kind=f"feedback_request_{payload.target}",
+            brand_id=case.get("brand_id"),
+            creator_id=case.get("creator_id"),
+            business_case_id=bc_id,
+        )
+
+        request_doc = {
+            "id": f"fbreq-{uuid.uuid4().hex[:8]}",
+            "business_case_id": bc_id,
+            "brand_id": case.get("brand_id"),
+            "creator_id": case.get("creator_id"),
+            "target": payload.target,
+            "recipient": recipient,
+            "subject": subject,
+            "body": body_text,
+            "email_id": email.get("id"),
+            "email_status": email.get("status"),
+            "delivery_error": email.get("delivery_error"),
+            "created_at": _now_iso(),
+            "created_by": "admin",
+        }
+        await db.v3_feedback_requests.insert_one({**request_doc})
+        return {"ok": True, "feedback_request": request_doc, "email": email}
+
+    @router.get("/business-cases/{bc_id}/feedback/requests")
+    async def list_feedback_requests(bc_id: str):
+        rows = await db.v3_feedback_requests.find({"business_case_id": bc_id}, {"_id": 0}).sort("created_at", -1).to_list(100)
+        return rows
+
     @router.post("/business-cases/{bc_id}/close")
     async def close_business_case(bc_id: str):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})

@@ -129,6 +129,9 @@ export const v3MarkReportSent = (reportId) => v3.post(`/final-reports/${reportId
 export const v3MarkFeedbackSent = (reportId) => v3.post(`/final-reports/${reportId}/mark-feedback-sent`).then(r => r.data);
 export const v3CloseBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}/close`).then(r => r.data);
 export const v3SignContract = (contractId) => v3.post(`/contracts/${contractId}/sign`).then(r => r.data);
+// Planning Feedback card: admin can re-send feedback requests to brand/creator.
+export const v3SendFeedbackRequest = (bcId, payload) => v3.post(`/business-cases/${bcId}/feedback/request`, payload).then(r => r.data);
+export const v3ListFeedbackRequests = (bcId) => v3.get(`/business-cases/${bcId}/feedback/requests`).then(r => r.data);
 
 // -------- Deliver stage --------
 export const v3ListDeliverables = (bcId) => v3.get('/deliverables', { params: { business_case_id: bcId } }).then(r => r.data);

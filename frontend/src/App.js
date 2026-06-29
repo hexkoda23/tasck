@@ -101,6 +101,7 @@ import {
   V3BusinessCasePlanCreatorBriefingCall as V1BusinessCasePlanCreatorBriefingCall,
   V3BusinessCasePlanStrategySnapshot as V1BusinessCasePlanStrategySnapshot,
   V3BusinessCasePlanWaitingBrand as V1BusinessCasePlanWaitingBrand,
+  V3BusinessCasePlanPlanning as V1BusinessCasePlanPlanning,
   V3BusinessCaseDeliverySummary as V1BusinessCaseDeliverySummary,
   V3BusinessCaseContractStudio as V1BusinessCaseContractStudio,
   V3BusinessCaseDeliveryWaitingSignatures as V1BusinessCaseDeliveryWaitingSignatures,
@@ -445,9 +446,9 @@ function AppRoutes() {
         <Route path="business-cases/:id/plan/strategy-snapshot" element={<V1BusinessCasePlanStrategySnapshot />} />
         <Route path="business-cases/:id/plan/waiting-brand" element={<V1BusinessCasePlanWaitingBrand />} />
         {/* Planning (Business Case area): budgeting, timelines, contracts,
-            invoicing, deliverables, feedback - all on one page until each gets
-            its own dedicated UI. */}
-        <Route path="business-cases/:id/plan/planning" element={<V1BusinessCaseDeliverySummary />} />
+            invoicing, deliverables, feedback - on a dedicated page distinct
+            from Delivery. */}
+        <Route path="business-cases/:id/plan/planning" element={<V1BusinessCasePlanPlanning />} />
         <Route path="business-cases/:id/delivery/summary" element={<V1BusinessCaseDeliverySummary />} />
         <Route path="business-cases/:id/delivery/contracts" element={<V1BusinessCaseContractStudio />} />
         <Route path="business-cases/:id/delivery/waiting-signatures" element={<V1BusinessCaseDeliveryWaitingSignatures />} />
