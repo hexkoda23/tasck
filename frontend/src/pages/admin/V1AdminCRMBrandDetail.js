@@ -1009,16 +1009,17 @@ const V1AdminCRMBrandDetail = () => {
                     Continue
                   </button>
                   <button type="button" onClick={() => { setNewProjectTitle(''); setStartNewTarget('connect'); }} disabled={moving} className="v3-btn-secondary justify-center" data-testid="brand-start-new-call">
-                    Start new: move to call
+                    Start new project
                   </button>
                   <button type="button" onClick={() => { setNewProjectTitle(''); setStartNewTarget('frame'); }} disabled={moving} className="v3-btn-secondary justify-center sm:col-span-2" style={{ borderColor: '#C49B5F', color: '#C49B5F' }} data-testid="brand-start-new-frame">
-                    Start new: move to frame
+                    Upload new transcript
                   </button>
                 </div>
                 <button
                   type="button"
                   onClick={() => { setProjectChoiceOpen(false); setProjectChoiceDismissed(true); }}
-                  className="mt-4 w-full text-center text-[12px] text-[#8A8A8A] hover:text-[#1F4A3A]"
+                  className="mt-4 w-full justify-center rounded-[8px] bg-[#1F4A3A] py-2.5 text-center text-[13px] font-semibold text-white shadow-sm hover:bg-[#163A2C] transition-colors"
+                  data-testid="brand-stay-on-details"
                 >
                   Stay on brand details
                 </button>

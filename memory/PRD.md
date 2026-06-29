@@ -491,6 +491,23 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Brand-detail "Continue or start a new project?" popup buttons relabelled + Stay on brand details made prominent)
+
+### Change
+On `/admin/crm/{brand_id}`, when the brand has an active business case, the "Continue or start a new project?" modal opens. The action buttons were renamed and the dismiss action made visible:
+
+| Before | After |
+| --- | --- |
+| "Start new: move to call" | **"Start new project"** |
+| "Start new: move to frame" | **"Upload new transcript"** |
+| "Stay on brand details" (faded grey link) | **"Stay on brand details"** (solid green button, `#1F4A3A` bg / white text, hover → `#163A2C`) |
+
+The new "Stay on brand details" button now visually matches the Continue button's prominence so admins can clearly see they can also dismiss without starting/continuing anything.
+
+### Files touched
+- `/app/frontend/src/pages/admin/V1AdminCRMBrandDetail.js` — relabelled `brand-start-new-call` + `brand-start-new-frame` button text; restyled `brand-stay-on-details` from a thin text link to a full-width solid green button.
+
+
 ## Update — 25 Feb 2026 (Transcript analysis can no longer fail — true background-job pattern with deterministic fallback)
 
 ### Bug
