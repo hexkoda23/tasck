@@ -36,7 +36,6 @@ const BRAND_DETAIL_FIELDS = [
   ['Brand name', ['company', 'name', 'brand_name']],
   ['Category / industry', ['industry', 'category', 'sector']],
   ['Website', ['website', 'url', 'brand_url']],
-  ['About the brand', ['about', 'brand_about', 'description', 'company_description']],
   ['Primary contact', ['primary_contact', 'primaryContact', 'contact_name']],
   ['Contact title', ['role', 'contact_title', 'title']],
   ['Contact email', ['email', 'contact_email']],

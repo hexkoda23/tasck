@@ -491,6 +491,19 @@ db.v3_business_cases.updateOne({ id: "bc-0ae422a0dc" }, { $set: { "connect.conne
 - Set production env: `SMTP_FROM_NAME=TASCK`, `SMTP_FROM_EMAIL=welcome@thetasck.com`, `SMTP_REPLY_TO=hello@thetasck.com`, `TASCK_SUPPORT_EMAIL=hello@thetasck.com`, `FRONTEND_URL`, `V1_BRAND_PORTAL_URL`.
 
 
+## Update — 25 Feb 2026 (Removed duplicate "About the brand" row from CRM brand profile grid)
+
+### Change
+The brand detail page (`/admin/crm/{brand_id}`) was rendering the About description in two places:
+1. The "Brand details" profile-fields grid (as one of the 16 labelled rows).
+2. The "Scraped and source information" card (where the full LLM-cleaned long-form About is shown with an inline edit button).
+
+Removed the duplicate from the profile grid since the scraped-card already shows the same data, with edit affordance, and at full length. The grid now flows from Marketing Budget → CRM Status → Source → Last Interaction → Created → Updated, and the long-form About is the sole appearance below.
+
+### Files touched
+- `/app/frontend/src/pages/admin/V1AdminCRMBrandDetail.js` — removed `'About the brand'` row from `BRAND_DETAIL_FIELDS`.
+
+
 ## Update — 25 Feb 2026 (Transcript Analysis now Claude-powered, lengthy, accurate, and name-free at the input layer)
 
 ### Bug
