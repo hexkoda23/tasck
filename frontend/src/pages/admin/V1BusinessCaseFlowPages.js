@@ -133,6 +133,11 @@ import {
   v3SendConnectRescheduleEmail,
   v3SendFeedbackRequest,
   v3ListFeedbackRequests,
+  v3CreateInvoice,
+  v3UpdateInvoice,
+  v3DeleteInvoice,
+  v3MarkInvoicePaid,
+  v3UpdatePlanningText,
   v3SendStrategySnapshotToBrand,
   v3SignContract,
   v3SuggestCreatorMatches,
@@ -3830,14 +3835,133 @@ export const V3BusinessCaseDeliverySummary = () => {
   const projectValue = approvedValue || strategyValue;
   const [projectValueInput, setProjectValueInput] = useState(projectValue ? String(projectValue) : '');
   const [valueNotice, setValueNotice] = useState('');
-  // Timelines: prefer Phase 5 execution plan from the brainstorm round, then
-  // fall back to any stored timeline string on the round itself.
-  const timelinePlan = brainstorm.phase_5_execution || brainstorm.timeline || null;
-  const timelineText = (() => {
-    if (!timelinePlan) return '';
-    if (typeof timelinePlan === 'string') return timelinePlan;
-    return timelinePlan.timeline || timelinePlan.schedule || timelinePlan.summary || '';
+  // Timelines: prefer the admin-edited case.plan.timeline_plan (saved from the
+  // editable textarea below), then fall back to Phase 5 execution plan or any
+  // stored timeline string on the brainstorm round.
+  const persistedTimeline = (bc.plan && bc.plan.timeline_plan) || '';
+  const brainstormTimelineSource = brainstorm.phase_5_execution || brainstorm.timeline || null;
+  const brainstormTimelineText = (() => {
+    if (!brainstormTimelineSource) return '';
+    if (typeof brainstormTimelineSource === 'string') return brainstormTimelineSource;
+    return brainstormTimelineSource.timeline || brainstormTimelineSource.schedule || brainstormTimelineSource.summary || '';
   })();
+  const fallbackTimelineText = brainstormTimelineText;
+
+  // ----- Editable Timelines state -----
+  const [timelineDraft, setTimelineDraft] = useState(persistedTimeline || fallbackTimelineText);
+  const [timelineSaving, setTimelineSaving] = useState(false);
+  const [timelineNotice, setTimelineNotice] = useState('');
+  useEffect(() => {
+    // Keep the textarea in sync when the bundle reloads (e.g. after save).
+    setTimelineDraft(persistedTimeline || fallbackTimelineText);
+  }, [persistedTimeline, fallbackTimelineText]);
+  const saveTimeline = async () => {
+    setTimelineNotice('');
+    setTimelineSaving(true);
+    try {
+      await v3UpdatePlanningText(id, { timeline_plan: timelineDraft });
+      await reload();
+      setTimelineNotice('Timeline saved.');
+    } catch (e) {
+      setTimelineNotice(e?.response?.data?.detail || e?.message || 'Could not save the timeline.');
+    } finally {
+      setTimelineSaving(false);
+    }
+  };
+
+  // ----- Editable Invoicing state -----
+  // Per-row drafts so admin can tweak inline; an empty draft means no pending edit.
+  const [invoiceDrafts, setInvoiceDrafts] = useState({}); // { invId: { kind, amount, status } }
+  const [invoiceBusyId, setInvoiceBusyId] = useState(null);
+  const [invoiceNotice, setInvoiceNotice] = useState('');
+  // New-invoice composer (collapsed by default).
+  const [newInvoiceOpen, setNewInvoiceOpen] = useState(false);
+  const [newInvoice, setNewInvoice] = useState({ kind: 'invoice', amount: '', status: 'issued', notes: '' });
+  const draftFor = (inv) => invoiceDrafts[inv.id] || {};
+  const draftField = (inv, field) => {
+    const d = invoiceDrafts[inv.id];
+    if (d && Object.prototype.hasOwnProperty.call(d, field)) return d[field];
+    if (field === 'amount') return String(inv.amount ?? '');
+    return inv[field] ?? '';
+  };
+  const setDraftField = (invId, field, value) => {
+    setInvoiceDrafts((prev) => ({ ...prev, [invId]: { ...(prev[invId] || {}), [field]: value } }));
+  };
+  const rowHasEdits = (invId) => Boolean(invoiceDrafts[invId] && Object.keys(invoiceDrafts[invId]).length);
+  const saveInvoiceRow = async (inv) => {
+    const d = invoiceDrafts[inv.id];
+    if (!d) return;
+    setInvoiceNotice('');
+    setInvoiceBusyId(inv.id);
+    try {
+      const payload = {};
+      if (d.kind !== undefined) payload.kind = d.kind;
+      if (d.amount !== undefined) payload.amount = Number(d.amount) || 0;
+      if (d.status !== undefined) payload.status = d.status;
+      await v3UpdateInvoice(inv.id, payload);
+      await reload();
+      setInvoiceDrafts((prev) => { const next = { ...prev }; delete next[inv.id]; return next; });
+      setInvoiceNotice('Invoice updated.');
+    } catch (e) {
+      setInvoiceNotice(e?.response?.data?.detail || e?.message || 'Could not save invoice.');
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  };
+  const deleteInvoiceRow = async (inv) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Delete invoice "${humanStatus(inv.kind || 'invoice')}"? This cannot be undone.`)) return;
+    setInvoiceNotice('');
+    setInvoiceBusyId(inv.id);
+    try {
+      await v3DeleteInvoice(inv.id);
+      await reload();
+      setInvoiceDrafts((prev) => { const next = { ...prev }; delete next[inv.id]; return next; });
+      setInvoiceNotice('Invoice deleted.');
+    } catch (e) {
+      setInvoiceNotice(e?.response?.data?.detail || e?.message || 'Could not delete invoice.');
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  };
+  const markInvoicePaid = async (inv) => {
+    setInvoiceNotice('');
+    setInvoiceBusyId(inv.id);
+    try {
+      await v3MarkInvoicePaid(inv.id);
+      await reload();
+      setInvoiceNotice('Invoice marked paid.');
+    } catch (e) {
+      setInvoiceNotice(e?.response?.data?.detail || e?.message || 'Could not mark paid.');
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  };
+  const createInvoice = async () => {
+    setInvoiceNotice('');
+    const amount = Number(newInvoice.amount) || 0;
+    if (!newInvoice.kind.trim()) {
+      setInvoiceNotice('Enter a kind for the new invoice (e.g. retainer, milestone, balance).');
+      return;
+    }
+    setInvoiceBusyId('__new__');
+    try {
+      await v3CreateInvoice({
+        business_case_id: id,
+        kind: newInvoice.kind.trim(),
+        amount,
+        status: newInvoice.status,
+        notes: newInvoice.notes || undefined,
+      });
+      await reload();
+      setNewInvoice({ kind: 'invoice', amount: '', status: 'issued', notes: '' });
+      setNewInvoiceOpen(false);
+      setInvoiceNotice('Invoice added.');
+    } catch (e) {
+      setInvoiceNotice(e?.response?.data?.detail || e?.message || 'Could not add invoice.');
+    } finally {
+      setInvoiceBusyId(null);
+    }
+  };
   useEffect(() => {
     setProjectValueInput(projectValue ? String(projectValue) : '');
   }, [projectValue]);
@@ -3926,47 +4050,207 @@ export const V3BusinessCaseDeliverySummary = () => {
           </div>
         )}
       </InfoCard>
-      {/* Timelines (Planning) - lock the schedule before Delivery starts. */}
-      <InfoCard title="Timelines">
-        {timelineText ? (
-          <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap">{timelineText}</p>
-        ) : (
-          <p className="text-[13px] text-[#8A8A8A]">No timeline captured yet. Add the launch window, approval rhythm, production windows, and reporting period during the Brainstorm round so it appears here.</p>
+      {/* Timelines (Planning) - editable. Lock the schedule before Delivery starts. */}
+      <InfoCard
+        title="Timelines"
+        action={(
+          <button
+            type="button"
+            onClick={saveTimeline}
+            disabled={timelineSaving}
+            className="v3-btn-primary text-[11px] disabled:opacity-60"
+            data-testid="planning-timeline-save"
+          >
+            <Save className="w-3.5 h-3.5" /> {timelineSaving ? 'Saving…' : 'Save timeline'}
+          </button>
+        )}
+      >
+        <label className="block text-[11px] text-[#6E6657] mb-1">
+          Edit the timeline directly here. Saved to this Business Case.
+        </label>
+        <textarea
+          value={timelineDraft}
+          onChange={(e) => setTimelineDraft(e.target.value)}
+          rows={6}
+          placeholder="Add the launch window, approval rhythm, production windows, and reporting period. Use plain text or bullets - anything that helps Delivery run the schedule."
+          className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
+          data-testid="planning-timeline-input"
+        />
+        {!persistedTimeline && fallbackTimelineText && (
+          <p className="mt-2 text-[11px] text-[#6E6657]">
+            Loaded from the Brainstorm round as a starting point. Edit and save to lock it on this Business Case.
+          </p>
+        )}
+        {timelineNotice && (
+          <p className="mt-2 text-[11px] text-[#1F4A3A]" data-testid="planning-timeline-notice">{timelineNotice}</p>
         )}
         <p className="mt-2 text-[11px] text-[#6E6657]">Lock the launch window and approval rhythm here. Delivery uses these dates when running deliverables.</p>
       </InfoCard>
 
-      {/* Invoicing (Planning) - issued and paid status. Invoices can be paid off-platform. */}
-      <InfoCard title="Invoicing">
+      {/* Invoicing (Planning) - editable rows + add. Invoices can be paid off-platform. */}
+      <InfoCard
+        title="Invoicing"
+        action={(
+          <button
+            type="button"
+            onClick={() => setNewInvoiceOpen((v) => !v)}
+            className="v3-btn-secondary text-[11px]"
+            data-testid="planning-invoice-add-toggle"
+          >
+            <Plus className="w-3.5 h-3.5" /> {newInvoiceOpen ? 'Cancel add' : 'Add invoice'}
+          </button>
+        )}
+      >
+        {invoiceNotice && (
+          <p className="mb-2 text-[11px] text-[#1F4A3A]" data-testid="planning-invoice-notice">{invoiceNotice}</p>
+        )}
+
+        {/* New invoice composer */}
+        {newInvoiceOpen && (
+          <div className="rounded-md border border-[#D7CBB8] bg-[#FBFAF7] p-3 mb-3 grid grid-cols-1 md:grid-cols-5 gap-2 items-end" data-testid="planning-invoice-new-row">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Kind</label>
+              <input
+                value={newInvoice.kind}
+                onChange={(e) => setNewInvoice((p) => ({ ...p, kind: e.target.value }))}
+                placeholder="retainer, milestone, balance"
+                className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-2 py-1.5"
+                data-testid="planning-invoice-new-kind"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Amount (NGN)</label>
+              <input
+                type="number"
+                value={newInvoice.amount}
+                onChange={(e) => setNewInvoice((p) => ({ ...p, amount: e.target.value }))}
+                placeholder="0"
+                className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-2 py-1.5"
+                data-testid="planning-invoice-new-amount"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Status</label>
+              <select
+                value={newInvoice.status}
+                onChange={(e) => setNewInvoice((p) => ({ ...p, status: e.target.value }))}
+                className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-2 py-1.5"
+                data-testid="planning-invoice-new-status"
+              >
+                <option value="draft">Draft</option>
+                <option value="issued">Issued</option>
+                <option value="paid">Paid</option>
+                <option value="overdue">Overdue</option>
+                <option value="void">Void</option>
+              </select>
+            </div>
+            <div className="md:col-span-2 flex gap-2">
+              <input
+                value={newInvoice.notes}
+                onChange={(e) => setNewInvoice((p) => ({ ...p, notes: e.target.value }))}
+                placeholder="Notes (optional)"
+                className="flex-1 text-[12px] rounded-md border border-[#D7CBB8] bg-white px-2 py-1.5"
+                data-testid="planning-invoice-new-notes"
+              />
+              <button
+                type="button"
+                onClick={createInvoice}
+                disabled={invoiceBusyId === '__new__'}
+                className="v3-btn-primary text-[11px] disabled:opacity-60"
+                data-testid="planning-invoice-new-save"
+              >
+                <Save className="w-3.5 h-3.5" /> {invoiceBusyId === '__new__' ? 'Adding…' : 'Add'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Existing invoices - editable inline */}
         {invoices.length === 0 ? (
-          <p className="text-[13px] text-[#8A8A8A]">No invoices on record yet for this Business Case.</p>
+          <p className="text-[13px] text-[#8A8A8A]">No invoices on record yet. Use "Add invoice" above to create one.</p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
             <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
               <thead className="bg-[#F4F2EC] text-[#6E6657]">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Kind</th>
-                  <th className="px-3 py-2 font-semibold">Amount</th>
+                  <th className="px-3 py-2 font-semibold">Amount (NGN)</th>
                   <th className="px-3 py-2 font-semibold">Status</th>
                   <th className="px-3 py-2 font-semibold">Issued</th>
                   <th className="px-3 py-2 font-semibold">Paid</th>
+                  <th className="px-3 py-2 font-semibold">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#E8E4DB] bg-white text-[#4F3E2F]">
-                {invoices.map((inv) => (
-                  <tr key={inv.id}>
-                    <td className="px-3 py-2 align-top">{humanStatus(inv.kind || 'invoice')}</td>
-                    <td className="px-3 py-2 align-top">{inv.amount ? formatNairaV3(inv.amount) : 'TBD'}</td>
-                    <td className="px-3 py-2 align-top">{humanStatus(inv.status || 'issued')}</td>
-                    <td className="px-3 py-2 align-top">{inv.issued_at ? formatDateTime(inv.issued_at) : '-'}</td>
-                    <td className="px-3 py-2 align-top">{inv.paid_at ? formatDateTime(inv.paid_at) : 'Not paid'}</td>
-                  </tr>
-                ))}
+                {invoices.map((inv) => {
+                  const isSdf = inv.kind === 'strategy_development_fee';
+                  const isPaid = inv.status === 'paid';
+                  const busy = invoiceBusyId === inv.id;
+                  const hasEdits = rowHasEdits(inv.id);
+                  return (
+                    <tr key={inv.id} data-testid={`planning-invoice-row-${inv.id}`}>
+                      <td className="px-2 py-1.5 align-top">
+                        <input
+                          value={draftField(inv, 'kind')}
+                          onChange={(e) => setDraftField(inv.id, 'kind', e.target.value)}
+                          disabled={isSdf}
+                          className="w-full text-[12px] rounded-md border border-transparent hover:border-[#D7CBB8] focus:border-[#1F4A3A] bg-white px-2 py-1 disabled:bg-[#F4F2EC]"
+                          data-testid={`planning-invoice-${inv.id}-kind`}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5 align-top">
+                        <input
+                          type="number"
+                          value={draftField(inv, 'amount')}
+                          onChange={(e) => setDraftField(inv.id, 'amount', e.target.value)}
+                          className="w-full text-[12px] rounded-md border border-transparent hover:border-[#D7CBB8] focus:border-[#1F4A3A] bg-white px-2 py-1"
+                          data-testid={`planning-invoice-${inv.id}-amount`}
+                        />
+                        <p className="text-[10px] text-[#8A8A8A] mt-0.5">{inv.amount ? formatNairaV3(inv.amount) : 'TBD'}</p>
+                      </td>
+                      <td className="px-2 py-1.5 align-top">
+                        <select
+                          value={draftField(inv, 'status')}
+                          onChange={(e) => setDraftField(inv.id, 'status', e.target.value)}
+                          className="w-full text-[12px] rounded-md border border-transparent hover:border-[#D7CBB8] focus:border-[#1F4A3A] bg-white px-2 py-1"
+                          data-testid={`planning-invoice-${inv.id}-status`}
+                        >
+                          <option value="draft">Draft</option>
+                          <option value="issued">Issued</option>
+                          <option value="paid">Paid</option>
+                          <option value="overdue">Overdue</option>
+                          <option value="void">Void</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-1.5 align-top text-[11px]">{inv.issued_at ? formatDateTime(inv.issued_at) : '-'}</td>
+                      <td className="px-3 py-1.5 align-top text-[11px]">{inv.paid_at ? formatDateTime(inv.paid_at) : 'Not paid'}</td>
+                      <td className="px-2 py-1.5 align-top whitespace-nowrap">
+                        <div className="flex flex-wrap gap-1">
+                          {hasEdits && (
+                            <button type="button" onClick={() => saveInvoiceRow(inv)} disabled={busy} className="v3-btn-primary text-[10px] disabled:opacity-60" data-testid={`planning-invoice-${inv.id}-save`}>
+                              <Save className="w-3 h-3" /> Save
+                            </button>
+                          )}
+                          {!isPaid && !hasEdits && (
+                            <button type="button" onClick={() => markInvoicePaid(inv)} disabled={busy} className="v3-btn-secondary text-[10px] disabled:opacity-60" data-testid={`planning-invoice-${inv.id}-mark-paid`}>
+                              Mark paid
+                            </button>
+                          )}
+                          {!isSdf && (
+                            <button type="button" onClick={() => deleteInvoiceRow(inv)} disabled={busy} className="v3-btn-secondary text-[10px] disabled:opacity-60 text-[#B54A37]" data-testid={`planning-invoice-${inv.id}-delete`}>
+                              <Trash2 className="w-3 h-3" /> Delete
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
-        <p className="mt-2 text-[11px] text-[#6E6657]">Invoices can be paid off-platform. Mark them paid from the invoice record when confirmation is received.</p>
+        <p className="mt-2 text-[11px] text-[#6E6657]">Invoices can be paid off-platform. Edit kind/amount/status inline and Save. Mark paid stamps the paid date now. Delete removes the invoice (the Strategy Development Fee invoice cannot be deleted here).</p>
       </InfoCard>
 
       {/* Other Planning pages */}

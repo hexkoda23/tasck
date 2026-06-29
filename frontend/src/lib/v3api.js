@@ -132,6 +132,12 @@ export const v3SignContract = (contractId) => v3.post(`/contracts/${contractId}/
 // Planning Feedback card: admin can re-send feedback requests to brand/creator.
 export const v3SendFeedbackRequest = (bcId, payload) => v3.post(`/business-cases/${bcId}/feedback/request`, payload).then(r => r.data);
 export const v3ListFeedbackRequests = (bcId) => v3.get(`/business-cases/${bcId}/feedback/requests`).then(r => r.data);
+// Planning Invoicing card: admin can create + delete invoices in addition to
+// the pre-existing v3UpdateInvoice / v3MarkInvoicePaid helpers above.
+export const v3CreateInvoice = (payload) => v3.post('/invoices', payload).then(r => r.data);
+export const v3DeleteInvoice = (invoiceId) => v3.delete(`/invoices/${invoiceId}`).then(r => r.data);
+// Planning page free-form text (timeline plan, planning notes) saved on case.plan.
+export const v3UpdatePlanningText = (bcId, payload) => v3.patch(`/business-cases/${bcId}/planning`, payload).then(r => r.data);
 
 // -------- Deliver stage --------
 export const v3ListDeliverables = (bcId) => v3.get('/deliverables', { params: { business_case_id: bcId } }).then(r => r.data);

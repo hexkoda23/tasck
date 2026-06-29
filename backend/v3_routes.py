@@ -3675,6 +3675,99 @@ def make_v3_router(db):
             )
         return {"ok": True, "paid_at": paid_at}
 
+    # Admin-driven invoice CRUD used by the Planning page Invoicing card.
+    # Lets admin add new invoices, edit existing ones, and delete drafts
+    # without going through the Strategy Development Fee auto-flow.
+    class InvoiceCreatePayload(BaseModel):
+        business_case_id: str
+        kind: str = "invoice"
+        amount: float = 0
+        status: str = "issued"
+        notes: Optional[str] = None
+        paid_at: Optional[str] = None
+
+    @router.post("/invoices")
+    async def create_invoice(payload: InvoiceCreatePayload):
+        case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        inv_id = f"inv-{uuid.uuid4().hex[:8]}"
+        doc = {
+            "id": inv_id,
+            "business_case_id": payload.business_case_id,
+            "kind": (payload.kind or "invoice").strip() or "invoice",
+            "amount": float(payload.amount or 0),
+            "status": payload.status or "issued",
+            "notes": (payload.notes or "").strip() or None,
+            "issued_at": _now_iso(),
+            "paid_at": payload.paid_at,
+            "triggered_by": "admin_planning_page",
+        }
+        await db.v3_invoices.insert_one({**doc})
+        return doc
+
+    class InvoiceUpdatePayload(BaseModel):
+        kind: Optional[str] = None
+        amount: Optional[float] = None
+        status: Optional[str] = None
+        notes: Optional[str] = None
+        paid_at: Optional[str] = None
+
+    @router.patch("/invoices/{invoice_id}")
+    async def update_invoice(invoice_id: str, payload: InvoiceUpdatePayload):
+        inv = await db.v3_invoices.find_one({"id": invoice_id}, {"_id": 0})
+        if not inv:
+            raise HTTPException(404, "Invoice not found")
+        updates: Dict[str, Any] = {}
+        if payload.kind is not None:
+            updates["kind"] = payload.kind.strip() or "invoice"
+        if payload.amount is not None:
+            updates["amount"] = float(payload.amount)
+        if payload.status is not None:
+            updates["status"] = payload.status.strip() or "issued"
+            # If marking paid through edit, stamp paid_at if missing.
+            if updates["status"] == "paid" and not (payload.paid_at or inv.get("paid_at")):
+                updates["paid_at"] = _now_iso()
+        if payload.notes is not None:
+            updates["notes"] = payload.notes.strip() or None
+        if payload.paid_at is not None:
+            updates["paid_at"] = payload.paid_at or None
+        if updates:
+            await db.v3_invoices.update_one({"id": invoice_id}, {"$set": updates})
+        return await db.v3_invoices.find_one({"id": invoice_id}, {"_id": 0})
+
+    @router.delete("/invoices/{invoice_id}")
+    async def delete_invoice(invoice_id: str):
+        inv = await db.v3_invoices.find_one({"id": invoice_id}, {"_id": 0})
+        if not inv:
+            raise HTTPException(404, "Invoice not found")
+        # Don't allow deleting the auto-generated Strategy Development Fee
+        # invoice from this generic admin route - that one is part of the
+        # Framing flow accounting.
+        if inv.get("kind") == "strategy_development_fee":
+            raise HTTPException(400, "Strategy Development Fee invoice cannot be deleted from here.")
+        await db.v3_invoices.delete_one({"id": invoice_id})
+        return {"ok": True}
+
+    # Planning page free-form text fields (timelines + planning notes).
+    # Saved on case.plan.* so they round-trip via the existing bundle endpoint.
+    class PlanningTextUpdatePayload(BaseModel):
+        timeline_plan: Optional[str] = None
+        planning_notes: Optional[str] = None
+
+    @router.patch("/business-cases/{bc_id}/planning")
+    async def update_planning_text(bc_id: str, payload: PlanningTextUpdatePayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        updates: Dict[str, Any] = {"updated_at": _now_iso()}
+        if payload.timeline_plan is not None:
+            updates["plan.timeline_plan"] = payload.timeline_plan
+        if payload.planning_notes is not None:
+            updates["plan.planning_notes"] = payload.planning_notes
+        await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
+        return await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+
     # ------------------------------------------------------------------------
     # CREATIVE BRIEFS  (Plan flagship #2 - per-creator)
     # ------------------------------------------------------------------------
