@@ -1026,7 +1026,10 @@ const snapshotPrintHtml = (snapshot) => {
         return `<tr>${cells.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`;
       }).join('')}</tbody></table>`
       : '';
-    return `<section><h2>${escapeHtml(section.heading)}</h2>${section.content ? `<p>${escapeHtml(section.content)}</p>` : ''}${list}${rows}</section>`;
+    const selectors = Array.isArray(section.selectors) && section.selectors.length
+      ? `<ul>${section.selectors.map((sel) => `<li><strong>${escapeHtml(sel.label || 'Selection')}:</strong> ${escapeHtml(sel.selected || 'Not selected yet')}</li>`).join('')}</ul>`
+      : '';
+    return `<section><h2>${escapeHtml(section.heading)}</h2>${section.content ? `<p>${escapeHtml(section.content)}</p>` : ''}${selectors}${list}${rows}</section>`;
   }).join('');
   return `<!doctype html><html><head><title>${escapeHtml(snapshot?.title || 'Alignment Snapshot')}</title><style>
     body{font-family:Arial,sans-serif;color:#1A1A1A;margin:40px;line-height:1.55}
@@ -1879,6 +1882,33 @@ const AlignmentSectionEditor = ({ section, index, onChange }) => {
               value={flagsTextFromItems(section.items || [])}
               onChange={(value) => update({ items: flagsFromText(value) })}
             />
+          )}
+
+          {section.type === 'selectors' && Array.isArray(section.selectors) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {section.selectors.map((sel, selIdx) => {
+                const options = Array.isArray(sel.options) ? sel.options : [];
+                const updateSelector = (patch) => {
+                  const next = section.selectors.map((s, i) => (i === selIdx ? { ...s, ...patch } : s));
+                  update({ selectors: next });
+                };
+                return (
+                  <label key={sel.key || selIdx} className="block">
+                    <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{sel.label || `Selector ${selIdx + 1}`}</span>
+                    <select
+                      value={sel.selected || ''}
+                      onChange={(e) => updateSelector({ selected: e.target.value })}
+                      className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none bg-white"
+                      data-testid={`alignment-selector-${sel.key || selIdx}`}
+                    >
+                      <option value="">Select {sel.label || 'an option'}…</option>
+                      {options.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
+                      {sel.selected && !options.includes(sel.selected) && <option value={sel.selected}>{sel.selected}</option>}
+                    </select>
+                  </label>
+                );
+              })}
+            </div>
           )}
 
           {section.type === 'table' && (
@@ -2890,6 +2920,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
         phase_5_execution: round.phase_5_execution,
         phase_6_commercial: round.phase_6_commercial,
         phase_7_recommendation: round.phase_7_recommendation,
+        snapshot_summary: round.snapshot_summary,
         scored_creators: round.scored_creators,
       });
       setNotice('Brainstorming saved.');
@@ -2921,10 +2952,37 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const p5 = round.phase_5_execution || {};
   const p6 = round.phase_6_commercial || {};
   const p7 = round.phase_7_recommendation || {};
+  const summary = round.snapshot_summary || {};
 
   return (
     <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Review and edit the brainstorm. If you uploaded a transcript, these fields were auto-filled by Claude - check each one before continuing.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
+
+      {/* Required brainstorm summary fields (client meeting recap). These are the
+          headline outputs the client reviews; auto-filled by Claude from the
+          transcript, editable here. "Meeting Transcripts" is the transcript
+          shown at the bottom of this page. */}
+      <BSPhase phase="summary" title="Brainstorm Snapshot - Required Fields" subtitle="The headline brainstorm outputs. Auto-filled from the transcript when you upload one; edit any field before continuing.">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <BSField label="1. About Organisation" rows={3} value={summary.about_organisation} onChange={(v) => updateField('snapshot_summary', 'about_organisation', v)} />
+          <BSField label="2. Priority" rows={3} value={summary.priority} onChange={(v) => updateField('snapshot_summary', 'priority', v)} />
+          <BSField label="3. The Challenge" rows={3} value={summary.the_challenge} onChange={(v) => updateField('snapshot_summary', 'the_challenge', v)} />
+          <BSField label="4. The Shift" rows={3} value={summary.the_shift} onChange={(v) => updateField('snapshot_summary', 'the_shift', v)} />
+          <BSField label="5. The Opportunity" rows={3} value={summary.the_opportunity} onChange={(v) => updateField('snapshot_summary', 'the_opportunity', v)} />
+          <BSField label="6. Creator's Role" rows={3} value={summary.creators_role} onChange={(v) => updateField('snapshot_summary', 'creators_role', v)} />
+          <BSField label="7. The Recommendation" rows={3} value={summary.the_recommendation} onChange={(v) => updateField('snapshot_summary', 'the_recommendation', v)} />
+          <BSField label="8. Marketing KPIs" rows={3} value={summary.marketing_kpis} onChange={(v) => updateField('snapshot_summary', 'marketing_kpis', v)} />
+          <BSField label="9. Key Marketing Focus" rows={3} value={summary.key_marketing_focus} onChange={(v) => updateField('snapshot_summary', 'key_marketing_focus', v)} />
+          <BSField label="10. Primary Target Audience" rows={3} value={summary.primary_target_audience} onChange={(v) => updateField('snapshot_summary', 'primary_target_audience', v)} />
+          <BSField label="11. Need for Supercreative" rows={3} value={summary.need_for_supercreative} onChange={(v) => updateField('snapshot_summary', 'need_for_supercreative', v)} />
+        </div>
+        {round.transcript && (
+          <div className="mt-3">
+            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">12. Meeting Transcripts</p>
+            <div className="max-h-40 overflow-y-auto rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3 text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{round.transcript}</div>
+          </div>
+        )}
+      </BSPhase>
 
       <BSPhase phase="pre-work" title="Pre-work (Mandatory before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
         <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Client Brief Summary (1 page max)</p>

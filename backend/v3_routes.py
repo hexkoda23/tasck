@@ -1276,6 +1276,25 @@ BRAINSTORM_SUGGESTED_QUESTIONS = [
 ]
 
 
+def _brainstorm_snapshot_summary_default() -> Dict[str, str]:
+    """The 12 required brainstorm fields (client meeting recap). "Meeting
+    Transcripts" is handled by the round's transcript field, so it is not
+    duplicated here - the other 11 are the editable summary."""
+    return {
+        "about_organisation": "",
+        "priority": "",
+        "the_challenge": "",
+        "the_shift": "",
+        "the_opportunity": "",
+        "creators_role": "",
+        "the_recommendation": "",
+        "marketing_kpis": "",
+        "key_marketing_focus": "",
+        "primary_target_audience": "",
+        "need_for_supercreative": "",
+    }
+
+
 def _brainstorm_analysis_system_prompt() -> str:
     return """
 You are TASCK's TTA Snapshot Brainstorm analyst, working for a paying enterprise client. You will be given the transcript of a 60-90 minute creator-strategy brainstorm session. Your job is to read it carefully and fill in the entire TTA Snapshot Brainstorm template with rich, specific, defensible content drawn ONLY from the transcript.
@@ -1336,8 +1355,23 @@ Return JSON only, no markdown, with EXACTLY this shape (fill every string; use "
       "language_people_use": ["string", "string"]
     }
   },
+  "snapshot_summary": {
+    "about_organisation": "string (2-4 sentences: who the brand is and what they do)",
+    "priority": "string (the single most important thing to address first, per the session)",
+    "the_challenge": "string (the core problem or barrier the audience faces)",
+    "the_shift": "string (the behaviour change we need to drive)",
+    "the_opportunity": "string (the strategic opening the brand can own)",
+    "creators_role": "string (what the creator must do and why they fit)",
+    "the_recommendation": "string (the recommended creator-led direction)",
+    "marketing_kpis": "string (the KPIs success will be measured against)",
+    "key_marketing_focus": "string (the sharpest single focus for the work)",
+    "primary_target_audience": "string (who the work must influence, with concrete detail)",
+    "need_for_supercreative": "string (whether a marquee / super creative is needed, and why)"
+  },
   "confidence": integer 0-100
 }
+
+The "snapshot_summary" object is REQUIRED - it is the headline brainstorm output the client reviews. Fill every field with specific, evidence-grounded prose from the transcript. Do not leave snapshot_summary fields blank unless the session genuinely did not touch them (then write a short "Confirm with team - not covered in session." placeholder).
 """.strip()
 
 
@@ -4387,6 +4421,25 @@ def make_v3_router(db):
                 {"heading": "Desired Outcomes and Success Metrics", "type": "table", "content": (
                     "The outcomes below are our current view of what success should look like. Please confirm or adjust the targets."
                 ), "columns": ["Metrics", "Success Looks Like"], "rows": metric_rows},
+                # Focus & Priority dropdowns (client request): the brand flags
+                # their single top focus and priority so TASCK addresses the
+                # top priority first and schedules lower-priority items after.
+                {"heading": "Focus & Priority", "type": "selectors", "content": (
+                    "Flag your single most important focus and priority. TASCK will address the top priority first and schedule lower-priority items after."
+                ), "selectors": [
+                    {
+                        "label": "Focus",
+                        "key": "focus",
+                        "options": ["Awareness", "Consideration", "Conversion", "Retention & Loyalty", "Advocacy", "Brand repositioning", "Product / service launch"],
+                        "selected": _usable_text(_af("focus") or mi.get("key_marketing_focus"), ""),
+                    },
+                    {
+                        "label": "Priority",
+                        "key": "priority",
+                        "options": ([str(row[0]) for row in metric_rows if row and str(row[0]).strip()] + ["Fastest time to impact", "Highest reach", "Best conversion", "Lowest cost / efficiency"]),
+                        "selected": _usable_text(_af("priority"), ""),
+                    },
+                ]},
                 {"heading": "Open Questions for Client Confirmation", "type": "numbered", "content": "To sharpen the next stage, we would like to confirm the following:", "items": [
                     "Have we understood your organisation correctly?",
                     "Have we understood the main goal of this project correctly?",
@@ -4550,6 +4603,13 @@ def make_v3_router(db):
                         "</tr>"
                     )
                 sections.append("</tbody></table>")
+            elif section.get("selectors"):
+                sections.append("<ul>")
+                for sel in section.get("selectors", []) or []:
+                    label = html.escape(str(sel.get("label") or "Selection"))
+                    selected = html.escape(str(sel.get("selected") or "Not selected yet"))
+                    sections.append(f"<li><strong>{label}:</strong> {selected}</li>")
+                sections.append("</ul>")
             elif section.get("items"):
                 sections.append("<ul>")
                 for item in section.get("items", []) or []:
@@ -4755,6 +4815,11 @@ def make_v3_router(db):
                     + "".join(table_rows)
                     + "</w:tbl>"
                 )
+            elif section.get("selectors"):
+                for sel in section.get("selectors", []) or []:
+                    label = str(sel.get("label") or "Selection")
+                    selected = str(sel.get("selected") or "Not selected yet")
+                    blocks.append(_docx_paragraph(f"{label}: {selected}", bold=True))
             elif section.get("items"):
                 for item in section.get("items", []) or []:
                     blocks.append(_docx_paragraph(f"- {item}"))
@@ -6076,6 +6141,7 @@ def make_v3_router(db):
         phase_5_execution: Optional[Dict[str, Any]] = None
         phase_6_commercial: Optional[Dict[str, Any]] = None
         phase_7_recommendation: Optional[Dict[str, Any]] = None
+        snapshot_summary: Optional[Dict[str, Any]] = None
 
     @router.post("/brainstorm-rounds")
     async def create_brainstorm(payload: BrainstormCreate):
@@ -6166,6 +6232,9 @@ def make_v3_router(db):
                 "key_reason": "",
                 "insight_summary": {"top_3_barriers": [], "key_behavioral_triggers": [], "language_people_use": []},
             },
+            # 11 required brainstorm summary fields (client meeting recap).
+            # "Meeting Transcripts" is the round's own transcript field.
+            "snapshot_summary": payload.snapshot_summary or _brainstorm_snapshot_summary_default(),
             "strategy_mapping": [
                 {"brainstorm_phase": "Phase 1: Problem", "strategy_section": "Strategic Thesis"},
                 {"brainstorm_phase": "Phase 2: Archetype", "strategy_section": "Creator Strategy (Logic)"},
@@ -6194,6 +6263,7 @@ def make_v3_router(db):
         phase_5_execution: Optional[Dict[str, Any]] = None
         phase_6_commercial: Optional[Dict[str, Any]] = None
         phase_7_recommendation: Optional[Dict[str, Any]] = None
+        snapshot_summary: Optional[Dict[str, Any]] = None
         status: Optional[str] = None
 
     @router.patch("/brainstorm-rounds/{round_id}")
@@ -6287,6 +6357,7 @@ def make_v3_router(db):
             "phase_5_execution": _section("phase_5_execution", {}),
             "phase_6_commercial": _section("phase_6_commercial", {}),
             "phase_7_recommendation": _section("phase_7_recommendation", {}),
+            "snapshot_summary": _section("snapshot_summary", _brainstorm_snapshot_summary_default()),
             "transcript": transcript,
             "transcript_analyzed_at": _now_iso(),
             "transcript_analysis_source": analysis_source,
@@ -7602,6 +7673,60 @@ def make_v3_router(db):
             )
         return {"ok": True, "business_case_id": bc_id, "status": "deleted"}
 
+    def _build_meeting_ics(*, summary: str, description: str, location: str, start_iso: str, organizer_email: str, attendee_email: str, uid: str, duration_minutes: int = 30) -> Optional[bytes]:
+        """Build a minimal RFC 5545 VCALENDAR/VEVENT so the meeting invite lands
+        directly in the brand's calendar when they open the email. Returns None
+        if we can't parse a start time (nothing to put in the calendar)."""
+        from datetime import datetime as _dt, timedelta as _tdelta
+        raw = str(start_iso or "").strip()
+        if not raw:
+            return None
+        cleaned = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+        try:
+            start = _dt.fromisoformat(cleaned)
+        except ValueError:
+            return None
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        start_utc = start.astimezone(timezone.utc)
+        end_utc = start_utc + _tdelta(minutes=max(15, duration_minutes))
+        fmt = "%Y%m%dT%H%M%SZ"
+
+        def _esc(text: str) -> str:
+            return (str(text or "")
+                    .replace("\\", "\\\\")
+                    .replace(";", "\\;")
+                    .replace(",", "\\,")
+                    .replace("\n", "\\n"))
+
+        lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//TASCK//Connect Meeting//EN",
+            "CALSCALE:GREGORIAN",
+            "METHOD:REQUEST",
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{_dt.now(timezone.utc).strftime(fmt)}",
+            f"DTSTART:{start_utc.strftime(fmt)}",
+            f"DTEND:{end_utc.strftime(fmt)}",
+            f"SUMMARY:{_esc(summary)}",
+            f"DESCRIPTION:{_esc(description)}",
+            f"LOCATION:{_esc(location)}",
+            f"ORGANIZER;CN=TASCK:mailto:{organizer_email or 'hello@thetasck.com'}",
+            f"ATTENDEE;CN={_esc(attendee_email)};RSVP=TRUE:mailto:{attendee_email}",
+            "STATUS:CONFIRMED",
+            "SEQUENCE:0",
+            "BEGIN:VALARM",
+            "TRIGGER:-PT30M",
+            "ACTION:DISPLAY",
+            "DESCRIPTION:Reminder",
+            "END:VALARM",
+            "END:VEVENT",
+            "END:VCALENDAR",
+        ]
+        return "\r\n".join(lines).encode("utf-8")
+
     @router.post("/business-cases/{bc_id}/connect/send-meeting-email")
     async def send_connect_meeting_email(bc_id: str, payload: ConnectActionPayload = ConnectActionPayload()):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -7628,6 +7753,26 @@ def make_v3_router(db):
             "Please reply to confirm this works for your team. If the time does not work, send us another date and time and we will reschedule.\n\n"
             "Best regards,\nTASCK"
         )
+        # Build a calendar invite so the meeting appears directly in the brand's
+        # calendar (per the client request to move from link+date to a real
+        # calendar booking). Attached as an .ics file the brand can accept.
+        ics_bytes = _build_meeting_ics(
+            summary=f"TASCK x {brand_name}: {case.get('title', 'Business Call')}",
+            description=purpose + (f"\nMeeting link: {meeting_link}" if meeting_link and meeting_link != "To be shared by TASCK" else ""),
+            location=meeting_link if meeting_link and meeting_link != "To be shared by TASCK" else "TASCK Connect Call",
+            start_iso=scheduled_for_raw,
+            organizer_email=os.getenv("SMTP_FROM_EMAIL", "hello@thetasck.com"),
+            attendee_email=to_email,
+            uid=f"tasck-connect-{bc_id}@thetasck.com",
+        )
+        meeting_attachments = []
+        if ics_bytes:
+            meeting_attachments.append({
+                "type": "calendar_invite",
+                "filename": "TASCK-meeting.ics",
+                "mime_type": "text/calendar",
+                "content": ics_bytes,
+            })
         email = await queue_email(
             to=to_email,
             subject=f"Meeting details for {brand_name}: {case.get('title', 'Business Case')}",
@@ -7635,6 +7780,7 @@ def make_v3_router(db):
             kind="business_call_meeting_schedule",
             brand_id=case.get("brand_id"),
             business_case_id=bc_id,
+            attachments=meeting_attachments or None,
         )
         interaction = {
             "id": f"int-{uuid.uuid4().hex[:8]}",
