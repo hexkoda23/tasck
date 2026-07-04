@@ -1698,7 +1698,9 @@ def make_v3_router(db):
         if _smtp_flag("SMTP_MARK_AUTOMATED", False):
             message["X-Auto-Response-Suppress"] = "All"
             message["Auto-Submitted"] = "auto-generated"
-        if _smtp_flag("SMTP_ENABLE_FEEDBACK_ID", False):
+        # Deliverability: Feedback-ID lets Gmail track this as a legitimate
+        # transactional stream and build per-stream reputation. Default ON.
+        if _smtp_flag("SMTP_ENABLE_FEEDBACK_ID", True):
             feedback_id = str(email.get("kind") or "transactional").replace(" ", "_")[:40]
             message["Feedback-ID"] = f"{feedback_id}:tasck:transactional"
         if _smtp_flag("SMTP_ENABLE_LIST_HEADERS", False):
@@ -1713,8 +1715,12 @@ def make_v3_router(db):
                 message["List-Unsubscribe"] = f"<mailto:{unsubscribe_email}>"
 
     def _email_uses_plain_text_only(kind: str) -> bool:
+        # Deliverability: plain-text-only emails that contain a login link plus
+        # an access code look like phishing to Gmail/Outlook filters. Welcome
+        # emails now get the HTML alternative by default like everything else;
+        # set SMTP_SEND_ACCESS_HTML=false to force plain text if ever needed.
         access_kinds = {"brand_welcome", "creator_welcome"}
-        return kind in access_kinds and not _smtp_flag("SMTP_SEND_ACCESS_HTML", False)
+        return kind in access_kinds and not _smtp_flag("SMTP_SEND_ACCESS_HTML", True)
 
     def _send_smtp_message(
         message: EmailMessage,
@@ -1771,7 +1777,10 @@ def make_v3_router(db):
         plain_body = str(email.get("body") or "")
         message.set_content(plain_body)
         kind = str(email.get("kind") or "")
-        if _smtp_flag("SMTP_SEND_HTML_ALTERNATIVE", False) and not _email_uses_plain_text_only(kind):
+        # Deliverability: multipart text+HTML is the norm for legitimate
+        # transactional mail and scores better with spam filters than bare
+        # plain text. Default ON; SMTP_SEND_HTML_ALTERNATIVE=false to disable.
+        if _smtp_flag("SMTP_SEND_HTML_ALTERNATIVE", True) and not _email_uses_plain_text_only(kind):
             message.add_alternative(_smtp_transactional_html(plain_body, reply_to or from_email), subtype="html")
         for attachment in email.get("attachments") or []:
             content = attachment.get("content")
