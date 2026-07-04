@@ -2171,8 +2171,10 @@ def make_v3_router(db):
                         content = _attr(tag, "content")
                         if meta_key in {"og:logo", "logo"}:
                             _add_logo(content, 100)
-                        elif meta_key in {"og:image", "twitter:image", "twitter:image:src"}:
-                            _add_logo(content, 62)
+                        # NOTE: og:image / twitter:image are deliberately NOT
+                        # candidates - on most brand sites they are campaign
+                        # banners or product shots, not the company logo
+                        # (same class of bug as the campaign-copy "about").
                     for tag in _re.findall(r'<link[^>]+>', html, _re.I | _re.S):
                         rel = _attr(tag, "rel").lower()
                         if any(key in rel for key in ["apple-touch-icon", "mask-icon", "shortcut icon", "icon"]):
@@ -2189,9 +2191,58 @@ def make_v3_router(db):
                     # the explicit, brand-curated logo.
                     for jl_logo in jsonld_logos:
                         _add_logo(jl_logo, 110)
-                    if logo_candidates:
-                        logo_candidates.sort(key=lambda item: item[0], reverse=True)
-                        scraped_logo = _brand_logo_from_source(final_url, logo_candidates[0][1])
+
+                    # Domain-keyed fallback: Google's favicon service serves
+                    # the site's real favicon at high resolution WHEN it has
+                    # one. When it doesn't, it returns a 16px generic globe -
+                    # which the dimension check below rejects, so we never
+                    # store a wrong generic image. (Clearbit's free logo API
+                    # is sunset - connection refused - so it is not used.)
+                    _logo_domain = _domain_from_url(final_url)
+                    if _logo_domain:
+                        _add_logo(f"https://www.google.com/s2/favicons?sz=256&domain={_logo_domain}", 20)
+
+                    def _logo_image_ok(content: bytes, content_type: str) -> bool:
+                        """True only for a real, usable logo image. Rejects
+                        HTML soft-404s (content-type check upstream), tiny
+                        tracker pixels, and Google's 16px generic globe."""
+                        if "svg" in content_type:
+                            return len(content) > 100
+                        if len(content) <= 500:
+                            return False
+                        if len(content) > 24 and content[:8] == b"\x89PNG\r\n\x1a\n":
+                            width = int.from_bytes(content[16:20], "big")
+                            height = int.from_bytes(content[20:24], "big")
+                            return width >= 32 and height >= 32
+                        return True
+
+                    # VERIFY candidates instead of blindly trusting the top
+                    # score: fetch each in score order and take the first that
+                    # actually returns a real image. Dead URLs, lazy-load
+                    # stubs, HTML error pages, and 1px trackers are skipped.
+                    logo_candidates.sort(key=lambda item: item[0], reverse=True)
+                    seen_logo_urls = set()
+                    for _score, candidate_url in logo_candidates[:8]:
+                        if str(candidate_url).startswith("https://www.google.com/s2/favicons"):
+                            # Service URL - bypass _brand_logo_from_source, whose
+                            # "favicon" block-list would wrongly filter it.
+                            normalised = str(candidate_url)
+                        else:
+                            normalised = _brand_logo_from_source(final_url, candidate_url)
+                        if not normalised or normalised in seen_logo_urls:
+                            continue
+                        seen_logo_urls.add(normalised)
+                        try:
+                            logo_resp = await client.get(normalised, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            content_type = str(logo_resp.headers.get("content-type") or "").lower()
+                            if logo_resp.status_code < 400 and content_type.startswith("image/") and _logo_image_ok(logo_resp.content or b"", content_type):
+                                scraped_logo = normalised
+                                break
+                        except Exception:  # noqa: BLE001
+                            continue
+                    # If nothing verified, scraped_logo stays empty and the UI
+                    # falls back to brand initials - intentionally better than
+                    # storing a wrong or generic image.
 
                     page_text = html_module.unescape(_re.sub(r'<[^>]+>', ' ', html))
                     page_text = " ".join(page_text.split())
