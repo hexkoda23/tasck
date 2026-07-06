@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
+import asyncio
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -69,15 +70,33 @@ async def seed_database():
 
 @app.on_event("startup")
 async def startup_event():
-    await seed_database()
-    await v3_router.seed_v3()
-    # Import real CRM workbook data (idempotent — safe to run every boot)
-    try:
-        await WorkbookImporter.import_all(db)
-        logger.info("Workbook import completed.")
-    except Exception as exc:
-        logger.warning(f"Workbook import skipped or failed: {exc}")
-    logger.info("TASCK OS API started successfully (v1+v2+v3)")
+    """Fast startup. Do the minimum synchronously so Uvicorn can bind and
+    respond to Kubernetes readiness probes within seconds. All slow work
+    (seed + xlsx import) is fired off as background tasks so the pod is
+    marked ready immediately even against a cold Atlas MongoDB.
+
+    Previous behaviour: awaited seed_database + seed_v3 + WorkbookImporter.
+    On a fresh production DB this could take 60-90s, exceeding the readiness
+    probe timeout and causing 'deployment failed to become ready'."""
+
+    async def _hydrate():
+        try:
+            await seed_database()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Seed database failed (non-fatal for readiness): {exc}")
+        try:
+            await v3_router.seed_v3()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Seed v3 failed (non-fatal for readiness): {exc}")
+        try:
+            await WorkbookImporter.import_all(db)
+            logger.info("Workbook import completed.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Workbook import skipped or failed: {exc}")
+        logger.info("Background hydration completed.")
+
+    asyncio.create_task(_hydrate())
+    logger.info("TASCK OS API started successfully (v1+v2+v3) — hydration running in background")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

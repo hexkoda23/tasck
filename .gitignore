@@ -93,9 +93,6 @@ frontend/node_modules/.cache/default-development/18.pack
 frontend/node_modules/.cache/default-development/16.pack
 frontend/node_modules/.cache/default-development/23.pack
 frontend/node_modules/.cache/default-development/25.pack
-.env
-.env.*
-*.env
 SERPAPI_API_KEY*
 .serpapi-key
 serpapi.key
@@ -135,3 +132,4 @@ frontend/node_modules/.cache/default-development/10.pack
 frontend/node_modules/.cache/default-development/15.pack
 frontend/node_modules/.cache/default-development/20.pack
 frontend/node_modules/.cache/default-development/31.pack
+frontend/node_modules/.cache/default-development/40.pack

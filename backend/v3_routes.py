@@ -79,11 +79,11 @@ def _temporary_password() -> str:
     return f"TASCK-{uuid.uuid4().hex[:4].upper()}-{uuid.uuid4().hex[:4].upper()}"
 
 
-# Hard-coded live demo URL used as the default fallback in emails so brands
-# always get a working portal link even when no env vars are set. Local dev
-# can override by exporting FRONTEND_URL=http://localhost:7159 or setting
-# APP_ENV=local with a FRONTEND_URL.
-PROD_FRONTEND_URL = "https://thcodemo.space"
+# Frontend URL used in emails and portal links is resolved from env vars at
+# runtime. Local dev exports FRONTEND_URL=http://localhost:7159; production
+# gets it from FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL. No hardcoded
+# domain — a stale hardcoded URL would ship emails with the wrong domain
+# when redeployed to a new host.
 
 
 def brand_login_url() -> str:
@@ -98,10 +98,10 @@ def brand_login_url() -> str:
         V1_BRAND_PORTAL_URL, BRAND_PORTAL_URL
 
     Acceptable formats and what we produce:
-        unset                       -> {app_base_url}/brand/login
-        https://thcodemo.space       -> https://thcodemo.space/brand/login
-        https://thcodemo.space/brand -> https://thcodemo.space/brand/login
-        https://thcodemo.space/brand/login -> unchanged
+        unset                          -> {app_base_url}/brand/login
+        https://example.com            -> https://example.com/brand/login
+        https://example.com/brand      -> https://example.com/brand/login
+        https://example.com/brand/login -> unchanged
     """
     raw = (os.getenv("V1_BRAND_PORTAL_URL") or os.getenv("BRAND_PORTAL_URL") or "").strip().rstrip("/")
     base = raw if raw else f"{app_base_url()}/brand"
@@ -134,10 +134,11 @@ def app_base_url() -> str:
 
     Resolution order:
       1. FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL (explicit override).
-      2. http://localhost:7159 when APP_ENV is "local" (or unset AND we have
-         no production hint - see (3)).
-      3. PROD_FRONTEND_URL for everything else, so emails sent from the demo
-         deploy always include a working URL even when env vars are missing.
+      2. http://localhost:7159 when APP_ENV is "local" or "dev".
+      3. Empty string as a last resort so downstream callers can decide how to
+         handle missing config (previously we returned a hardcoded demo URL
+         here which shipped wrong emails after the app was redeployed to a
+         new production host).
     """
     raw = (
         os.getenv("FRONTEND_URL")
@@ -150,8 +151,7 @@ def app_base_url() -> str:
     env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
     if env in {"local", "dev", "development"}:
         return "http://localhost:7159"
-    # Default to the live demo so emails never go out with localhost in them.
-    return PROD_FRONTEND_URL
+    return ""
 
 
 def _brand_created_at_key(brand: Dict[str, Any]) -> str:

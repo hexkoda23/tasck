@@ -3,8 +3,10 @@
 
 import axios from 'axios';
 
-const DEFAULT_BACKEND_URL = 'https://tasck-live-demo-1.emergent.host';
-const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || DEFAULT_BACKEND_URL).replace(/\/$/, '');
+// REACT_APP_BACKEND_URL must be provided at build time. No hardcoded fallback
+// — a stale fallback would silently point production API calls at the wrong
+// domain after a redeploy.
+const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 const V3 = `${BACKEND_URL}/api/v3`;
 
 const v3 = axios.create({ baseURL: V3, headers: { 'Content-Type': 'application/json' }, timeout: 45000 });
@@ -172,7 +174,7 @@ export const v3DeleteDeliverable = (deliverableId) => v3.delete(`/deliverables/$
 // invoice doc without the inline base64 blob.
 export const v3UploadInvoice = (payload) => v3.post('/invoices/upload', payload).then(r => r.data);
 // Stream URL for downloading a previously-uploaded invoice attachment.
-const _BACKEND_URL_FOR_INVOICE = (process.env.REACT_APP_BACKEND_URL || 'https://tasck-live-demo-1.emergent.host').replace(/\/$/, '');
+const _BACKEND_URL_FOR_INVOICE = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 export const v3InvoiceFileUrl = (invoiceId) => `${_BACKEND_URL_FOR_INVOICE}/api/v3/invoices/${invoiceId}/file`;
 
 // -------- Deliver stage --------
