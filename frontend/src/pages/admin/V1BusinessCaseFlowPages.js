@@ -2036,6 +2036,9 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const activeSnapshot = draft || snapshot;
   const hasSnapshot = Boolean(activeSnapshot?.title || activeSnapshot?.meta || activeSnapshot?.sections?.length);
   const preparingFrame = Boolean(location.state?.preparingFrame);
+  // Brand comments on the alignment snapshot, shown right on this page so
+  // admin sees and works on them without hunting for the admin-review page.
+  const alignmentComments = Array.isArray(snapshot?.brand_comments) ? snapshot.brand_comments : [];
 
   useEffect(() => {
     // Defensive: only adopt the persisted snapshot when it actually has content.
@@ -2213,6 +2216,28 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
   return (
     <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 5. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand. Once approved, Framing continues into Brainstorm, Creator Selection, Creative Brief, and Strategy Snapshot.">
+      {alignmentComments.length > 0 && (
+        <InfoCard title={`Brand Comments (${alignmentComments.length})`}>
+          <div className="space-y-3" data-testid="alignment-snapshot-brand-comments">
+            {alignmentComments.map((c, index) => (
+              <div key={c.id || index} className="rounded-xl border-2 border-[#E8A33A] bg-[#FFF8E1] p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-1">
+                  <MessageSquare className="w-4 h-4 text-[#C47A1A]" />
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
+                  {c.status && <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${c.status === 'open' ? 'bg-[#FDEBD0] text-[#C47A1A] border border-[#E8A33A]' : 'bg-[#E8F5ED] text-[#2E7D5B] border border-[#2E7D5B]'}`}>{humanStatus(c.status)}</span>}
+                </div>
+                {c.quoted_text && c.quoted_text !== 'Brand review' && <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Re: <strong className="text-[#4F3E2F]">{c.quoted_text}</strong></p>}
+                <p className="text-[13px] text-[#1A1A1A] font-medium leading-relaxed whitespace-pre-wrap">{cleanV1Text(c.comment || c.content || '')}</p>
+                <div className="mt-2 flex items-center gap-3 text-[11px] text-[#8A8A8A]">
+                  <span>By: <strong className="text-[#C47A1A]">{c.author || 'Brand'}</strong></span>
+                  {c.created_at && <span>{formatDateTime(c.created_at)}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-[#6E6657]">Edit the relevant section below to address each comment, save, then re-send to the brand.</p>
+        </InfoCard>
+      )}
       <InfoCard
         title="Alignment Snapshot"
         action={(
@@ -3898,7 +3923,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
             {brandComments.map((comment, index) => (
               <div key={comment.id || index} className="rounded-[8px] border border-[#E8E4DB] bg-[#FBFAF7] p-3">
                 <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">
-                  {comment.author || "Brand"} - {formatDate(comment.created_at)}
+                  {comment.author || "Brand"}{comment.quoted_text && comment.quoted_text !== 'Brand review' ? ` · ${comment.quoted_text}` : ''} - {formatDateTime(comment.created_at)}
                 </p>
                 <p className="mt-1 whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]">
                   {cleanV1Text(comment.comment || comment.content || comment)}
@@ -4994,6 +5019,11 @@ export const V3BusinessCaseContractStudio = () => {
   const brand = getBrand(bundle);
   const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';
   const creatorEmail = bundle?.creator?.email || '';
+  // Contract comments come from the brand portal as interactions (not on the
+  // contract doc), so surface them here from the bundle's interactions.
+  const contractComments = (Array.isArray(bundle?.interactions) ? bundle.interactions : [])
+    .filter((it) => ['brand_contract_comment', 'brand_document_comment'].includes(it?.type))
+    .sort((a, b) => new Date(b.date_iso || b.created_at || 0) - new Date(a.date_iso || a.created_at || 0));
   const refreshContracts = async () => {
     const rows = await v3ListContracts(id);
     setContracts(Array.isArray(rows) ? rows : []);
@@ -5115,6 +5145,27 @@ ${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`
   return (
     <FlowShell title="Contract Page" subtitle="Brand and Creator contracts are drafted automatically from the approved templates when you open this page. Edit any clause before sending.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="contract-notice">{notice}</div>}
+
+      {contractComments.length > 0 && (
+        <InfoCard title={`Brand Comments (${contractComments.length})`}>
+          <div className="space-y-3" data-testid="contract-brand-comments">
+            {contractComments.map((c, index) => (
+              <div key={c.id || index} className="rounded-xl border-2 border-[#E8A33A] bg-[#FFF8E1] p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-1">
+                  <MessageSquare className="w-4 h-4 text-[#C47A1A]" />
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
+                </div>
+                <p className="text-[13px] text-[#1A1A1A] font-medium leading-relaxed whitespace-pre-wrap">{cleanV1Text(c.content || c.comment || c.summary || '')}</p>
+                <div className="mt-2 flex items-center gap-3 text-[11px] text-[#8A8A8A]">
+                  <span>By: <strong className="text-[#C47A1A]">{c.author || 'Brand'}</strong></span>
+                  {(c.date_iso || c.created_at) && <span>{formatDateTime(c.date_iso || c.created_at)}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-[#6E6657]">Edit the relevant contract clause below to address each comment, then re-send to the brand.</p>
+        </InfoCard>
+      )}
       {contracts.length === 0 ? (
         <InfoCard title="Contracts">
           <p className="text-[13px] text-[#8A8A8A]">
