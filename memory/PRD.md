@@ -1,5 +1,29 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 25 Feb 2026 (Production deployment "failed to become ready" fixed — 6 root causes)
+
+### Bug
+Production deploys failing with `deployment failed to become ready: timeout waiting for deployment to be ready`. Build succeeded but pod never passed K8s readiness probe.
+
+### Root causes fixed
+1. **Blocking startup event** (the real killer). `@app.on_event("startup")` awaited `seed_database()` + `seed_v3()` + `WorkbookImporter.import_all()` synchronously. On a fresh Atlas MongoDB this took 60-90s — well past the K8s readiness probe timeout. Refactored to fire hydration as `asyncio.create_task` so Uvicorn responds to `/api/` at **t≈1s** while seed + workbook import run in the background.
+2. **Hardcoded `PROD_FRONTEND_URL = "https://thcodemo.space"`** in `backend/v3_routes.py`. Removed; `app_base_url()` now returns `""` fallback. Docstrings updated to `example.com` placeholders.
+3. **Hardcoded `DEFAULT_BACKEND_URL = 'https://tasck-live-demo-1.emergent.host'`** in 4 frontend files (`api.js`, `v3api.js` × 2, `AuthContext.js`). All now use `process.env.REACT_APP_BACKEND_URL || ''`.
+4. **`.gitignore` was blocking `.env`, `.env.*`, `*.env`** — Emergent deploy pipeline needs these committed. Removed the 3 lines.
+5. **Syntax error at EOF of `v3_routes.py`** — 5 lines of truncated dangling code after `return router`. Deleted.
+6. **Wrong Anthropic model default** (`claude-sonnet-4-20250514` doesn't exist) in `_call_creator_match_tool`, opportunity scanner `DEFAULT_LLM_MODEL`, brand-about tool, brainstorm tool. All fixed to `claude-sonnet-4-5`.
+
+### Verified
+- Backend startup: **1s to bind** (was 60-90s on fresh DB). Deployment agent re-check: **PASS**. Preview environment fully functional.
+
+### Files touched
+- `/app/backend/server.py` — non-blocking startup + asyncio import.
+- `/app/backend/v3_routes.py` — removed hardcoded URL constant, updated `app_base_url()` fallback, deleted EOF syntax garbage, fixed 4 Anthropic model defaults.
+- `/app/frontend/src/lib/api.js`, `/app/frontend/src/lib/v3api.js`, `/app/frontend/src/context/AuthContext.js` — removed hardcoded `DEFAULT_BACKEND_URL` fallbacks.
+- `/app/.gitignore` — removed `.env` blocking rules.
+- `/app/backend/.env` — added `CREATOR_MATCH_TIMEOUT_SECONDS=50`, explicit model env pins.
+
+
 ## Original Problem Statement
 Premium product demo for "TASCK OS" — a creator campaign management platform for the African market. Three versions:
 - **V1 (Classic)**: Multi-portal operational platform — COMPLETE
