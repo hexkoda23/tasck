@@ -4724,35 +4724,64 @@ def make_v3_router(db):
     def _docx_text(value: Any) -> str:
         return html.escape(str(value or ""), quote=True)
 
-    # Century Gothic is the font used in Chioma's approved Alignment Snapshot
-    # template. We pin it on every paragraph run so the generated DOCX looks
-    # the same as the template the brand reviews.
-    _DOCX_FONT = "Century Gothic"
+    # Fonts + colours are pinned to match Chioma's approved Alignment Snapshot
+    # template exactly: Century Gothic for body/headings, Bebas Neue for the
+    # title, the template's blue title colour and dark-teal heading colour.
+    # The fonts are also embedded in the package (see below) so the document
+    # renders identically even on machines without these fonts installed.
+    _DOCX_BODY_FONT = "Century Gothic"
+    _DOCX_TITLE_FONT = "Bebas Neue"
+    _DOCX_TITLE_COLOR = "1C4587"   # template client-name blue
+    _DOCX_HEADING_COLOR = "0C343D" # template section-heading dark teal
+    _DOCX_BODY_COLOR = "000000"
 
-    def _docx_run_props(*, bold: bool = False, size_half_pt: int = 22, color: str = "1A1A1A") -> str:
+    def _docx_run_props(*, bold: bool = False, italic: bool = False, size_half_pt: int = 22,
+                        color: str = _DOCX_BODY_COLOR, font: str = _DOCX_BODY_FONT,
+                        underline: bool = False) -> str:
         bold_tag = "<w:b/><w:bCs/>" if bold else ""
+        italic_tag = "<w:i/><w:iCs/>" if italic else ""
+        underline_tag = '<w:u w:val="single"/>' if underline else ""
         return (
             "<w:rPr>"
-            f'<w:rFonts w:ascii="{_DOCX_FONT}" w:hAnsi="{_DOCX_FONT}" w:cs="{_DOCX_FONT}" w:eastAsia="{_DOCX_FONT}"/>'
-            f"{bold_tag}"
+            f'<w:rFonts w:ascii="{font}" w:hAnsi="{font}" w:cs="{font}" w:eastAsia="{font}"/>'
+            f"{bold_tag}{italic_tag}{underline_tag}"
             f'<w:sz w:val="{size_half_pt}"/><w:szCs w:val="{size_half_pt}"/>'
             f'<w:color w:val="{color}"/>'
             "</w:rPr>"
         )
 
-    def _docx_paragraph(value: Any, *, bold: bool = False, size_half_pt: int = 22, color: str = "1A1A1A") -> str:
+    def _docx_paragraph(value: Any, *, bold: bool = False, italic: bool = False,
+                        size_half_pt: int = 22, color: str = _DOCX_BODY_COLOR,
+                        font: str = _DOCX_BODY_FONT, before: int = 120, after: int = 240) -> str:
         return (
             "<w:p>"
-            f'<w:pPr><w:spacing w:after="120" w:line="300" w:lineRule="auto"/></w:pPr>'
+            f'<w:pPr><w:spacing w:before="{before}" w:after="{after}" w:line="276" w:lineRule="auto"/></w:pPr>'
             "<w:r>"
-            f"{_docx_run_props(bold=bold, size_half_pt=size_half_pt, color=color)}"
+            f"{_docx_run_props(bold=bold, italic=italic, size_half_pt=size_half_pt, color=color, font=font)}"
             f'<w:t xml:space="preserve">{_docx_text(value)}</w:t>'
             "</w:r></w:p>"
         )
 
+    def _docx_hr() -> str:
+        # Thin grey horizontal rule between sections, exactly as the template.
+        return (
+            "<w:p>"
+            '<w:pPr><w:spacing w:before="120" w:after="120" w:line="240" w:lineRule="auto"/></w:pPr>'
+            "<w:r><w:pict>"
+            '<v:rect style="width:0.0pt;height:1.5pt" o:hr="t" o:hrstd="t" o:hralign="center" fillcolor="#A0A0A0" stroked="f"/>'
+            "</w:pict></w:r>"
+            "</w:p>"
+        )
+
+    def _docx_title(value: Any) -> str:
+        # Client name headline: Bebas Neue, template blue, large.
+        return _docx_paragraph(value, size_half_pt=60, color=_DOCX_TITLE_COLOR,
+                               font=_DOCX_TITLE_FONT, before=240, after=120)
+
     def _docx_heading(value: Any) -> str:
-        # Section heading: bolder + larger + dark TASCK green.
-        return _docx_paragraph(value, bold=True, size_half_pt=26, color="1F4A3A")
+        # Section heading: Century Gothic bold, dark teal, 12pt, tight after-space.
+        return _docx_paragraph(value, bold=True, size_half_pt=24, color=_DOCX_HEADING_COLOR,
+                               before=240, after=80)
 
     def _docx_cell(value: Any, *, bold: bool = False) -> str:
         return (
@@ -4835,17 +4864,23 @@ def make_v3_router(db):
 
         # ---- Body content ----
         blocks: List[str] = []
-        # Title - brand name as the [Client Name] line in the template.
-        blocks.append(_docx_paragraph(brand_name, bold=True, size_half_pt=36, color="1F4A3A"))
-        # The three intro paragraphs (matches the template wording).
-        for intro_para in _split_intro_paragraphs(snap.get("meta") or ""):
-            blocks.append(_docx_paragraph(intro_para))
-        if not snap.get("meta"):
+        # Title - brand name as the [Client Name] line in the template
+        # (Bebas Neue, blue), followed by a grey rule as in the template.
+        blocks.append(_docx_title(brand_name))
+        blocks.append(_docx_hr())
+        # The intro paragraphs (italic, matching the template wording/style).
+        intro_paras = _split_intro_paragraphs(snap.get("meta") or "")
+        if intro_paras:
+            for intro_para in intro_paras:
+                blocks.append(_docx_paragraph(intro_para, italic=True, size_half_pt=20))
+        else:
             blocks.append(_docx_paragraph(
-                "This Alignment Snapshot captures TASCK's current understanding of your organisation, project goals, priority audience, desired outcomes, and possible areas of support."
+                "This Alignment Snapshot captures TASCK's current understanding of your organisation, project goals, priority audience, desired outcomes, and possible areas of support.",
+                italic=True, size_half_pt=20,
             ))
-            blocks.append(_docx_paragraph("It is designed to help us understand the opportunity correctly."))
-            blocks.append(_docx_paragraph("We would like you to review this document and help us confirm, correct, or sharpen our thinking."))
+            blocks.append(_docx_paragraph("It is designed to help us understand the opportunity correctly.", italic=True, size_half_pt=20))
+            blocks.append(_docx_paragraph("We would like you to review this document and help us confirm, correct, or sharpen our thinking.", italic=True, size_half_pt=20))
+        blocks.append(_docx_hr())
 
         for section in snap.get("sections", []) or []:
             blocks.append(_docx_heading(section.get("heading") or "Alignment section"))
@@ -4920,9 +4955,12 @@ def make_v3_router(db):
                     blocks.append(_docx_paragraph(f"- {item}"))
 
         # ---- Static template assets ----
-        # Logo size: 1.5 inches wide. Aspect from 2048x286.
+        # Logo band: 6.5 inches wide (full content width), exactly as the
+        # template — the artwork is whitespace on the left with the bold TASCK
+        # circle on the right, so full width places the logo prominently at the
+        # top-right of the page. Aspect from 2048x286.
         logo_bytes = _read_template_asset("tasck_logo.png")
-        logo_cx = _emu_inch(1.5)
+        logo_cx = _emu_inch(6.5)
         logo_cy = int(logo_cx * 286 / 2048)
         # Footer contact strip: 6 inches wide. Aspect from 2048x180.
         footer_bytes = _read_template_asset("footer_contact.png")
@@ -4975,7 +5013,10 @@ def make_v3_router(db):
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
-            'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
+            'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+            'xmlns:v="urn:schemas-microsoft-com:vml" '
+            'xmlns:o="urn:schemas-microsoft-com:office:office" '
+            'xmlns:w10="urn:schemas-microsoft-com:office:word">'
             "<w:body>"
             + "".join(blocks)
             + sectpr +
@@ -4983,7 +5024,14 @@ def make_v3_router(db):
         )
 
         # ---- Document-level relationships ----
-        doc_rels_items: List[str] = []
+        doc_rels_items: List[str] = [
+            '<Relationship Id="rIdSettings" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" '
+            'Target="settings.xml"/>',
+            '<Relationship Id="rIdFontTable" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" '
+            'Target="fontTable.xml"/>',
+        ]
         if logo_bytes:
             doc_rels_items.append(
                 '<Relationship Id="rIdHeader1" '
@@ -5021,13 +5069,72 @@ def make_v3_router(db):
             "</Relationships>"
         )
 
+        # ---- Embedded fonts (Bebas Neue + Century Gothic family) ----
+        # The template ships these fonts embedded (non-obfuscated TTF) so the
+        # document looks identical on any machine. We replicate that exactly.
+        _font_files = {
+            "font_bebas.ttf": ("BebasNeue-regular.ttf", "regular"),
+            "font_century.ttf": ("CenturyGothic-regular.ttf", "regular"),
+            "font_century_bold.ttf": ("CenturyGothic-bold.ttf", "bold"),
+            "font_century_italic.ttf": ("CenturyGothic-italic.ttf", "italic"),
+            "font_century_bolditalic.ttf": ("CenturyGothic-boldItalic.ttf", "bolditalic"),
+        }
+        embedded_fonts: Dict[str, bytes] = {}
+        for pkg_name, (src_name, _kind) in _font_files.items():
+            data = _read_template_asset(f"fonts/{src_name}")
+            if data:
+                embedded_fonts[pkg_name] = data
+        fonts_ok = len(embedded_fonts) == len(_font_files)
+
+        _ZERO_KEY = "{00000000-0000-0000-0000-000000000000}"
+        settings_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            + ('<w:embedTrueTypeFonts/>' if fonts_ok else "")
+            + "</w:settings>"
+        )
+        font_table_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<w:font w:name="Bebas Neue">'
+            f'<w:embedRegular w:fontKey="{_ZERO_KEY}" r:id="rIdFontBebas" w:subsetted="0"/>'
+            "</w:font>"
+            '<w:font w:name="Century Gothic">'
+            f'<w:embedRegular w:fontKey="{_ZERO_KEY}" r:id="rIdFontCentury" w:subsetted="0"/>'
+            f'<w:embedBold w:fontKey="{_ZERO_KEY}" r:id="rIdFontCenturyBold" w:subsetted="0"/>'
+            f'<w:embedItalic w:fontKey="{_ZERO_KEY}" r:id="rIdFontCenturyItalic" w:subsetted="0"/>'
+            f'<w:embedBoldItalic w:fontKey="{_ZERO_KEY}" r:id="rIdFontCenturyBoldItalic" w:subsetted="0"/>'
+            "</w:font>"
+            "</w:fonts>"
+        ) if fonts_ok else (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:font w:name="Bebas Neue"/><w:font w:name="Century Gothic"/>'
+            "</w:fonts>"
+        )
+        font_table_rels_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rIdFontBebas" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_bebas.ttf"/>'
+            '<Relationship Id="rIdFontCentury" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_century.ttf"/>'
+            '<Relationship Id="rIdFontCenturyBold" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_century_bold.ttf"/>'
+            '<Relationship Id="rIdFontCenturyItalic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_century_italic.ttf"/>'
+            '<Relationship Id="rIdFontCenturyBoldItalic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_century_bolditalic.ttf"/>'
+            "</Relationships>"
+        )
+
         # ---- Build the .docx package ----
         package = BytesIO()
         with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as docx:
-            # Content Types - declare png + header + footer.
+            # Content Types - declare png + header + footer + settings + fonts.
             content_types_overrides: List[str] = [
                 '<Override PartName="/word/document.xml" '
                 'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+                '<Override PartName="/word/settings.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>',
+                '<Override PartName="/word/fontTable.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/>',
             ]
             if logo_bytes:
                 content_types_overrides.append(
@@ -5046,6 +5153,7 @@ def make_v3_router(db):
                 '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
                 '<Default Extension="xml" ContentType="application/xml"/>'
                 '<Default Extension="png" ContentType="image/png"/>'
+                '<Default Extension="ttf" ContentType="application/x-font-ttf"/>'
                 + "".join(content_types_overrides) +
                 "</Types>",
             )
@@ -5060,6 +5168,12 @@ def make_v3_router(db):
             )
             docx.writestr("word/document.xml", document_xml)
             docx.writestr("word/_rels/document.xml.rels", document_rels_xml)
+            docx.writestr("word/settings.xml", settings_xml)
+            docx.writestr("word/fontTable.xml", font_table_xml)
+            if fonts_ok:
+                docx.writestr("word/_rels/fontTable.xml.rels", font_table_rels_xml)
+                for pkg_name, data in embedded_fonts.items():
+                    docx.writestr(f"word/fonts/{pkg_name}", data)
             if logo_bytes:
                 docx.writestr("word/header1.xml", header_xml)
                 docx.writestr("word/_rels/header1.xml.rels", header_rels_xml)
