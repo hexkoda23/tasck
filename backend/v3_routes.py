@@ -5540,6 +5540,30 @@ def make_v3_router(db):
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
         return await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
 
+    # Explicit sub-phase completion. Unlike business_case_phase (which just
+    # tracks the last page visited, for routing), these are deliberate "I have
+    # finished this sub-phase" markers that GATE the Business Case stepper:
+    #   - Delivery stays locked until planning_completed_at is set.
+    #   - Reporting stays locked until delivery_completed_at is set.
+    class SubphaseCompletePayload(BaseModel):
+        subphase: str = Field(..., pattern="^(planning|delivery)$")
+
+    @router.post("/business-cases/{bc_id}/subphase/complete")
+    async def complete_business_case_subphase(bc_id: str, payload: SubphaseCompletePayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        now = _now_iso()
+        if payload.subphase == "planning":
+            updates = {"plan.planning_completed_at": now, "updated_at": now}
+        else:  # delivery
+            # Guard: delivery cannot be completed before planning is.
+            if not (case.get("plan") or {}).get("planning_completed_at"):
+                raise HTTPException(400, "Complete the Planning phase before completing Delivery.")
+            updates = {"plan.delivery_completed_at": now, "updated_at": now}
+        await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
+        return await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+
     # ------------------------------------------------------------------------
     # CREATIVE BRIEFS  (Plan flagship #2 - per-creator)
     # ------------------------------------------------------------------------

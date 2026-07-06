@@ -149,6 +149,9 @@ export const v3UpdateSelectedCreators = (bcId, ids) => v3.patch(`/business-cases
 // admin is on so businessCasePhasePath can land them on the right page when
 // opening a brand from the Business Case list.
 export const v3UpdateBusinessCasePhase = (bcId, phase) => v3.patch(`/business-cases/${bcId}/business-case-phase`, { phase }).then(r => r.data);
+// Explicit Business Case sub-phase completion gate: Delivery stays locked
+// until planning is completed; Reporting until delivery is completed.
+export const v3CompleteSubphase = (bcId, subphase) => v3.post(`/business-cases/${bcId}/subphase/complete`, { subphase }).then(r => r.data);
 // Admin notifications: brand/creator-initiated actions (alignment approved,
 // strategy approved, contract signed, brief responded). Polled every 30s by
 // the V1 admin layout to surface toasts + the Overview "Needs attention"

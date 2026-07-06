@@ -148,6 +148,7 @@ import {
   v3SuggestCreatorMatches,
   v3UpdateAlignment,
   v3UpdateBusinessCasePhase,
+  v3CompleteSubphase,
   v3UpdateSelectedCreators,
   v3UpdateStrategySnapshot,
 } from '../../lib/v3api';
@@ -254,7 +255,7 @@ const connectStatusUpdatedAt = (bundle) => {
 //
 // Backend stage keys are unchanged; only the UI grouping reflects the client's
 // vocabulary so no data migration is needed.
-const stepperConfig = (id, stage, pathname) => {
+const stepperConfig = (id, stage, pathname, bc = {}) => {
   const inCrmPhase = /\/(connect|frame)(\/|$)/.test(pathname || '');
   if (inCrmPhase) {
     return {
@@ -266,6 +267,18 @@ const stepperConfig = (id, stage, pathname) => {
       currentIndex: ({ connect: 0, frame: 1, plan: 1 }[stage] ?? 1),
     };
   }
+  // Business Case area: Planning -> Delivery -> Reporting.
+  // currentIndex is the HIGHEST unlocked step (locked = idx > currentIndex).
+  // Delivery must stay locked until Planning is explicitly completed, and
+  // Reporting until Delivery is completed. A closed/reporting-stage case
+  // unlocks everything (nothing left to gate).
+  const plan = bc.plan || {};
+  const planningDone = Boolean(plan.planning_completed_at);
+  const deliveryDone = Boolean(plan.delivery_completed_at) || Boolean(bc.reporting_started_at) || Boolean(bc.final_report_sent_at);
+  let bcIndex = 0; // Planning only.
+  if (planningDone) bcIndex = 1; // Delivery unlocked.
+  if (deliveryDone) bcIndex = 2; // Reporting unlocked.
+  if (stage === 'closed' || stage === 'reporting') bcIndex = 2;
   return {
     links: [
       // Planning lands on its summary page (project value, brand/creator
@@ -277,7 +290,7 @@ const stepperConfig = (id, stage, pathname) => {
       ['Delivery', adminRoute(`/business-cases/${id}/delivery/deliverables`)],
       ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
     ],
-    currentIndex: ({ deliver: 1, reporting: 2, closed: 2 }[stage] ?? 0),
+    currentIndex: bcIndex,
   };
 };
 
@@ -288,24 +301,17 @@ export const businessCasePhasePath = (id, bc = {}) => {
   // Business Case area. Pick the right sub-page using existing case fields so
   // clicking on a brand opens what the admin was actually working on, not
   // always Planning:
-  //   - business_case_phase = "reporting"          -> Reporting
-  //   - business_case_phase = "delivery"           -> Delivery (Deliverables)
-  //   - business_case_phase = "planning" (default) -> Planning
-  // Heuristic fallbacks keep older cases that pre-date business_case_phase
-  // working: a signed contract or any approved deliverables implies Delivery,
-  // a sent final report implies Reporting.
+  // Gated by the same sub-phase completion flags as the stepper so clicking
+  // a brand never jumps past an incomplete phase:
+  //   - Reporting only once Delivery is completed.
+  //   - Delivery only once Planning is completed.
+  //   - Otherwise land on Planning.
   if (stage === 'deliver') {
-    const phase = bc.business_case_phase;
-    if (phase === 'reporting') return adminRoute(`/business-cases/${id}/reporting/final-report`);
-    if (phase === 'delivery') return adminRoute(`/business-cases/${id}/delivery/deliverables`);
-    if (phase === 'planning') return adminRoute(`/business-cases/${id}/plan/planning`);
-    // No explicit phase set - infer from artifacts.
-    if (bc.final_report_sent_at || bc.reporting_started_at) {
-      return adminRoute(`/business-cases/${id}/reporting/final-report`);
-    }
-    if ((bc.plan && bc.plan.contract_signed_at) || bc.deliverables_started_at) {
-      return adminRoute(`/business-cases/${id}/delivery/deliverables`);
-    }
+    const plan = bc.plan || {};
+    const planningDone = Boolean(plan.planning_completed_at);
+    const deliveryDone = Boolean(plan.delivery_completed_at) || Boolean(bc.reporting_started_at) || Boolean(bc.final_report_sent_at);
+    if (deliveryDone) return adminRoute(`/business-cases/${id}/reporting/final-report`);
+    if (planningDone) return adminRoute(`/business-cases/${id}/delivery/deliverables`);
     return adminRoute(`/business-cases/${id}/plan/planning`);
   }
   if (stage === 'plan') {
@@ -348,7 +354,7 @@ const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const { id, bundle, loading } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
-  const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage, location.pathname);
+  const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage, location.pathname, bc);
   // Framing pages (Connect + Frame sub-steps) live under the CRM Brands tab
   // conceptually. Strip the Business Case context chip and point the second
   // back-button at the CRM Brands list instead of the Business Cases list so
@@ -4267,6 +4273,22 @@ export const V3BusinessCaseDeliverySummary = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
+  const planningDone = Boolean(bc.plan?.planning_completed_at);
+  const [completingPlanning, setCompletingPlanning] = useState(false);
+  const [planningNotice, setPlanningNotice] = useState('');
+  const completePlanning = async () => {
+    setPlanningNotice('');
+    setCompletingPlanning(true);
+    try {
+      await v3CompleteSubphase(id, 'planning');
+      await reload();
+      navigate(adminRoute(`/business-cases/${id}/delivery/deliverables`));
+    } catch (e) {
+      setPlanningNotice(e?.response?.data?.detail || e?.message || 'Could not complete Planning.');
+    } finally {
+      setCompletingPlanning(false);
+    }
+  };
   const brand = getBrand(bundle);
   const contact = bc.brand_contact_snapshot || {};
   const creator = bundle?.creator || {};
@@ -4805,6 +4827,22 @@ export const V3BusinessCaseDeliverySummary = () => {
         <p className="mt-2 text-[11px] text-[#6E6657]">Contract Studio generates brand & creator agreements from approved templates. The Feedback page is reusable - admin can return at any time to send fresh feedback requests.</p>
       </InfoCard>
 
+      {/* Planning gate: Delivery stays locked until Planning is marked complete. */}
+      <InfoCard title="Complete Planning">
+        {planningNotice && <p className="mb-2 text-[11px] text-[#B54A37]">{planningNotice}</p>}
+        {planningDone ? (
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <p className="text-[13px] text-[#1F4A3A]">Planning is complete. The Delivery phase is now unlocked.</p>
+            <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/deliverables`))} className="v3-btn-primary" data-testid="planning-open-delivery-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Delivery</button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <p className="text-[13px] text-[#6E6657]">Confirm the budget, timelines, invoicing, and contracts are handled. Delivery stays locked until Planning is marked complete.</p>
+            <button onClick={completePlanning} disabled={completingPlanning} className="v3-btn-primary disabled:opacity-60" data-testid="planning-complete-btn"><CheckCircle2 className="w-3.5 h-3.5" /> {completingPlanning ? 'Completing…' : 'Complete Planning & Open Delivery'}</button>
+          </div>
+        )}
+      </InfoCard>
+
       {/* Framing artifacts shortcuts. Even after the Business Case has moved
           into Planning / Delivery / Reporting, admin should be able to jump
           back to any of the Framing documents from one place. */}
@@ -5325,10 +5363,10 @@ export const V3BusinessCaseDeliverables = () => {
   const openReporting = async () => {
     setNotice('');
     try {
-      if (getCase(bundle).stage === 'deliver') {
-        await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Delivery phase marked done by admin.' });
-        await reload();
-      }
+      // Mark Delivery complete (unlocks Reporting in the stepper). Does NOT
+      // close the Business Case - the Final Report page's Close Project does.
+      await v3CompleteSubphase(id, 'delivery');
+      await reload();
       navigate(adminRoute(`/business-cases/${id}/reporting/final-report`));
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not move to Reporting yet.');
