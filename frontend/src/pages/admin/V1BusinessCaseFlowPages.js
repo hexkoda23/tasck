@@ -1035,7 +1035,10 @@ const snapshotPrintHtml = (snapshot) => {
     const selectors = Array.isArray(section.selectors) && section.selectors.length
       ? `<ul>${section.selectors.map((sel) => `<li><strong>${escapeHtml(sel.label || 'Selection')}:</strong> ${escapeHtml(sel.selected || 'Not selected yet')}</li>`).join('')}</ul>`
       : '';
-    return `<section><h2>${escapeHtml(section.heading)}</h2>${section.content ? `<p>${escapeHtml(section.content)}</p>` : ''}${selectors}${list}${rows}</section>`;
+    const focusPriority = Array.isArray(section.segments) && section.segments.length
+      ? `<ul>${section.segments.map((seg, i) => `<li><strong>${escapeHtml(seg.name || `Focus ${i + 1}`)}:</strong> ${escapeHtml(seg.focus || 'Not selected yet')} — ${escapeHtml(seg.priority || 'No priority set')}</li>`).join('')}</ul>`
+      : '';
+    return `<section><h2>${escapeHtml(section.heading)}</h2>${section.content ? `<p>${escapeHtml(section.content)}</p>` : ''}${selectors}${focusPriority}${list}${rows}</section>`;
   }).join('');
   return `<!doctype html><html><head><title>${escapeHtml(snapshot?.title || 'Alignment Snapshot')}</title><style>
     body{font-family:Arial,sans-serif;color:#1A1A1A;margin:40px;line-height:1.55}
@@ -1914,6 +1917,72 @@ const AlignmentSectionEditor = ({ section, index, onChange }) => {
                   </label>
                 );
               })}
+            </div>
+          )}
+
+          {section.type === 'focus_priority' && (
+            <div className="space-y-3">
+              {(() => {
+                const segments = Array.isArray(section.segments) && section.segments.length ? section.segments : [{ name: '', focus: '', priority: '' }];
+                const focusOptions = Array.isArray(section.focus_options) ? section.focus_options : [];
+                const priorityOptions = Array.isArray(section.priority_options) ? section.priority_options : [];
+                const updateSegments = (next) => update({ segments: next });
+                const patchSegment = (segIdx, patch) => updateSegments(segments.map((s, i) => (i === segIdx ? { ...s, ...patch } : s)));
+                const addSegment = () => updateSegments([...segments, { name: '', focus: '', priority: '' }]);
+                const removeSegment = (segIdx) => updateSegments(segments.filter((_, i) => i !== segIdx));
+                return (
+                  <>
+                    {segments.map((seg, segIdx) => (
+                      <div key={segIdx} className="rounded-lg border border-[#E8E4DB] bg-[#FAFAF7] p-3 space-y-2" data-testid={`focus-priority-segment-${segIdx}`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Segment {segIdx + 1}</span>
+                          {segments.length > 1 && (
+                            <button type="button" onClick={() => removeSegment(segIdx)} className="text-[11px] text-[#B4443C] hover:underline" data-testid={`focus-priority-remove-${segIdx}`}>Remove</button>
+                          )}
+                        </div>
+                        <label className="block">
+                          <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Label (optional)</span>
+                          <input
+                            value={seg.name || ''}
+                            onChange={(e) => patchSegment(segIdx, { name: e.target.value })}
+                            placeholder="e.g. Launch phase"
+                            className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none bg-white"
+                          />
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <label className="block">
+                            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Focus</span>
+                            <select
+                              value={seg.focus || ''}
+                              onChange={(e) => patchSegment(segIdx, { focus: e.target.value })}
+                              className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none bg-white"
+                              data-testid={`focus-priority-focus-${segIdx}`}
+                            >
+                              <option value="">Select focus…</option>
+                              {focusOptions.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
+                              {seg.focus && !focusOptions.includes(seg.focus) && <option value={seg.focus}>{seg.focus}</option>}
+                            </select>
+                          </label>
+                          <label className="block">
+                            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Priority</span>
+                            <select
+                              value={seg.priority || ''}
+                              onChange={(e) => patchSegment(segIdx, { priority: e.target.value })}
+                              className="mt-1 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none bg-white"
+                              data-testid={`focus-priority-priority-${segIdx}`}
+                            >
+                              <option value="">Select priority…</option>
+                              {priorityOptions.map((opt, i) => <option key={i} value={opt}>{opt}</option>)}
+                              {seg.priority && !priorityOptions.includes(seg.priority) && <option value={seg.priority}>{seg.priority}</option>}
+                            </select>
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                    <button type="button" onClick={addSegment} className="v3-btn-secondary text-[12px]" data-testid="focus-priority-add-segment">+ Add segment</button>
+                  </>
+                );
+              })()}
             </div>
           )}
 

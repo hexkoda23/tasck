@@ -218,6 +218,30 @@ def _compact_text(value: Any, limit: int = 900) -> str:
 # so we always pin it to a known-good logo whenever its details are scraped.
 WEYAN_LOGO_URL = "https://scontent-los4-1.cdninstagram.com/v/t51.82787-19/601692842_17862524652545721_3369637980792452369_n.jpg?efg=eyJ2ZW5jb2RlX3RhZyI6InByb2ZpbGVfcGljLmRqYW5nby4zMjAuYzIifQ&_nc_ht=scontent-los4-1.cdninstagram.com&_nc_cat=109&_nc_oc=Q6cZ2gH9uAtrwTgLvFzBdmyqtcKhToIxt0TV3qRdx9FYnsKC_blx2--pkZkQF65wp-TP4jU&_nc_ohc=4FM9BtLjBKcQ7kNvwGP6Zqz&_nc_gid=wGJOFiidyqtUGSEfxTF9jA&edm=APoiHPcBAAAA&ccb=7-5&oh=00_Af9y_Zg_LBk9ujRAVBg8BCZnKH6wciQ7EPwXQ4eSKq5S0Q&oe=6A413562&_nc_sid=22de04"
 
+# Alignment Snapshot "Focus & Priority" dropdown options. A project can have
+# several focus/priority segments; the brand adds one per goal. Edit these
+# lists here to change what appears in the dropdowns everywhere.
+FOCUS_OPTIONS = [
+    "Recruit users",
+    "Drive awareness",
+    "Increase consideration",
+    "Drive conversions / sales",
+    "Retention & loyalty",
+    "Advocacy / word of mouth",
+    "Community building",
+    "Product / service launch",
+    "Brand repositioning",
+    "Talent / creator partnership",
+]
+PRIORITY_OPTIONS = [
+    "High Priority & Urgent",
+    "High Priority",
+    "Mid-Term Priority",
+    "Long-Term Priority",
+    "Low Priority",
+    "Ongoing",
+]
+
 
 def _is_weyan_brand(name: Any) -> bool:
     normalized = "".join(ch for ch in str(name or "").lower() if ch.isalnum())
@@ -4481,25 +4505,22 @@ def make_v3_router(db):
                 {"heading": "Desired Outcomes and Success Metrics", "type": "table", "content": (
                     "The outcomes below are our current view of what success should look like. Please confirm or adjust the targets."
                 ), "columns": ["Metrics", "Success Looks Like"], "rows": metric_rows},
-                # Focus & Priority dropdowns (client request): the brand flags
-                # their single top focus and priority so TASCK addresses the
-                # top priority first and schedules lower-priority items after.
-                {"heading": "Focus & Priority", "type": "selectors", "content": (
-                    "Flag your single most important focus and priority. TASCK will address the top priority first and schedule lower-priority items after."
-                ), "selectors": [
-                    {
-                        "label": "Focus",
-                        "key": "focus",
-                        "options": ["Awareness", "Consideration", "Conversion", "Retention & Loyalty", "Advocacy", "Brand repositioning", "Product / service launch"],
-                        "selected": _usable_text(_af("focus") or mi.get("key_marketing_focus"), ""),
-                    },
-                    {
-                        "label": "Priority",
-                        "key": "priority",
-                        "options": ([str(row[0]) for row in metric_rows if row and str(row[0]).strip()] + ["Fastest time to impact", "Highest reach", "Best conversion", "Lowest cost / efficiency"]),
-                        "selected": _usable_text(_af("priority"), ""),
-                    },
-                ]},
+                # Focus & Priority segments (client request): the brand can add
+                # MULTIPLE focus/priority pairs for a project. TASCK addresses
+                # the higher-priority focuses first.
+                {"heading": "Focus & Priority", "type": "focus_priority", "content": (
+                    "Add each focus for this project and how urgent it is. TASCK addresses the higher-priority focuses first. Use “Add segment” to capture more than one."
+                ),
+                    "focus_options": FOCUS_OPTIONS,
+                    "priority_options": PRIORITY_OPTIONS,
+                    "segments": [
+                        {
+                            "name": "",
+                            "focus": _usable_text(_af("focus") or mi.get("key_marketing_focus"), ""),
+                            "priority": _usable_text(_af("priority"), ""),
+                        },
+                    ],
+                },
                 {"heading": "Open Questions for Client Confirmation", "type": "numbered", "content": "To sharpen the next stage, we would like to confirm the following:", "items": [
                     "Have we understood your organisation correctly?",
                     "Have we understood the main goal of this project correctly?",
@@ -4669,6 +4690,14 @@ def make_v3_router(db):
                     label = html.escape(str(sel.get("label") or "Selection"))
                     selected = html.escape(str(sel.get("selected") or "Not selected yet"))
                     sections.append(f"<li><strong>{label}:</strong> {selected}</li>")
+                sections.append("</ul>")
+            elif section.get("segments"):
+                sections.append("<ul>")
+                for idx, seg in enumerate(section.get("segments", []) or []):
+                    name = html.escape(str(seg.get("name") or f"Focus {idx + 1}"))
+                    focus = html.escape(str(seg.get("focus") or "Not selected yet"))
+                    priority = html.escape(str(seg.get("priority") or "No priority set"))
+                    sections.append(f"<li><strong>{name}:</strong> {focus} — {priority}</li>")
                 sections.append("</ul>")
             elif section.get("items"):
                 sections.append("<ul>")
@@ -4880,6 +4909,12 @@ def make_v3_router(db):
                     label = str(sel.get("label") or "Selection")
                     selected = str(sel.get("selected") or "Not selected yet")
                     blocks.append(_docx_paragraph(f"{label}: {selected}", bold=True))
+            elif section.get("segments"):
+                for idx, seg in enumerate(section.get("segments", []) or []):
+                    name = str(seg.get("name") or f"Focus {idx + 1}")
+                    focus = str(seg.get("focus") or "Not selected yet")
+                    priority = str(seg.get("priority") or "No priority set")
+                    blocks.append(_docx_paragraph(f"{name}: {focus} — {priority}", bold=True))
             elif section.get("items"):
                 for item in section.get("items", []) or []:
                     blocks.append(_docx_paragraph(f"- {item}"))
