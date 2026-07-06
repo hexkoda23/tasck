@@ -1021,6 +1021,35 @@ const escapeHtml = (value) => String(value || '')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#039;');
 
+// Build the Focus & Priority "Section narrative" from the segments, grouped by
+// priority (highest/most urgent first, using the section's own priority order)
+// so admin and brands can immediately see what is urgent vs. what can wait.
+// Exported so the same text renders in the editor, preview, DOCX, and portal.
+export const buildFocusPriorityNarrative = (segments, priorityOptions) => {
+  const list = Array.isArray(segments) ? segments : [];
+  const options = Array.isArray(priorityOptions) ? priorityOptions : [];
+  const filled = list.filter((s) => (s?.focus || '').trim() || (s?.priority || '').trim());
+  if (!filled.length) return '';
+  const rankOf = (p) => {
+    const idx = options.indexOf(p);
+    return idx === -1 ? 999 : idx;
+  };
+  const groups = {};
+  filled.forEach((s) => {
+    const key = (s.priority || '').trim() || 'Priority not set';
+    (groups[key] = groups[key] || []).push(s);
+  });
+  const orderedKeys = Object.keys(groups).sort((a, b) => rankOf(a) - rankOf(b));
+  return orderedKeys.map((key) => {
+    const lines = groups[key].map((s) => {
+      const focus = (s.focus || '').trim() || 'Focus not set';
+      const name = (s.name || '').trim();
+      return `• ${focus}${name ? ` (${name})` : ''}`;
+    }).join('\n');
+    return `${key}:\n${lines}`;
+  }).join('\n\n');
+};
+
 const snapshotPrintHtml = (snapshot) => {
   const sections = (snapshot?.sections || []).map((section) => {
     const list = Array.isArray(section.items)
@@ -1035,10 +1064,7 @@ const snapshotPrintHtml = (snapshot) => {
     const selectors = Array.isArray(section.selectors) && section.selectors.length
       ? `<ul>${section.selectors.map((sel) => `<li><strong>${escapeHtml(sel.label || 'Selection')}:</strong> ${escapeHtml(sel.selected || 'Not selected yet')}</li>`).join('')}</ul>`
       : '';
-    const focusPriority = Array.isArray(section.segments) && section.segments.length
-      ? `<ul>${section.segments.map((seg, i) => `<li><strong>${escapeHtml(seg.name || `Focus ${i + 1}`)}:</strong> ${escapeHtml(seg.focus || 'Not selected yet')} — ${escapeHtml(seg.priority || 'No priority set')}</li>`).join('')}</ul>`
-      : '';
-    return `<section><h2>${escapeHtml(section.heading)}</h2>${section.content ? `<p>${escapeHtml(section.content)}</p>` : ''}${selectors}${focusPriority}${list}${rows}</section>`;
+    return `<section><h2>${escapeHtml(section.heading)}</h2>${section.content ? `<p style="white-space:pre-wrap">${escapeHtml(section.content)}</p>` : ''}${selectors}${list}${rows}</section>`;
   }).join('');
   return `<!doctype html><html><head><title>${escapeHtml(snapshot?.title || 'Alignment Snapshot')}</title><style>
     body{font-family:Arial,sans-serif;color:#1A1A1A;margin:40px;line-height:1.55}
@@ -1926,7 +1952,10 @@ const AlignmentSectionEditor = ({ section, index, onChange }) => {
                 const segments = Array.isArray(section.segments) && section.segments.length ? section.segments : [{ name: '', focus: '', priority: '' }];
                 const focusOptions = Array.isArray(section.focus_options) ? section.focus_options : [];
                 const priorityOptions = Array.isArray(section.priority_options) ? section.priority_options : [];
-                const updateSegments = (next) => update({ segments: next });
+                // Adding/editing/removing a segment also rewrites the Section
+                // narrative, grouped by priority, so the classification the brand
+                // sees always matches the segments.
+                const updateSegments = (next) => update({ segments: next, content: buildFocusPriorityNarrative(next, priorityOptions) });
                 const patchSegment = (segIdx, patch) => updateSegments(segments.map((s, i) => (i === segIdx ? { ...s, ...patch } : s)));
                 const addSegment = () => updateSegments([...segments, { name: '', focus: '', priority: '' }]);
                 const removeSegment = (segIdx) => updateSegments(segments.filter((_, i) => i !== segIdx));

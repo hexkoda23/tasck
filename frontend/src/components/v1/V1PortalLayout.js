@@ -29,6 +29,9 @@ const portalConfig = {
     exitPath: '/brand',
     loginPath: '/brand/login',
     homePath: '/brand',
+    // On sign out, send the brand straight to the V1 entry page so the tester
+    // can immediately log back in as admin for an easy end-to-end flow.
+    signOutUrl: 'https://thcodemo.space/v1',
     items: [
       { path: '/brand', label: 'Overview', icon: LayoutDashboard, exact: true },
       { path: '/brand/projects', label: 'Projects', icon: FolderOpen },
@@ -73,10 +76,21 @@ const V1PortalLayout = ({ portal }) => {
   const title = portal === 'brand' && brand ? brand.company : config.label;
   const initials = portal === 'brand' ? brandSession?.initials || 'BR' : 'CR';
 
+  // Sign out, then either redirect to the configured external entry page
+  // (brand portal → /v1 for easy admin re-login) or fall back to the portal's
+  // own login page.
+  const handleSignOut = () => {
+    logout();
+    if (config.signOutUrl) {
+      window.location.href = config.signOutUrl;
+      return;
+    }
+    navigate(config.loginPath);
+  };
+
   const handleSessionButton = () => {
     if (isAuthenticated) {
-      logout();
-      navigate(config.loginPath);
+      handleSignOut();
       return;
     }
     navigate(config.loginPath);
@@ -114,7 +128,7 @@ const V1PortalLayout = ({ portal }) => {
               clear logout action that returns them to their OWN login page,
               not the V1 role selector. */}
           <button
-            onClick={() => { logout(); navigate(config.loginPath); }}
+            onClick={handleSignOut}
             className="v3-nav-item text-[#8A8A8A] hover:text-[#5C5C5C]"
             data-testid={`v1-${portal}-exit`}
           >

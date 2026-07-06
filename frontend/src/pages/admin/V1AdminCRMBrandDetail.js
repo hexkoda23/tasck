@@ -14,6 +14,8 @@ import {
   Check,
   ChevronDown,
   PackageCheck,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   v3GetBrand,
@@ -31,6 +33,17 @@ import { BrandLogo as SharedBrandLogo } from '../../lib/brandLogo';
 import { toast } from 'sonner';
 
 const EMPTY_VALUE = 'Not captured yet';
+
+// Friendly stage label shown under the scrape progress bar, driven purely by
+// the current percentage so it reads like real work is happening.
+const scrapeStageLabel = (p) => {
+  if (p < 20) return 'Locating the brand’s website…';
+  if (p < 45) return 'Fetching the brand logo…';
+  if (p < 65) return 'Reading the About information…';
+  if (p < 90) return 'Extracting company details…';
+  if (p < 100) return 'Finalising…';
+  return 'All details captured.';
+};
 
 const BRAND_DETAIL_FIELDS = [
   ['Brand name', ['company', 'name', 'brand_name']],
@@ -338,6 +351,14 @@ const V1AdminCRMBrandDetail = () => {
   const [moving, setMoving] = useState(false);
   const [notice, setNotice] = useState('');
   const [scraping, setScraping] = useState(false);
+  // Scrape progress popup: shows an animated loading bar to 100% while brand
+  // details are being scraped, then reveals a summary of what was captured.
+  const [scrapeModalOpen, setScrapeModalOpen] = useState(false);
+  const [scrapeProgress, setScrapeProgress] = useState(0);
+  const [scrapeDone, setScrapeDone] = useState(false);
+  const [scrapeSummary, setScrapeSummary] = useState([]);
+  const [scrapeWarnings, setScrapeWarnings] = useState([]);
+  const [scrapeError, setScrapeError] = useState('');
   const [editingAbout, setEditingAbout] = useState(false);
   const [aboutDraft, setAboutDraft] = useState('');
   const [editingMarketingBudget, setEditingMarketingBudget] = useState(false);
@@ -369,37 +390,68 @@ const V1AdminCRMBrandDetail = () => {
   const handleScrape = async () => {
     setScraping(true);
     setNotice('');
+    // Open the progress popup and reset it to the start.
+    setScrapeModalOpen(true);
+    setScrapeDone(false);
+    setScrapeSummary([]);
+    setScrapeWarnings([]);
+    setScrapeError('');
+    setScrapeProgress(6);
+
+    // The backend scrape is a single request with no streaming progress, so we
+    // animate the bar toward ~90% while it runs, then snap to 100% on completion.
+    const timer = setInterval(() => {
+      setScrapeProgress((prev) => {
+        if (prev >= 90) return prev;
+        const next = prev + Math.max(1, Math.round((94 - prev) * 0.06));
+        return Math.min(next, 90);
+      });
+    }, 200);
+
     try {
       const res = await v3ScrapeBrandDetails(id);
-      if (res.ok) {
+      clearInterval(timer);
+      if (res && res.ok) {
         const warnings = [
           ...(res.warnings || []),
           ...(res.enrichment_target?.warnings || []),
         ];
         const dedupedWarnings = Array.from(new Set(warnings));
         const sourceType = res.enrichment_target?.source_type || 'website';
-        const summaryParts = [];
-        if (res.website) summaryParts.push(`source ${res.website}`);
-        if (res.logo_url) summaryParts.push('logo found');
+        const summary = [];
+        summary.push(`Source: ${sourceType}${res.website ? ` · ${res.website}` : ''}`);
+        if (res.logo_url) summary.push('Logo found and updated');
+        if (res.about || res.brand_about) summary.push('About information captured');
         if (Array.isArray(res.supporting_links) && res.supporting_links.length) {
-          summaryParts.push(`${res.supporting_links.length} supporting link(s) kept`);
+          summary.push(`${res.supporting_links.length} supporting link(s) kept`);
         }
-        const summary = summaryParts.length ? ` (${summaryParts.join(' · ')})` : '';
-        if (dedupedWarnings.length) {
-          toast(`Scrape warning: ${dedupedWarnings[0]}`, { icon: '⚠️', duration: 6000 });
-          dedupedWarnings.slice(1, 4).forEach((w) => toast(w, { icon: '⚠️', duration: 6000 }));
-        }
-        toast.success(`Scraped via ${sourceType}${summary}`);
+        // Reload the brand first so the page behind the popup already shows the
+        // fresh details by the time the bar reaches 100%.
         await reloadData();
+        setScrapeSummary(summary);
+        setScrapeWarnings(dedupedWarnings);
+        setScrapeProgress(100);
+        setScrapeDone(true);
       } else {
-        toast.error('Scraping returned no results.');
+        await reloadData();
+        setScrapeError('Scraping returned no results. Try again or add the details manually.');
+        setScrapeProgress(100);
+        setScrapeDone(true);
       }
     } catch (e) {
-      toast.error('Scraping failed.');
+      clearInterval(timer);
       await reloadData();
+      setScrapeError('Scraping failed. Please try again.');
+      setScrapeProgress(100);
+      setScrapeDone(true);
     } finally {
       setScraping(false);
     }
+  };
+
+  const closeScrapeModal = () => {
+    if (scraping) return; // don't allow closing mid-scrape
+    setScrapeModalOpen(false);
   };
 
   const handleSaveAbout = async () => {
@@ -1059,6 +1111,91 @@ const V1AdminCRMBrandDetail = () => {
       )}
 
       {/* Delete confirmation modal */}
+      {scrapeModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          data-testid="brand-scrape-modal"
+        >
+          <div className="v3-card w-full max-w-md bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-3 mb-4">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${scrapeDone && !scrapeError ? 'bg-[#EAF4EE]' : scrapeError ? 'bg-[#FBF1EE]' : 'bg-[#EAF4EE]'}`}>
+                {scrapeDone && !scrapeError ? (
+                  <CheckCircle2 className="w-5 h-5 text-[#1F7A4D]" />
+                ) : scrapeError ? (
+                  <AlertTriangle className="w-5 h-5 text-[#B54A37]" />
+                ) : (
+                  <Loader2 className="w-5 h-5 text-[#1F4A3A] animate-spin" />
+                )}
+              </div>
+              <div>
+                <h3 className="text-[16px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                  {scrapeDone && !scrapeError
+                    ? 'Brand details scraped'
+                    : scrapeError
+                    ? 'Scrape did not complete'
+                    : 'Scraping brand details…'}
+                </h3>
+                <p className="text-[12px] text-[#6E6657] mt-1 leading-relaxed">
+                  {scrapeDone
+                    ? scrapeError || 'All available details were captured and updated on this page.'
+                    : 'Please keep this open while we gather the brand’s website, logo, and company information.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[11px] font-medium text-[#4F3E2F]" data-testid="brand-scrape-stage">
+                {scrapeStageLabel(scrapeProgress)}
+              </span>
+              <span className="text-[11px] font-semibold text-[#1F4A3A]" data-testid="brand-scrape-percent">
+                {Math.round(scrapeProgress)}%
+              </span>
+            </div>
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-[#EFEBE1]">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ease-out ${scrapeError ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
+                style={{ width: `${scrapeProgress}%` }}
+                data-testid="brand-scrape-bar"
+              />
+            </div>
+
+            {/* Summary once done */}
+            {scrapeDone && !scrapeError && scrapeSummary.length > 0 && (
+              <ul className="mt-4 space-y-1.5" data-testid="brand-scrape-summary">
+                {scrapeSummary.map((line, i) => (
+                  <li key={i} className="flex items-start gap-2 text-[12px] text-[#4F3E2F]">
+                    <Check className="w-3.5 h-3.5 text-[#1F7A4D] mt-0.5 flex-shrink-0" />
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {scrapeDone && scrapeWarnings.length > 0 && (
+              <div className="mt-3 rounded-lg bg-[#FDF6E9] border border-[#F0E2C0] p-2.5">
+                {scrapeWarnings.slice(0, 4).map((w, i) => (
+                  <p key={i} className="flex items-start gap-1.5 text-[11px] text-[#8A6D1F]">
+                    <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" /> <span>{w}</span>
+                  </p>
+                ))}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-4 mt-4 border-t border-[#F1ECDF]">
+              <button
+                onClick={closeScrapeModal}
+                disabled={scraping}
+                className="v3-btn-primary text-[12px] disabled:opacity-50"
+                data-testid="brand-scrape-close"
+              >
+                {scraping ? 'Please wait…' : scrapeError ? 'Close' : 'View details'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteConfirmOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"

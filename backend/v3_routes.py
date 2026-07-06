@@ -243,6 +243,41 @@ PRIORITY_OPTIONS = [
 ]
 
 
+def focus_priority_narrative(segments, priority_options=None) -> str:
+    """Build the Focus & Priority section narrative from the segments, grouped by
+    priority (most urgent first, using the given priority order) so admin and
+    brands can see what is urgent vs. what can wait. Mirrors the frontend
+    buildFocusPriorityNarrative so the text is identical everywhere."""
+    options = list(priority_options or PRIORITY_OPTIONS)
+    filled = [
+        s for s in (segments or [])
+        if isinstance(s, dict) and ((s.get("focus") or "").strip() or (s.get("priority") or "").strip())
+    ]
+    if not filled:
+        return ""
+
+    def rank_of(p: str) -> int:
+        try:
+            return options.index(p)
+        except ValueError:
+            return 999
+
+    groups: Dict[str, List[dict]] = {}
+    for s in filled:
+        key = (s.get("priority") or "").strip() or "Priority not set"
+        groups.setdefault(key, []).append(s)
+
+    blocks = []
+    for key in sorted(groups.keys(), key=rank_of):
+        lines = []
+        for s in groups[key]:
+            focus = (s.get("focus") or "").strip() or "Focus not set"
+            name = (s.get("name") or "").strip()
+            lines.append(f"• {focus}" + (f" ({name})" if name else ""))
+        blocks.append(f"{key}:\n" + "\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def _is_weyan_brand(name: Any) -> bool:
     normalized = "".join(ch for ch in str(name or "").lower() if ch.isalnum())
     return "weyan" in normalized
@@ -4469,6 +4504,18 @@ def make_v3_router(db):
         ]
         as_id = (existing or {}).get("id") or f"as-{uuid.uuid4().hex[:8]}"
         generated_at = _now_iso()
+        # Focus & Priority: start from any focus/priority we already know. The
+        # section narrative is generated from the segments (grouped by priority)
+        # instead of showing instructions, so the classification is always
+        # visible in the downloaded document and preview.
+        focus_priority_segments = [
+            {
+                "name": "",
+                "focus": _usable_text(_af("focus") or mi.get("key_marketing_focus"), ""),
+                "priority": _usable_text(_af("priority"), ""),
+            },
+        ]
+        focus_priority_content = focus_priority_narrative(focus_priority_segments, PRIORITY_OPTIONS)
         doc = {
             "id": as_id,
             "business_case_id": bc_id,
@@ -4508,18 +4555,11 @@ def make_v3_router(db):
                 # Focus & Priority segments (client request): the brand can add
                 # MULTIPLE focus/priority pairs for a project. TASCK addresses
                 # the higher-priority focuses first.
-                {"heading": "Focus & Priority", "type": "focus_priority", "content": (
-                    "Add each focus for this project and how urgent it is. TASCK addresses the higher-priority focuses first. Use “Add segment” to capture more than one."
-                ),
+                {"heading": "Focus & Priority", "type": "focus_priority",
+                    "content": focus_priority_content,
                     "focus_options": FOCUS_OPTIONS,
                     "priority_options": PRIORITY_OPTIONS,
-                    "segments": [
-                        {
-                            "name": "",
-                            "focus": _usable_text(_af("focus") or mi.get("key_marketing_focus"), ""),
-                            "priority": _usable_text(_af("priority"), ""),
-                        },
-                    ],
+                    "segments": focus_priority_segments,
                 },
                 {"heading": "Open Questions for Client Confirmation", "type": "numbered", "content": "To sharpen the next stage, we would like to confirm the following:", "items": [
                     "Have we understood your organisation correctly?",
@@ -4690,14 +4730,6 @@ def make_v3_router(db):
                     label = html.escape(str(sel.get("label") or "Selection"))
                     selected = html.escape(str(sel.get("selected") or "Not selected yet"))
                     sections.append(f"<li><strong>{label}:</strong> {selected}</li>")
-                sections.append("</ul>")
-            elif section.get("segments"):
-                sections.append("<ul>")
-                for idx, seg in enumerate(section.get("segments", []) or []):
-                    name = html.escape(str(seg.get("name") or f"Focus {idx + 1}"))
-                    focus = html.escape(str(seg.get("focus") or "Not selected yet"))
-                    priority = html.escape(str(seg.get("priority") or "No priority set"))
-                    sections.append(f"<li><strong>{name}:</strong> {focus} — {priority}</li>")
                 sections.append("</ul>")
             elif section.get("items"):
                 sections.append("<ul>")
@@ -4885,7 +4917,11 @@ def make_v3_router(db):
         for section in snap.get("sections", []) or []:
             blocks.append(_docx_heading(section.get("heading") or "Alignment section"))
             if section.get("content"):
-                blocks.append(_docx_paragraph(section.get("content")))
+                # Preserve line breaks (e.g. the grouped Focus & Priority
+                # narrative) by rendering each line as its own paragraph.
+                for content_line in str(section.get("content")).split("\n"):
+                    if content_line.strip():
+                        blocks.append(_docx_paragraph(content_line))
             if section.get("type") == "questions":
                 rows = [
                     "<w:tr>"
@@ -4944,12 +4980,6 @@ def make_v3_router(db):
                     label = str(sel.get("label") or "Selection")
                     selected = str(sel.get("selected") or "Not selected yet")
                     blocks.append(_docx_paragraph(f"{label}: {selected}", bold=True))
-            elif section.get("segments"):
-                for idx, seg in enumerate(section.get("segments", []) or []):
-                    name = str(seg.get("name") or f"Focus {idx + 1}")
-                    focus = str(seg.get("focus") or "Not selected yet")
-                    priority = str(seg.get("priority") or "No priority set")
-                    blocks.append(_docx_paragraph(f"{name}: {focus} — {priority}", bold=True))
             elif section.get("items"):
                 for item in section.get("items", []) or []:
                     blocks.append(_docx_paragraph(f"- {item}"))
