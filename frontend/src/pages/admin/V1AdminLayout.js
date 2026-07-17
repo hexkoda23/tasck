@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { useThemeMode } from '../../lib/useThemeMode';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Bell, Building2, BriefcaseBusiness, ChevronLeft, Home, LogIn, LogOut, Moon, Search, Settings, Sun } from 'lucide-react';
@@ -56,7 +57,7 @@ const V1AdminLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated, logout } = useAuth();
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useThemeMode();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notificationsBoxRef = useRef(null);
 

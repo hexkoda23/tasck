@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
+import { RelationshipStageSelect, relationshipStageMeta, relationshipStageOf } from '../../lib/relationshipStage';
+import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
+import { PrioritySelect } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
@@ -75,6 +79,7 @@ import {
   PackageCheck,
   Plus,
   RotateCcw,
+  Presentation,
   Save,
   Send,
   Sparkles,
@@ -100,6 +105,13 @@ import {
   v3ContractPdfUrl,
   v3AlignmentDocxUrl,
   v3CreativeBriefDocxUrl,
+  v3TemplateBriefDocxUrl,
+  v3GeneratePitchDeck,
+  v3UpdatePitchDeck,
+  v3ApprovePitchDeckAs,
+  v3SendPitchDeckToBrand,
+  v3PitchDeckDocxUrl,
+  v3GenerateCreativeBrief,
   v3StrategySnapshotDocxUrl,
   v3ContractDocxUrl,
   v3FinalReportPdfUrl,
@@ -166,7 +178,7 @@ const brainstormingSections = [
   ['Admin notes / idea log', ['idea cards', 'created-by notes', 'decision notes']],
 ];
 
-const useBusinessCaseBundle = () => {
+export const useBusinessCaseBundle = () => {
   const params = useParams();
   const id = params.id || params.businessCaseId;
   const [bundle, setBundle] = useState(null);
@@ -348,11 +360,12 @@ export const V3BusinessCaseStageHome = () => {
   return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Opening the active Business Case page...</div>;
 };
 
-const FlowShell = ({ title, subtitle, children, nextAction }) => {
+export const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { id, bundle, loading } = useBusinessCaseBundle();
+  const { id, bundle, loading, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
+  const flowBrand = bundle?.brand || {};
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
   const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage, location.pathname, bc);
   // Framing pages (Connect + Frame sub-steps) live under the CRM Brands tab
@@ -374,6 +387,24 @@ const FlowShell = ({ title, subtitle, children, nextAction }) => {
           <button type="button" onClick={() => navigate(adminRoute('/business-cases'))} className="v3-btn-secondary text-[11px]" data-testid="business-case-list-btn">
             <ArrowLeft className="w-3.5 h-3.5" /> Business Cases
           </button>
+        )}
+        <div className="flex-1" />
+        {/* Same relationship stage control as the CRM brand page - pinned to
+            every Business Case page so the brand's position is always visible
+            and editable. Advancing a stage updates it automatically too. */}
+        {flowBrand.id && (
+          <RelationshipStageSelect
+            brandId={flowBrand.id}
+            value={relationshipStageOf(flowBrand)}
+            onChange={(next, error) => {
+              if (error) {
+                toast.error('Could not update the relationship stage.');
+                return;
+              }
+              toast.success(`Stage set to "${relationshipStageMeta(next).label}".`);
+              reload();
+            }}
+          />
         )}
       </div>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -609,7 +640,7 @@ const TranscriptUploadPanel = ({ sessions, onAdd, onRemove, onChange, onUploadFi
   );
 };
 
-const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, brand, contactName, contactEmail, sourceLabel }) => {
+export const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, bc, brand, contactName, contactEmail, sourceLabel }) => {
   const cleanSessions = sessions.filter(transcriptHasContent);
   if (!cleanSessions.length) {
     throw new Error('Upload or paste at least one transcript before running analysis.');
@@ -1086,7 +1117,22 @@ export const V3BusinessCaseConnect = () => {
   const about = valueFrom(brand, ['about', 'brand_about', 'description', 'company_description', 'notes']);
   const marketingBudget = valueFrom(brand, ['marketing_budget', 'budget', 'budget_range']) || valueFrom(bc, ['marketing_budget', 'budget', 'estimated_value']);
   const defaultEmail = contact.email || brand.email || '';
-  const defaultPurpose = 'Connect / Business Call to confirm the brand context, marketing priorities, timeline, budget, and the information TASCK needs before Frame.';
+  // Agenda for the Connect / Business Call. These are the exact points TASCK
+  // needs to cover, because the answers are what feed the Alignment Snapshot we
+  // send back to the brand. Keep the points intact if you reword this.
+  const defaultPurpose = [
+    'TASCK would like to talk through your brand and what you are working to achieve, so we can shape the right approach with you. We would like to cover:',
+    '',
+    '1. Your brand / organisation - who you are, what you do, and who you serve.',
+    '2. Core Focus Areas - the priorities that matter most to you right now.',
+    '3. Campaign Type - the kind of work or campaign you have in mind.',
+    '4. Key Audience / Beneficiaries - the people you are trying to reach or serve.',
+    '5. Audience Behaviour / Pain Points - what they do today, and what gets in their way.',
+    '6. Key Goals & Metrics Tracked - the numbers your team is measured on.',
+    '7. What Success Looks Like / Timeline - your definition of a win, and by when.',
+    '',
+    'Everything we discuss on this call is what TASCK uses to build your Alignment Snapshot, which we send back to you to confirm, correct, or sharpen before any work begins.',
+  ].join('\n');
   const [meetingForm, setMeetingForm] = useState({
     scheduled_for: bc.connect?.scheduled_for || '',
     meeting_link: bc.connect?.meeting_link || '',
@@ -1520,6 +1566,16 @@ export const V3BusinessCaseConnectSchedule = () => {
           lastAddedId={lastAddedTranscriptId}
         />
       )}
+
+      {/* Conversation sources: transcripts, email chains, WhatsApp threads.
+          Added over time; all of them feed the opportunity analysis below. */}
+      <ConnectSourcesPanel businessCaseId={id} />
+
+      {/* What the AI found across every source, plus merge + generate. */}
+      <OpportunitiesPanel
+        businessCaseId={id}
+        onGenerated={() => navigate(adminRoute(`/business-cases/${id}/frame/snapshot`))}
+      />
 
       <InfoCard title="Combined AI Transcript Analysis">
         <p className="text-[12px] text-[#6E6657] mb-4">
@@ -2126,7 +2182,18 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { id, bundle, reload } = useBusinessCaseBundle();
-  const snapshot = bundle?.alignment_snapshot;
+  // One Connect call can produce several snapshots. Admin edits/sends/approves
+  // each one separately: the list below switches which snapshot this editor is
+  // bound to. Deep-linkable via ?snapshot=<id> (used by the CRM project rows).
+  const allSnapshots = Array.isArray(bundle?.alignment_snapshots) && bundle.alignment_snapshots.length
+    ? bundle.alignment_snapshots
+    : (bundle?.alignment_snapshot ? [bundle.alignment_snapshot] : []);
+  const querySnapshotId = new URLSearchParams(location.search || '').get('snapshot') || '';
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState(querySnapshotId);
+  const snapshot = allSnapshots.find((s) => s.id === selectedSnapshotId)
+    || bundle?.alignment_snapshot
+    || allSnapshots[0]
+    || null;
   const [notice, setNotice] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [draft, setDraft] = useState(null);
@@ -2160,6 +2227,18 @@ export const V3BusinessCaseFrameSnapshot = () => {
       setRecipientEmail(brandEmail);
     }
   }, [brandEmail, id]);
+
+  // Refetch when admin returns to this tab so brand-side changes (priority
+  // picks, comments, approvals) show up immediately without a manual refresh.
+  useEffect(() => {
+    const onFocus = () => { reload().catch(() => {}); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [reload]);
 
   useEffect(() => {
     if (!preparingFrame || hasSnapshot || frameRefreshCount >= 10) return undefined;
@@ -2215,21 +2294,21 @@ export const V3BusinessCaseFrameSnapshot = () => {
 
   const approveSnapshot = async () => {
     setNotice(null);
-    setSendPopup({ title: 'Approving', message: 'Approving the Alignment Snapshot and opening Brainstorm (still in Framing)…', tone: 'pending' });
+    setSendPopup({ title: 'Approving', message: 'Approving the Alignment Snapshot and opening the Creator Selector (still in Framing)…', tone: 'pending' });
     try {
       await persistDraft();
-      await v3ApproveAlignmentAs(id, 'admin', 'admin');
+      await v3ApproveAlignmentAs(id, 'admin', 'admin', activeSnapshot?.id || undefined);
       // The backend stage advances frame -> plan so the Brainstorm/Brief/Strategy
       // Snapshot data slots become writable. The UI keeps the user in Framing.
       if (stage === 'frame') {
         await v3AdvanceBusinessCase(id, {
           actor: 'admin',
           override: true,
-          reason: 'Alignment Snapshot approved by admin. Continue Framing in Brainstorm.',
+          reason: 'Alignment Snapshot approved by admin. Continue Framing in the Creator Selector.',
         });
       }
       await reload();
-      setSendPopup({ title: 'Opening Brainstorm', message: 'Snapshot approved. Opening the brainstorm transcript step.', tone: 'success' });
+      setSendPopup({ title: 'Opening Creator Selector', message: 'Snapshot approved. Opening the Creator Selector transcript step.', tone: 'success' });
       window.setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`)), 450);
     } catch (e) {
       setSendPopup(null);
@@ -2265,7 +2344,11 @@ export const V3BusinessCaseFrameSnapshot = () => {
     });
     try {
       await persistDraft();
-      const result = await v3SendAlignmentToBrand(id, { recipient_email: recipientEmail.trim() || undefined });
+      const result = await v3SendAlignmentToBrand(id, {
+        recipient_email: recipientEmail.trim() || undefined,
+        // Send exactly the snapshot being edited, not just the primary one.
+        snapshot_id: activeSnapshot?.id || undefined,
+      });
       await reload();
       const status = result?.email?.status || 'queued';
       const deliveryError = result?.email?.delivery_error || '';
@@ -2319,7 +2402,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   return (
-    <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 5. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand. Once approved, Framing continues into Brainstorm, Creator Selection, Creative Brief, and Strategy Snapshot.">
+    <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 5. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand. Once approved, Framing continues into Creator Selector, Creative Brief, and Strategy Snapshot.">
       {alignmentComments.length > 0 && (
         <InfoCard title={`Brand Comments (${alignmentComments.length})`}>
           <div className="space-y-3" data-testid="alignment-snapshot-brand-comments">
@@ -2342,10 +2425,70 @@ export const V3BusinessCaseFrameSnapshot = () => {
           <p className="mt-3 text-[11px] text-[#6E6657]">Edit the relevant section below to address each comment, save, then re-send to the brand.</p>
         </InfoCard>
       )}
+      {/* Every Alignment Snapshot generated from this Connect call. Click one
+          to edit/send/approve THAT snapshot; the brand's priority picks show
+          here live (most urgent first, unranked last) and admin can override. */}
+      {allSnapshots.length > 1 && (
+        <InfoCard title={`Alignment Snapshots (${allSnapshots.length})`}>
+          <p className="text-[12px] text-[#6E6657] mb-3">
+            This Connect call produced several opportunities, so each has its own snapshot. Click one to edit it below,
+            then send each to the brand — the brand ranks them by priority and that ranking shows here immediately.
+          </p>
+          <div className="space-y-2">
+            {allSnapshots.map((snapshotItem) => {
+              const isEditing = snapshot?.id === snapshotItem.id;
+              return (
+                <div
+                  key={snapshotItem.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedSnapshotId(snapshotItem.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedSnapshotId(snapshotItem.id); }}
+                  className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                    isEditing ? 'border-[#1F4A3A] bg-[#EAF4EE]' : 'border-[#E8E4DB] bg-[#FBFAF7] hover:border-[#1F4A3A]'
+                  }`}
+                  data-testid={`snapshot-switch-${snapshotItem.id}`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[13px] font-semibold text-[#1F1B18] truncate">
+                        {snapshotItem.opportunity_title || snapshotItem.title || 'Alignment Snapshot'}
+                      </p>
+                      {isEditing && (
+                        <span className="rounded-full bg-[#1F4A3A] px-2 py-0.5 text-[10px] font-semibold text-white">Editing</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[#8A8A8A]">
+                      {cleanV1Text(String(snapshotItem.status || 'draft').replace(/[_-]+/g, ' '))}
+                      {snapshotItem.priority_set_by ? ` · ranked by ${snapshotItem.priority_set_by}` : ' · not ranked yet'}
+                    </p>
+                  </div>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <PrioritySelect
+                      snapshotId={snapshotItem.id}
+                      value={snapshotItem.priority}
+                      actor="admin"
+                      onChange={(next, error) => {
+                        if (error) {
+                          toast.error('Could not save the priority.');
+                          return;
+                        }
+                        toast.success('Priority updated.');
+                        reload();
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </InfoCard>
+      )}
       <InfoCard
         title="Alignment Snapshot"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
+            {snapshot?.id && <PrioritySelect snapshotId={snapshot.id} value={snapshot.priority} actor="admin" onChange={(next, error) => { if (error) { toast.error('Could not save the priority.'); return; } toast.success('Priority updated.'); reload(); }} />}
             <button data-testid="alignment-generate-btn" onClick={generateSnapshot} disabled={generating} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"><Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> {generating ? 'Generating…' : (hasSnapshot ? 'Regenerate Snapshot' : 'Generate Snapshot')}</button>
             <button data-testid="alignment-preview-btn" onClick={openPreview} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Preview</button>
             <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
@@ -2623,7 +2766,7 @@ export const V3BusinessCaseFrameApproved = () => {
   const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const snap = bundle?.alignment_snapshot || {};
-  return <FlowShell title="Alignment Approved" subtitle="Framing continues. The Alignment Snapshot is approved; the next Framing step is the brainstorm transcript upload."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`))} className="v3-btn-primary mt-4">Continue to Brainstorm</button></InfoCard></FlowShell>;
+  return <FlowShell title="Alignment Approved" subtitle="Framing continues. The Alignment Snapshot is approved; the next Framing step is the Creator Selector transcript upload."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`))} className="v3-btn-primary mt-4">Continue to Creator Selector</button></InfoCard></FlowShell>;
 };
 
 export const V1BusinessCaseFrameTranscripts = () => {
@@ -2854,7 +2997,7 @@ const BSPhase = ({ phase, title, subtitle, children }) => (
 //   1. Reviews the suggested questions to ask during the brainstorm session.
 //   2. Pastes / uploads the brainstorm-session transcript.
 //   3. Clicks Analyze - Claude reads the transcript and fills the ENTIRE
-//      TTA Snapshot Brainstorm (all phases) automatically.
+//      TTA Creator Selector (all phases) automatically.
 //   4. Continues to the brainstorm form, now pre-filled, to review/edit.
 // ============================================================================
 export const V3BusinessCasePlanBrainstormTranscript = () => {
@@ -2886,15 +3029,15 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
 
   const analyze = async () => {
     if (transcript.trim().length < 40) {
-      setNotice('Paste or upload a fuller brainstorm transcript before analyzing.');
+      setNotice('Paste or upload a fuller Creator Selector transcript before analyzing.');
       return;
     }
     setNotice('');
     setAnalyzing(true);
-    setPopup({ status: 'running', message: 'Reading the brainstorm transcript and filling the TTA Snapshot Brainstorm…' });
+    setPopup({ status: 'running', message: 'Reading the transcript and filling the TTA Creator Selector…' });
     try {
       await v3AnalyzeBrainstormTranscript(id, transcript.trim());
-      setPopup({ status: 'complete', message: 'Brainstorm filled from the transcript. Opening the brainstorm to review and edit.' });
+      setPopup({ status: 'complete', message: 'Creator Selector filled from the transcript. Opening it to review and edit.' });
       setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`)), 800);
     } catch (e) {
       const msg = e?.response?.data?.detail || e?.message || 'Could not analyze the transcript.';
@@ -2906,14 +3049,14 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
 
   return (
     <FlowShell
-      title="Brainstorm Transcript & Analysis"
-      subtitle="Framing step 2 of 5. Run the TTA Snapshot Brainstorm session using the suggested questions, then upload the transcript here. Claude will analyse it and fill the entire brainstorm for you to review."
-      nextAction="Upload the brainstorm transcript and click Analyze to auto-fill the brainstorm."
+      title="Creator Selector & Transcript Analysis"
+      subtitle="Framing step 2 of 5. Run the creator selection session using the suggested questions, then upload the transcript here. Claude will analyse it and fill the entire Creator Selector for you to review."
+      nextAction="Upload the creator selection transcript and click Analyze to auto-fill the Creator Selector."
     >
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
 
-      <InfoCard title="Suggested questions for the brainstorm session">
-        <p className="text-[12px] text-[#6E6657] mb-3">Ask these during the 60-90 minute session so the transcript covers everything the brainstorm template needs.</p>
+      <InfoCard title="Suggested questions for creator selection">
+        <p className="text-[12px] text-[#6E6657] mb-3">Cover these during the creator selection session so the transcript answers everything the Creator Selector needs.</p>
         {questions.length === 0 ? (
           <p className="text-[12px] text-[#8A8A8A]">Loading suggested questions…</p>
         ) : (
@@ -2924,7 +3067,7 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
       </InfoCard>
 
       <InfoCard
-        title="Upload / paste the brainstorm transcript"
+        title="Upload / paste the creator selection transcript"
         action={(
           <label htmlFor="brainstorm-transcript-file" className="v3-btn-secondary text-[11px] cursor-pointer">
             <Upload className="w-3.5 h-3.5" /> Upload file
@@ -2942,24 +3085,27 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
           rows={12}
-          placeholder="Paste the full brainstorm session transcript here, or use Upload file above. The more complete the transcript, the richer the auto-filled brainstorm."
+          placeholder="Paste the full creator selection transcript here, or use Upload file above. The more complete the transcript, the richer the auto-filled Creator Selector."
           className="w-full text-[13px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none leading-relaxed"
           data-testid="brainstorm-transcript-input"
         />
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-[11px] text-[#6E6657]">{transcript.trim().length} characters</p>
           <button onClick={analyze} disabled={analyzing} className="v3-btn-primary disabled:opacity-60" data-testid="brainstorm-analyze-btn">
-            <Sparkles className={`w-3.5 h-3.5 ${analyzing ? 'animate-spin' : ''}`} /> {analyzing ? 'Analyzing…' : 'Analyze & fill brainstorm'}
+            <Sparkles className={`w-3.5 h-3.5 ${analyzing ? 'animate-spin' : ''}`} /> {analyzing ? 'Analyzing…' : 'Analyze & fill Creator Selector'}
           </button>
         </div>
-        <button
-          type="button"
-          onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`))}
-          className="mt-3 text-[12px] text-[#1F4A3A] underline hover:no-underline"
-          data-testid="brainstorm-skip-to-form"
-        >
-          Skip and fill the brainstorm manually instead
-        </button>
+        <div className="mt-4 border-t border-[#F1ECDF] pt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`))}
+            className="v3-btn-secondary text-[12px]"
+            data-testid="brainstorm-skip-to-form"
+          >
+            <ArrowRight className="w-3.5 h-3.5" /> Skip and fill creator selection manually
+          </button>
+          <p className="text-[11px] text-[#8A8A8A]">No transcript? Open the Creator Selector and fill each field yourself.</p>
+        </div>
       </InfoCard>
 
       {popup && (
@@ -2970,7 +3116,7 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
                 {popup.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : popup.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
               </span>
               <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
-                {popup.status === 'complete' ? 'Brainstorm filled' : popup.status === 'failed' ? 'Analysis failed' : 'Analyzing transcript'}
+                {popup.status === 'complete' ? 'Creator Selector filled' : popup.status === 'failed' ? 'Analysis failed' : 'Analyzing transcript'}
               </h3>
             </div>
             <p className="text-[13px] leading-6 text-[#4F3E2F]">{popup.message}</p>
@@ -2985,6 +3131,19 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
     </FlowShell>
   );
 };
+
+// The eight Creator Selector fields (client-specified). Mirrors
+// CREATOR_SELECTOR_FIELDS in backend/v3_routes.py - keep keys in sync.
+const CREATOR_SELECTOR_FIELDS = [
+  { key: 'audience_platform', label: 'Where is this audience (Platform)', hint: 'The platforms where this audience actually lives - e.g. Instagram, TikTok, YouTube, WhatsApp, radio.', placeholder: 'e.g. Instagram and TikTok first, YouTube for long-form...' },
+  { key: 'top_of_funnel_size', label: 'Top of Funnel Audience Size', hint: 'How large is the reachable audience at the top of the funnel? Estimates and sources are fine.', placeholder: 'e.g. ~2.5m reachable 18-30s across target platforms...' },
+  { key: 'funnel_milestones', label: 'What are the Funnel Milestones', hint: 'The steps from first touch to the target action.', placeholder: 'e.g. view -> follow -> click -> sign-up -> first purchase -> repeat...' },
+  { key: 'timelines', label: 'Timelines', hint: 'Key dates and phases - launch windows, campaign length, reporting points.', placeholder: 'e.g. 6-week launch burst from March, reporting at week 3 and 6...' },
+  { key: 'risks', label: 'Risks', hint: 'The biggest risks to this working - audience, creator, market, or execution risks.', placeholder: 'e.g. audience distrust of app promos; creator availability...' },
+  { key: 'risk_mitigation', label: 'Risk Mitigation', hint: 'How each named risk is reduced or handled.', placeholder: 'e.g. proof-led content first; back-up creator shortlist...' },
+  { key: 'budget_assumption', label: 'Budget Assumption', hint: 'The working budget level and what it is expected to buy.', placeholder: 'e.g. mid-level budget covering 3 creators + boosted posts...' },
+  { key: 'creator_matches', label: 'Creator Matches', hint: 'Creators discussed for this project - one per line. The Creator Match Scanner auto-selects these from the database.', placeholder: 'One creator per line, e.g. Temi Adebayo / Chef Kanyin / Streetstyle Lagos' },
+];
 
 export const V3BusinessCasePlanBrainstorm = () => {
   const navigate = useNavigate();
@@ -3041,18 +3200,10 @@ export const V3BusinessCasePlanBrainstorm = () => {
     setNotice('');
     try {
       await v3UpdateBrainstorm(round.id, {
-        pre_work: round.pre_work,
-        phase_0_focus_group: round.phase_0_focus_group,
-        phase_1_problem: round.phase_1_problem,
-        phase_2_archetype: round.phase_2_archetype,
-        phase_4_interpretation: round.phase_4_interpretation,
-        phase_5_execution: round.phase_5_execution,
-        phase_6_commercial: round.phase_6_commercial,
-        phase_7_recommendation: round.phase_7_recommendation,
-        snapshot_summary: round.snapshot_summary,
+        creator_selector: round.creator_selector,
         scored_creators: round.scored_creators,
       });
-      setNotice('Brainstorming saved.');
+      setNotice('Creator Selector saved.');
       if (advance) navigate(adminRoute(`/business-cases/${id}/frame/creator-scan`));
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not save brainstorm.');
@@ -3063,182 +3214,48 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
   if (!round) {
     return (
-      <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Framing step 2 of 5.">
+      <FlowShell title="The TTA Creator Selector" subtitle="Framing step 2 of 5.">
         {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
-        <InfoCard title={bootstrapping ? 'Loading brainstorm…' : 'Brainstorm unavailable'}>
+        <InfoCard title={bootstrapping ? 'Loading Creator Selector…' : 'Creator Selector unavailable'}>
           <p className="text-[13px] text-[#6E6657]">
-            {bootstrapping ? 'Opening the TTA Snapshot Brainstorm for this Business Case…' : 'Could not load or create the brainstorm round. Please refresh the page.'}
+            {bootstrapping ? 'Opening the TTA Creator Selector for this Business Case…' : 'Could not load or create the Creator Selector. Please refresh the page.'}
           </p>
         </InfoCard>
       </FlowShell>
     );
   }
 
-  const preWork = round.pre_work || {};
-  const p0 = round.phase_0_focus_group || {};
-  const p1 = round.phase_1_problem || {};
-  const p2 = round.phase_2_archetype || {};
-  const p5 = round.phase_5_execution || {};
-  const p6 = round.phase_6_commercial || {};
-  const p7 = round.phase_7_recommendation || {};
-  const summary = round.snapshot_summary || {};
+  const selector = round.creator_selector || {};
 
   return (
-    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="Review and edit the brainstorm. If you uploaded a transcript, these fields were auto-filled by Claude - check each one before continuing.">
+    <FlowShell title="The TTA Creator Selector" subtitle="Review and edit the Creator Selector. If you uploaded a transcript, email, or WhatsApp conversation, these fields were auto-filled by Claude - check each one before continuing.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
 
-      {/* Required brainstorm summary fields (client meeting recap). These are the
-          headline outputs the client reviews; auto-filled by Claude from the
-          transcript, editable here. "Meeting Transcripts" is the transcript
-          shown at the bottom of this page. */}
-      <BSPhase phase="summary" title="Brainstorm Snapshot - Required Fields" subtitle="The headline brainstorm outputs. Auto-filled from the transcript when you upload one; edit any field before continuing.">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <BSField label="1. About Organisation" rows={3} value={summary.about_organisation} onChange={(v) => updateField('snapshot_summary', 'about_organisation', v)} />
-          <BSField label="2. Priority" rows={3} value={summary.priority} onChange={(v) => updateField('snapshot_summary', 'priority', v)} />
-          <BSField label="3. The Challenge" rows={3} value={summary.the_challenge} onChange={(v) => updateField('snapshot_summary', 'the_challenge', v)} />
-          <BSField label="4. The Shift" rows={3} value={summary.the_shift} onChange={(v) => updateField('snapshot_summary', 'the_shift', v)} />
-          <BSField label="5. The Opportunity" rows={3} value={summary.the_opportunity} onChange={(v) => updateField('snapshot_summary', 'the_opportunity', v)} />
-          <BSField label="6. Creator's Role" rows={3} value={summary.creators_role} onChange={(v) => updateField('snapshot_summary', 'creators_role', v)} />
-          <BSField label="7. The Recommendation" rows={3} value={summary.the_recommendation} onChange={(v) => updateField('snapshot_summary', 'the_recommendation', v)} />
-          <BSField label="8. Marketing KPIs" rows={3} value={summary.marketing_kpis} onChange={(v) => updateField('snapshot_summary', 'marketing_kpis', v)} />
-          <BSField label="9. Key Marketing Focus" rows={3} value={summary.key_marketing_focus} onChange={(v) => updateField('snapshot_summary', 'key_marketing_focus', v)} />
-          <BSField label="10. Primary Target Audience" rows={3} value={summary.primary_target_audience} onChange={(v) => updateField('snapshot_summary', 'primary_target_audience', v)} />
-          <BSField label="11. Need for Supercreative" rows={3} value={summary.need_for_supercreative} onChange={(v) => updateField('snapshot_summary', 'need_for_supercreative', v)} />
-        </div>
-        {round.transcript && (
-          <div className="mt-3">
-            <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">12. Meeting Transcripts</p>
-            <div className="max-h-40 overflow-y-auto rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3 text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{round.transcript}</div>
+      {/* The eight Creator Selector fields (client-specified). Each has its own
+          box; admin fills them manually or Claude fills them from the uploaded
+          transcript on the previous page. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="creator-selector-fields">
+        {CREATOR_SELECTOR_FIELDS.map((field, index) => (
+          <div key={field.key} className="v3-card p-4" data-testid={`creator-selector-${field.key}`}>
+            <p className="text-[12px] font-semibold text-[#1A1A1A]">{index + 1}. {field.label}</p>
+            <p className="text-[11px] text-[#8A8A8A] mt-0.5">{field.hint}</p>
+            <textarea
+              rows={field.key === 'creator_matches' ? 5 : 3}
+              value={selector[field.key] || ''}
+              onChange={(e) => updateField('creator_selector', field.key, e.target.value)}
+              placeholder={field.placeholder}
+              className="mt-2 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed"
+            />
           </div>
-        )}
-      </BSPhase>
+        ))}
+      </div>
 
-      <BSPhase phase="pre-work" title="Pre-work (Mandatory before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
-        <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Client Brief Summary (1 page max)</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <BSField label="Objective" rows={2} value={preWork.client_brief_summary?.objective} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'objective', v)} />
-          <BSField label="Target audience" rows={2} value={preWork.client_brief_summary?.target_audience} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'target_audience', v)} />
-          <BSField label="Constraints (budget, timeline)" rows={2} value={preWork.client_brief_summary?.constraints} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'constraints', v)} />
-        </div>
-        <BSField label="Initial Hypothesis (optional)" hint='We believe the problem may be...' value={preWork.initial_hypothesis} onChange={(v) => updateField('pre_work', 'initial_hypothesis', v)} />
-        <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Research Inputs</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <BSField label="Past campaigns" value={preWork.research_inputs?.past_campaigns} onChange={(v) => updateNested('pre_work', 'research_inputs', 'past_campaigns', v)} />
-          <BSField label="Market context" value={preWork.research_inputs?.market_context} onChange={(v) => updateNested('pre_work', 'research_inputs', 'market_context', v)} />
-          <BSField label="Focus group insights (if available)" value={preWork.research_inputs?.focus_group_insights} onChange={(v) => updateNested('pre_work', 'research_inputs', 'focus_group_insights', v)} />
-        </div>
-      </BSPhase>
-
-      <BSPhase phase="0" title="Phase 0 - Focus Group Integration" subtitle="Use only when problem is unclear, audience behavior is ambiguous, or product is new/misunderstood.">
-        <div className="space-y-2">
-          {(p0.core_questions || []).map((q, idx) => (
-            <div key={idx} className="rounded border border-[#E8E4DB] p-3">
-              <p className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}. {q}</p>
-              <textarea rows={2} value={(p0.answers || [])[idx] || ''} onChange={(e) => updatePhase0Answer(idx, e.target.value)} placeholder="Capture audience response..." className="mt-2 w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[12px] focus:border-[#1F4A3A] outline-none" />
-            </div>
-          ))}
-        </div>
-      </BSPhase>
-
-      <BSPhase phase="1" title="Phase 1 - Define the Problem (10-15 mins)" subtitle="Remove ambiguity. Lock the problem before solving it. ALL questions must be answered.">
-        <BSField label="What is the core business objective?" value={p1.core_business_objective} onChange={(v) => updateField('phase_1_problem', 'core_business_objective', v)} />
-        <BSField label="What specific action must the audience take?" value={p1.specific_action} onChange={(v) => updateField('phase_1_problem', 'specific_action', v)} />
-        <BSField label="What is the primary barrier to that action?" value={p1.primary_barrier} onChange={(v) => updateField('phase_1_problem', 'primary_barrier', v)} />
-        <BSField label="What type of influence is required?" value={p1.type_of_influence} onChange={(v) => updateField('phase_1_problem', 'type_of_influence', v)} />
-        <BSField label="What observable behavior change defines success?" value={p1.observable_behavior_change} onChange={(v) => updateField('phase_1_problem', 'observable_behavior_change', v)} />
-        <BSField
-          label="PROJECT TRUTH (mandatory output - max 3 lines)"
-          hint="Template: [Target audience] currently [problem/barrier]. To achieve [business goal], they must [specific action]. This requires [type of influence]."
-          rows={3}
-          value={p1.project_truth}
-          onChange={(v) => updateField('phase_1_problem', 'project_truth', v)}
-        />
-      </BSPhase>
-
-      <BSPhase phase="2" title="Phase 2 - Define Creator Archetype (10 mins)" subtitle="Define the type of mind, not the person.">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <BSSelect label="Voice Type" options={BS_VOICE_TYPES} value={p2.voice_type} onChange={(v) => updateField('phase_2_archetype', 'voice_type', v)} />
-          <BSSelect label="Audience Relationship" options={BS_AUDIENCE_REL} value={p2.audience_relationship} onChange={(v) => updateField('phase_2_archetype', 'audience_relationship', v)} />
-          <BSSelect label="Format Strength" options={BS_FORMAT_STRENGTH} value={p2.format_strength} onChange={(v) => updateField('phase_2_archetype', 'format_strength', v)} />
-        </div>
-        <BSField
-          label="CREATOR ARCHETYPE STATEMENT"
-          hint='Template: "We need a [voice type] creator with [audience relationship] who excels in [format], capable of driving [specific action] among [audience]."'
-          rows={3}
-          value={p2.creator_archetype_statement}
-          onChange={(v) => updateField('phase_2_archetype', 'creator_archetype_statement', v)}
-        />
-      </BSPhase>
-
-      <BSPhase phase="3" title="Phase 3 - Creator Identification & Scoring (20-25 mins)" subtitle="Scoring criteria (1-5): Audience Match, Trust Signals, Conversion Behaviour, Content Fit, Commercial Reliability. Any creator scoring below 3 on Conversion Behaviour = ELIMINATED.">
-        <p className="text-[12px] text-[#6E6657] bg-[#FBFAF7] rounded-md p-3 border border-[#E8E4DB]">Scoring happens on the next page (Creator Match Scanner). Each shortlisted creator must be backed by evidence; only 2-3 creators max are carried forward.</p>
-      </BSPhase>
-
-      <BSPhase phase="4" title="Phase 4 - Interpretation Logic (15 mins)" subtitle="Explain how each creator thinks, not what they will post.">
-        <BSField
-          label="INTERPRETATION SUMMARY (per creator - one paragraph each)"
-          hint='Template (per creator): "[Creator] will likely approach this by [angle], emphasising [focus], which aligns with [audience behavior]."'
-          rows={5}
-          value={(round.phase_4_interpretation || {}).notes || ''}
-          onChange={(v) => updateField('phase_4_interpretation', 'notes', v)}
-        />
-      </BSPhase>
-
-      <BSPhase phase="5" title="Phase 5 - Execution Reality Check (10-15 mins)" subtitle="Pressure-test feasibility.">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <BSField label="What level of brand involvement is required?" value={p5.test_questions_answered?.brand_involvement} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'brand_involvement', v)} />
-          <BSField label="What is the execution speed?" value={p5.test_questions_answered?.execution_speed} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'execution_speed', v)} />
-          <BSField label="Is this repeatable or one-off?" value={p5.test_questions_answered?.repeatable_or_one_off} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'repeatable_or_one_off', v)} />
-          <BSField label="What are the top 2 risks?" value={p5.test_questions_answered?.top_risks} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'top_risks', v)} />
-        </div>
-        <BSField label="EXECUTION SNAPSHOT (per option - Effort / Speed / Scale / Key risks)" rows={4} value={p5.snapshot_notes} onChange={(v) => updateField('phase_5_execution', 'snapshot_notes', v)} />
-      </BSPhase>
-
-      <BSPhase phase="6" title="Phase 6 - Commercial Snapshot (10 mins)">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <BSSelect label="Budget Level" options={BS_BUDGET} value={p6.budget_level} onChange={(v) => updateField('phase_6_commercial', 'budget_level', v)} />
-          <BSSelect label="Expected Efficiency" options={BS_EFFICIENCY} value={p6.expected_efficiency} onChange={(v) => updateField('phase_6_commercial', 'expected_efficiency', v)} />
-          <BSSelect label="Time to impact" options={BS_TIMING} value={p6.time_to_impact} onChange={(v) => updateField('phase_6_commercial', 'time_to_impact', v)} />
-        </div>
-        <BSField
-          label="COMMERCIAL POSITIONING STATEMENT"
-          hint='Template: "This approach requires a [budget level] investment and is expected to deliver [type of return] within [timeframe]."'
-          rows={3}
-          value={p6.commercial_positioning_statement}
-          onChange={(v) => updateField('phase_6_commercial', 'commercial_positioning_statement', v)}
-        />
-      </BSPhase>
-
-      <BSPhase phase="7" title="Phase 7 - Final Recommendation (5 mins)" subtitle="Make a decision, not just present options.">
-        <BSField label="Selected option" hint="e.g., Option A - Creator X" value={p7.selected_option} onChange={(v) => updateField('phase_7_recommendation', 'selected_option', v)} rows={1} />
-        <BSField
-          label="RECOMMENDATION RATIONALE"
-          hint={'Template:\n"Based on the objective of [goal], Option [X] offers the strongest balance between:\n  - Conversion potential\n  - Execution feasibility\n  - Commercial efficiency\nThis is driven by [key reason]."'}
-          rows={6}
-          value={p7.rationale}
-          onChange={(v) => updateField('phase_7_recommendation', 'rationale', v)}
-        />
-        <BSField label="Key reason driving this recommendation" value={p7.key_reason} onChange={(v) => updateField('phase_7_recommendation', 'key_reason', v)} rows={1} />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <BSField label="Top 3 barriers (one per line)" rows={3} value={(p7.insight_summary?.top_3_barriers || []).join('\n')} onChange={(v) => updateNested('phase_7_recommendation', 'insight_summary', 'top_3_barriers', v.split('\n'))} />
-          <BSField label="Key behavioral triggers (one per line)" rows={3} value={(p7.insight_summary?.key_behavioral_triggers || []).join('\n')} onChange={(v) => updateNested('phase_7_recommendation', 'insight_summary', 'key_behavioral_triggers', v.split('\n'))} />
-          <BSField label="Language people actually use (one per line)" rows={3} value={(p7.insight_summary?.language_people_use || []).join('\n')} onChange={(v) => updateNested('phase_7_recommendation', 'insight_summary', 'language_people_use', v.split('\n'))} />
-        </div>
-      </BSPhase>
-
-      <InfoCard title="Strategy mapping">
-        <p className="text-[12px] text-[#6E6657] mb-3">After the session, the team does not rethink - they only clean language, format, and complete the Strategy template. Each phase produces a direct input block:</p>
-        <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
-          <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
-            <thead className="bg-[#F4F2EC] text-[#6E6657]"><tr><th className="px-3 py-2 font-semibold">Brainstorm Phase</th><th className="px-3 py-2 font-semibold">Strategy Section It Fills</th></tr></thead>
-            <tbody className="divide-y divide-[#E8E4DB] bg-white text-[#4F3E2F]">
-              {(round.strategy_mapping || []).map((row, idx) => (
-                <tr key={idx}><td className="px-3 py-2">{row.brainstorm_phase}</td><td className="px-3 py-2">{row.strategy_section}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </InfoCard>
+      {round.transcript && (
+        <InfoCard title="Session transcript">
+          <p className="text-[11px] text-[#8A8A8A] mb-2">The conversation these fields were filled from. Re-upload on the previous page to re-analyse.</p>
+          <div className="max-h-48 overflow-y-auto rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3 text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{round.transcript}</div>
+        </InfoCard>
+      )}
 
       {/* Per Chioma's feedback: Save / Save & open Creator Scan now live at
           the BOTTOM of the page, not in a sticky top bar. Admin fills the
@@ -3313,6 +3330,8 @@ export const V3BusinessCasePlanCreatorScan = () => {
   //   "deterministic_keyword_overlap" (fallback when no LLM key is set
   //   or the LLM call timed out / failed to parse).
   const [analysisSource, setAnalysisSource] = useState('');
+  const [namedMatches, setNamedMatches] = useState([]);
+  const [namedUnmatched, setNamedUnmatched] = useState([]);
   const runScan = async () => {
     setNotice('');
     setScanning(true);
@@ -3320,6 +3339,23 @@ export const V3BusinessCasePlanCreatorScan = () => {
       const data = await v3SuggestCreatorMatches(id);
       setMatches(Array.isArray(data?.matches) ? data.matches : []);
       setAnalysisSource(data?.analysis_source || '');
+      // Creators the team NAMED in the Creator Selector "Creator Matches"
+      // field come back matched against the database - auto-select them so
+      // admin only has to confirm. The AI list below is additions on top.
+      const named = Array.isArray(data?.named_matches) ? data.named_matches : [];
+      setNamedMatches(named);
+      setNamedUnmatched(Array.isArray(data?.named_unmatched) ? data.named_unmatched : []);
+      if (named.length) {
+        setSelectedIds((current) => {
+          const next = [...current];
+          named.forEach((m) => {
+            const creatorId = m?.creator?.id;
+            if (creatorId && !next.includes(creatorId)) next.push(creatorId);
+          });
+          persistSelectedIds(next);
+          return next;
+        });
+      }
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.');
     } finally {
@@ -3340,6 +3376,16 @@ export const V3BusinessCasePlanCreatorScan = () => {
       return;
     }
     navigate(adminRoute(`/business-cases/${id}/frame/brief?creators=${selectedCreatorQuery(selectedIds)}`));
+  };
+  // Pitch Deck and Creative Brief are siblings: admin can do either first;
+  // approving one opens the other, and when both are done the flow moves
+  // into Planning.
+  const continueToPitchDeck = () => {
+    if (selectedIds.length === 0) {
+      setNotice('Select at least one creator before opening the Pitch Deck.');
+      return;
+    }
+    navigate(adminRoute(`/business-cases/${id}/frame/pitch-deck`));
   };
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
   return (
@@ -3365,6 +3411,43 @@ export const V3BusinessCasePlanCreatorScan = () => {
           <button onClick={() => addCreator(manualCreatorId)} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
         </div>
       </InfoCard>
+      {(namedMatches.length > 0 || namedUnmatched.length > 0) && (
+        <InfoCard title={`From your Creator Selector (${namedMatches.length} matched)`}>
+          <p className="text-[12px] text-[#6E6657] mb-3">
+            Creators you named in the Creator Selector "Creator Matches" field, found in the TASCK database and
+            auto-selected below — untick any you no longer want before continuing.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {namedMatches.map((match) => {
+              const creator = match.creator || {};
+              const picked = selectedIds.includes(creator.id);
+              return (
+                <div key={creator.id} className={`rounded-lg border p-3 ${picked ? 'border-[#1F4A3A] bg-[#EAF4EE]' : 'border-[#E8E4DB] bg-white'}`} data-testid={`named-match-${creator.id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-semibold text-[#1F1B18]">{creatorName(creator)}</p>
+                      <p className="text-[11px] text-[#8A8A8A]">{creatorSpecialty(creator)}</p>
+                      <p className="text-[11px] text-[#1F4A3A] mt-1">Named by your team as "{match.matched_from}"</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => (picked ? removeCreator(creator.id) : addCreator(creator.id))}
+                      className={picked ? 'v3-btn-secondary text-[11px]' : 'v3-btn-primary text-[11px]'}
+                    >
+                      {picked ? 'Remove' : 'Add back'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {namedUnmatched.length > 0 && (
+            <p className="mt-3 text-[11px] rounded-md border border-[#E5C99A] bg-[#FBF4E4] px-2.5 py-1.5 text-[#7A5A1E]">
+              Not found in the creator database: {namedUnmatched.join(', ')}. Add them manually below or onboard them first.
+            </p>
+          )}
+        </InfoCard>
+      )}
       <InfoCard title="AI database scan" action={<button onClick={runScan} disabled={scanning} className="v3-btn-primary" data-testid="creator-ai-scan-btn"><Sparkles className="w-3.5 h-3.5" /> {scanning ? 'Scanning...' : 'Run AI scan'}</button>}>
         {analysisSourceLabel && (
           <p
@@ -3399,7 +3482,14 @@ export const V3BusinessCasePlanCreatorScan = () => {
           })}
         </div>
       </InfoCard>
-      <InfoCard title="Selected creators" action={<button onClick={continueToBrief} className="v3-btn-primary" data-testid="creator-continue-brief-btn"><FileText className="w-3.5 h-3.5" /> Generate briefs</button>}>
+      <InfoCard title="Selected creators" action={(
+        <div className="flex flex-wrap justify-end gap-2">
+          {/* Either can be opened first; approving one opens the other, and
+              when both are done the flow moves into Planning. */}
+          <button onClick={continueToPitchDeck} className="v3-btn-secondary" data-testid="creator-open-pitch-deck-btn"><Presentation className="w-3.5 h-3.5" /> Open Pitch Deck</button>
+          <button onClick={continueToBrief} className="v3-btn-primary" data-testid="creator-continue-brief-btn"><FileText className="w-3.5 h-3.5" /> Open Creator Brief</button>
+        </div>
+      )}>
         {selectedCreators.length === 0 ? (
           <p className="text-[13px] text-[#8A8A8A]">No creators selected yet.</p>
         ) : (
@@ -3431,6 +3521,32 @@ export const V3BusinessCasePlanBrief = () => {
   const [sentBriefs, setSentBriefs] = useState({});
   const [sendPopup, setSendPopup] = useState(null);
   const [notice, setNotice] = useState('');
+  // The brand-tailored brief in the approved TASCK 4-page template.
+  const [templateBrief, setTemplateBrief] = useState(null);
+  const [generatingBrief, setGeneratingBrief] = useState(false);
+  const [briefProgress, setBriefProgress] = useState('');
+
+  // Adopt a brief generated earlier (persisted on the case).
+  useEffect(() => {
+    const persisted = bundle?.business_case?.plan?.generated_brief;
+    if (persisted && !templateBrief) setTemplateBrief(persisted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.business_case?.id, bundle?.business_case?.plan?.generated_brief_at]);
+
+  const generateTemplateBrief = async () => {
+    setGeneratingBrief(true);
+    setBriefProgress('Queued: writing the Creative Brief…');
+    try {
+      const result = await v3GenerateCreativeBrief(id, (job) => setBriefProgress(job?.message || ''));
+      setTemplateBrief(result?.brief || null);
+      toast.success('Creative Brief written in the TASCK template.');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not generate the Creative Brief.');
+    } finally {
+      setGeneratingBrief(false);
+      setBriefProgress('');
+    }
+  };
   useEffect(() => {
     const ids = (new URLSearchParams(location.search).get('creators') || '').split(',').map((value) => value.trim()).filter(Boolean);
     if (ids.length) setSelectedIds(ids);
@@ -3453,6 +3569,8 @@ export const V3BusinessCasePlanBrief = () => {
   const creatorById = (creatorId) => creators.find((creator) => creator.id === creatorId);
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
   const allBriefsSent = selectedCreators.length > 0 && selectedCreators.every((creator) => sentBriefs[creator.id]);
+  // Sibling document: the Pitch Deck. Approved (by admin or brand) counts as done.
+  const pitchDeckDone = bundle?.pitch_deck?.status === 'approved' || bundle?.business_case?.plan?.pitch_deck_status === 'approved';
   const planningFields = bundle?.brainstorm_round?.planning_fields || null;
   useEffect(() => {
     const activeCreators = selectedIds.map((creatorId) => creators.find((creator) => creator.id === creatorId)).filter(Boolean);
@@ -3538,6 +3656,67 @@ export const V3BusinessCasePlanBrief = () => {
   };
   return (
     <FlowShell title="Creative Brief Studio" subtitle="Framing step 4 of 5. Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
+      {/* The brand-tailored Creative Brief in the approved TASCK template
+          (the 4-page WE.YAN-style document). Claude writes it from the
+          alignment snapshot + Creator Selector data; download is the styled
+          .docx with the TASCK logo, footer, and fonts. */}
+      <InfoCard
+        title="TASCK Creative Brief (approved template)"
+        action={(
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={generateTemplateBrief}
+              disabled={generatingBrief}
+              className="v3-btn-primary text-[12px]"
+              data-testid="brief-generate-template-btn"
+            >
+              {generatingBrief ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {generatingBrief ? 'Writing…' : (templateBrief ? 'Regenerate brief' : 'Generate brief')}
+            </button>
+            {templateBrief && (
+              <a href={v3TemplateBriefDocxUrl(id)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brief-download-docx">
+                <Download className="w-3.5 h-3.5" /> Download (.docx)
+              </a>
+            )}
+          </div>
+        )}
+      >
+        {generatingBrief && briefProgress && (
+          <p className="text-[12px] text-[#1F4A3A] mb-3 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {briefProgress}</p>
+        )}
+        {!templateBrief && !generatingBrief && (
+          <p className="text-[12px] text-[#6E6657]">
+            Generates the brand-tailored Creative Brief in TASCK's approved 4-page template — same structure and design as
+            the agency sample, every word written for this brand from the Alignment Snapshot and Creator Selector.
+          </p>
+        )}
+        {templateBrief && (
+          <div className="rounded-lg border border-[#E8E4DB] bg-white p-5 space-y-3 max-h-[520px] overflow-y-auto" data-testid="brief-template-preview">
+            <p className="text-[16px] font-bold text-[#1A1A1A] uppercase">{templateBrief.title}</p>
+            {templateBrief.duration && <p className="text-[12px] text-[#4F3E2F]"><strong>Duration:</strong> {templateBrief.duration}</p>}
+            {(templateBrief.sections || []).map((section, index) => (
+              <div key={index} className="space-y-1.5">
+                <p className="text-[13px] font-bold text-[#1A1A1A] mt-3">{section.heading}</p>
+                {(section.paragraphs || []).map((para, i) => <p key={i} className="text-[12px] text-[#4F3E2F] leading-5">{para}</p>)}
+                {section.quote && <p className="text-[12px] font-semibold text-[#1F1B18] pl-6">{section.quote}</p>}
+                {(section.bullets || []).map((b, i) => <p key={`b${i}`} className="text-[12px] text-[#4F3E2F] pl-4">• {b}</p>)}
+                {section.pillars_intro && <p className="text-[12px] text-[#4F3E2F]">{section.pillars_intro}</p>}
+                {(section.pillars || []).map((b, i) => <p key={`p${i}`} className="text-[12px] text-[#4F3E2F] pl-4">• {b}</p>)}
+                {(section.subsections || []).map((sub, i) => (
+                  <div key={`s${i}`} className="pl-1">
+                    <p className="text-[12px] font-semibold text-[#1F1B18] mt-1.5">{sub.title}</p>
+                    {(sub.bullets || []).map((b, j) => <p key={j} className="text-[12px] text-[#4F3E2F] pl-4">• {b}</p>)}
+                  </div>
+                ))}
+                {(section.sub_bullets || []).map((b, i) => <p key={`sb${i}`} className="text-[12px] text-[#4F3E2F] pl-10">○ {b}</p>)}
+                {section.closing && <p className="text-[12px] text-[#4F3E2F] mt-1">{section.closing}</p>}
+              </div>
+            ))}
+            {templateBrief.closing_cta && <p className="text-[12px] font-bold text-[#1A1A1A] mt-4">{templateBrief.closing_cta}</p>}
+          </div>
+        )}
+      </InfoCard>
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Selected creator briefs" action={<button onClick={generateAll} className="v3-btn-primary" data-testid="brief-generate-all-btn"><Sparkles className="w-3.5 h-3.5" /> Generate AI briefs</button>}>
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end">
@@ -3589,20 +3768,286 @@ export const V3BusinessCasePlanBrief = () => {
           </div>
         </div>
       )}
-      <InfoCard title="Next Plan page">
+      {/* Pitch Deck and Creative Brief are siblings: whichever admin does
+          first, the other opens next; when both are done the flow moves into
+          Planning. */}
+      <InfoCard title="Next step">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <p className="text-[13px] text-[#6E6657]">
-            {allBriefsSent ? 'All selected creator briefs have been sent. Open the Strategy Snapshot that will be prepared for the brand.' : 'Open the Strategy Snapshot now, then send creator briefs when they are ready.'}
+            {pitchDeckDone
+              ? (allBriefsSent ? 'Briefs sent and Pitch Deck approved. Continue into Planning.' : 'Pitch Deck is approved. Send the creator briefs above, then continue into Planning.')
+              : (allBriefsSent ? 'All selected creator briefs have been sent. Open the Pitch Deck next — once it is approved the flow moves into Planning.' : 'Send the creator briefs above, or open the Pitch Deck first — either order works.')}
           </p>
-          <button
-            onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/strategy-snapshot`))}
-            className="v3-btn-primary"
-            data-testid="brief-open-strategy-snapshot-btn"
-          >
-            <ArrowRight className="w-3.5 h-3.5" /> Open Strategy Snapshot
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {!pitchDeckDone && (
+              <button
+                onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/pitch-deck`))}
+                className="v3-btn-primary"
+                data-testid="brief-open-pitch-deck-btn"
+              >
+                <Presentation className="w-3.5 h-3.5" /> Open Pitch Deck
+              </button>
+            )}
+            {pitchDeckDone && allBriefsSent && (
+              <button
+                onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))}
+                className="v3-btn-primary"
+                data-testid="brief-continue-planning-btn"
+              >
+                <ArrowRight className="w-3.5 h-3.5" /> Continue to Planning
+              </button>
+            )}
+            <button
+              onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/strategy-snapshot`))}
+              className="v3-btn-secondary"
+              data-testid="brief-open-strategy-snapshot-btn"
+            >
+              <ArrowRight className="w-3.5 h-3.5" /> Open Strategy Snapshot
+            </button>
+          </div>
         </div>
       </InfoCard>
+    </FlowShell>
+  );
+};
+
+// -----------------------------------------------------------------------
+// PITCH DECK (Framing, alongside the Creative Brief)
+// Ten AI-written sections generated from everything so far - alignment
+// snapshot, Creator Selector, selected creators. Admin edits each section,
+// then approves / previews / sends to the brand / downloads the styled
+// Google Docs-compatible .docx. Either this or the Creative Brief can be
+// done first; when both are done the flow moves into Planning.
+// -----------------------------------------------------------------------
+export const V3BusinessCasePitchDeck = () => {
+  const navigate = useNavigate();
+  const { id, bundle, reload } = useBusinessCaseBundle();
+  const bc = getCase(bundle);
+  const brand = getBrand(bundle);
+  const [deck, setDeck] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [sendPopup, setSendPopup] = useState(null);
+  const brandEmail = brand?.email || brand?.contact_email || '';
+  // The Creative Brief is "done" once at least one brief was sent - that is
+  // what decides whether approval here continues to the Brief page or Planning.
+  const briefDone = Boolean(bc?.plan?.creative_brief_id);
+
+  useEffect(() => {
+    const persisted = bundle?.pitch_deck;
+    if (persisted && !deck) setDeck(persisted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.pitch_deck?.id, bundle?.pitch_deck?.updated_at]);
+
+  useEffect(() => { if (brandEmail) setRecipientEmail(brandEmail); }, [brandEmail]);
+
+  const generate = async () => {
+    setGenerating(true);
+    setProgress('Queued: writing the Pitch Deck…');
+    try {
+      const result = await v3GeneratePitchDeck(id, (job) => setProgress(job?.message || ''));
+      setDeck(result?.pitch_deck || null);
+      await reload();
+      toast.success('Pitch Deck written. Review and edit each section before sending.');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not generate the Pitch Deck.');
+    } finally {
+      setGenerating(false);
+      setProgress('');
+    }
+  };
+
+  const updateSection = (index, content) => {
+    setDeck((current) => ({
+      ...(current || {}),
+      sections: (current?.sections || []).map((section, i) => (i === index ? { ...section, content } : section)),
+    }));
+  };
+
+  const persist = async () => {
+    if (!deck?.id) return null;
+    const saved = await v3UpdatePitchDeck(deck.id, { title: deck.title || '', sections: deck.sections || [], reviewer: 'admin' });
+    setDeck(saved?.pitch_deck || deck);
+    await reload();
+    return saved;
+  };
+
+  const saveEdits = async () => {
+    setSaving(true);
+    try {
+      await persist();
+      toast.success('Pitch Deck edits saved.');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not save the Pitch Deck.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const approve = async () => {
+    setSendPopup({ title: 'Approving', message: 'Approving the Pitch Deck…', tone: 'pending' });
+    try {
+      await persist();
+      await v3ApprovePitchDeckAs(id, 'admin', 'admin');
+      await reload();
+      const nextLabel = briefDone ? 'Planning' : 'the Creative Brief';
+      setSendPopup({ title: 'Approved', message: `Pitch Deck approved. Opening ${nextLabel}…`, tone: 'success' });
+      window.setTimeout(() => navigate(adminRoute(briefDone
+        ? `/business-cases/${id}/plan/planning`
+        : `/business-cases/${id}/frame/brief`)), 600);
+    } catch (e) {
+      setSendPopup(null);
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not approve the Pitch Deck. Generate it first.');
+    }
+  };
+
+  const sendToBrand = async () => {
+    const recipient = recipientEmail.trim() || brandEmail || 'the registered brand email';
+    setSendPopup({ title: 'Sending', message: `Sending the Pitch Deck to ${recipient}…`, tone: 'pending' });
+    try {
+      await persist();
+      const result = await v3SendPitchDeckToBrand(id, { recipient_email: recipientEmail.trim() || undefined });
+      await reload();
+      const status = result?.email?.status || 'queued';
+      if (status === 'sent') {
+        setSendPopup({ title: 'Sent', message: `Pitch Deck sent to ${result?.email?.to || recipient} with the formatted document attached. The brand can review and approve from their portal.`, tone: 'success' });
+      } else {
+        setSendPopup({ title: status === 'delivery_failed' ? 'Email not delivered' : 'Email queued', message: result?.email?.delivery_error || `Pitch Deck queued for ${recipient}.`, tone: 'warning' });
+      }
+    } catch (e) {
+      setSendPopup({ title: 'Email not sent', message: e?.response?.data?.detail || e?.message || 'Could not send the Pitch Deck. Generate it first.', tone: 'warning' });
+    }
+  };
+
+  const openPreview = () => {
+    if (!deck) return;
+    const win = window.open('', '_blank', 'noopener,noreferrer');
+    if (!win) return;
+    const sectionsHtml = (deck.sections || []).map((section) => (
+      `<section><h2>${escapeHtml(section.heading)}</h2><p style="white-space:pre-wrap">${escapeHtml(section.content)}</p></section>`
+    )).join('');
+    win.document.write(`<!doctype html><html><head><title>${escapeHtml(deck.title || 'Pitch Deck')}</title><style>
+      body{font-family:'Century Gothic',Arial,sans-serif;color:#1A1A1A;margin:40px auto;max-width:760px;line-height:1.6}
+      h1{font-size:22px;text-transform:uppercase} h2{font-size:15px;margin-top:26px} p{font-size:13px}
+    </style></head><body><h1>${escapeHtml(deck.title || 'Pitch Deck')}</h1>${sectionsHtml}</body></html>`);
+    win.document.close();
+  };
+
+  const deckComments = Array.isArray(deck?.brand_comments) ? deck.brand_comments : [];
+
+  return (
+    <FlowShell
+      title="Pitch Deck"
+      subtitle="The brand-facing pitch: ten sections written by the AI from the Alignment Snapshot, Creator Selector, and your selected creators. Edit each section, then approve or send it to the brand."
+      nextAction={briefDone ? 'Once the Pitch Deck is approved, the flow moves into Planning.' : 'Once the Pitch Deck is approved, the Creative Brief opens next.'}
+    >
+      <InfoCard
+        title="Pitch Deck"
+        action={(
+          <div className="flex flex-wrap justify-end gap-2">
+            <button onClick={generate} disabled={generating} className="v3-btn-primary text-[12px]" data-testid="pitch-generate-btn">
+              {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {generating ? 'Writing…' : (deck ? 'Regenerate' : 'Generate Pitch Deck')}
+            </button>
+            {deck && (
+              <>
+                <button onClick={saveEdits} disabled={saving} className="v3-btn-secondary text-[12px]" data-testid="pitch-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save edits'}</button>
+                <button onClick={openPreview} className="v3-btn-secondary text-[12px]" data-testid="pitch-preview-btn"><FileText className="w-3.5 h-3.5" /> Preview</button>
+                <a href={v3PitchDeckDocxUrl(deck.id)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="pitch-download-btn"><Download className="w-3.5 h-3.5" /> Download (.docx)</a>
+                <button onClick={approve} className="v3-btn-secondary text-[12px]" data-testid="pitch-approve-btn"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
+              </>
+            )}
+          </div>
+        )}
+      >
+        {generating && progress && (
+          <p className="text-[12px] text-[#1F4A3A] mb-3 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress}</p>
+        )}
+        {!deck && !generating && (
+          <p className="text-[12px] text-[#6E6657]">
+            Generates the ten-section Pitch Deck — About The Organisation, Context & Core Focus, The Problem, The
+            Objective, The Market / Core Audience, The Solution / Creator Strategy, Go To Market / Campaign, Campaign
+            Projections, Risk & Mitigation Analysis, and Budget Assumptions — each written by the AI from everything
+            captured so far. You can edit every section before it goes to the brand.
+          </p>
+        )}
+        {deck && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded-full border px-2 py-0.5 text-[11px] ${deck.status === 'approved' ? 'bg-[#DDE7E2] text-[#1F4A3A] border-[#C7D7CF]' : 'bg-[#F2EAD8] text-[#7A5F23] border-[#E6D6B6]'}`}>
+                {cleanV1Text(String(deck.status || 'draft').replace(/[_-]+/g, ' '))}
+              </span>
+              {deck.approved_by && <span className="text-[11px] text-[#8A8A8A]">Approved by {deck.approved_by} ({deck.approved_by_party})</span>}
+            </div>
+            <input
+              value={deck.title || ''}
+              onChange={(e) => setDeck((current) => ({ ...(current || {}), title: e.target.value }))}
+              className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[14px] font-semibold focus:outline-none focus:border-[#1F4A3A]"
+              data-testid="pitch-title-input"
+            />
+            {(deck.sections || []).map((section, index) => (
+              <div key={index} className="v3-card p-4" data-testid={`pitch-section-${index}`}>
+                <p className="text-[12px] font-semibold text-[#1A1A1A] mb-2">{index + 1}. {section.heading}</p>
+                <textarea
+                  rows={4}
+                  value={section.content || ''}
+                  onChange={(e) => updateSection(index, e.target.value)}
+                  className="w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed"
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </InfoCard>
+
+      {deck && (
+        <InfoCard title="Send to brand">
+          <p className="text-[12px] text-[#6E6657] mb-2">
+            Emails the formatted Pitch Deck (TASCK-branded .docx attached) and makes it reviewable in the brand portal.
+            Once the brand approves it{briefDone ? ', the flow moves into Planning.' : ', the Creative Brief opens next.'}
+          </p>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <input
+              value={recipientEmail}
+              onChange={(e) => setRecipientEmail(e.target.value)}
+              placeholder="brand@email.com"
+              className="flex-1 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"
+              data-testid="pitch-recipient-input"
+            />
+            <button onClick={sendToBrand} className="v3-btn-primary text-[12px]" data-testid="pitch-send-btn"><Send className="w-3.5 h-3.5" /> Send Pitch Deck</button>
+          </div>
+        </InfoCard>
+      )}
+
+      {deckComments.length > 0 && (
+        <InfoCard title={`Brand Comments (${deckComments.length})`}>
+          {deckComments.map((comment, index) => (
+            <div key={comment.id || index} className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-3 mb-2">
+              {comment.quoted_text && comment.quoted_text !== 'Brand review' && (
+                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Re: <strong className="text-[#4F3E2F]">{comment.quoted_text}</strong></p>
+              )}
+              <p className="text-[13px] text-[#1A1A1A] whitespace-pre-wrap">{cleanV1Text(comment.comment || '')}</p>
+              <p className="mt-1 text-[11px] text-[#8A8A8A]">By {comment.author || 'Brand'}{comment.created_at ? ` · ${formatDateTime(comment.created_at)}` : ''}</p>
+            </div>
+          ))}
+        </InfoCard>
+      )}
+
+      {sendPopup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-md rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
+            <h3 className="text-[15px] font-semibold text-[#1A1A1A] mb-2" style={{ fontFamily: "'Fraunces', serif" }}>{sendPopup.title}</h3>
+            <p className="text-[13px] leading-6 text-[#4F3E2F]">{sendPopup.message}</p>
+            {sendPopup.tone !== 'pending' && (
+              <div className="mt-4 flex justify-end">
+                <button onClick={() => setSendPopup(null)} className="v3-btn-primary" data-testid="pitch-popup-close">OK</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </FlowShell>
   );
 };
@@ -4651,7 +5096,7 @@ export const V3BusinessCaseDeliverySummary = () => {
           <p className="text-[13px] text-[#8A8A8A]">No primary creator linked to this Business Case yet.</p>
         )}
       </InfoCard>
-      <InfoCard title="Brainstorming ideas & strategy concept">
+      <InfoCard title="Creator Selector ideas & strategy concept">
         <p className="text-[13px] text-[#4F3E2F] whitespace-pre-wrap mb-3"><strong>Concept:</strong> {conceptBlock}</p>
         {executiveRows.length > 0 && (
           <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
@@ -4951,7 +5396,7 @@ export const V3BusinessCaseDeliverySummary = () => {
             <FileText className="w-3.5 h-3.5" /> Alignment Snapshot
           </button>
           <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-brainstorm-btn">
-            <Sparkles className="w-3.5 h-3.5" /> Brainstorm
+            <Sparkles className="w-3.5 h-3.5" /> Creator Selector
           </button>
           <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/creator-scan`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-creator-scan-btn">
             <Eye className="w-3.5 h-3.5" /> Creator Match

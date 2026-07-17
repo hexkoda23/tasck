@@ -11,6 +11,8 @@ import V3Modal from '../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles, Users } from 'lucide-react';
 import { adminRoute, getAdminRouteBase, V1_ADMIN_ROUTE_BASE } from '../../lib/v3AdminRouteBase';
 import { BrandLogo } from '../../lib/brandLogo';
+import { RelationshipStageTag, relationshipStageOf } from '../../lib/relationshipStage';
+import { PriorityTag } from '../../lib/snapshotPriority';
 import { toast } from 'sonner';
 
 // Format a brand's last-worked-on timestamp as a real readable date+time
@@ -60,6 +62,11 @@ const normaliseBrand = (b) => ({
   engagementTrack: b.engagement_track_default || 'paid',
   rmId: b.rm_id || b.relationship_manager?.id || 'rm-temi',
   relationshipManager: b.relationship_manager || { name: b.relationship_manager_name || 'Unassigned' },
+  relationshipStage: relationshipStageOf(b),
+  nextAction: b.next_action || '',
+  // Alignment Snapshot projects: the brand appears once PER project on the CRM
+  // list, each with its own priority tag, so admin can pick one and continue.
+  alignmentProjects: Array.isArray(b.alignment_projects) ? b.alignment_projects : [],
 });
 
 const brandCreatedAtTs = (value) => {
@@ -126,8 +133,7 @@ const V1AdminCRM = () => {
     email: '',
     phone: '',
     website: '',
-    hq: '',
-    notes: '',
+    next_action: '',
     call_purpose: '',
     rm_id: '',
     engagement_track_default: 'paid',
@@ -143,8 +149,7 @@ const V1AdminCRM = () => {
     email: '',
     phone: '',
     website: '',
-    hq: '',
-    notes: '',
+    next_action: '',
     call_purpose: '',
     rm_id: rms[0]?.id || '',
     engagement_track_default: 'paid',
@@ -163,7 +168,7 @@ const V1AdminCRM = () => {
   }, []);
 
   const submitBrand = async () => {
-    const requiredKeys = ['company', 'industry', 'primary_contact', 'role', 'email', 'hq'];
+    const requiredKeys = ['company', 'industry', 'primary_contact', 'role', 'email'];
     const errors = {};
     let firstInvalidKey = null;
 
@@ -364,6 +369,8 @@ const V1AdminCRM = () => {
                       >
                         {tp.label}
                       </span>
+                      {/* Where this brand stands in the relationship pipeline. */}
+                      <RelationshipStageTag stage={brand.relationshipStage} />
                     </div>
                     <p className="text-[12px] text-[#8A8A8A] mt-0.5">
                       {brand.primaryContact || 'No contact'} {brand.role ? `/ ${brand.role}` : ''}
@@ -376,6 +383,11 @@ const V1AdminCRM = () => {
                     <p className="text-[11px] text-[#6E6657] mt-1">
                       RM: {brand.relationshipManager?.name || 'Unassigned'}
                     </p>
+                    {brand.nextAction && (
+                      <p className="text-[11px] text-[#1F4A3A] mt-1 truncate" title={brand.nextAction}>
+                        <span className="font-semibold">Next action:</span> {brand.nextAction}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-4 flex-shrink-0">
@@ -397,6 +409,52 @@ const V1AdminCRM = () => {
           </div>
         )}
       </div>
+
+      {/* One row per Alignment Snapshot project: e.g. "MTN (Better Advert)"
+          with its priority tag. Clicking continues from that snapshot on the
+          Alignment Snapshot page; approval there opens the Creator Selector. */}
+      {filtered.some((brand) => brand.alignmentProjects.length > 0) && (
+        <div className="mt-6">
+          <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">
+            Alignment Snapshot projects
+          </p>
+          <div className="space-y-2">
+            {filtered.flatMap((brand) => brand.alignmentProjects.map((project) => (
+              <button
+                key={`${brand.id}-${project.snapshot_id}`}
+                onClick={() => navigate(adminRoute(`/business-cases/${project.business_case_id}/frame/snapshot?snapshot=${project.snapshot_id}`))}
+                className="w-full v3-card p-3 text-left flex items-center gap-3 hover:border-[#1F4A3A] transition-colors"
+                data-testid={`crm-project-${project.snapshot_id}`}
+              >
+                <CrmBrandLogo brand={brand} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[13px] font-medium text-[#1A1A1A]">
+                      {brand.company} <span className="text-[#6E6657] font-normal">({project.title})</span>
+                    </span>
+                    <PriorityTag priority={project.priority} />
+                    <span className="text-[10px] text-[#8A8A8A] px-2 py-0.5 rounded bg-[#F4F2EC]">
+                      {String(project.status || 'draft').replace(/[_-]+/g, ' ')}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#6E6657] mt-0.5">
+                    {project.priority ? `Brand priority: ${project.priority}` : 'Not ranked by the brand yet'} · click to continue from the Alignment Snapshot
+                  </p>
+                </div>
+                <span
+                  role="link"
+                  tabIndex={0}
+                  onClick={(e) => { e.stopPropagation(); navigate(adminRoute(`/crm-brands/${brand.id}`)); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); navigate(adminRoute(`/crm-brands/${brand.id}`)); } }}
+                  className="text-[11px] text-[#8A8A8A] hover:text-[#1F4A3A] underline flex-shrink-0"
+                >
+                  Brand details
+                </span>
+              </button>
+            )))}
+          </div>
+        </div>
+      )}
 
       {createdIntake && (
         <div
@@ -461,7 +519,6 @@ const V1AdminCRM = () => {
             { k: 'email', label: 'Contact email (strongly recommended)', placeholder: 'name@brand.com', required: true },
             { k: 'phone', label: 'Phone / WhatsApp', placeholder: '+234...' },
             { k: 'website', label: 'Website', placeholder: 'https://brand.com' },
-            { k: 'hq', label: 'HQ / location', placeholder: 'Lagos, Nigeria', required: true },
           ].map((f) => (
             <div key={f.k} id={`form-div-${f.k}`}>
               <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
@@ -492,16 +549,19 @@ const V1AdminCRM = () => {
             </div>
           ))}
           <div>
+            {/* Optional. Several admins share this board, so whoever opens the
+                brand next can see what is meant to happen. Editable later from
+                the brand detail page. */}
             <label className="text-[11px] uppercase tracking-wider text-[#8A8A8A] block mb-1">
-              Notes / source
+              Next action <span className="text-[#B8AA96] normal-case tracking-normal">(optional)</span>
             </label>
             <textarea
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              placeholder="Where this lead came from, what they asked for, and what the qualification call should confirm."
-              rows={3}
+              value={form.next_action}
+              onChange={(e) => setForm({ ...form, next_action: e.target.value })}
+              placeholder="e.g. Follow up with Funke on the Q1 budget before booking the Connect call."
+              rows={2}
               className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
-              data-testid="add-brand-notes"
+              data-testid="add-brand-next-action"
             />
           </div>
           <div>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useThemeMode } from '../../lib/useThemeMode';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Logo from '../shared/Logo';
 import { useAuth } from '../../context/AuthContext';
@@ -12,6 +13,7 @@ import {
   LogOut,
   MessageSquare,
   Moon,
+  Presentation,
   Search,
   Settings,
   Sun,
@@ -37,6 +39,7 @@ const portalConfig = {
       { path: '/brand/projects', label: 'Projects', icon: FolderOpen },
       { path: '/brand/alignment-snapshot', label: 'Alignment Snapshot', icon: FileCheck },
       { path: '/brand/strategy-snapshot', label: 'Strategy Snapshot', icon: Briefcase },
+      { path: '/brand/pitch-deck', label: 'Pitch Deck', icon: Presentation },
       { path: '/brand/contracts', label: 'Contracts', icon: FileCheck },
       { path: '/brand/reports-feedback', label: 'Reports & Feedback', icon: Upload },
       { path: '/brand/messages', label: 'Messages', icon: MessageSquare },
@@ -69,7 +72,7 @@ const V1PortalLayout = ({ portal }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated, logout, user } = useAuth();
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useThemeMode();
   const config = portalConfig[portal] || portalConfig.brand;
   const brandSession = portal === 'brand' ? getBrandPortalSession() : null;
   const brand = portal === 'brand' ? getBrandPortalBrand() : null;

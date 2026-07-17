@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useThemeMode } from '../../lib/useThemeMode';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Logo from '../../components/shared/Logo';
 import V3NotificationCenter from './V3NotificationCenter';
@@ -112,7 +113,7 @@ const V3Layout = ({ portal }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const config = navConfig[portal];
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useThemeMode();
   const brandSession = portal === 'brand' ? getBrandPortalSession() : null;
   const brand = portal === 'brand' ? getBrandPortalBrand() : null;
 

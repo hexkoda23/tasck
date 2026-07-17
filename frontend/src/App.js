@@ -87,7 +87,6 @@ import {
 import {
   V3BusinessCaseStageHome as V1BusinessCaseStageHome,
   V3BusinessCaseConnect as V1BusinessCaseConnect,
-  V3BusinessCaseConnectSchedule as V1BusinessCaseConnectSchedule,
   V3BusinessCaseConnectQuestions as V1BusinessCaseConnectQuestions,
   V3BusinessCaseConnectAnalysis as V1BusinessCaseConnectAnalysis,
   V3BusinessCaseConnectReschedule as V1BusinessCaseConnectReschedule,
@@ -100,6 +99,7 @@ import {
   V3BusinessCasePlanBrainstormTranscript as V1BusinessCasePlanBrainstormTranscript,
   V3BusinessCasePlanCreatorScan as V1BusinessCasePlanCreatorScan,
   V3BusinessCasePlanBrief as V1BusinessCasePlanBrief,
+  V3BusinessCasePitchDeck as V1BusinessCasePitchDeck,
   V3BusinessCasePlanCreatorBriefingCall as V1BusinessCasePlanCreatorBriefingCall,
   V3BusinessCasePlanStrategySnapshot as V1BusinessCasePlanStrategySnapshot,
   V3BusinessCasePlanWaitingBrand as V1BusinessCasePlanWaitingBrand,
@@ -110,6 +110,12 @@ import {
   V3BusinessCaseDeliverables as V1BusinessCaseDeliverables,
   V3BusinessCaseFinalReport as V1BusinessCaseFinalReport,
 } from './pages/admin/V1BusinessCaseFlowPages';
+// V1 Connect Schedule & Transcripts rebuild: a dedicated combined panel +
+// opportunities page, separate from the V3 alias (V3 admin keeps its own).
+import {
+  V1BusinessCaseConnectSchedulePage as V1BusinessCaseConnectSchedule,
+  V1BusinessCaseOpportunities,
+} from './pages/admin/V1ConnectSources';
 import V3BrandInreach from './pages/v3/V3BrandInreach';
 
 // V3 Brand Portal Pages
@@ -131,6 +137,7 @@ import {
   V1BrandStrategySnapshot,
   V1BrandContracts,
   V1BrandReportsFeedback,
+  V1BrandPitchDeck,
 } from './pages/brand/V1BrandDocuments';
 import V1BrandMessages from './pages/brand/V1BrandMessages';
 
@@ -316,6 +323,7 @@ function AppRoutes() {
         <Route path="alignment-snapshot" element={<V1BrandAlignmentSnapshot />} />
         <Route path="strategy-snapshot" element={<V1BrandStrategySnapshot />} />
         <Route path="contracts" element={<V1BrandContracts />} />
+        <Route path="pitch-deck" element={<V1BrandPitchDeck />} />
         <Route path="reports-feedback" element={<V1BrandReportsFeedback />} />
         <Route path="approvals" element={<V1BrandAlignmentSnapshot />} />
         <Route path="documents" element={<V1BrandStrategySnapshot />} />
@@ -422,6 +430,7 @@ function AppRoutes() {
         <Route path="business-cases/:id" element={<V1BusinessCaseStageHome />} />
         <Route path="business-cases/:id/connect" element={<V1BusinessCaseConnect />} />
         <Route path="business-cases/:id/connect/schedule" element={<V1BusinessCaseConnectSchedule />} />
+        <Route path="business-cases/:id/connect/opportunities" element={<V1BusinessCaseOpportunities />} />
         <Route path="business-cases/:id/connect/questions" element={<V1BusinessCaseConnectQuestions />} />
         <Route path="business-cases/:id/connect/analysis" element={<V1BusinessCaseConnectAnalysis />} />
         <Route path="business-cases/:id/connect/reschedule" element={<V1BusinessCaseConnectReschedule />} />
@@ -438,6 +447,7 @@ function AppRoutes() {
         <Route path="business-cases/:id/frame/brainstorm" element={<V1BusinessCasePlanBrainstorm />} />
         <Route path="business-cases/:id/frame/creator-scan" element={<V1BusinessCasePlanCreatorScan />} />
         <Route path="business-cases/:id/frame/brief" element={<V1BusinessCasePlanBrief />} />
+        <Route path="business-cases/:id/frame/pitch-deck" element={<V1BusinessCasePitchDeck />} />
         <Route path="business-cases/:id/frame/creator-briefing-call" element={<V1BusinessCasePlanCreatorBriefingCall />} />
         <Route path="business-cases/:id/frame/strategy-snapshot" element={<V1BusinessCasePlanStrategySnapshot />} />
         <Route path="business-cases/:id/frame/waiting-brand-strategy" element={<V1BusinessCasePlanWaitingBrand />} />

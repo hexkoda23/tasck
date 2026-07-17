@@ -80,7 +80,7 @@ export const v3GenerateAlignmentQuestions = (bcId) => v3.post(`/business-cases/$
 
 export const v3ApproveAlignment = (bcId, approver) => v3.post(`/business-cases/${bcId}/ai/alignment/approve`, { approver }).then(r => r.data);
 
-export const v3ApproveAlignmentAs = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/ai/alignment/approve`, { approver, approver_party }).then(r => r.data);
+export const v3ApproveAlignmentAs = (bcId, approver, approver_party = 'admin', snapshotId = undefined) => v3.post(`/business-cases/${bcId}/ai/alignment/approve`, { approver, approver_party, snapshot_id: snapshotId }).then(r => r.data);
 
 export const v3UpdateAlignment = (snapshotId, payload) => v3.patch(`/alignment-snapshots/${snapshotId}`, payload).then(r => r.data);
 
@@ -264,6 +264,85 @@ export const v3AdminOverview = () => v3.get('/metrics/admin-overview').then(r =>
 
 // -------- Projects --------
 export const v3ListProjects = () => v3.get('/projects').then(r => r.data);
+
+// --- Connect sources: transcripts, email chains, WhatsApp threads ---------
+// Admin drips these in over time; all of them feed the AI analysis.
+export const v3ListConnectSources = (bcId) => v3.get(`/business-cases/${bcId}/connect/sources`).then(r => r.data);
+export const v3AddConnectSource = (bcId, { kind, label, content, author }) =>
+  v3.post(`/business-cases/${bcId}/connect/sources`, { kind, label, content, author }).then(r => r.data);
+export const v3DeleteConnectSource = (bcId, sourceId) =>
+  v3.delete(`/business-cases/${bcId}/connect/sources/${sourceId}`).then(r => r.data);
+
+// --- Opportunities: detect -> review/merge -> generate snapshots ----------
+export const v3ListOpportunities = (bcId) => v3.get(`/business-cases/${bcId}/connect/opportunities`).then(r => r.data);
+// Detection runs as a background job (Claude takes 20-60s; a sync request
+// would 504 behind the gateway). Start it, then poll until it completes.
+export const v3StartDetectOpportunities = (bcId) => v3.post(`/business-cases/${bcId}/connect/detect-opportunities`).then(r => r.data);
+export const v3GetDetectOpportunitiesJob = (bcId, jobId) => v3.get(`/business-cases/${bcId}/connect/detect-opportunities/jobs/${jobId}`).then(r => r.data);
+export const v3DetectOpportunities = async (bcId, onProgress) => {
+  const started = await v3StartDetectOpportunities(bcId);
+  const jobId = started?.job_id;
+  if (!jobId) return started; // future-proof: a sync response passes straight through
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const { job } = await v3GetDetectOpportunitiesJob(bcId, jobId);
+    if (typeof onProgress === 'function' && job?.message) onProgress(job);
+    if (job?.status === 'completed') return { ok: true, opportunities: job.opportunities || [], detected_at: job.detected_at, analysis_source: job.analysis_source };
+    if (job?.status === 'failed') throw new Error(job?.message || 'Opportunity detection failed.');
+  }
+  throw new Error('Opportunity detection timed out. Please retry.');
+};
+export const v3MergeOpportunities = (bcId, ids, title) =>
+  v3.post(`/business-cases/${bcId}/connect/opportunities/merge`, { ids, title }).then(r => r.data);
+export const v3UpdateOpportunity = (bcId, oppId, patch) =>
+  v3.patch(`/business-cases/${bcId}/connect/opportunities/${oppId}`, patch).then(r => r.data);
+export const v3DeleteOpportunity = (bcId, oppId) =>
+  v3.delete(`/business-cases/${bcId}/connect/opportunities/${oppId}`).then(r => r.data);
+export const v3GenerateOpportunitySnapshots = (bcId) =>
+  v3.post(`/business-cases/${bcId}/connect/opportunities/generate-snapshots`).then(r => r.data);
+
+// --- Creative brief: Claude writes it in the approved TASCK template ------
+// Background job (Claude takes 20-60s); resolves when the brief is ready.
+export const v3GenerateCreativeBrief = async (bcId, onProgress) => {
+  const started = await v3.post(`/business-cases/${bcId}/ai/creative-brief/generate`).then(r => r.data);
+  const jobId = started?.job_id;
+  if (!jobId) return started;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const { job } = await v3.get(`/business-cases/${bcId}/ai/creative-brief/jobs/${jobId}`).then(r => r.data);
+    if (typeof onProgress === 'function' && job?.message) onProgress(job);
+    if (job?.status === 'completed') return { ok: true, brief: job.brief };
+    if (job?.status === 'failed') throw new Error(job?.message || 'Brief generation failed.');
+  }
+  throw new Error('Brief generation timed out. Please retry.');
+};
+export const v3TemplateBriefDocxUrl = (bcId) => `${V3}/business-cases/${bcId}/creative-brief/docx`;
+
+// --- Pitch Deck: ten AI-written sections, brand-facing -------------------
+export const v3GetPitchDeck = (bcId) => v3.get(`/business-cases/${bcId}/pitch-deck`).then(r => r.data);
+export const v3GeneratePitchDeck = async (bcId, onProgress) => {
+  const started = await v3.post(`/business-cases/${bcId}/ai/pitch-deck/generate`).then(r => r.data);
+  const jobId = started?.job_id;
+  if (!jobId) return started;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const { job } = await v3.get(`/business-cases/${bcId}/ai/pitch-deck/jobs/${jobId}`).then(r => r.data);
+    if (typeof onProgress === 'function' && job?.message) onProgress(job);
+    if (job?.status === 'completed') return { ok: true, pitch_deck: job.pitch_deck };
+    if (job?.status === 'failed') throw new Error(job?.message || 'Pitch Deck generation failed.');
+  }
+  throw new Error('Pitch Deck generation timed out. Please retry.');
+};
+export const v3UpdatePitchDeck = (deckId, payload) => v3.patch(`/pitch-decks/${deckId}`, payload).then(r => r.data);
+export const v3ApprovePitchDeckAs = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/pitch-deck/approve`, { approver, approver_party }).then(r => r.data);
+export const v3SendPitchDeckToBrand = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/pitch-deck/send`, payload).then(r => r.data);
+export const v3AddPitchDeckComment = (deckId, payload) => v3.post(`/pitch-decks/${deckId}/comments`, payload).then(r => r.data);
+export const v3PitchDeckDocxUrl = (deckId) => `${V3}/pitch-decks/${deckId}/docx`;
+
+// --- Alignment snapshot priority (brand ranks; admin can override) --------
+export const v3ListPriorityOptions = () => v3.get('/priority-options').then(r => r.data);
+export const v3SetSnapshotPriority = (snapshotId, priority, actor) =>
+  v3.patch(`/alignment-snapshots/${snapshotId}/priority`, { priority, actor }).then(r => r.data);
 
 export default v3;
 

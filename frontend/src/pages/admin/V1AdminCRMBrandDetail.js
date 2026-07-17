@@ -28,6 +28,7 @@ import {
   v3ResendBrandCredentials,
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
+import { RelationshipStageSelect, relationshipStageMeta, relationshipStageOf } from '../../lib/relationshipStage';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
 import { BrandLogo as SharedBrandLogo } from '../../lib/brandLogo';
 import { toast } from 'sonner';
@@ -360,6 +361,10 @@ const V1AdminCRMBrandDetail = () => {
   const [scrapeWarnings, setScrapeWarnings] = useState([]);
   const [scrapeError, setScrapeError] = useState('');
   const [editingAbout, setEditingAbout] = useState(false);
+  // Next action is shared across the admin team - any admin opening this brand
+  // can read it and edit it.
+  const [editingNextAction, setEditingNextAction] = useState(false);
+  const [nextActionDraft, setNextActionDraft] = useState('');
   const [aboutDraft, setAboutDraft] = useState('');
   const [editingMarketingBudget, setEditingMarketingBudget] = useState(false);
   const [marketingBudgetDraft, setMarketingBudgetDraft] = useState('');
@@ -462,6 +467,17 @@ const V1AdminCRMBrandDetail = () => {
       await reloadData();
     } catch (e) {
       toast.error(e?.message || 'Failed to update about section.');
+    }
+  };
+
+  const handleSaveNextAction = async () => {
+    try {
+      await v3UpdateBrandDetails(id, { next_action: nextActionDraft });
+      toast.success('Next action updated.');
+      setEditingNextAction(false);
+      await reloadData();
+    } catch (e) {
+      toast.error(e?.message || 'Failed to update the next action.');
     }
   };
 
@@ -638,6 +654,21 @@ const V1AdminCRMBrandDetail = () => {
         <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
           <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
         </button>
+        <div className="flex-1" />
+        {/* Relationship stage. Saves to the brand record, so the tag updates
+            everywhere this brand appears (CRM list, business case pages). */}
+        <RelationshipStageSelect
+          brandId={id}
+          value={relationshipStageOf(brand)}
+          onChange={(next, error) => {
+            if (error) {
+              toast.error('Could not update the relationship stage.');
+              return;
+            }
+            toast.success(`Stage set to "${relationshipStageMeta(next).label}".`);
+            reloadData();
+          }}
+        />
         <button
           type="button"
           onClick={() => setDeleteConfirmOpen(true)}
@@ -672,6 +703,61 @@ const V1AdminCRMBrandDetail = () => {
         </div>
         {notice && <div className="mt-4 rounded-[8px] border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2 text-[12px] text-[#7A5A1E]">{notice}</div>}
       </div>
+
+      {/* Next action: shared across the admin team. Any admin can read what is
+          meant to happen next on this brand and edit it. */}
+      <InfoCard
+        title="Next action"
+        action={!editingNextAction && (
+          <button
+            type="button"
+            onClick={() => {
+              setNextActionDraft(firstValue(brand, ['next_action']) || '');
+              setEditingNextAction(true);
+            }}
+            className="p-1 hover:bg-[#F4F2EC] rounded text-[#8A8A8A] hover:text-[#1F4A3A] transition-colors"
+            title="Edit the next action"
+            data-testid="crm-edit-next-action-btn"
+          >
+            <Edit2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      >
+        {editingNextAction ? (
+          <div className="space-y-2">
+            <textarea
+              value={nextActionDraft}
+              onChange={(e) => setNextActionDraft(e.target.value)}
+              rows={3}
+              className="w-full text-[13px] border border-[#D7CBB8] rounded-lg p-2 focus:outline-none focus:border-[#1F4A3A]"
+              placeholder="What should happen next on this brand? e.g. Follow up with Funke on the Q1 budget before booking the Connect call."
+              data-testid="crm-next-action-textarea"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setEditingNextAction(false)}
+                className="px-2.5 py-1 text-[11px] rounded bg-[#F4F2EC] text-[#4F3E2F]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveNextAction}
+                className="px-2.5 py-1 text-[11px] rounded bg-[#1F4A3A] text-white flex items-center gap-1"
+                data-testid="crm-save-next-action-btn"
+              >
+                <Check className="w-3 h-3" /> Save
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p
+            className="whitespace-pre-wrap text-[13px] leading-6 text-[#4F3E2F]"
+            data-testid="crm-next-action-value"
+          >
+            {firstValue(brand, ['next_action']) || 'No next action set yet. Add one so the next admin knows what to do.'}
+          </p>
+        )}
+      </InfoCard>
 
       <InfoCard title="Brand details">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -973,7 +1059,7 @@ const V1AdminCRMBrandDetail = () => {
                   <div className="mt-2 flex flex-wrap gap-1 border-t border-[#E8E4DB] pt-2">
                     <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/snapshot`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Alignment</button>
                     <span className="text-[10px] text-[#D7CBB8]">·</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brainstorm`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Brainstorm</button>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brainstorm`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Creator Selector</button>
                     <span className="text-[10px] text-[#D7CBB8]">·</span>
                     <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/creator-scan`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Creator Match</button>
                     <span className="text-[10px] text-[#D7CBB8]">·</span>

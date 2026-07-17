@@ -129,16 +129,23 @@ def creator_login_url() -> str:
         return f"{base.rstrip('/')}/login" if not base.endswith("/login") else base
     return f"{base}/creator/login"
 
+# Last-resort public URL for links we put in emails. ALWAYS prefer setting
+# FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL for the environment - this
+# default exists only so we never ship a RELATIVE link ("/brand/login"), which
+# is what happened when the env was unset: the brand received a dead link they
+# could not click. Override it per environment rather than editing this value.
+DEFAULT_PUBLIC_APP_URL = (os.getenv("DEFAULT_PUBLIC_APP_URL") or "https://thcodemo.space").strip().rstrip("/")
+
+
 def app_base_url() -> str:
     """Single source of truth for the frontend URL used in emails and portal links.
 
     Resolution order:
       1. FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL (explicit override).
       2. http://localhost:7159 when APP_ENV is "local" or "dev".
-      3. Empty string as a last resort so downstream callers can decide how to
-         handle missing config (previously we returned a hardcoded demo URL
-         here which shipped wrong emails after the app was redeployed to a
-         new production host).
+      3. DEFAULT_PUBLIC_APP_URL - an absolute URL, never "". A relative link in
+         an email is always broken for the recipient, so a possibly-stale
+         absolute host beats a guaranteed-dead relative path.
     """
     raw = (
         os.getenv("FRONTEND_URL")
@@ -151,7 +158,12 @@ def app_base_url() -> str:
     env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
     if env in {"local", "dev", "development"}:
         return "http://localhost:7159"
-    return ""
+    logger.warning(
+        "No FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL set - email links fall back to %s. "
+        "Set one of these env vars for this environment.",
+        DEFAULT_PUBLIC_APP_URL,
+    )
+    return DEFAULT_PUBLIC_APP_URL
 
 
 def _brand_created_at_key(brand: Dict[str, Any]) -> str:
@@ -233,14 +245,25 @@ FOCUS_OPTIONS = [
     "Brand repositioning",
     "Talent / creator partnership",
 ]
+# Priority vocabulary, client-specified. Used BOTH for the Focus & Priority
+# section inside an Alignment Snapshot and for the priority the brand sets on
+# each Alignment Snapshot when several are generated from one Connect call.
+# Ordered most-urgent first - focus_priority_narrative and the snapshot sorting
+# both rank by this order.
 PRIORITY_OPTIONS = [
-    "High Priority & Urgent",
-    "High Priority",
-    "Mid-Term Priority",
-    "Long-Term Priority",
-    "Low Priority",
-    "Ongoing",
+    "High Priority and Urgent",
+    "High Priority and Long Term",
+    "Mid Term Priority",
+    "Long Term Priority",
 ]
+# Tag colours for the priority chip, matching the client's reference image.
+PRIORITY_COLORS = {
+    "High Priority and Urgent": {"bg": "#9B1C1C", "fg": "#FFFFFF"},
+    "High Priority and Long Term": {"bg": "#1D4ED8", "fg": "#FFFFFF"},
+    "Mid Term Priority": {"bg": "#6B5E16", "fg": "#FFFFFF"},
+    "Long Term Priority": {"bg": "#2A6A6A", "fg": "#FFFFFF"},
+}
+DEFAULT_SNAPSHOT_PRIORITY = ""  # brand has not ranked it yet
 
 
 def focus_priority_narrative(segments, priority_options=None) -> str:
@@ -276,6 +299,46 @@ def focus_priority_narrative(segments, priority_options=None) -> str:
             lines.append(f"• {focus}" + (f" ({name})" if name else ""))
         blocks.append(f"{key}:\n" + "\n".join(lines))
     return "\n\n".join(blocks)
+
+
+# CRM relationship stage. One value per brand, shown as a coloured tag wherever
+# the brand appears (CRM list, brand detail, business case pages) and editable
+# from a dropdown that is pinned to those pages. Admin can set it by hand; real
+# stage events (connect call booked//completed, move to frame, contract signed,
+# delivery, reporting) advance it automatically - see _auto_relationship_stage.
+RELATIONSHIP_STAGES = [
+    {"value": "unknown", "label": "Unknown", "bg": "#1F2937", "fg": "#FFFFFF"},
+    {"value": "dormant", "label": "Dormant", "bg": "#6B7280", "fg": "#FFFFFF"},
+    {"value": "resting", "label": "Resting relationship | check back date set", "bg": "#E3E5EF", "fg": "#3F3F46"},
+    {"value": "setup_relationship_meeting", "label": "Set Up Relationship Meeting", "bg": "#0F766E", "fg": "#FFFFFF"},
+    {"value": "hot_relationship", "label": "HOT Relationship | Prepare Connect Stage", "bg": "#22D3EE", "fg": "#0B3B44"},
+    {"value": "setup_connect_call", "label": "Set Up Connect Call", "bg": "#2563EB", "fg": "#FFFFFF"},
+    {"value": "hot_connection", "label": "HOT Connection | Prepare Pitch", "bg": "#6EE7A8", "fg": "#0B3B2B"},
+    {"value": "setup_pitch_meeting", "label": "Set Up Pitch Meeting | Pitch Ready", "bg": "#BBF7D0", "fg": "#14532D"},
+    {"value": "hot_pitch", "label": "HOT Pitch | Head to framing", "bg": "#FCD34D", "fg": "#4A3208"},
+    {"value": "framing_onboard_partner", "label": "Framing | Onboard Partner", "bg": "#F9A8D4", "fg": "#5C1138"},
+    {"value": "framing_onboard_super_creative", "label": "Framing | Onboard Super Creative", "bg": "#F87171", "fg": "#4C0D0D"},
+    {"value": "framing_agreements_signed", "label": "Framing | Agreements Signed", "bg": "#991B1B", "fg": "#FFFFFF"},
+    {"value": "project_delivery", "label": "Project Delivery", "bg": "#DDD6FE", "fg": "#3B0764"},
+    {"value": "reporting", "label": "Reporting", "bg": "#7C3AED", "fg": "#FFFFFF"},
+]
+RELATIONSHIP_STAGE_VALUES = {stage["value"] for stage in RELATIONSHIP_STAGES}
+DEFAULT_RELATIONSHIP_STAGE = "unknown"
+
+# The relationship manager the client asked to always be selectable.
+MI_RM_ID = "rm-mi"
+MI_RM_NAME = "MI"
+
+
+# Total wall-clock budget for POST /brands/{id}/scrape. The gateway in front of
+# this API cuts a request off at ~60s and returns 504 to the browser. The scrape
+# fires many optional network probes, so without a budget a slow or dead domain
+# (every request burning its full timeout, twice over via the SerpAPI retry) ran
+# for minutes and the admin just saw "Scraping failed". We now stop starting new
+# work once the budget is spent and return whatever was captured so far.
+_SCRAPE_BUDGET_SECONDS = float(os.getenv("BRAND_SCRAPE_BUDGET_SECONDS", "40") or 40)
+# Per-request caps. A dead host fails on connect in ~4s instead of hanging 15s.
+_SCRAPE_HTTP_TIMEOUT_ARGS = dict(connect=4.0, read=6.0, write=4.0, pool=4.0)
 
 
 def _is_weyan_brand(name: Any) -> bool:
@@ -1317,21 +1380,41 @@ async def _call_creator_match_tool(
 # Curated questions the admin can ask during the brainstorm session. These
 # are template-grounded (the TTA Snapshot Brainstorm structure) and shown on
 # the upload page before/while the session happens.
+# The Creator Selector question set (client-specified). These are BOTH the
+# suggested questions shown on the transcript-upload page AND the exact fields
+# the TTA Creator Selector form captures - one box each, manually fillable or
+# auto-filled by Claude from an uploaded transcript.
+CREATOR_SELECTOR_FIELDS = [
+    {"key": "audience_platform", "label": "Where is this audience (Platform)",
+     "hint": "The platforms where this audience actually lives - e.g. Instagram, TikTok, YouTube, WhatsApp, radio."},
+    {"key": "top_of_funnel_size", "label": "Top of Funnel Audience Size",
+     "hint": "How large is the reachable audience at the top of the funnel? Estimates and sources are fine."},
+    {"key": "funnel_milestones", "label": "What are the Funnel Milestones",
+     "hint": "The steps from first touch to the target action - e.g. view -> follow -> click -> sign-up -> repeat use."},
+    {"key": "timelines", "label": "Timelines",
+     "hint": "Key dates and phases - launch windows, campaign length, reporting points."},
+    {"key": "risks", "label": "Risks",
+     "hint": "The biggest risks to this working - audience, creator, market, or execution risks."},
+    {"key": "risk_mitigation", "label": "Risk Mitigation",
+     "hint": "How each named risk is reduced or handled."},
+    {"key": "budget_assumption", "label": "Budget Assumption",
+     "hint": "The working budget level and what it is expected to buy."},
+    {"key": "creator_matches", "label": "Creator Matches",
+     "hint": "Creators discussed for this project - names or creator types, one per line if possible."},
+]
+
+def _creator_selector_default() -> Dict[str, str]:
+    return {field["key"]: "" for field in CREATOR_SELECTOR_FIELDS}
+
 BRAINSTORM_SUGGESTED_QUESTIONS = [
-    "What is the single most important business outcome this project must drive?",
-    "What specific action do we need the audience to take that they are not taking now?",
-    "What is the biggest barrier stopping that action today - trust, awareness, price, habit, or relevance?",
-    "When was the last time the audience did the target action, and what stopped them from doing it more often?",
-    "Who does the audience currently listen to or trust for this category?",
-    "What kind of creator voice fits best - an authority, a peer, an entertainer, or a niche specialist?",
-    "Do we need reach, trust, conversion, or community most from the creator relationship?",
-    "Which content format will carry the idea best - short-form, long-form, live, or a series?",
-    "What does success look like in numbers, and over what timeframe?",
-    "What is the realistic budget level - low, mid, or premium - and what efficiency do we expect from it?",
-    "What are the top two risks to executing this well, and how do we de-risk them?",
-    "What language does the audience actually use when they talk about this category?",
-    "What cultural moment, tension, or behaviour can the brand credibly tap into right now?",
-    "If we could only tell the audience one thing, what would it be?",
+    "Where is this audience? (Platform)",
+    "What is the Top of Funnel audience size?",
+    "What are the Funnel Milestones?",
+    "What are the Timelines?",
+    "What are the Risks?",
+    "How do we mitigate those risks? (Risk Mitigation)",
+    "What is the Budget Assumption?",
+    "Which creators match this project? (Creator Matches)",
 ]
 
 
@@ -1356,7 +1439,7 @@ def _brainstorm_snapshot_summary_default() -> Dict[str, str]:
 
 def _brainstorm_analysis_system_prompt() -> str:
     return """
-You are TASCK's TTA Snapshot Brainstorm analyst, working for a paying enterprise client. You will be given the transcript of a 60-90 minute creator-strategy brainstorm session. Your job is to read it carefully and fill in the entire TTA Snapshot Brainstorm template with rich, specific, defensible content drawn ONLY from the transcript.
+You are TASCK's TTA Creator Selector analyst, working for a paying enterprise client. You will be given the transcript of a creator-selection session (the conversation may also be an email or WhatsApp thread). Your job is to read it carefully and fill in the entire TTA Creator Selector template with rich, specific, defensible content drawn ONLY from the transcript. The MOST IMPORTANT output is `creator_selector` - the eight headline fields the team reviews.
 
 Write polished Nigerian business English. Use concrete nouns and the actual language used in the session. Do NOT invent creators, numbers, budgets, or facts not supported by the transcript - if something was not discussed, write a short, clearly-marked placeholder like "Not covered in session - confirm with team." rather than fabricating.
 
@@ -1366,6 +1449,16 @@ ABSOLUTE RULES:
 
 Return JSON only, no markdown, with EXACTLY this shape (fill every string; use "" only when truly nothing applies):
 {
+  "creator_selector": {
+    "audience_platform": "string (where this audience lives - the platforms, channels, or spaces named in the session)",
+    "top_of_funnel_size": "string (the top-of-funnel audience size discussed, with any source or estimate basis)",
+    "funnel_milestones": "string (the funnel milestones from first touch to target action, in order)",
+    "timelines": "string (key dates, phases, campaign length, and reporting points)",
+    "risks": "string (the biggest risks to this working)",
+    "risk_mitigation": "string (how each named risk is reduced or handled)",
+    "budget_assumption": "string (the working budget level and what it is expected to buy)",
+    "creator_matches": "string (creators or creator types discussed for this project, one per line)"
+  },
   "pre_work": {
     "client_brief_summary": {"objective": "string", "target_audience": "string", "constraints": "string"},
     "initial_hypothesis": "string",
@@ -1451,6 +1544,461 @@ BRAINSTORM SESSION TRANSCRIPT:
 
 Fill the entire TTA Snapshot Brainstorm template from this transcript.
 """.strip()
+
+
+# ---------------------------------------------------------------------------
+# Opportunity detection
+# One Connect conversation often contains several distinct pieces of work. We
+# ask Claude to read EVERY uploaded source (call transcript, email chain,
+# WhatsApp thread) and split what it finds into discrete opportunities. Admin
+# then reviews them, merges any that are really the same thing, and we generate
+# one Alignment Snapshot per surviving opportunity.
+# ---------------------------------------------------------------------------
+def _opportunity_detection_system_prompt() -> str:
+    return """
+You are a senior strategist at TASCK, a creator-marketing agency.
+
+You will be given every recorded conversation with a brand: call transcripts,
+email threads, and WhatsApp chats. Read ALL of them together.
+
+Your job: identify each DISTINCT opportunity (a separate piece of work TASCK
+could scope, price and deliver on its own). Two asks belong to the SAME
+opportunity when they share the same goal, audience and success measure. They
+are DIFFERENT opportunities when the brand would judge them separately.
+
+Be conservative. Most conversations contain 1-4 real opportunities. Do NOT
+invent work the brand never raised, and do NOT split one campaign into phases.
+
+Return STRICT JSON only, no prose, no markdown fences:
+{
+  "opportunities": [
+    {
+      "title": "Short name for this piece of work",
+      "summary": "2-3 sentences: what the brand wants and why it matters.",
+      "focus": "The single core focus area.",
+      "campaign_type": "The kind of work (launch, awareness push, recruitment drive...).",
+      "audience": "Who this is aimed at.",
+      "audience_behaviour": "What they do today / what gets in the way.",
+      "goals": "The goals or metrics the brand tracks for this.",
+      "success_looks_like": "The brand's definition of success.",
+      "timeline": "Any timing the brand mentioned, else empty string.",
+      "evidence": "Short quote or paraphrase showing where this came from.",
+      "confidence": "high | medium | low"
+    }
+  ]
+}
+
+Rules:
+- Ground every field in what was actually said. Use "" when the brand never said it.
+- NEVER output dates you were not given.
+- If the sources contain no real opportunity, return {"opportunities": []}.
+""".strip()
+
+
+def _opportunity_detection_user_message(brand: Dict[str, Any], case: Dict[str, Any], corpus: str) -> str:
+    def _safe(value: Any) -> str:
+        text = str(value or "").strip()
+        return text if text else "Not provided"
+
+    return f"""
+BRAND: {_safe(brand.get("company") or brand.get("name"))}
+INDUSTRY / CATEGORY: {_safe(brand.get("category") or brand.get("industry") or brand.get("sector"))}
+PROJECT: {_safe(case.get("title"))}
+
+ALL RECORDED CONVERSATIONS WITH THIS BRAND:
+{corpus[:40000]}
+
+Identify every distinct opportunity discussed across these sources.
+""".strip()
+
+
+async def _call_opportunity_detection_tool(
+    brand: Dict[str, Any],
+    case: Dict[str, Any],
+    corpus: str,
+) -> Optional[Dict[str, Any]]:
+    """Claude reads every Connect source and returns discrete opportunities.
+    Returns None when unavailable so the caller can fall back."""
+    if not (corpus or "").strip():
+        return None
+
+    system_prompt = _opportunity_detection_system_prompt()
+    user_message = _opportunity_detection_user_message(brand, case, corpus)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    _prefer_anthropic = _resolve_ai_provider("OPPORTUNITY_PROVIDER")
+
+    async def _call_emergent() -> Optional[Dict[str, Any]]:
+        if not emergent_key:
+            return None
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        provider = os.getenv("OPPORTUNITY_EMERGENT_PROVIDER") or "gemini"
+        model = os.getenv("OPPORTUNITY_EMERGENT_MODEL") or "gemini-2.0-flash"
+        chat = LlmChat(
+            api_key=emergent_key,
+            session_id=f"opportunities-{uuid.uuid4()}",
+            system_message=system_prompt,
+        ).with_model(provider, model)
+        response = await chat.send_message(UserMessage(text=user_message))
+        parsed = _parse_json_object(_response_to_text(response))
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"emergent:{provider}/{model}"
+            return parsed
+        return None
+
+    def _call_http_model() -> Optional[Dict[str, Any]]:
+        if not anthropic_key:
+            return None
+        model = os.getenv("OPPORTUNITY_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-20250514"
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": anthropic_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": 4000,
+                "temperature": 0.1,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_message}],
+            },
+            timeout=90,
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+        parsed = _parse_json_object(text)
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"anthropic:{model}"
+            return parsed
+        return None
+
+    order = [_call_http_model, _call_emergent] if _prefer_anthropic else [_call_emergent, _call_http_model]
+    for call in order:
+        try:
+            result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
+            if isinstance(result, dict) and isinstance(result.get("opportunities"), list):
+                return result
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Opportunity detection via %s failed: %s", getattr(call, "__name__", "?"), exc)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Creative Brief generation
+# Writes the brief in the EXACT skeleton of the client's approved 4-page PDF
+# (WE.YAN Merchant Ambassador sample): same headings, same rhythm, same closing
+# line - but every sentence tailored to THIS brand from the alignment snapshot,
+# marketing intelligence, and Creator Selector data.
+# ---------------------------------------------------------------------------
+def _creative_brief_system_prompt() -> str:
+    return """
+You are TASCK's senior brief writer. Write a creator-facing Creative Brief that follows the agency's approved template EXACTLY - same section headings, same order, same rhythm - with every sentence tailored to the brand and project you are given. The reader is the creator ("you"), so write directly to them, confident and warm, in polished Nigerian business English.
+
+Ground every claim in the brand data provided. Do NOT invent product features, benefit programmes, fees, percentages, or numbers that are not supported by the inputs - where a commercial detail is unknown, keep it directional ("a fixed base fee plus performance-based incentives") rather than inventing figures.
+
+Return JSON only, no markdown fences, with EXACTLY this shape:
+{
+  "title": "string - '<BRAND NAME IN CAPS> CREATIVE BRIEF: <SHORT CAMPAIGN NAME IN CAPS>'",
+  "duration": "string - e.g. '6 Months' (use the project timeline if given, else a sensible default)",
+  "sections": [
+    {
+      "heading": "The Opportunity",
+      "paragraphs": ["1-2 short paragraphs introducing the brand and why this moment matters"],
+      "bullets": ["4-6 concrete things the brand/product lets the audience do"],
+      "closing": "one short punchline line, e.g. 'All in one place.'"
+    },
+    {
+      "heading": "Your Role",
+      "paragraphs": ["2 short paragraphs: what the creator's real role is (bigger than promotion), and what their content should naturally demonstrate"]
+    },
+    {
+      "heading": "Core Narrative (Non-Negotiable)",
+      "paragraphs": ["All content must reinforce one clear story:"],
+      "quote": "the single-sentence brand story every piece of content must reinforce",
+      "pillars_intro": "Your content should bring these 4 pillars to life:",
+      "pillars": ["Pillar name - what it means for content", "x4 exactly"]
+    },
+    {
+      "heading": "What You'll Do",
+      "subsections": [
+        {"title": "1. <action area>", "bullets": ["3 concrete content actions"]},
+        {"title": "2. <action area>", "bullets": ["3 concrete content actions"]},
+        {"title": "3. <action area>", "bullets": ["3 concrete content actions"]},
+        {"title": "4. <action area>", "bullets": ["3 concrete content actions"]}
+      ]
+    },
+    {
+      "heading": "Content Approach",
+      "paragraphs": ["Content is not one-off,  it is a series designed to:"],
+      "bullets": ["4 funnel outcomes the series drives, in order"],
+      "closing": "Your creativity is key, but every piece of content should move your audience to act."
+    },
+    {
+      "heading": "Founding Partner Benefits For You (Limited Access)",
+      "bullets": ["6-11 concrete benefits the creator gets, grounded in the inputs; keep directional where unknown"]
+    },
+    {
+      "heading": "Success Metrics",
+      "bullets": ["4-6 measurable outcomes, matching the project's KPIs"]
+    },
+    {
+      "heading": "Commercial Model",
+      "paragraphs": ["Hybrid structure:"],
+      "bullets": ["Fixed base fee", "Performance-based incentives (approx. 50%) tied to:"],
+      "sub_bullets": ["3-4 performance triggers matching the funnel milestones"]
+    }
+  ],
+  "closing_cta": "If you're interested, reply with your rate card or let us know a good time to connect - we'll take it from there."
+}
+
+Keep headings EXACTLY as shown (you may adapt only the '<...>' placeholders). Keep "Core Narrative (Non-Negotiable)", "What You'll Do", "Content Approach", "Success Metrics", "Commercial Model" and the closing_cta line verbatim.
+""".strip()
+
+
+def _creative_brief_user_message(brand: Dict[str, Any], case: Dict[str, Any], snapshot: Dict[str, Any],
+                                 selector: Dict[str, Any], creators: List[Dict[str, Any]]) -> str:
+    def _safe(value: Any) -> str:
+        text = str(value or "").strip()
+        return text if text else "Not provided"
+
+    snapshot_text = ""
+    for section in (snapshot or {}).get("sections", [])[:12]:
+        heading = str(section.get("heading") or "")
+        content = str(section.get("content") or "")
+        if heading or content:
+            snapshot_text += f"\n[{heading}] {content[:800]}"
+
+    creator_names = ", ".join([
+        str(c.get("name") or c.get("full_name") or "") for c in (creators or [])[:6]
+    ]) or "Not selected yet"
+
+    return f"""
+BRAND: {_safe(brand.get("company") or brand.get("name"))}
+INDUSTRY: {_safe(brand.get("category") or brand.get("industry") or brand.get("sector"))}
+ABOUT THE BRAND: {_safe(brand.get("about") or brand.get("brand_about") or brand.get("description"))[:1200]}
+PROJECT: {_safe(case.get("title"))}
+
+APPROVED ALIGNMENT SNAPSHOT (the agreed understanding with the brand):{snapshot_text or " Not provided"}
+
+CREATOR SELECTOR DATA:
+- Audience platform(s): {_safe(selector.get("audience_platform"))}
+- Top of funnel size: {_safe(selector.get("top_of_funnel_size"))}
+- Funnel milestones: {_safe(selector.get("funnel_milestones"))}
+- Timelines: {_safe(selector.get("timelines"))}
+- Risks: {_safe(selector.get("risks"))}
+- Risk mitigation: {_safe(selector.get("risk_mitigation"))}
+- Budget assumption: {_safe(selector.get("budget_assumption"))}
+
+SELECTED CREATORS THIS BRIEF GOES TO: {creator_names}
+
+Write the Creative Brief for this brand in the exact template shape.
+""".strip()
+
+
+async def _call_creative_brief_tool(brand: Dict[str, Any], case: Dict[str, Any], snapshot: Dict[str, Any],
+                                    selector: Dict[str, Any], creators: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    system_prompt = _creative_brief_system_prompt()
+    user_message = _creative_brief_user_message(brand, case, snapshot, selector, creators)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    _prefer_anthropic = _resolve_ai_provider("CREATIVE_BRIEF_PROVIDER")
+
+    async def _call_emergent() -> Optional[Dict[str, Any]]:
+        if not emergent_key:
+            return None
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        provider = os.getenv("CREATIVE_BRIEF_EMERGENT_PROVIDER") or "gemini"
+        model = os.getenv("CREATIVE_BRIEF_EMERGENT_MODEL") or "gemini-2.0-flash"
+        chat = LlmChat(api_key=emergent_key, session_id=f"brief-{uuid.uuid4()}",
+                       system_message=system_prompt).with_model(provider, model)
+        response = await chat.send_message(UserMessage(text=user_message))
+        parsed = _parse_json_object(_response_to_text(response))
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"emergent:{provider}/{model}"
+            return parsed
+        return None
+
+    def _call_http_model() -> Optional[Dict[str, Any]]:
+        if not anthropic_key:
+            return None
+        model = os.getenv("CREATIVE_BRIEF_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-20250514"
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": model, "max_tokens": 4000, "temperature": 0.4,
+                  "system": system_prompt,
+                  "messages": [{"role": "user", "content": user_message}]},
+            timeout=90,
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+        parsed = _parse_json_object(text)
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"anthropic:{model}"
+            return parsed
+        return None
+
+    order = [_call_http_model, _call_emergent] if _prefer_anthropic else [_call_emergent, _call_http_model]
+    for call in order:
+        try:
+            result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
+            if isinstance(result, dict) and isinstance(result.get("sections"), list) and result.get("title"):
+                return result
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Creative brief generation via %s failed: %s", getattr(call, "__name__", "?"), exc)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Pitch Deck generation
+# A brand-facing strategy document (like the Strategy Snapshot) generated after
+# creators are selected. Ten fixed sections; Claude writes each answer from
+# everything known so far - alignment snapshot, Creator Selector data, and the
+# selected creators. Admin edits, approves, sends to the brand, downloads DOCX.
+# ---------------------------------------------------------------------------
+PITCH_DECK_SECTIONS = [
+    "About The Organisation",
+    "Context & Core Focus",
+    "The Problem",
+    "The Objective",
+    "The Market / Core Audience",
+    "The Solution / Creator Strategy",
+    "Go To Market / Campaign",
+    "Campaign Projections",
+    "Risk & Mitigation Analysis",
+    "Budget Assumptions",
+]
+
+
+def _pitch_deck_system_prompt() -> str:
+    section_lines = "\n".join(f'    {{"heading": "{h}", "content": "string"}},' for h in PITCH_DECK_SECTIONS)
+    return f"""
+You are TASCK's senior strategist writing a brand-facing Pitch Deck - the document that convinces the brand this creator-led campaign is the right move. You will be given everything TASCK knows about the brand and project: the approved Alignment Snapshot, the Creator Selector data (audience platforms, funnel, timelines, risks, budget), and the selected creators.
+
+Write ALL TEN sections below. Each section is 1-3 tight paragraphs of polished Nigerian business English - specific, confident, and grounded ONLY in the inputs. Use the brand's own numbers where given (funnel size, timelines, budget level). Where a number is not given, keep it directional rather than inventing figures. Never include speaker names or internal TASCK process talk.
+
+Section guidance:
+- About The Organisation: who the brand is, what they do, who they serve.
+- Context & Core Focus: where the brand is right now and the single focus this work sharpens.
+- The Problem: the audience/behaviour barrier standing in the way.
+- The Objective: the concrete outcome this campaign must drive.
+- The Market / Core Audience: who we are reaching, where they live (platforms), and how big the opportunity is.
+- The Solution / Creator Strategy: why creators, which creators, and the roles they play. NAME EACH SELECTED CREATOR EXPLICITLY and give each a one-line role.
+- Go To Market / Campaign: how the campaign rolls out - phases, content series, platforms, timeline.
+- Campaign Projections: what the funnel milestones should deliver, directionally quantified from the inputs.
+- Risk & Mitigation Analysis: the named risks and exactly how each is de-risked.
+- Budget Assumptions: the working budget level and what it covers.
+
+Return JSON only, no markdown fences:
+{{
+  "title": "string - '<Brand Name> x TASCK - Creator Campaign Pitch'",
+  "sections": [
+{section_lines}
+  ]
+}}
+Keep the ten headings EXACTLY as given, in this order.
+""".strip()
+
+
+def _pitch_deck_user_message(brand: Dict[str, Any], case: Dict[str, Any], snapshot: Dict[str, Any],
+                             selector: Dict[str, Any], creators: List[Dict[str, Any]]) -> str:
+    def _safe(value: Any) -> str:
+        text = str(value or "").strip()
+        return text if text else "Not provided"
+
+    snapshot_text = ""
+    for section in (snapshot or {}).get("sections", [])[:12]:
+        heading = str(section.get("heading") or "")
+        content = str(section.get("content") or "")
+        if heading or content:
+            snapshot_text += f"\n[{heading}] {content[:700]}"
+
+    creator_lines = "\n".join(
+        f"- {c.get('name') or c.get('full_name')}: {c.get('specialty') or c.get('genre') or ''}"
+        for c in (creators or [])[:8]
+    ) or "Not selected yet"
+
+    return f"""
+BRAND: {_safe(brand.get("company") or brand.get("name"))}
+INDUSTRY: {_safe(brand.get("category") or brand.get("industry") or brand.get("sector"))}
+ABOUT THE BRAND: {_safe(brand.get("about") or brand.get("brand_about") or brand.get("description"))[:1200]}
+PROJECT: {_safe(case.get("title"))}
+
+APPROVED ALIGNMENT SNAPSHOT:{snapshot_text or " Not provided"}
+
+CREATOR SELECTOR DATA:
+- Audience platform(s): {_safe(selector.get("audience_platform"))}
+- Top of funnel size: {_safe(selector.get("top_of_funnel_size"))}
+- Funnel milestones: {_safe(selector.get("funnel_milestones"))}
+- Timelines: {_safe(selector.get("timelines"))}
+- Risks: {_safe(selector.get("risks"))}
+- Risk mitigation: {_safe(selector.get("risk_mitigation"))}
+- Budget assumption: {_safe(selector.get("budget_assumption"))}
+
+SELECTED CREATORS:
+{creator_lines}
+
+Write the full ten-section Pitch Deck for this brand.
+""".strip()
+
+
+async def _call_pitch_deck_tool(brand: Dict[str, Any], case: Dict[str, Any], snapshot: Dict[str, Any],
+                                selector: Dict[str, Any], creators: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    system_prompt = _pitch_deck_system_prompt()
+    user_message = _pitch_deck_user_message(brand, case, snapshot, selector, creators)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    _prefer_anthropic = _resolve_ai_provider("PITCH_DECK_PROVIDER")
+
+    async def _call_emergent() -> Optional[Dict[str, Any]]:
+        if not emergent_key:
+            return None
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        provider = os.getenv("PITCH_DECK_EMERGENT_PROVIDER") or "gemini"
+        model = os.getenv("PITCH_DECK_EMERGENT_MODEL") or "gemini-2.0-flash"
+        chat = LlmChat(api_key=emergent_key, session_id=f"pitch-{uuid.uuid4()}",
+                       system_message=system_prompt).with_model(provider, model)
+        response = await chat.send_message(UserMessage(text=user_message))
+        parsed = _parse_json_object(_response_to_text(response))
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"emergent:{provider}/{model}"
+            return parsed
+        return None
+
+    def _call_http_model() -> Optional[Dict[str, Any]]:
+        if not anthropic_key:
+            return None
+        model = os.getenv("PITCH_DECK_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-20250514"
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": model, "max_tokens": 4500, "temperature": 0.3,
+                  "system": system_prompt,
+                  "messages": [{"role": "user", "content": user_message}]},
+            timeout=90,
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+        parsed = _parse_json_object(text)
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"anthropic:{model}"
+            return parsed
+        return None
+
+    order = [_call_http_model, _call_emergent] if _prefer_anthropic else [_call_emergent, _call_http_model]
+    for call in order:
+        try:
+            result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
+            if isinstance(result, dict) and isinstance(result.get("sections"), list) and len(result["sections"]) >= 8:
+                return result
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Pitch deck generation via %s failed: %s", getattr(call, "__name__", "?"), exc)
+    return None
 
 
 async def _call_brainstorm_analysis_tool(
@@ -1938,7 +2486,44 @@ def make_v3_router(db):
 
         brands = await db.v3_brands.find(query, {"_id": 0}).to_list(1000)
         brands = sorted(brands, key=_brand_created_at_key, reverse=True)
-        return [await _with_relationship_manager(brand) for brand in brands]
+        enriched = [await _with_relationship_manager(brand) for brand in brands]
+
+        # Attach each brand's Alignment Snapshot projects so the CRM list can
+        # show one row per project with its priority tag - e.g.
+        # "MTN (Better Advert - High Priority and Urgent)". Two bulk queries,
+        # not N per brand.
+        if crm_only and enriched:
+            cases = await db.v3_business_cases.find(
+                {"brand_id": {"$in": [b["id"] for b in enriched]}},
+                {"_id": 0, "id": 1, "brand_id": 1},
+            ).to_list(2000)
+            case_to_brand = {c["id"]: c["brand_id"] for c in cases}
+            if case_to_brand:
+                snaps = await db.v3_alignment_snapshots.find(
+                    {"business_case_id": {"$in": list(case_to_brand.keys())}},
+                    {"_id": 0, "id": 1, "business_case_id": 1, "title": 1,
+                     "opportunity_title": 1, "priority": 1, "status": 1},
+                ).to_list(2000)
+                by_brand: Dict[str, List[Dict[str, Any]]] = {}
+                for s in snaps:
+                    owner = case_to_brand.get(s.get("business_case_id"))
+                    if owner:
+                        by_brand.setdefault(owner, []).append({
+                            "snapshot_id": s.get("id"),
+                            "business_case_id": s.get("business_case_id"),
+                            "title": s.get("opportunity_title") or s.get("title") or "Alignment Snapshot",
+                            "priority": s.get("priority") or "",
+                            "status": s.get("status") or "draft",
+                        })
+                def _proj_rank(p: Dict[str, Any]) -> int:
+                    try:
+                        return PRIORITY_OPTIONS.index(p.get("priority"))
+                    except ValueError:
+                        return len(PRIORITY_OPTIONS)
+                for brand in enriched:
+                    projects = sorted(by_brand.get(brand["id"], []), key=_proj_rank)
+                    brand["alignment_projects"] = projects
+        return enriched
 
     @router.get("/brands/{brand_id}")
     async def get_brand(brand_id: str):
@@ -1965,6 +2550,35 @@ def make_v3_router(db):
             "opportunities": opportunities,
             "deliverables": deliverables,
         }
+
+    @router.get("/relationship-stages")
+    async def list_relationship_stages():
+        """The CRM relationship stage options (value/label/colour) used by the
+        stage dropdown and the tag shown wherever a brand appears."""
+        return RELATIONSHIP_STAGES
+
+    async def _auto_relationship_stage(brand_id: Optional[str], stage_value: str) -> None:
+        """Advance a brand's relationship stage because a real event happened
+        (connect call booked/completed, moved to frame, contract signed,
+        delivery, reporting). A real event overrides whatever admin last picked
+        by hand, which is what keeps the tag honest across the app.
+
+        Never raises - stage tracking must not break the flow it observes.
+        """
+        try:
+            if not brand_id or stage_value not in RELATIONSHIP_STAGE_VALUES:
+                return
+            await db.v3_brands.update_one(
+                {"id": brand_id},
+                {"$set": {
+                    "relationship_stage": stage_value,
+                    "relationship_stage_set_at": _now_iso(),
+                    "relationship_stage_source": "auto",
+                    "updated_at": _now_iso(),
+                }},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not auto-advance relationship stage for %s: %s", brand_id, exc)
 
     @router.delete("/brands/{brand_id}")
     async def delete_brand(brand_id: str):
@@ -2011,10 +2625,17 @@ def make_v3_router(db):
             "primary_contact", "role", "email", "phone", "hq",
             "industry", "company", "name", "brand_name",
             "marketing_budget", "budget", "budget_range",
+            "relationship_stage", "next_action",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
         if not updates:
             raise HTTPException(400, "No valid fields to update")
+        if "relationship_stage" in updates:
+            if updates["relationship_stage"] not in RELATIONSHIP_STAGE_VALUES:
+                raise HTTPException(400, f"Unknown relationship_stage: {updates['relationship_stage']}")
+            # Manual pick wins until the next real stage event fires.
+            updates["relationship_stage_set_at"] = _now_iso()
+            updates["relationship_stage_source"] = "manual"
         updates["updated_at"] = _now_iso()
         await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
         updated = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
@@ -2039,11 +2660,21 @@ def make_v3_router(db):
         import httpx
         import json as _json
         import re as _re
+        import time as _time
         from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
 
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
+
+        # Wall-clock budget so we always answer before the gateway's 504.
+        _deadline = _time.monotonic() + _SCRAPE_BUDGET_SECONDS
+
+        def _budget_left() -> float:
+            return max(0.0, _deadline - _time.monotonic())
+
+        def _has_budget(need: float = 2.0) -> bool:
+            return _budget_left() >= need
 
         # Strip noise tracking params from any inbound URL so we fetch the
         # canonical page. Google Shopping in particular adds `srsltid` which
@@ -2081,7 +2712,7 @@ def make_v3_router(db):
         if not website and os.getenv("SERPAPI_API_KEY", "").strip():
             try:
                 params = {"engine": "google", "q": f"{brand_name} official website logo", "api_key": os.getenv("SERPAPI_API_KEY", "").strip(), "num": 5}
-                search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
+                search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=min(12, max(3, _budget_left() - 8)))
                 search_response.raise_for_status()
                 search_data = search_response.json()
                 blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com"}
@@ -2098,7 +2729,7 @@ def make_v3_router(db):
         if website:
             url = website if website.startswith("http") else f"https://{website}"
             try:
-                async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(**_SCRAPE_HTTP_TIMEOUT_ARGS), follow_redirects=True) as client:
                     resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
                     resp.raise_for_status()
                     final_url = str(resp.url).rstrip("/")
@@ -2195,23 +2826,35 @@ def make_v3_router(db):
                             if len(clean_paragraph) >= 80:
                                 scraped_about = html_module.unescape(clean_paragraph)[:700]
                                 break
-                    if manifest_url:
-                        manifest_resp = await client.get(manifest_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
-                        if manifest_resp.status_code < 400:
-                            manifest_data = manifest_resp.json()
-                            manifest_description = str(manifest_data.get("description") or "").strip()
-                            if manifest_description and not scraped_about:
-                                scraped_about = html_module.unescape(manifest_description)[:700]
-                            for manifest_icon in manifest_data.get("icons") or []:
-                                if isinstance(manifest_icon, dict):
-                                    manifest_src = manifest_icon.get("src")
-                                else:
-                                    manifest_src = manifest_icon
-                                if manifest_src:
-                                    manifest_logo_candidates.append(urljoin(manifest_url, str(manifest_src)))
-                    if not scraped_about:
+                    # These probes are optional extras. Keep their failures local:
+                    # before, a manifest/script timeout raised out to the outer
+                    # httpx handler and abandoned the whole scrape - including the
+                    # logo verification and the LLM about that follow.
+                    if manifest_url and _has_budget(6.0):
+                        try:
+                            manifest_resp = await client.get(manifest_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            if manifest_resp.status_code < 400:
+                                manifest_data = manifest_resp.json()
+                                manifest_description = str(manifest_data.get("description") or "").strip()
+                                if manifest_description and not scraped_about:
+                                    scraped_about = html_module.unescape(manifest_description)[:700]
+                                for manifest_icon in manifest_data.get("icons") or []:
+                                    if isinstance(manifest_icon, dict):
+                                        manifest_src = manifest_icon.get("src")
+                                    else:
+                                        manifest_src = manifest_icon
+                                    if manifest_src:
+                                        manifest_logo_candidates.append(urljoin(manifest_url, str(manifest_src)))
+                        except Exception:  # noqa: BLE001
+                            pass
+                    if not scraped_about and _has_budget(6.0):
                         for script_url in script_urls[:3]:
-                            script_resp = await client.get(script_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            if not _has_budget(6.0):
+                                break
+                            try:
+                                script_resp = await client.get(script_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
+                            except Exception:  # noqa: BLE001
+                                continue
                             if script_resp.status_code >= 400:
                                 continue
                             script_text = script_resp.text
@@ -2290,6 +2933,7 @@ def make_v3_router(db):
                     # stubs, HTML error pages, and 1px trackers are skipped.
                     logo_candidates.sort(key=lambda item: item[0], reverse=True)
                     seen_logo_urls = set()
+                    ordered_logo_urls: List[str] = []
                     for _score, candidate_url in logo_candidates[:8]:
                         if str(candidate_url).startswith("https://www.google.com/s2/favicons"):
                             # Service URL - bypass _brand_logo_from_source, whose
@@ -2300,14 +2944,33 @@ def make_v3_router(db):
                         if not normalised or normalised in seen_logo_urls:
                             continue
                         seen_logo_urls.add(normalised)
+                        ordered_logo_urls.append(normalised)
+
+                    async def _logo_verifies(candidate: str) -> bool:
                         try:
-                            logo_resp = await client.get(normalised, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
-                            content_type = str(logo_resp.headers.get("content-type") or "").lower()
-                            if logo_resp.status_code < 400 and content_type.startswith("image/") and _logo_image_ok(logo_resp.content or b"", content_type):
-                                scraped_logo = normalised
-                                break
+                            logo_resp = await client.get(candidate, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
                         except Exception:  # noqa: BLE001
-                            continue
+                            return False
+                        content_type = str(logo_resp.headers.get("content-type") or "").lower()
+                        return bool(
+                            logo_resp.status_code < 400
+                            and content_type.startswith("image/")
+                            and _logo_image_ok(logo_resp.content or b"", content_type)
+                        )
+
+                    # Fetch every candidate concurrently (was sequential: 8 dead
+                    # URLs x 15s each was the main cause of the 504), then keep
+                    # the highest-scoring one that actually returned an image -
+                    # ordered_logo_urls is already in score order.
+                    if ordered_logo_urls and _has_budget(6.0):
+                        verdicts = await asyncio.gather(
+                            *[_logo_verifies(candidate) for candidate in ordered_logo_urls],
+                            return_exceptions=True,
+                        )
+                        for candidate, verdict in zip(ordered_logo_urls, verdicts):
+                            if verdict is True:
+                                scraped_logo = candidate
+                                break
                     # If nothing verified, scraped_logo stays empty and the UI
                     # falls back to brand initials - intentionally better than
                     # storing a wrong or generic image.
@@ -2334,25 +2997,47 @@ def make_v3_router(db):
                     # paragraphs, because those are the source of the
                     # rubbish admin keeps seeing.
                     about_text_for_llm = page_text[:6000]
-                    for about_path in ["/about", "/about-us", "/about_us", "/who-we-are", "/our-story", "/company"]:
+                    about_paths = ["/about", "/about-us", "/about_us", "/who-we-are", "/our-story", "/company"]
+
+                    async def _about_page_text(about_path: str) -> str:
                         try:
                             about_resp = await client.get(urljoin(final_url, about_path), headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
                             if about_resp.status_code >= 400:
-                                continue
-                            about_html = about_resp.text
-                            extracted = html_module.unescape(_re.sub(r'<[^>]+>', ' ', about_html))
+                                return ""
+                            extracted = html_module.unescape(_re.sub(r'<[^>]+>', ' ', about_resp.text))
                             extracted = " ".join(extracted.split())
-                            if len(extracted) >= 200:
-                                about_text_for_llm = (about_text_for_llm + "\n\n--- " + about_path + " ---\n" + extracted[:6000])[:12000]
-                                # Most sites have one canonical about URL - first match is enough.
-                                break
+                            return extracted if len(extracted) >= 200 else ""
                         except Exception:  # noqa: BLE001
-                            continue
-                    llm_about = await _call_brand_about_tool(
-                        brand_name=brand_name,
-                        brand_industry=str(brand.get("category") or brand.get("industry") or brand.get("sector") or ""),
-                        page_text=about_text_for_llm,
-                    )
+                            return ""
+
+                    # Probe the about-page paths concurrently, then take the first
+                    # that returned real copy (paths stay in preference order).
+                    if _has_budget(6.0):
+                        about_results = await asyncio.gather(
+                            *[_about_page_text(path) for path in about_paths],
+                            return_exceptions=True,
+                        )
+                        for about_path, extracted in zip(about_paths, about_results):
+                            if isinstance(extracted, str) and extracted:
+                                about_text_for_llm = (about_text_for_llm + "\n\n--- " + about_path + " ---\n" + extracted[:6000])[:12000]
+                                break
+                    # Bound the LLM call by whatever budget is left so a slow
+                    # provider can't push the whole request past the gateway.
+                    llm_about = ""
+                    if _has_budget(6.0):
+                        try:
+                            llm_about = await asyncio.wait_for(
+                                _call_brand_about_tool(
+                                    brand_name=brand_name,
+                                    brand_industry=str(brand.get("category") or brand.get("industry") or brand.get("sector") or ""),
+                                    page_text=about_text_for_llm,
+                                ),
+                                timeout=max(5.0, min(25.0, _budget_left() - 2.0)),
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning("Brand about LLM timed out for %s within scrape budget", brand_name)
+                    else:
+                        logger.warning("Skipped brand about LLM for %s - scrape budget exhausted", brand_name)
                     if llm_about:
                         scraped_about = llm_about[:2400]
                         about_source = "llm"
@@ -2401,10 +3086,12 @@ def make_v3_router(db):
         # official site and retry the scrape ONCE. Without this fallback the
         # admin sees "About: Not captured yet" for any brand whose CRM record
         # has a stale or wrong domain.
-        if website_fetch_failed and not scraped_about and os.getenv("SERPAPI_API_KEY", "").strip():
+        # Only attempt the (expensive) rediscovery if there is real budget left -
+        # it does a search, refetches pages, and calls the LLM again.
+        if website_fetch_failed and not scraped_about and _has_budget(15.0) and os.getenv("SERPAPI_API_KEY", "").strip():
             try:
                 params = {"engine": "google", "q": f"{brand_name} official website", "api_key": os.getenv("SERPAPI_API_KEY", "").strip(), "num": 5}
-                search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=20)
+                search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=min(12, max(3, _budget_left() - 8)))
                 search_response.raise_for_status()
                 search_data = search_response.json()
                 blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com", "apps.apple.com", "play.google.com"}
@@ -2423,7 +3110,7 @@ def make_v3_router(db):
                     logger.info("Brand %s primary site %s unreachable; retrying scrape via SerpAPI-discovered URL %s", brand_name, website, candidate_url)
                     retry_url = candidate_url if candidate_url.startswith("http") else f"https://{candidate_url}"
                     try:
-                        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                        async with httpx.AsyncClient(timeout=httpx.Timeout(**_SCRAPE_HTTP_TIMEOUT_ARGS), follow_redirects=True) as client:
                             resp = await client.get(retry_url, headers={"User-Agent": "Mozilla/5.0 (compatible; TASCKBot/1.0; +https://thetasck.com)"})
                             resp.raise_for_status()
                             final_url = str(resp.url).rstrip("/")
@@ -2476,12 +3163,21 @@ def make_v3_router(db):
                             except Exception:  # noqa: BLE001
                                 pass
 
-                            # LLM summarisation over the rich corpus.
-                            llm_about_retry = await _call_brand_about_tool(
-                                brand_name=brand_name,
-                                brand_industry=str(brand.get("category") or brand.get("industry") or brand.get("sector") or ""),
-                                page_text=corpus,
-                            )
+                            # LLM summarisation over the rich corpus, bounded by
+                            # the remaining budget.
+                            llm_about_retry = ""
+                            if _has_budget(6.0):
+                                try:
+                                    llm_about_retry = await asyncio.wait_for(
+                                        _call_brand_about_tool(
+                                            brand_name=brand_name,
+                                            brand_industry=str(brand.get("category") or brand.get("industry") or brand.get("sector") or ""),
+                                            page_text=corpus,
+                                        ),
+                                        timeout=max(5.0, min(25.0, _budget_left() - 2.0)),
+                                    )
+                                except asyncio.TimeoutError:
+                                    logger.warning("Brand about LLM (SerpAPI retry) timed out for %s", brand_name)
                             if llm_about_retry:
                                 scraped_about = llm_about_retry[:2400]
                                 about_source = "serpapi_llm"
@@ -2547,6 +3243,10 @@ def make_v3_router(db):
         crm_accepted_at: Optional[str] = None
         marketing_budget: Optional[str] = None
         notes: Optional[str] = None
+        # Optional free-text next action, editable by any admin from the brand
+        # detail page. Several admins share this board, so this is how whoever
+        # opens the brand next knows what is meant to happen.
+        next_action: Optional[str] = None
         about: Optional[str] = None
         brand_about: Optional[str] = None
         logo_url: Optional[str] = None
@@ -2585,6 +3285,12 @@ def make_v3_router(db):
             "email": payload.email or "",
             "phone": payload.phone or "",
             "status": brand_status,
+            "next_action": (payload.next_action or "").strip(),
+            # Every brand starts at "Unknown" on the CRM relationship tag and is
+            # then advanced by admin or automatically by real stage events.
+            "relationship_stage": DEFAULT_RELATIONSHIP_STAGE,
+            "relationship_stage_set_at": now,
+            "relationship_stage_source": "auto",
             "lead_score": payload.lead_score,
             "last_interaction": "just now",
             "engagement_track_default": payload.engagement_track_default,
@@ -2648,8 +3354,8 @@ def make_v3_router(db):
                 f"We have prepared brand portal access for {payload.company} so your team can review project documents, respond to approval requests, and keep communication with TASCK in one place.\n\n"
                 f"Click here to sign in: {brand_login_link}\n"
                 f"Email: {username}\n"
-                f"Access code: {temp_password}\n\n"
-                "For security, please sign in and change this access code before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
+                f"Password: {temp_password}\n\n"
+                "For security, please sign in and change this password before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
                 "Regards,\n"
                 "TASCK"
             ),
@@ -2948,11 +3654,11 @@ def make_v3_router(db):
             subject="Your TASCK brand access (resent)",
             body=(
                 f"Hello {primary_contact},\n\n"
-                "TASCK has reset the access code for your brand portal account.\n\n"
+                "TASCK has reset the password for your brand portal account.\n\n"
                 f"Brand portal: {login_link}\n"
                 f"Email: {username}\n"
-                f"Access code: {new_temp}\n\n"
-                "For security, please sign in and change this access code immediately.\n\n"
+                f"Password: {new_temp}\n\n"
+                "For security, please sign in and change this password immediately.\n\n"
                 "Regards,\n"
                 "TASCK"
             ),
@@ -3632,6 +4338,40 @@ def make_v3_router(db):
 
         final_matches = llm_matches if llm_matches is not None else deterministic_matches[:8]
 
+        # Creators the team NAMED in the Creator Selector ("Creator Matches"
+        # field). These are matched against the database by name so the scanner
+        # can auto-select them - the AI suggestions below are additions on top
+        # ("this creator from our database also matches") for anyone the admin
+        # did not remember.
+        named_matches: List[Dict[str, Any]] = []
+        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
+        raw_named = str((round_doc.get("creator_selector") or {}).get("creator_matches") or "")
+        if raw_named.strip():
+            def _norm(text: str) -> str:
+                return "".join(ch for ch in str(text or "").lower() if ch.isalnum())
+            wanted = [part.strip() for part in re.split(r"[\n,;/]+", raw_named) if len(part.strip()) >= 3]
+            matched_ids = set()
+            for wanted_name in wanted:
+                wn = _norm(wanted_name)
+                if not wn:
+                    continue
+                for cr in creators:
+                    cn = _norm(cr.get("name") or cr.get("full_name") or "")
+                    handle = _norm(cr.get("handle") or cr.get("instagram") or "")
+                    if not cn and not handle:
+                        continue
+                    if (cn and (wn in cn or cn in wn)) or (handle and (wn in handle or handle in wn)):
+                        if cr.get("id") not in matched_ids:
+                            matched_ids.add(cr.get("id"))
+                            named_matches.append({
+                                "creator": cr,
+                                "score": 100,
+                                "matched_from": wanted_name,
+                                "reasons": [f'Named in the Creator Selector "Creator Matches" field as "{wanted_name}".'],
+                                "risk_notes": [],
+                            })
+                        break
+
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {
@@ -3640,9 +4380,14 @@ def make_v3_router(db):
                 "updated_at": _now_iso(),
             }},
         )
+        # Keep the AI suggestions distinct from the named picks.
+        named_ids = {m["creator"].get("id") for m in named_matches}
         return {
             "business_case_id": bc_id,
-            "matches": final_matches,
+            "matches": [m for m in final_matches if (m.get("creator") or {}).get("id") not in named_ids],
+            "named_matches": named_matches,
+            "named_unmatched": [w for w in ([part.strip() for part in re.split(r"[\n,;/]+", raw_named) if len(part.strip()) >= 3] if raw_named.strip() else [])
+                                 if not any(m.get("matched_from") == w for m in named_matches)],
             "analysis_source": analysis_source,
         }
 
@@ -3743,7 +4488,19 @@ def make_v3_router(db):
             stored_snapshot_id = (case.get("frame") or {}).get("alignment_snapshot_id")
             if stored_snapshot_id:
                 alignment = await db.v3_alignment_snapshots.find_one({"id": stored_snapshot_id}, {"_id": 0})
+        # One Connect call can produce several snapshots (one per opportunity).
+        # `alignment_snapshot` stays the primary one for pages that expect a
+        # single doc; `alignment_snapshots` is the full list, ranked by the
+        # brand's priority (most urgent first, unranked last).
+        alignment_snapshots = await db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0}).to_list(50)
+        alignment_snapshots.sort(key=lambda s: (
+            PRIORITY_OPTIONS.index(s.get("priority")) if s.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
+            str(s.get("generated_at") or ""),
+        ))
+        if not alignment and alignment_snapshots:
+            alignment = alignment_snapshots[0]
         brief = await db.v3_creative_briefs.find_one({"business_case_id": bc_id}, {"_id": 0})
+        pitch_deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
         snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         contract = await db.v3_contracts.find_one({"business_case_id": bc_id}, {"_id": 0})
         deliverables = await db.v3_deliverables.find({"business_case_id": bc_id}, {"_id": 0}).to_list(100)
@@ -3758,7 +4515,9 @@ def make_v3_router(db):
             "brand": brand,
             "creator": creator,
             "alignment_snapshot": alignment,
+            "alignment_snapshots": alignment_snapshots,
             "creative_brief": brief,
+            "pitch_deck": pitch_deck,
             "creative_snapshot": snapshot,
             "contract": contract,
             "deliverables": deliverables,
@@ -3891,6 +4650,7 @@ def make_v3_router(db):
             {"id": brand_id},
             {"$set": {"status": "business_call_pending", "updated_at": now}, "$addToSet": {"business_case_ids": bc_id}},
         )
+        await _auto_relationship_stage(brand_id, "setup_connect_call")
         return {"ok": True, "business_case": doc, "business_case_id": bc_id, "created": True}
 
     @router.post("/brands/{brand_id}/move-to-frame")
@@ -3929,6 +4689,7 @@ def make_v3_router(db):
                 {"id": brand_id},
                 {"$set": {"status": "qualified_to_frame", "updated_at": now}},
             )
+            await _auto_relationship_stage(brand_id, "framing_onboard_partner")
             updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
             return {"ok": True, "business_case": updated, "business_case_id": bc_id, "created": False}
             
@@ -3975,6 +4736,7 @@ def make_v3_router(db):
             {"id": brand_id},
             {"$set": {"status": "qualified_to_frame", "updated_at": now}, "$addToSet": {"business_case_ids": bc_id}},
         )
+        await _auto_relationship_stage(brand_id, "framing_onboard_partner")
         return {"ok": True, "business_case": doc, "business_case_id": bc_id, "created": True}
 
     # ------------------------------------------------------------------------
@@ -4071,6 +4833,17 @@ def make_v3_router(db):
                 "$push": {"timeline": timeline_event},
             },
         )
+        # Keep the CRM relationship tag in step with the real stage. Mapped on
+        # user-facing meaning, not the legacy key names: `plan` is still Framing
+        # (creator selection), `deliver` is Planning + Delivery, `closed` is
+        # Reporting - see the stage vocabulary note above.
+        await _auto_relationship_stage(case.get("brand_id"), {
+            "connect": "setup_connect_call",
+            "frame": "framing_onboard_partner",
+            "plan": "framing_onboard_super_creative",
+            "deliver": "project_delivery",
+            "closed": "reporting",
+        }.get(next_stage, ""))
         updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         return updated
 
@@ -4279,11 +5052,21 @@ def make_v3_router(db):
             logger.warning("Background alignment refresh failed for %s: %s", bc_id, exc)
 
     @router.post("/business-cases/{bc_id}/ai/alignment/questions")
-    async def generate_alignment_questions_for_v1(bc_id: str, fast: bool = True):
+    async def generate_alignment_questions_for_v1(bc_id: str, fast: bool = True, opportunity: Optional[Dict[str, Any]] = None):
+        """Build an Alignment Snapshot for this case.
+
+        When `opportunity` is given (the multi-opportunity flow), the snapshot is
+        scoped to that opportunity: its focus/audience/goals win over the
+        case-wide marketing intelligence, and it is stored per-opportunity so one
+        Connect call can produce several snapshots side by side.
+        """
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        if case.get("stage") != "frame":
+        # The stage gate exists so admin can't generate a snapshot before Frame.
+        # The opportunity flow generates from Connect on purpose (the caller has
+        # already advanced the case), so it is exempt.
+        if opportunity is None and case.get("stage") != "frame":
             raise HTTPException(400, "Alignment Snapshot is only generated in the Frame stage.")
 
         # Speed up the V1 admin "Generate Snapshot" click: by default we DON'T await
@@ -4291,17 +5074,29 @@ def make_v3_router(db):
         # kick the LLM run off in the background. The admin can hit "Regenerate
         # Snapshot" once it finishes to pull in the richer content. Pass ?fast=0 to
         # force the synchronous (legacy) behaviour.
-        if fast:
+        if opportunity is not None:
+            # Opportunity-scoped generation: detection already analysed every
+            # source. Kicking off a refresh here would queue one duplicate
+            # background analysis PER opportunity - skip it.
+            pass
+        elif fast:
             asyncio.create_task(_safe_refresh_transcripts(bc_id))
         else:
             await analyze_all_connect_transcripts(bc_id)
             case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or case
-        existing = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        # One snapshot per opportunity when scoped; otherwise the single
+        # case-wide snapshot as before.
+        if opportunity:
+            existing = await db.v3_alignment_snapshots.find_one(
+                {"business_case_id": bc_id, "opportunity_id": opportunity.get("id")}, {"_id": 0},
+            )
+        else:
+            existing = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
         connect = case.get("connect", {}) or {}
         brand_company = brand.get("company") or brand.get("name") or case.get("brand_name") or case.get("title") or "Brand"
         brand_industry = brand.get("industry") or brand.get("sector") or brand.get("category") or "consumer culture"
-        project_title = case.get("title") or f"{brand_company} Relationship Opportunity"
+        project_title = (opportunity or {}).get("title") or case.get("title") or f"{brand_company} Relationship Opportunity"
         mi = _marketing_intelligence_from_case(case)
         alignment_fields = connect.get("alignment_tool_analysis") or mi.get("alignment_snapshot_fields") or {}
 
@@ -4327,20 +5122,24 @@ def make_v3_router(db):
             or connect.get("latest_meeting_id")
             or connect.get("latest_business_call_id")
         )
+        # When this snapshot is scoped to one detected opportunity, that
+        # opportunity's own focus/audience/behaviour/timeline lead - otherwise
+        # every snapshot generated from the same Connect call reads identically.
+        opp = opportunity or {}
         focus = _usable_text(
-            mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"),
+            opp.get("focus") or mi.get("key_marketing_focus") or connect.get("key_marketing_focus") or connect.get("stated_intent"),
             f"Turn {brand_company}'s {brand_industry} advantage into a sharper creator-led narrative that improves qualified consideration and conversion.",
         )
         audience = _usable_text(
-            mi.get("primary_target_audience") or connect.get("primary_target_audience"),
+            opp.get("audience") or mi.get("primary_target_audience") or connect.get("primary_target_audience"),
             f"Urban Nigerian consumers and professional decision-makers who already engage with {brand_industry} content but need stronger proof, relevance, and trust cues before action.",
         )
         challenge = _usable_text(
-            connect.get("marketing_challenge") or connect.get("current_marketing_challenge") or connect.get("observed_challenge"),
+            opp.get("audience_behaviour") or connect.get("marketing_challenge") or connect.get("current_marketing_challenge") or connect.get("observed_challenge"),
             f"{brand_company} has an opportunity to move from broad awareness into clearer behavior change by matching the right creator voices to the right purchase or adoption moments.",
         )
         timeline = _usable_text(
-            connect.get("timeline") or connect.get("campaign_timeline"),
+            opp.get("timeline") or connect.get("timeline") or connect.get("campaign_timeline"),
             "6-8 weeks from snapshot approval to launch readiness, with reporting after the first campaign cycle.",
         )
         decision_maker = _usable_text(
@@ -4499,6 +5298,21 @@ def make_v3_router(db):
             "creative direction, creator/talent options, campaign structure, budget, timeline, roles, deliverables, and measurement plan."
         )
 
+        # Opportunity-scoped snapshot: this opportunity's own detail OVERRIDES
+        # the case-wide analysis, otherwise every snapshot generated from the
+        # same Connect call would carry identical goals/audience/metrics. The
+        # _af(...) fields describe the whole conversation; the opportunity
+        # describes this specific piece of work.
+        if opportunity:
+            goal_statement = _usable_text(opp.get("summary") or opp.get("focus"), goal_statement)
+            primary_audience = _usable_text(opp.get("audience"), primary_audience)
+            current_behaviour = _usable_text(opp.get("audience_behaviour"), current_behaviour)
+            if (opp.get("goals") or "").strip() or (opp.get("success_looks_like") or "").strip():
+                metric_rows = [[
+                    _usable_text(opp.get("goals"), "Qualified reach"),
+                    _usable_text(opp.get("success_looks_like"), "Confirm target with brand."),
+                ]]
+
         scope_flags = [
             {"text": "Brand review", "reason": "Brand must review, comment, or approve the Alignment Snapshot before admin approval."},
         ]
@@ -4511,7 +5325,8 @@ def make_v3_router(db):
         focus_priority_segments = [
             {
                 "name": "",
-                "focus": _usable_text(_af("focus") or mi.get("key_marketing_focus"), ""),
+                # In the multi-snapshot flow the opportunity's focus leads.
+                "focus": _usable_text(opp.get("focus") or _af("focus") or mi.get("key_marketing_focus"), ""),
                 "priority": _usable_text(_af("priority"), ""),
             },
         ]
@@ -4577,6 +5392,14 @@ def make_v3_router(db):
             ],
             "scope_flags": scope_flags,
         }
+        if opportunity:
+            # Tie the snapshot to its opportunity and give the brand somewhere
+            # to rank it. Priority stays blank until someone actually sets it.
+            doc["opportunity_id"] = opportunity.get("id")
+            doc["opportunity_title"] = opportunity.get("title") or ""
+            doc["priority"] = (existing or {}).get("priority") or DEFAULT_SNAPSHOT_PRIORITY
+            doc["priority_set_by"] = (existing or {}).get("priority_set_by") or ""
+            doc["priority_set_at"] = (existing or {}).get("priority_set_at") or ""
         if existing:
             await db.v3_alignment_snapshots.update_one({"id": as_id}, {"$set": doc})
         else:
@@ -4584,6 +5407,9 @@ def make_v3_router(db):
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {
+                # `frame.alignment_snapshot_id` is the primary snapshot pointer
+                # older pages still read. In the multi-opportunity flow the
+                # caller sets it once, to the first snapshot, so it stays stable.
                 "frame.alignment_snapshot_id": as_id,
                 "frame.alignment_snapshot_status": "under_review",
                 "frame.alignment_snapshot_generated_at": generated_at,
@@ -4597,13 +5423,21 @@ def make_v3_router(db):
     class ApproveAlignmentPayload(BaseModel):
         approver: str
         approver_party: str = "admin"
+        # Which snapshot to approve when one Connect call produced several.
+        # Omitted -> the primary snapshot (legacy single-snapshot behaviour).
+        snapshot_id: Optional[str] = None
 
     @router.post("/business-cases/{bc_id}/ai/alignment/approve")
     async def approve_alignment(bc_id: str, payload: ApproveAlignmentPayload):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        snap = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        if payload.snapshot_id:
+            snap = await db.v3_alignment_snapshots.find_one(
+                {"id": payload.snapshot_id, "business_case_id": bc_id}, {"_id": 0},
+            )
+        else:
+            snap = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         if not snap:
             raise HTTPException(404, "No Alignment Snapshot to approve.")
 
@@ -4699,6 +5533,8 @@ def make_v3_router(db):
 
     class SendAlignmentPayload(BaseModel):
         recipient_email: Optional[str] = None
+        # Which snapshot to send when one Connect call produced several.
+        snapshot_id: Optional[str] = None
 
     def alignment_snapshot_doc_html(case: Dict[str, Any], brand: Dict[str, Any], snap: Dict[str, Any]) -> str:
         sections: List[str] = []
@@ -5297,7 +6133,13 @@ def make_v3_router(db):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        snap = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        requested_snapshot_id = payload.snapshot_id if payload else None
+        if requested_snapshot_id:
+            snap = await db.v3_alignment_snapshots.find_one(
+                {"id": requested_snapshot_id, "business_case_id": bc_id}, {"_id": 0},
+            )
+        else:
+            snap = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         if not snap:
             raise HTTPException(404, "No Alignment Snapshot to send.")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
@@ -5357,9 +6199,9 @@ def make_v3_router(db):
                 f"Business Case: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
-                f"Access code: {password}\n\n"
+                f"Password: {password}\n\n"
                 "Please log in, review each field against the Connect call, add comments where anything does not align, and approve the Alignment Snapshot when it is accurate. "
-                "TASCK admin will review brand comments or approval before moving into Brainstorming.\n\n"
+                "TASCK admin will review brand comments or approval before moving into the Creator Selector.\n\n"
                 f"Alignment fields to review:\n{question_text}\n\n"
                 "A Google Docs-compatible copy of the Alignment Snapshot is attached for review if you prefer to work in Docs."
             )
@@ -5371,7 +6213,7 @@ def make_v3_router(db):
                 f"Business Case: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
-                f"Access code: {password}\n\n"
+                f"Password: {password}\n\n"
                 "You can approve it or add line-level comments for the admin team. A Google Docs-compatible copy is attached."
             )
         document_docx = alignment_snapshot_docx_bytes(case, brand, snap)
@@ -5751,6 +6593,536 @@ def make_v3_router(db):
         creator_id: str
         brief_text: str
         subject: Optional[str] = None
+
+    def _docx_package(blocks: List[str]) -> bytes:
+        """Assemble a TASCK-template .docx around the given body blocks: logo
+        band header (bold circle top-right), contact-strip footer, embedded
+        Bebas Neue + Century Gothic fonts. Mirrors the alignment builder's
+        packaging so every TASCK document looks the same."""
+        logo_bytes = _read_template_asset("tasck_logo.png")
+        logo_cx = _emu_inch(6.5)
+        logo_cy = int(logo_cx * 286 / 2048)
+        footer_bytes = _read_template_asset("footer_contact.png")
+        footer_cx = _emu_inch(6.0)
+        footer_cy = int(footer_cx * 180 / 2048)
+
+        header_drawing = _drawing_inline("rId1", logo_cx, logo_cy, 1, "TASCK logo") if logo_bytes else ""
+        header_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            + (('<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r>' + header_drawing + "</w:r></w:p>") if header_drawing else "<w:p/>")
+            + "</w:hdr>"
+        )
+        footer_drawing = _drawing_inline("rId1", footer_cx, footer_cy, 1, "Contact strip") if footer_bytes else ""
+        footer_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            + (('<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r>' + footer_drawing + "</w:r></w:p>") if footer_drawing else "<w:p/>")
+            + "</w:ftr>"
+        )
+        sectpr = (
+            "<w:sectPr>"
+            + ('<w:headerReference xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdHeader1" w:type="default"/>' if logo_bytes else "")
+            + ('<w:footerReference xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdFooter1" w:type="default"/>' if footer_bytes else "")
+            + '<w:pgSz w:w="12240" w:h="15840"/>'
+            '<w:pgMar w:top="1800" w:right="1440" w:bottom="1800" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
+            "</w:sectPr>"
+        )
+        document_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+            'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+            'xmlns:v="urn:schemas-microsoft-com:vml" '
+            'xmlns:o="urn:schemas-microsoft-com:office:office" '
+            'xmlns:w10="urn:schemas-microsoft-com:office:word">'
+            "<w:body>" + "".join(blocks) + sectpr + "</w:body></w:document>"
+        )
+        doc_rels_items = [
+            '<Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>',
+            '<Relationship Id="rIdFontTable" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable" Target="fontTable.xml"/>',
+        ]
+        if logo_bytes:
+            doc_rels_items.append('<Relationship Id="rIdHeader1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>')
+        if footer_bytes:
+            doc_rels_items.append('<Relationship Id="rIdFooter1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>')
+        document_rels_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            + "".join(doc_rels_items) + "</Relationships>"
+        )
+        rel_img = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/%s"/></Relationships>'
+        _font_files = {
+            "font_bebas.ttf": "fonts/BebasNeue-regular.ttf",
+            "font_century.ttf": "fonts/CenturyGothic-regular.ttf",
+            "font_century_bold.ttf": "fonts/CenturyGothic-bold.ttf",
+            "font_century_italic.ttf": "fonts/CenturyGothic-italic.ttf",
+            "font_century_bolditalic.ttf": "fonts/CenturyGothic-boldItalic.ttf",
+        }
+        embedded_fonts = {k: _read_template_asset(v) for k, v in _font_files.items()}
+        fonts_ok = all(embedded_fonts.values())
+        _ZK = "{00000000-0000-0000-0000-000000000000}"
+        settings_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            + ('<w:embedTrueTypeFonts/>' if fonts_ok else "") + "</w:settings>"
+        )
+        font_table_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            f'<w:font w:name="Bebas Neue"><w:embedRegular w:fontKey="{_ZK}" r:id="rIdFontBebas" w:subsetted="0"/></w:font>'
+            f'<w:font w:name="Century Gothic"><w:embedRegular w:fontKey="{_ZK}" r:id="rIdFontCentury" w:subsetted="0"/>'
+            f'<w:embedBold w:fontKey="{_ZK}" r:id="rIdFontCenturyBold" w:subsetted="0"/>'
+            f'<w:embedItalic w:fontKey="{_ZK}" r:id="rIdFontCenturyItalic" w:subsetted="0"/>'
+            f'<w:embedBoldItalic w:fontKey="{_ZK}" r:id="rIdFontCenturyBoldItalic" w:subsetted="0"/></w:font></w:fonts>'
+        ) if fonts_ok else (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:font w:name="Bebas Neue"/><w:font w:name="Century Gothic"/></w:fonts>'
+        )
+        font_table_rels_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rIdFontBebas" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_bebas.ttf"/>'
+            '<Relationship Id="rIdFontCentury" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_century.ttf"/>'
+            '<Relationship Id="rIdFontCenturyBold" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_century_bold.ttf"/>'
+            '<Relationship Id="rIdFontCenturyItalic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_century_italic.ttf"/>'
+            '<Relationship Id="rIdFontCenturyBoldItalic" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/font" Target="fonts/font_century_bolditalic.ttf"/>'
+            "</Relationships>"
+        )
+        package = BytesIO()
+        with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as docx:
+            overrides = [
+                '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+                '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>',
+                '<Override PartName="/word/fontTable.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml"/>',
+            ]
+            if logo_bytes:
+                overrides.append('<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>')
+            if footer_bytes:
+                overrides.append('<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>')
+            docx.writestr("[Content_Types].xml",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Default Extension="png" ContentType="image/png"/>'
+                '<Default Extension="ttf" ContentType="application/x-font-ttf"/>'
+                + "".join(overrides) + "</Types>")
+            docx.writestr("_rels/.rels",
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+                "</Relationships>")
+            docx.writestr("word/document.xml", document_xml)
+            docx.writestr("word/_rels/document.xml.rels", document_rels_xml)
+            docx.writestr("word/settings.xml", settings_xml)
+            docx.writestr("word/fontTable.xml", font_table_xml)
+            if fonts_ok:
+                docx.writestr("word/_rels/fontTable.xml.rels", font_table_rels_xml)
+                for name, data in embedded_fonts.items():
+                    docx.writestr(f"word/fonts/{name}", data)
+            if logo_bytes:
+                docx.writestr("word/header1.xml", header_xml)
+                docx.writestr("word/_rels/header1.xml.rels", rel_img % "tasck_logo.png")
+                docx.writestr("word/media/tasck_logo.png", logo_bytes)
+            if footer_bytes:
+                docx.writestr("word/footer1.xml", footer_xml)
+                docx.writestr("word/_rels/footer1.xml.rels", rel_img % "footer_contact.png")
+                docx.writestr("word/media/footer_contact.png", footer_bytes)
+        return package.getvalue()
+
+    def creative_brief_docx_bytes(brief: Dict[str, Any]) -> bytes:
+        """Render the generated Creative Brief in the client's approved PDF
+        layout: bold caps title, Duration line, bold section headings, bullet
+        rhythm, indented core-narrative quote, bold closing CTA."""
+        blocks: List[str] = []
+        title = str(brief.get("title") or "CREATIVE BRIEF").upper()
+        blocks.append(_docx_paragraph(title, bold=True, size_half_pt=30, before=240, after=200))
+        if brief.get("duration"):
+            blocks.append(_docx_paragraph(f"Duration: {brief.get('duration')}", bold=True, size_half_pt=22, after=200))
+        for section in brief.get("sections", []) or []:
+            heading = str(section.get("heading") or "").strip()
+            if heading:
+                blocks.append(_docx_paragraph(heading, bold=True, size_half_pt=26, before=240, after=120))
+            for para in section.get("paragraphs", []) or []:
+                blocks.append(_docx_paragraph(para, after=160))
+            if section.get("quote"):
+                blocks.append(_docx_paragraph(f"        {section.get('quote')}", bold=True, after=200))
+            for bullet in section.get("bullets", []) or []:
+                blocks.append(_docx_paragraph(f"•   {bullet}", after=80))
+            if section.get("closing") and not section.get("pillars"):
+                blocks.append(_docx_paragraph(section.get("closing"), before=160, after=200))
+            if section.get("pillars_intro"):
+                blocks.append(_docx_paragraph(section.get("pillars_intro"), before=160, after=120))
+            for pillar in section.get("pillars", []) or []:
+                blocks.append(_docx_paragraph(f"•   {pillar}", after=80))
+            for sub in section.get("subsections", []) or []:
+                blocks.append(_docx_paragraph(str(sub.get("title") or ""), bold=True, size_half_pt=22, before=180, after=100))
+                for bullet in sub.get("bullets", []) or []:
+                    blocks.append(_docx_paragraph(f"•   {bullet}", after=80))
+            for sub_bullet in section.get("sub_bullets", []) or []:
+                blocks.append(_docx_paragraph(f"        ○   {sub_bullet}", after=80))
+        if brief.get("closing_cta"):
+            blocks.append(_docx_paragraph(brief.get("closing_cta"), bold=True, before=320, after=200))
+        return _docx_package(blocks)
+
+    @router.post("/business-cases/{bc_id}/ai/creative-brief/generate")
+    async def generate_creative_brief(bc_id: str):
+        """Claude writes the Creative Brief for this case in the approved 4-page
+        template, tailored to the brand from the alignment snapshot + Creator
+        Selector data. Background job (Claude takes 20-60s; sync would 504)."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        # Prefer the approved snapshot; else the brand's top-priority one.
+        snaps = await db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0}).to_list(50)
+        snaps.sort(key=lambda s: (
+            0 if s.get("status") == "approved" else 1,
+            PRIORITY_OPTIONS.index(s.get("priority")) if s.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
+        ))
+        snapshot = snaps[0] if snaps else {}
+        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
+        selector = round_doc.get("creator_selector") or {}
+        selected_ids = (case.get("plan") or {}).get("selected_creator_ids") or []
+        creators = await db.v3_creators.find({"id": {"$in": selected_ids}}, {"_id": 0}).to_list(50) if selected_ids else []
+
+        job_id = f"brief-job-{uuid.uuid4().hex[:10]}"
+        await db.v3_analysis_jobs.insert_one({
+            "id": job_id, "business_case_id": bc_id, "kind": "creative_brief",
+            "status": "pending", "progress": 5,
+            "message": "Queued: writing the Creative Brief…",
+            "created_at": _now_iso(), "updated_at": _now_iso(), "error": None,
+        })
+
+        async def _runner():
+            try:
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "running", "progress": 30,
+                              "message": "Claude is writing the brief in the approved TASCK template…",
+                              "updated_at": _now_iso()}})
+                brief = await _call_creative_brief_tool(brand, case, snapshot, selector, creators)
+                if not brief:
+                    await db.v3_analysis_jobs.update_one(
+                        {"id": job_id},
+                        {"$set": {"status": "failed", "progress": 100,
+                                  "message": "The AI could not write the brief. Check ANTHROPIC_API_KEY / TASCK_AI_PROVIDER and retry.",
+                                  "updated_at": _now_iso()}})
+                    return
+                now = _now_iso()
+                await db.v3_business_cases.update_one(
+                    {"id": bc_id},
+                    {"$set": {"plan.generated_brief": brief,
+                              "plan.generated_brief_at": now,
+                              "plan.generated_brief_source": brief.get("analysis_source"),
+                              "updated_at": now},
+                     "$push": {"timeline": {"at": now, "event": "creative_brief_generated"}}})
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "completed", "progress": 100,
+                              "message": "Creative Brief ready.", "brief": brief,
+                              "updated_at": _now_iso()}})
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Creative brief job failed for %s: %s", bc_id, exc)
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "failed", "progress": 100,
+                              "message": "Brief generation failed. Please retry.",
+                              "error": str(exc)[:500], "updated_at": _now_iso()}})
+
+        asyncio.create_task(_runner())
+        return {"ok": True, "mode": "background_job", "job_id": job_id}
+
+    @router.get("/business-cases/{bc_id}/ai/creative-brief/jobs/{job_id}")
+    async def get_creative_brief_job(bc_id: str, job_id: str):
+        job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
+        if not job:
+            raise HTTPException(404, "Brief job not found")
+        return {"ok": True, "job": job}
+
+    @router.get("/business-cases/{bc_id}/creative-brief/docx")
+    async def download_creative_brief_docx(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brief = (case.get("plan") or {}).get("generated_brief")
+        if not brief:
+            raise HTTPException(404, "No generated Creative Brief on this Business Case yet.")
+        data = creative_brief_docx_bytes(brief)
+        filename = re.sub(r"[^A-Za-z0-9]+", "_", str(brief.get("title") or "Creative_Brief"))[:60] or "Creative_Brief"
+        return StreamingResponse(
+            BytesIO(data),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}.docx"'},
+        )
+
+    # ------------------------------------------------------------------
+    # PITCH DECK
+    # Brand-facing strategy document generated after creator selection.
+    # Ten fixed sections written by Claude from the alignment snapshot +
+    # Creator Selector + selected creators; admin edits/approves/sends.
+    # Runs alongside the Creative Brief - either can be done first; when
+    # both are approved/sent the flow moves into Planning.
+    # ------------------------------------------------------------------
+    def pitch_deck_docx_bytes(deck: Dict[str, Any]) -> bytes:
+        """The Pitch Deck in the TASCK template design: logo band header,
+        contact footer, Century Gothic, bold caps title, bold section
+        headings - the same look as the Creative Brief document."""
+        blocks: List[str] = []
+        title = str(deck.get("title") or "Creator Campaign Pitch")
+        blocks.append(_docx_paragraph(title.upper(), bold=True, size_half_pt=30, before=240, after=160))
+        blocks.append(_docx_hr())
+        for section in deck.get("sections", []) or []:
+            heading = str(section.get("heading") or "").strip()
+            if heading:
+                blocks.append(_docx_paragraph(heading, bold=True, size_half_pt=26, before=240, after=120))
+            for para in str(section.get("content") or "").split("\n"):
+                if para.strip():
+                    blocks.append(_docx_paragraph(para.strip(), after=160))
+        blocks.append(_docx_hr())
+        blocks.append(_docx_paragraph(
+            "Prepared by TASCK. Please review, comment, or approve from your brand portal.",
+            italic=True, size_half_pt=20, before=160, after=120,
+        ))
+        return _docx_package(blocks)
+
+    @router.get("/business-cases/{bc_id}/pitch-deck")
+    async def get_pitch_deck(bc_id: str):
+        deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+        return {"ok": True, "pitch_deck": deck}
+
+    @router.post("/business-cases/{bc_id}/ai/pitch-deck/generate")
+    async def generate_pitch_deck(bc_id: str):
+        """Background job: Claude writes all ten Pitch Deck sections from
+        everything known so far. Regenerating overwrites the sections but
+        keeps brand comments; status returns to under_review."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        snaps = await db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0}).to_list(50)
+        snaps.sort(key=lambda s: (
+            0 if s.get("status") == "approved" else 1,
+            PRIORITY_OPTIONS.index(s.get("priority")) if s.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
+        ))
+        snapshot = snaps[0] if snaps else {}
+        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
+        selector = round_doc.get("creator_selector") or {}
+        selected_ids = (case.get("plan") or {}).get("selected_creator_ids") or []
+        creators = await db.v3_creators.find({"id": {"$in": selected_ids}}, {"_id": 0}).to_list(50) if selected_ids else []
+
+        job_id = f"pitch-job-{uuid.uuid4().hex[:10]}"
+        await db.v3_analysis_jobs.insert_one({
+            "id": job_id, "business_case_id": bc_id, "kind": "pitch_deck",
+            "status": "pending", "progress": 5,
+            "message": "Queued: writing the Pitch Deck…",
+            "created_at": _now_iso(), "updated_at": _now_iso(), "error": None,
+        })
+
+        async def _runner():
+            try:
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "running", "progress": 30,
+                              "message": "Claude is writing all ten Pitch Deck sections…",
+                              "updated_at": _now_iso()}})
+                result = await _call_pitch_deck_tool(brand, case, snapshot, selector, creators)
+                if not result:
+                    await db.v3_analysis_jobs.update_one(
+                        {"id": job_id},
+                        {"$set": {"status": "failed", "progress": 100,
+                                  "message": "The AI could not write the Pitch Deck. Check ANTHROPIC_API_KEY / TASCK_AI_PROVIDER and retry.",
+                                  "updated_at": _now_iso()}})
+                    return
+                now = _now_iso()
+                existing = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+                deck_id = (existing or {}).get("id") or f"pd-{uuid.uuid4().hex[:8]}"
+                deck = {
+                    "id": deck_id,
+                    "business_case_id": bc_id,
+                    "title": result.get("title") or f"{brand.get('company') or 'Brand'} x TASCK - Creator Campaign Pitch",
+                    "sections": [
+                        {"heading": str(s.get("heading") or ""), "content": str(s.get("content") or "")}
+                        for s in (result.get("sections") or []) if isinstance(s, dict)
+                    ],
+                    "status": "under_review",
+                    "generated_at": now,
+                    "analysis_source": result.get("analysis_source"),
+                    "sent_to_brand_at": (existing or {}).get("sent_to_brand_at"),
+                    "approved_at": None,
+                    "approved_by": None,
+                    "approved_by_party": None,
+                    "brand_comments": (existing or {}).get("brand_comments", []),
+                    "updated_at": now,
+                }
+                if existing:
+                    await db.v3_pitch_decks.update_one({"id": deck_id}, {"$set": deck})
+                else:
+                    await db.v3_pitch_decks.insert_one({**deck})
+                await db.v3_business_cases.update_one(
+                    {"id": bc_id},
+                    {"$set": {"plan.pitch_deck_id": deck_id, "plan.pitch_deck_status": "under_review", "updated_at": now},
+                     "$push": {"timeline": {"at": now, "event": "pitch_deck_generated", "deck_id": deck_id}}})
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "completed", "progress": 100,
+                              "message": "Pitch Deck ready.", "pitch_deck": deck,
+                              "updated_at": _now_iso()}})
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Pitch deck job failed for %s: %s", bc_id, exc)
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "failed", "progress": 100,
+                              "message": "Pitch Deck generation failed. Please retry.",
+                              "error": str(exc)[:500], "updated_at": _now_iso()}})
+
+        asyncio.create_task(_runner())
+        return {"ok": True, "mode": "background_job", "job_id": job_id}
+
+    @router.get("/business-cases/{bc_id}/ai/pitch-deck/jobs/{job_id}")
+    async def get_pitch_deck_job(bc_id: str, job_id: str):
+        job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
+        if not job:
+            raise HTTPException(404, "Pitch Deck job not found")
+        return {"ok": True, "job": job}
+
+    class PitchDeckUpdate(BaseModel):
+        title: Optional[str] = None
+        sections: Optional[List[Dict[str, Any]]] = None
+        reviewer: str = "admin"
+
+    @router.patch("/pitch-decks/{deck_id}")
+    async def update_pitch_deck(deck_id: str, payload: PitchDeckUpdate):
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        updates: Dict[str, Any] = {"updated_at": _now_iso(), "last_edited_by": payload.reviewer}
+        if payload.title is not None:
+            updates["title"] = payload.title
+        if payload.sections is not None:
+            updates["sections"] = payload.sections
+        await db.v3_pitch_decks.update_one({"id": deck_id}, {"$set": updates})
+        updated = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        return {"ok": True, "pitch_deck": updated}
+
+    class PitchDeckApprovePayload(BaseModel):
+        approver: str
+        approver_party: str = "admin"
+
+    @router.post("/business-cases/{bc_id}/pitch-deck/approve")
+    async def approve_pitch_deck(bc_id: str, payload: PitchDeckApprovePayload):
+        deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "No Pitch Deck to approve. Generate it first.")
+        approved_at = _now_iso()
+        await db.v3_pitch_decks.update_one(
+            {"id": deck["id"]},
+            {"$set": {"status": "approved", "approved_at": approved_at,
+                      "approved_by": payload.approver, "approved_by_party": payload.approver_party}})
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.pitch_deck_status": "approved", "plan.pitch_deck_approved_at": approved_at,
+                      "plan.pitch_deck_approved_by_party": payload.approver_party, "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": approved_at, "event": "pitch_deck_approved",
+                                     "by": payload.approver, "party": payload.approver_party}}})
+        return {"ok": True, "approved_at": approved_at}
+
+    class PitchDeckSendPayload(BaseModel):
+        recipient_email: Optional[str] = None
+
+    @router.post("/business-cases/{bc_id}/pitch-deck/send")
+    async def send_pitch_deck(bc_id: str, payload: Optional[PitchDeckSendPayload] = Body(None)):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "No Pitch Deck to send. Generate it first.")
+        brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
+        if not brand:
+            raise HTTPException(404, "Brand not found")
+        account = await ensure_brand_account(brand)
+        recipient = (payload.recipient_email if payload and payload.recipient_email else "") or brand.get("email") or account.get("username") or ""
+        if not recipient:
+            raise HTTPException(400, "Brand email is required before sending the Pitch Deck.")
+        review_link = f"{app_base_url()}/brand/pitch-deck"
+        sent_at = _now_iso()
+        docx_bytes = pitch_deck_docx_bytes(deck)
+        email = await queue_email(
+            to=recipient,
+            subject=f"{deck.get('title') or 'Creator Campaign Pitch'} - for your review",
+            body=(
+                f"Hello {brand.get('primary_contact', 'there')},\n\n"
+                f"TASCK has prepared the Creator Campaign Pitch for {brand.get('company') or 'your brand'}. "
+                "It covers the organisation, the core focus, the problem and objective, the audience, the creator strategy, "
+                "the campaign plan, projections, risks and mitigation, and budget assumptions.\n\n"
+                f"Review it in your brand portal: {review_link}\n\n"
+                "The formatted document is attached. Please review, comment, or approve so TASCK can move into planning.\n\n"
+                "Regards,\nTASCK"
+            ),
+            kind="pitch_deck",
+            brand_id=brand.get("id"),
+            business_case_id=bc_id,
+            attachments=[{
+                "type": "google_docs_compatible_pitch_deck",
+                "id": deck["id"],
+                "title": deck.get("title"),
+                "filename": f"{deck['id']}-pitch-deck.docx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "content": docx_bytes,
+                "review_link": review_link,
+            }],
+        )
+        await db.v3_pitch_decks.update_one(
+            {"id": deck["id"]},
+            {"$set": {"status": "sent_to_brand", "sent_to_brand_at": sent_at}})
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.pitch_deck_status": "sent_to_brand", "updated_at": _now_iso()},
+             "$push": {"timeline": {"at": sent_at, "event": "pitch_deck_sent_to_brand", "deck_id": deck["id"]}}})
+        return {"ok": True, "sent_at": sent_at, "email": {"status": email.get("status"), "to": recipient,
+                                                          "delivery_error": email.get("delivery_error")}}
+
+    class PitchDeckCommentPayload(BaseModel):
+        section_index: int = 0
+        quoted_text: str = "Brand review"
+        comment: str
+        author: str = "brand"
+
+    @router.post("/pitch-decks/{deck_id}/comments")
+    async def add_pitch_deck_comment(deck_id: str, payload: PitchDeckCommentPayload):
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        comment = {
+            "id": f"pdc-{uuid.uuid4().hex[:8]}",
+            "section_index": payload.section_index,
+            "quoted_text": payload.quoted_text,
+            "comment": payload.comment,
+            "author": payload.author,
+            "created_at": _now_iso(),
+            "resolved": False,
+        }
+        await db.v3_pitch_decks.update_one({"id": deck_id}, {"$push": {"brand_comments": comment}})
+        return {"ok": True, "comment": comment}
+
+    @router.get("/pitch-decks/{deck_id}/docx")
+    async def download_pitch_deck_docx(deck_id: str):
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        data = pitch_deck_docx_bytes(deck)
+        filename = re.sub(r"[^A-Za-z0-9]+", "_", str(deck.get("title") or "Pitch_Deck"))[:60] or "Pitch_Deck"
+        return StreamingResponse(
+            BytesIO(data),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}.docx"'},
+        )
 
     @router.post("/creative-briefs")
     async def create_brief(payload: CreativeBriefCreate):
@@ -6302,6 +7674,8 @@ def make_v3_router(db):
             {"$set": {"plan.contract_signed_at": signed_at, "updated_at": _now_iso()},
              "$push": {"timeline": {"at": _now_iso(), "event": "contract_signed"}}},
         )
+        signed_case = await db.v3_business_cases.find_one({"id": ctr["business_case_id"]}, {"_id": 0, "brand_id": 1})
+        await _auto_relationship_stage((signed_case or {}).get("brand_id") or ctr.get("brand_id"), "framing_agreements_signed")
         return {"ok": True, "signed_at": signed_at}
 
     # ------------------------------------------------------------------------
@@ -6432,6 +7806,10 @@ def make_v3_router(db):
             "business_case_id": payload.business_case_id,
             "status": "in_progress",
             "planning_fields": payload.planning_fields,
+            # The eight Creator Selector fields (client-specified). Filled
+            # manually on the TTA Creator Selector page or auto-filled by
+            # Claude from an uploaded transcript.
+            "creator_selector": _creator_selector_default(),
             # Template-aligned phase scaffolding (60-90 min TTA Snapshot Brainstorm)
             "template_version": "tta_snapshot_v1",
             "duration_minutes": "60-90",
@@ -6518,6 +7896,7 @@ def make_v3_router(db):
     class BrainstormUpdate(BaseModel):
         scored_creators: Optional[List[BrainstormScore]] = None
         planning_fields: Optional[Dict[str, Any]] = None
+        creator_selector: Optional[Dict[str, Any]] = None
         pre_work: Optional[Dict[str, Any]] = None
         phase_0_focus_group: Optional[Dict[str, Any]] = None
         phase_1_problem: Optional[Dict[str, Any]] = None
@@ -6613,6 +7992,9 @@ def make_v3_router(db):
             return existing.get(key) or fallback
 
         updates: Dict[str, Any] = {
+            # The headline output: the eight Creator Selector fields shown on
+            # the TTA Creator Selector page.
+            "creator_selector": _section("creator_selector", _creator_selector_default()),
             "pre_work": _section("pre_work", {}),
             "phase_0_focus_group": _section("phase_0_focus_group", {}),
             "phase_1_problem": _section("phase_1_problem", {}),
@@ -7536,7 +8918,422 @@ def make_v3_router(db):
             {"$set": {"connect.connect_status": payload.connect_status, "updated_at": _now_iso()},
              "$push": {"timeline": {"at": _now_iso(), "event": "connect_status_changed", "to": payload.connect_status}}},
         )
+        # Connect call still to happen -> "Set Up Connect Call"; once it has
+        # happened (discovery done / qualified) -> "HOT Connection | Prepare Pitch".
+        await _auto_relationship_stage(case.get("brand_id"), {
+            "needs_business_call": "setup_connect_call",
+            "in_discovery": "hot_connection",
+            "qualified_to_frame": "hot_connection",
+        }.get(payload.connect_status, ""))
         return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # CONNECT SOURCES
+    # A Connect call is not the only input. Admin drips in evidence over
+    # time - a call transcript today, the WhatsApp thread next week, the
+    # email chain after that. Each upload is stored as its own source and
+    # ALL of them are fed to Claude when admin generates the Alignment
+    # Snapshot(s), so nothing the brand said is lost.
+    # ------------------------------------------------------------------
+    CONNECT_SOURCE_KINDS = {
+        "transcript": "Call transcript",
+        "email": "Email conversation",
+        "whatsapp": "WhatsApp conversation",
+        "note": "Note",
+    }
+
+    class ConnectSourcePayload(BaseModel):
+        kind: str = "transcript"
+        label: Optional[str] = None
+        content: str
+        author: Optional[str] = "admin"
+
+    @router.get("/business-cases/{bc_id}/connect/sources")
+    async def list_connect_sources(bc_id: str):
+        rows = await db.v3_connect_sources.find({"business_case_id": bc_id}, {"_id": 0}).to_list(500)
+        rows.sort(key=lambda r: str(r.get("created_at") or ""))
+        return {"ok": True, "sources": rows, "kinds": CONNECT_SOURCE_KINDS}
+
+    @router.post("/business-cases/{bc_id}/connect/sources")
+    async def add_connect_source(bc_id: str, payload: ConnectSourcePayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        kind = (payload.kind or "transcript").strip().lower()
+        if kind not in CONNECT_SOURCE_KINDS:
+            raise HTTPException(400, f"Unknown source kind: {kind}")
+        content = (payload.content or "").strip()
+        if len(content) < 20:
+            raise HTTPException(400, "Paste or upload the full conversation before saving it.")
+        now = _now_iso()
+        doc = {
+            "id": f"src-{uuid.uuid4().hex[:8]}",
+            "business_case_id": bc_id,
+            "brand_id": case.get("brand_id"),
+            "kind": kind,
+            "label": (payload.label or "").strip() or CONNECT_SOURCE_KINDS[kind],
+            "content": content,
+            "author": payload.author or "admin",
+            "created_at": now,
+        }
+        await db.v3_connect_sources.insert_one({**doc})
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"updated_at": now},
+             "$push": {"timeline": {"at": now, "event": "connect_source_added", "kind": kind, "source_id": doc["id"]}}},
+        )
+        return {"ok": True, "source": doc}
+
+    @router.delete("/business-cases/{bc_id}/connect/sources/{source_id}")
+    async def delete_connect_source(bc_id: str, source_id: str):
+        result = await db.v3_connect_sources.delete_one({"id": source_id, "business_case_id": bc_id})
+        if not getattr(result, "deleted_count", 0):
+            raise HTTPException(404, "Source not found")
+        return {"ok": True, "deleted": source_id}
+
+    async def _connect_source_corpus(bc_id: str) -> Tuple[str, List[Dict[str, Any]]]:
+        """Every uploaded Connect source, formatted for the LLM. Dividers name
+        the channel (and nothing date-shaped) so Claude can weigh a WhatsApp
+        aside differently from a formal call, without leaking dates."""
+        rows = await db.v3_connect_sources.find({"business_case_id": bc_id}, {"_id": 0}).to_list(500)
+        rows.sort(key=lambda r: str(r.get("created_at") or ""))
+        blocks = []
+        for row in rows:
+            kind_label = CONNECT_SOURCE_KINDS.get(row.get("kind"), "Source")
+            label = str(row.get("label") or kind_label)
+            body = str(row.get("content") or "").strip()
+            if body:
+                blocks.append(f"--- {kind_label}: {label} ---\n{body}")
+        return "\n\n".join(blocks).strip(), rows
+
+    # ------------------------------------------------------------------
+    # OPPORTUNITIES
+    # Claude reads every Connect source and splits it into discrete
+    # opportunities. Admin reviews them, merges any that are really the
+    # same job, and then generates one Alignment Snapshot per survivor.
+    # ------------------------------------------------------------------
+    async def _all_connect_evidence(bc_id: str) -> str:
+        """Uploaded sources + any meeting transcripts, as one corpus."""
+        corpus, _rows = await _connect_source_corpus(bc_id)
+        meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
+        blocks = [corpus] if corpus else []
+        for meeting in meetings:
+            transcript = (meeting.get("transcript") or "").strip()
+            if transcript:
+                blocks.append(f"--- Call transcript ---\n{transcript}")
+        return "\n\n".join(blocks).strip()
+
+    @router.get("/business-cases/{bc_id}/connect/opportunities")
+    async def list_opportunities(bc_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        connect = case.get("connect") or {}
+        return {
+            "ok": True,
+            "opportunities": connect.get("opportunities") or [],
+            "detected_at": connect.get("opportunities_detected_at"),
+            "analysis_source": connect.get("opportunities_source"),
+        }
+
+    @router.post("/business-cases/{bc_id}/connect/detect-opportunities")
+    async def detect_opportunities(bc_id: str):
+        """Run Claude over every uploaded source and store the opportunities it
+        finds. Admin reviews/merges the result before any snapshot is made.
+
+        Runs as a BACKGROUND JOB (same pattern as analyze-all): the Claude call
+        takes 20-60s on a real corpus, which is over the gateway's request
+        budget - a synchronous version would 504 exactly like analyze-all used
+        to. The endpoint returns a job id instantly and the frontend polls
+        GET /connect/detect-opportunities/jobs/{job_id}.
+        """
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        corpus = await _all_connect_evidence(bc_id)
+        if not corpus:
+            raise HTTPException(400, "Upload at least one transcript, email, or WhatsApp conversation first.")
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+
+        job_id = f"opp-job-{uuid.uuid4().hex[:10]}"
+        await db.v3_analysis_jobs.insert_one({
+            "id": job_id,
+            "business_case_id": bc_id,
+            "kind": "opportunity_detection",
+            "status": "pending",
+            "progress": 5,
+            "message": "Queued: reading every saved conversation…",
+            "corpus_chars": len(corpus),
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "error": None,
+        })
+
+        async def _runner():
+            try:
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "running", "progress": 30,
+                              "message": "Claude is splitting the conversations into distinct opportunities…",
+                              "updated_at": _now_iso()}},
+                )
+                result = await _call_opportunity_detection_tool(brand, case, corpus)
+                if not result:
+                    await db.v3_analysis_jobs.update_one(
+                        {"id": job_id},
+                        {"$set": {"status": "failed", "progress": 100,
+                                  "message": "The AI could not analyse the conversations. Check ANTHROPIC_API_KEY / TASCK_AI_PROVIDER and try again.",
+                                  "updated_at": _now_iso()}},
+                    )
+                    return
+
+                now = _now_iso()
+                opportunities = []
+                for raw in (result.get("opportunities") or []):
+                    if not isinstance(raw, dict):
+                        continue
+                    title = str(raw.get("title") or "").strip()
+                    if not title:
+                        continue
+                    opportunities.append({
+                        "id": f"opp-{uuid.uuid4().hex[:8]}",
+                        "title": title,
+                        "summary": str(raw.get("summary") or "").strip(),
+                        "focus": str(raw.get("focus") or "").strip(),
+                        "campaign_type": str(raw.get("campaign_type") or "").strip(),
+                        "audience": str(raw.get("audience") or "").strip(),
+                        "audience_behaviour": str(raw.get("audience_behaviour") or "").strip(),
+                        "goals": str(raw.get("goals") or "").strip(),
+                        "success_looks_like": str(raw.get("success_looks_like") or "").strip(),
+                        "timeline": str(raw.get("timeline") or "").strip(),
+                        "evidence": str(raw.get("evidence") or "").strip(),
+                        "confidence": str(raw.get("confidence") or "medium").strip().lower(),
+                        "merged_from": [],
+                        "snapshot_id": None,
+                    })
+
+                await db.v3_business_cases.update_one(
+                    {"id": bc_id},
+                    {"$set": {
+                        "connect.opportunities": opportunities,
+                        "connect.opportunities_detected_at": now,
+                        "connect.opportunities_source": result.get("analysis_source") or "llm",
+                        "updated_at": now,
+                    },
+                     "$push": {"timeline": {"at": now, "event": "opportunities_detected", "count": len(opportunities)}}},
+                )
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "completed", "progress": 100,
+                              "message": f"Found {len(opportunities)} opportunit{'y' if len(opportunities) == 1 else 'ies'}.",
+                              "opportunities": opportunities,
+                              "detected_at": now,
+                              "analysis_source": result.get("analysis_source"),
+                              "updated_at": _now_iso()}},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Opportunity detection job failed for %s: %s", bc_id, exc)
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "failed", "progress": 100,
+                              "message": "Opportunity detection failed. Please retry.",
+                              "error": str(exc)[:500], "updated_at": _now_iso()}},
+                )
+
+        asyncio.create_task(_runner())
+        return {"ok": True, "mode": "background_job", "job_id": job_id,
+                "message": "Analysing every saved conversation in the background…"}
+
+    @router.get("/business-cases/{bc_id}/connect/detect-opportunities/jobs/{job_id}")
+    async def get_detect_opportunities_job(bc_id: str, job_id: str):
+        job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
+        if not job:
+            raise HTTPException(404, "Detection job not found")
+        return {"ok": True, "job": job}
+
+    class MergeOpportunitiesPayload(BaseModel):
+        ids: List[str]
+        title: Optional[str] = None
+
+    @router.post("/business-cases/{bc_id}/connect/opportunities/merge")
+    async def merge_opportunities(bc_id: str, payload: MergeOpportunitiesPayload):
+        """Fold two or more detected opportunities into one. 5 detected, merge
+        two -> 3 remain, and 3 Alignment Snapshots get generated."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        existing = list((case.get("connect") or {}).get("opportunities") or [])
+        chosen = [o for o in existing if o.get("id") in set(payload.ids or [])]
+        if len(chosen) < 2:
+            raise HTTPException(400, "Select at least two opportunities to merge.")
+
+        def _join(field: str) -> str:
+            seen, parts = set(), []
+            for opp in chosen:
+                value = str(opp.get(field) or "").strip()
+                if value and value.lower() not in seen:
+                    seen.add(value.lower())
+                    parts.append(value)
+            return " ".join(parts) if field in {"summary", "evidence"} else " / ".join(parts)
+
+        merged = {
+            "id": f"opp-{uuid.uuid4().hex[:8]}",
+            "title": (payload.title or "").strip() or " + ".join([str(o.get("title") or "") for o in chosen]),
+            "summary": _join("summary"),
+            "focus": _join("focus"),
+            "campaign_type": _join("campaign_type"),
+            "audience": _join("audience"),
+            "audience_behaviour": _join("audience_behaviour"),
+            "goals": _join("goals"),
+            "success_looks_like": _join("success_looks_like"),
+            "timeline": _join("timeline"),
+            "evidence": _join("evidence"),
+            "confidence": "high" if any(o.get("confidence") == "high" for o in chosen) else "medium",
+            "merged_from": [{"id": o.get("id"), "title": o.get("title")} for o in chosen],
+            "snapshot_id": None,
+        }
+        # Keep order stable: the merged card takes the slot of the first pick.
+        chosen_ids = {o.get("id") for o in chosen}
+        next_list, inserted = [], False
+        for opp in existing:
+            if opp.get("id") in chosen_ids:
+                if not inserted:
+                    next_list.append(merged)
+                    inserted = True
+                continue
+            next_list.append(opp)
+
+        now = _now_iso()
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"connect.opportunities": next_list, "updated_at": now},
+             "$push": {"timeline": {"at": now, "event": "opportunities_merged", "merged": list(chosen_ids)}}},
+        )
+        return {"ok": True, "opportunities": next_list, "merged": merged}
+
+    class UpdateOpportunityPayload(BaseModel):
+        title: Optional[str] = None
+        summary: Optional[str] = None
+
+    @router.patch("/business-cases/{bc_id}/connect/opportunities/{opportunity_id}")
+    async def update_opportunity(bc_id: str, opportunity_id: str, payload: UpdateOpportunityPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        opportunities = list((case.get("connect") or {}).get("opportunities") or [])
+        found = False
+        for opp in opportunities:
+            if opp.get("id") == opportunity_id:
+                if payload.title is not None:
+                    opp["title"] = payload.title.strip()
+                if payload.summary is not None:
+                    opp["summary"] = payload.summary.strip()
+                found = True
+                break
+        if not found:
+            raise HTTPException(404, "Opportunity not found")
+        await db.v3_business_cases.update_one(
+            {"id": bc_id}, {"$set": {"connect.opportunities": opportunities, "updated_at": _now_iso()}},
+        )
+        return {"ok": True, "opportunities": opportunities}
+
+    @router.delete("/business-cases/{bc_id}/connect/opportunities/{opportunity_id}")
+    async def delete_opportunity(bc_id: str, opportunity_id: str):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        opportunities = [o for o in ((case.get("connect") or {}).get("opportunities") or [])
+                         if o.get("id") != opportunity_id]
+        await db.v3_business_cases.update_one(
+            {"id": bc_id}, {"$set": {"connect.opportunities": opportunities, "updated_at": _now_iso()}},
+        )
+        return {"ok": True, "opportunities": opportunities}
+
+    @router.post("/business-cases/{bc_id}/connect/opportunities/generate-snapshots")
+    async def generate_snapshots_for_opportunities(bc_id: str):
+        """One Alignment Snapshot per surviving opportunity. Admin has already
+        reviewed and merged, so whatever is on the case now is what we build."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        opportunities = list((case.get("connect") or {}).get("opportunities") or [])
+        if not opportunities:
+            raise HTTPException(400, "Detect and review opportunities before generating snapshots.")
+
+        now = _now_iso()
+        # Generating snapshots means Connect is done - move the case into Frame
+        # so the snapshot stage gate and the CRM relationship tag both agree.
+        if case.get("stage") == "connect":
+            await db.v3_business_cases.update_one(
+                {"id": bc_id},
+                {"$set": {
+                    "stage": "frame",
+                    "connect.connect_status": "qualified_to_frame",
+                    "next_action": STAGE_NEXT_ACTIONS.get("frame"),
+                    "updated_at": now,
+                }, "$push": {"timeline": {"at": now, "event": "stage_advanced", "from": "connect", "to": "frame", "reason": "alignment snapshots generated"}}},
+            )
+            await _auto_relationship_stage(case.get("brand_id"), "framing_onboard_partner")
+
+        created = []
+        for opportunity in opportunities:
+            try:
+                snapshot = await generate_alignment_questions_for_v1(bc_id, fast=True, opportunity=opportunity)
+            except HTTPException:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Snapshot generation failed for opportunity %s: %s", opportunity.get("id"), exc)
+                continue
+            opportunity["snapshot_id"] = snapshot.get("id")
+            created.append({
+                "opportunity_id": opportunity.get("id"),
+                "opportunity_title": opportunity.get("title"),
+                "snapshot_id": snapshot.get("id"),
+                "title": snapshot.get("title"),
+            })
+
+        # Persist the snapshot_id back onto each opportunity, and keep the
+        # primary pointer on the FIRST snapshot so legacy pages stay stable.
+        updates = {"connect.opportunities": opportunities, "updated_at": _now_iso()}
+        if created:
+            updates["frame.alignment_snapshot_id"] = created[0]["snapshot_id"]
+        await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
+        if not created:
+            raise HTTPException(500, "No Alignment Snapshot could be generated. Check the AI provider configuration.")
+        return {"ok": True, "created": created, "count": len(created)}
+
+    class SnapshotPriorityPayload(BaseModel):
+        priority: str
+        actor: Optional[str] = "brand"
+
+    @router.patch("/alignment-snapshots/{snapshot_id}/priority")
+    async def set_alignment_snapshot_priority(snapshot_id: str, payload: SnapshotPriorityPayload):
+        """Rank an Alignment Snapshot. The brand normally sets this from their
+        portal so TASCK knows what to work on first; admin can also set it."""
+        snap = await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "Alignment Snapshot not found")
+        priority = (payload.priority or "").strip()
+        if priority and priority not in PRIORITY_OPTIONS:
+            raise HTTPException(400, f"Unknown priority: {priority}")
+        now = _now_iso()
+        await db.v3_alignment_snapshots.update_one(
+            {"id": snapshot_id},
+            {"$set": {
+                "priority": priority,
+                "priority_set_by": payload.actor or "brand",
+                "priority_set_at": now,
+                "updated_at": now,
+            }},
+        )
+        return {"ok": True, "priority": priority, "priority_set_by": payload.actor, "priority_set_at": now}
+
+    @router.get("/priority-options")
+    async def list_priority_options():
+        return [
+            {"value": option, "label": option, **PRIORITY_COLORS.get(option, {"bg": "#6B7280", "fg": "#FFFFFF"})}
+            for option in PRIORITY_OPTIONS
+        ]
 
     class ConnectActionPayload(BaseModel):
         meeting_id: Optional[str] = None
@@ -7658,6 +9455,9 @@ def make_v3_router(db):
                 "updated_at": now,
             }}
         )
+        # The connect call has now happened and been analysed - the brand is a
+        # live connection to pitch.
+        await _auto_relationship_stage(case.get("brand_id"), "hot_connection")
 
         updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         return {
@@ -7737,6 +9537,13 @@ def make_v3_router(db):
                 transcripts.append(f"--- Transcript ---\n{t}")
             if m.get("scheduled_for"):
                 meeting_dates.append(m.get("scheduled_for"))
+
+        # Meeting transcripts PLUS everything admin uploaded separately
+        # (email chains, WhatsApp threads, notes) - the whole evidence pile
+        # goes to Claude, not just the call.
+        source_corpus, _source_rows = await _connect_source_corpus(bc_id)
+        if source_corpus:
+            transcripts.append(source_corpus)
 
         combined_text = "\n\n".join(transcripts).strip()
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0}) or {}
@@ -10384,6 +12191,18 @@ Produce the opportunity card JSON.
 
     @router.get("/relationship-managers")
     async def list_relationship_managers():
+        # MI is a standing relationship manager the client always wants to be
+        # able to assign. RMs otherwise come from the workbook import, so we
+        # upsert MI here (idempotent) rather than rely on a seed that only runs
+        # on a fresh database.
+        try:
+            await db.v3_rms.update_one(
+                {"id": MI_RM_ID},
+                {"$setOnInsert": {"id": MI_RM_ID, "name": MI_RM_NAME, "created_at": _now_iso()}},
+                upsert=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not ensure MI relationship manager exists: %s", exc)
         db_rms = await db.v3_rms.find({}, {"_id": 0}).to_list(500)
         return sorted(db_rms, key=lambda r: r.get("name", "")) if db_rms else []
 
