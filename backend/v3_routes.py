@@ -5365,6 +5365,14 @@ def make_v3_router(db):
             "marketing_intelligence": mi,
             "alignment_analysis_source": alignment_fields.get("analysis_source") if isinstance(alignment_fields, dict) else "deterministic_fallback",
             "brand_comments": (existing or {}).get("brand_comments", []),
+            # Revision tracking: the snapshot starts at Rev 1. Each re-send
+            # after admin edits bumps revision_number and appends to revisions,
+            # so the brand can tell a corrected version from the first one.
+            # Preserved across regeneration so the audit trail survives regen.
+            "revision_number": (existing or {}).get("revision_number") or 1,
+            "revision_note": (existing or {}).get("revision_note") or "",
+            "revisions": (existing or {}).get("revisions") or [],
+            "pending_change_summary": (existing or {}).get("pending_change_summary") or [],
             "sections": [
                 {"heading": "Our Understanding of your Organisation", "type": "prose", "content": org_understanding},
                 {"heading": "What We Understand You Are Trying to Achieve", "type": "prose", "content": (
@@ -5535,8 +5543,39 @@ def make_v3_router(db):
             updates["title"] = payload.title
         if payload.meta is not None:
             updates["meta"] = payload.meta
+        # Track which sections actually changed so the next re-send can show a
+        # "what changed" summary and bump the revision. We compare each section's
+        # serialisable content (heading + content + items + rows) against what is
+        # currently stored. Admin-only edits that don't touch content leave the
+        # summary empty, so re-sending the same content does NOT inflate the rev.
         if payload.sections is not None:
             updates["sections"] = payload.sections
+            try:
+                old_sections = {s.get("heading"): s for s in (snap.get("sections") or [])}
+                changed: List[str] = []
+                for new_section in payload.sections or []:
+                    heading = new_section.get("heading") or "Section"
+                    old_section = old_sections.get(heading)
+                    if old_section is None:
+                        changed.append(str(heading))
+                        continue
+                    for key in ("content", "items", "rows", "points", "selectors"):
+                        if old_section.get(key) != new_section.get(key):
+                            changed.append(str(heading))
+                            break
+                if payload.title is not None and payload.title != snap.get("title"):
+                    changed.append("Title")
+                if changed:
+                    # Merge with any pending changes from a previous save in the
+                    # same round (de-duped, order preserved).
+                    prior = list(snap.get("pending_change_summary") or [])
+                    merged: List[str] = []
+                    for item in prior + changed:
+                        if item not in merged:
+                            merged.append(item)
+                    updates["pending_change_summary"] = merged
+            except Exception:  # noqa: BLE001 - never block a save on diffing
+                pass
         await db.v3_alignment_snapshots.update_one({"id": snapshot_id}, {"$set": updates})
         await db.v3_business_cases.update_one(
             {"id": snap["business_case_id"]},
@@ -6177,14 +6216,53 @@ def make_v3_router(db):
         review_link = f"{base_url}/brand/approvals"
         project_title = _clean_document_text(case.get("title") or snap.get("title") or "Alignment Snapshot", "Alignment Snapshot")
         sent_at = _now_iso()
-        await db.v3_alignment_snapshots.update_one(
-            {"id": snap["id"]},
-            {"$set": {"status": "sent_to_brand", "sent_to_brand_at": sent_at}},
-        )
+        # Revision logic. The snapshot is Rev 1 the first time it is sent. If
+        # admin edited it since the last send (recorded as pending_change_summary
+        # by the PATCH endpoint), this send is a REVISION: bump the revision
+        # number, record what changed, and auto-resolve the brand's earlier
+        # open comments so the brand starts a fresh review round.
+        prior_revision = int(snap.get("revision_number") or 1)
+        already_sent = bool(snap.get("sent_to_brand_at"))
+        changed_sections = list(snap.get("pending_change_summary") or [])
+        is_revision_send = already_sent and bool(changed_sections)
+        if is_revision_send:
+            new_revision = prior_revision + 1
+            revision_entry = {
+                "number": new_revision,
+                "sent_at": sent_at,
+                "changed_sections": changed_sections,
+                "note": f"Updated based on brand comments: {', '.join(changed_sections)}",
+            }
+            # Auto-resolve every still-open brand comment from earlier rounds.
+            resolved_comments = []
+            for comment in (snap.get("brand_comments") or []):
+                if comment.get("status") in (None, "", "open"):
+                    resolved_comments.append({**comment, "status": "addressed", "resolved_at": sent_at, "resolved_reason": "Addressed in a revised snapshot"})
+                else:
+                    resolved_comments.append(comment)
+            await db.v3_alignment_snapshots.update_one(
+                {"id": snap["id"]},
+                {"$set": {
+                    "status": "sent_to_brand", "sent_to_brand_at": sent_at,
+                    "revision_number": new_revision,
+                    "revision_note": revision_entry["note"],
+                    "pending_change_summary": [],
+                    "brand_comments": resolved_comments,
+                }, "$push": {"revisions": revision_entry}},
+            )
+            # Reflect the bump on the in-memory snap so the email + docx below
+            # use the new revision number.
+            snap["revision_number"] = new_revision
+            snap["brand_comments"] = resolved_comments
+        else:
+            await db.v3_alignment_snapshots.update_one(
+                {"id": snap["id"]},
+                {"$set": {"status": "sent_to_brand", "sent_to_brand_at": sent_at}},
+            )
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {"frame.alignment_snapshot_status": "sent_to_brand", "updated_at": _now_iso()},
-             "$push": {"timeline": {"at": sent_at, "event": "alignment_sent_to_brand", "snapshot_id": snap["id"]}}},
+             "$push": {"timeline": {"at": sent_at, "event": "alignment_sent_to_brand", "snapshot_id": snap["id"], "revision": int(snap.get("revision_number") or 1), "is_revision": is_revision_send}}},
         )
         completion_section = next(
             (
@@ -6214,7 +6292,26 @@ def make_v3_router(db):
                     if question:
                         completion_questions.append(str(question))
         password = account.get("temporary_password") or "Use your current TASCK password"
-        if completion_questions:
+        current_revision = int(snap.get("revision_number") or 1)
+        if is_revision_send:
+            # Distinct, unique copy for a corrected re-send so the brand can
+            # tell this is a revision, not the original welcome email.
+            changed_list = "\n".join(f"- {name}" for name in changed_sections)
+            subject = f"Updated Alignment Snapshot (Rev {current_revision}) - please re-review - {project_title}"
+            body = (
+                f"Hello {brand.get('primary_contact', 'there')},\n\n"
+                f"We have made corrections to the Alignment Snapshot based on your comments. "
+                f"This is Rev {current_revision} of the document, and the following sections were updated:\n\n"
+                f"{changed_list}\n\n"
+                "Please log back into your TASCK brand portal and re-check the updated sections. "
+                "If everything now aligns, approve the snapshot; if anything still needs work, add a new comment and we will revise again.\n\n"
+                f"Business Case: {project_title}\n"
+                f"Brand portal: {review_link}\n"
+                f"Username: {account.get('username', '')}\n"
+                f"Password: {password}\n\n"
+                "A Google Docs-compatible copy of the updated Alignment Snapshot is attached."
+            )
+        elif completion_questions:
             question_text = "\n".join(f"- {question}" for question in completion_questions)
             subject = f"Alignment Snapshot ready for review - {project_title}"
             body = (
@@ -6301,6 +6398,9 @@ def make_v3_router(db):
             "comment": payload.comment,
             "suggested_text": payload.suggested_text,
             "author": payload.author,
+            # Tag with the revision the brand is reviewing so admin can see
+            # which round each comment came from (Rev 1, Rev 2, ...).
+            "revision": int(snap.get("revision_number") or 1),
             "status": "open",
             "created_at": _now_iso(),
             "resolved_at": None,

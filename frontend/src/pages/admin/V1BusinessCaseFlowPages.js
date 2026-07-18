@@ -2418,6 +2418,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
                 <div className="flex items-center gap-2 mb-1">
                   <MessageSquare className="w-4 h-4 text-[#C47A1A]" />
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
+                  {Number(c.revision) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded-md font-semibold bg-[#EEF1F6] text-[#3A5BA0] border border-[#C9D6EE]">Rev {c.revision}</span>}
                   {c.status && <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${c.status === 'open' ? 'bg-[#FDEBD0] text-[#C47A1A] border border-[#E8A33A]' : 'bg-[#E8F5ED] text-[#2E7D5B] border border-[#2E7D5B]'}`}>{humanStatus(c.status)}</span>}
                 </div>
                 {c.quoted_text && c.quoted_text !== 'Brand review' && <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Re: <strong className="text-[#4F3E2F]">{c.quoted_text}</strong></p>}
@@ -2505,6 +2506,22 @@ export const V3BusinessCaseFrameSnapshot = () => {
         {notice && (
           <div data-testid="alignment-notice" className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]">
             {notice}{stage && stage !== 'frame' ? ` (Current stage: ${bundle?.business_case?.stage_label || stage})` : ''}
+          </div>
+        )}
+
+        {/* Revision indicator: shows the current revision and, if admin has
+            saved edits since the last send, the sections that will be flagged
+            as updated in the next re-send email. */}
+        {hasSnapshot && Number(snapshot?.revision_number) >= 2 && (
+          <div className="rounded-lg border border-[#C9D6EE] bg-[#EEF1F6] px-3 py-2 mb-3 text-[12px] text-[#3A5BA0] flex flex-wrap items-center gap-2" data-testid="alignment-revision-badge">
+            <span className="font-semibold">Rev {snapshot.revision_number}</span>
+            <span className="text-[#6E6657]">· last revised {formatDateTime(snapshot?.sent_to_brand_at)}</span>
+          </div>
+        )}
+        {hasSnapshot && Array.isArray(snapshot?.pending_change_summary) && snapshot.pending_change_summary.length > 0 && (
+          <div className="rounded-lg border border-[#C7D7CF] bg-[#EAF4EE] px-3 py-2 mb-3 text-[12px] text-[#1F4A3A]" data-testid="alignment-pending-changes">
+            <span className="font-semibold">Pending on next send:</span> these sections were edited and will be flagged to the brand as updated —
+            <span className="font-medium"> {snapshot.pending_change_summary.join(', ')}</span>.
           </div>
         )}
 
