@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Download, MessageSquare, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { DocumentIcon, ErrorState, LoadingState, SnapshotSections, approveDocument, brandContact, cleanPortalText, documentGroupsFromBundles, formatDate, sectionsFromSnapshot, sendDocumentComment, sendReportFeedback, sentenceCaseStatus, statusTone, useV1BrandPortalData } from './V1BrandPortalData';
@@ -18,9 +18,18 @@ const DocumentReview = ({ kind, title, emptyLabel }) => {
   const selected = docs.find((doc) => (doc.snapshot?.id || doc.businessCase?.id) === selectedId) || docs[0];
   const businessCase = selected?.businessCase || {};
   const author = brandContact(data.brand, data.session);
+  const setSectionDraft = (index, value) => setSectionDrafts((current) => ({ ...current, [index]: value }));
+  // Reset the in-progress drafts whenever the brand switches document, so a
+  // per-section draft keyed by index on one document never leaks into another
+  // document's section at the same index. Declared before the early returns
+  // below so the hook order stays stable across renders.
+  const selectedDocKey = selected?.snapshot?.id || selected?.businessCase?.id || '';
+  useEffect(() => {
+    setSectionDrafts({});
+    setComment('');
+  }, [selectedDocKey]);
   if (data.loading) return <LoadingState />;
   if (data.error) return <ErrorState error={data.error} />;
-  const setSectionDraft = (index, value) => setSectionDrafts((current) => ({ ...current, [index]: value }));
   const sendComment = async () => {
     if (!selected) return;
     setBusy('comment');

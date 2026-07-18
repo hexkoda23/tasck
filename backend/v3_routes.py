@@ -4503,6 +4503,15 @@ def make_v3_router(db):
         pitch_deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
         snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         contract = await db.v3_contracts.find_one({"business_case_id": bc_id}, {"_id": 0})
+        # Connect conversations: every business-call meeting (carries the
+        # transcript text) plus every loose connect source (email / WhatsApp /
+        # note). Surfaces a count so the admin Connect page can tell whether
+        # any conversation has already been saved and swap its CTA from
+        # "Add Transcript" to "Next".
+        connect_meetings = await db.v3_meetings.find(
+            {"business_case_id": bc_id, "stage": "connect"}, {"_id": 0},
+        ).to_list(100)
+        connect_sources_count = await db.v3_connect_sources.count_documents({"business_case_id": bc_id})
         deliverables = await db.v3_deliverables.find({"business_case_id": bc_id}, {"_id": 0}).to_list(100)
         # Strip the inline base64 file blob from invoice docs so the bundle
         # response stays small. The download endpoint serves the file on demand.
@@ -4525,6 +4534,10 @@ def make_v3_router(db):
             "final_report": final_report,
             "brainstorm_round": brainstorm,
             "interactions": interactions,
+            # Connect conversations so the admin Connect page knows whether
+            # any have been saved (drives the "Add Transcript" vs "Next" CTA).
+            "meetings": connect_meetings,
+            "connect_sources_count": connect_sources_count,
         }
 
     class BusinessCaseCreate(BaseModel):
