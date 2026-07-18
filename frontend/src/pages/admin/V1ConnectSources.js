@@ -320,10 +320,10 @@ export const OpportunitiesPanel = ({ businessCaseId, onGenerated }) => {
     <div className="v3-card p-5" data-testid="opportunities-panel">
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 mb-3">
         <div>
-          <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Opportunities found</h2>
+          <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Campaigns found</h2>
           <p className="text-[12px] text-[#6E6657] mt-1 max-w-3xl">
-            The AI reads every saved conversation and splits it into the separate projects discussed. Merge any that are
-            really the same job, then generate one Alignment Snapshot per opportunity for the brand to rank.
+            The AI reads every saved conversation and splits it into the separate campaigns discussed. Merge any that are
+            really the same campaign, then generate one Alignment Snapshot per campaign for the brand to rank.
           </p>
           {detectedAt && <p className="text-[11px] text-[#8A8A8A] mt-1">Last analysed {formatWhen(detectedAt)}</p>}
           {detecting && detectMessage && (
@@ -452,7 +452,7 @@ export const OpportunitiesPanel = ({ businessCaseId, onGenerated }) => {
                 : `Generate ${opportunities.length} Alignment Snapshot${opportunities.length === 1 ? '' : 's'}`}
             </button>
             <p className="text-[11px] text-[#8A8A8A]">
-              One snapshot per opportunity. The brand ranks them by priority in their portal.
+              One snapshot per campaign. The brand ranks them by priority in their portal.
             </p>
           </div>
         </>
@@ -913,8 +913,7 @@ export const V1BusinessCaseConnectSchedulePage = () => {
   return (
     <FlowShell
       title="Connect Schedule & Transcripts"
-      subtitle="Add every Connect call transcript, email thread and WhatsApp chat with the brand, then run one analysis to find the opportunities hidden in them."
-      nextAction="Save your conversations, then click Analyze to find opportunities."
+      subtitle="Add every Connect call transcript, email thread and WhatsApp chat with the brand, then run one analysis to find the campaign found in them."
     >
       <ConversationsPanel
         businessCaseId={id}
@@ -929,7 +928,7 @@ export const V1BusinessCaseConnectSchedulePage = () => {
             <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Analyze conversations</h2>
             <p className="text-[12px] text-[#6E6657] mt-1 max-w-2xl">
               One click reads every saved transcript, email and WhatsApp chat, then splits them into separate
-              opportunities. After that you can merge any that are really the same job and move them into Alignment
+              campaigns. After that you can merge any that are really the same job and move them into Alignment
               Snapshots for the brand to rank.
             </p>
             <p className="text-[11px] text-[#8A8A8A] mt-1">
@@ -1009,15 +1008,14 @@ export const V1BusinessCaseOpportunities = () => {
 
   return (
     <FlowShell
-      title="Opportunities & Alignment Snapshots"
-      subtitle="The AI split every saved conversation into separate opportunities. Merge any that are the same job, then move them into Alignment Snapshots the brand can rank by priority."
-      nextAction="Merge duplicates, then generate Alignment Snapshots to move into Frame."
+      title="Campaign & Alignment snapshot"
+      subtitle="The AI split every saved conversation into separate campaigns. Merge any that are of the same campaign, then move them into Alignment Snapshots the brand can rank by priority."
     >
       <div className="v3-card p-5 mb-5" data-testid="opportunities-flow-guide">
         <ol className="space-y-2 text-[12px] text-[#4F3E2F]">
-          <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">1.</span> Review the opportunities the AI found below.</li>
-          <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">2.</span> Tick two or more and <strong>merge</strong> when they are really the same job.</li>
-          <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">3.</span> <strong>Generate Alignment Snapshots</strong> — one per surviving opportunity — which moves the case into Frame.</li>
+          <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">1.</span> Review the campaigns the AI found below.</li>
+          <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">2.</span> Tick two or more and <strong>merge</strong> when they are really the same campaign.</li>
+          <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">3.</span> <strong>Generate Alignment Snapshots</strong> — one per surviving campaign — which moves the case into Frame.</li>
           <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">4.</span> On the Frame page, open each snapshot and <strong>send it to the brand</strong>. The brand ranks them by priority in their portal.</li>
         </ol>
         <div className="mt-3 flex flex-wrap gap-2">

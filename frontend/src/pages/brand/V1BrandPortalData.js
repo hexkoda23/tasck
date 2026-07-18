@@ -90,54 +90,29 @@ export const sendReportFeedback = async ({ businessCase, brand, author, feedback
 export const BrandIdentityCard = ({ brand, session, compact = false }) => { return <div className={'v3-card ' + (compact ? 'p-4' : 'p-5')}><div className="flex items-start gap-4"><SharedBrandLogo name={brandName(brand)} candidates={brandLogoCandidates(brand)} containerClassName="w-16 h-16 rounded-xl border border-[#E8E4DB] bg-white overflow-hidden flex items-center justify-center shrink-0" imgClassName="w-full h-full object-contain p-1.5" initialsClassName="text-lg font-bold text-[#1F4A3A]" /><div className="min-w-0"><p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">Signed-in brand</p><h2 className="v3-heading text-2xl break-words" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)}</h2><p className="text-[13px] text-[#6B6258] mt-1">{brandIndustry(brand)} · {brandContact(brand, session)}</p>{!compact && <p className="text-[13px] text-[#5C5C5C] mt-3 leading-6">{brandAbout(brand)}</p>}</div></div></div>; };
 export const ProjectStageRail = ({ stage }) => { const current = stageIndex(stage); return <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">{stageOrder.map((item, index) => <div key={item} className={'rounded-lg border px-3 py-2 text-[12px] ' + (index < current ? 'border-[#C7D7CF] bg-[#EEF5F1] text-[#1F4A3A]' : index === current ? 'border-[#C49B5F] bg-[#F7EFE1] text-[#7A5F23]' : 'border-[#E8E4DB] bg-white text-[#8A8A8A]')}><div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5" />{stageLabel(item)}</div></div>)}</div>; };
 // Per-section comment box (brand portal). Rendered below EVERY section of a
-// document when SnapshotSections is given an onSectionComment handler, so the
-// brand can comment on each part individually instead of only one box at the
-// bottom of the page. Each box manages its own draft + busy state; on success
-// the draft clears and a small confirmation replaces the button label briefly.
-const SectionCommentBox = ({ section, index, onSectionComment }) => {
-  const [draft, setDraft] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [sentAt, setSentAt] = useState(0);
+// document when SnapshotSections is given an onSectionChange handler, so the
+// brand can comment on each part individually. There is NO send button here
+// any more — every section draft is collected at the page level and submitted
+// together by the single "Send back to admin" button at the bottom of the page
+// (Chioma feedback: one send button, not one per section).
+const SectionCommentBox = ({ section, index, value, onChange }) => {
   const heading = cleanPortalText(section.heading || section.title || `Section ${index + 1}`);
-  const send = async () => {
-    if (!draft.trim() || busy) return;
-    setBusy(true);
-    try {
-      await onSectionComment(section, index, draft);
-      setDraft('');
-      setSentAt(Date.now());
-      setTimeout(() => setSentAt(0), 2500);
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <div className="mt-3 border-t border-[#EEEAE0] pt-3" data-testid={`section-comment-${index}`}>
-      <p className="text-[10px] uppercase tracking-wide text-[#8A8A8A] mb-1.5 flex items-center gap-1"><MessageSquare className="w-3 h-3" /> Comment on this part</p>
-      <div className="flex flex-col sm:flex-row gap-2">
-        <textarea
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          rows={2}
-          className="flex-1 rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-2.5 text-[12px] focus:outline-none focus:border-[#1F4A3A]"
-          placeholder={`Add a comment about "${heading}"...`}
-          data-testid={`section-comment-input-${index}`}
-        />
-        <button
-          type="button"
-          onClick={send}
-          disabled={busy || !draft.trim()}
-          className="v3-btn-secondary text-[11px] self-end sm:self-start disabled:opacity-50"
-          data-testid={`section-comment-send-${index}`}
-        >
-          <Send className="w-3 h-3" /> {busy ? 'Sending...' : sentAt ? 'Sent ✓' : 'Send'}
-        </button>
-      </div>
+      <p className="text-[10px] uppercase tracking-wide text-[#8A8A8A] mb-1.5 flex items-center gap-1"><MessageSquare className="w-3 h-3" /> Comment</p>
+      <textarea
+        value={value || ''}
+        onChange={(event) => onChange(index, event.target.value)}
+        rows={2}
+        className="w-full rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-2.5 text-[12px] focus:outline-none focus:border-[#1F4A3A]"
+        placeholder={`Add a comment about "${heading}"...`}
+        data-testid={`section-comment-input-${index}`}
+      />
     </div>
   );
 };
 
-export const SnapshotSections = ({ sections, onSectionComment }) => <div className="space-y-4">{(sections?.length ? sections : [{ heading: 'Document', content: emptyText }]).map((section, index) => <div key={(section.heading || 'section') + index} className="rounded-xl border border-[#E8E4DB] bg-white p-4"><h3 className="text-[13px] font-semibold uppercase tracking-wide text-[#1F4A3A] mb-2">{cleanPortalText(section.heading || section.title || 'Section')}</h3>{section.content && <p className="text-[13px] leading-6 text-[#4F4941] whitespace-pre-wrap">{cleanPortalText(section.content)}</p>}{Array.isArray(section.items) && <ul className="space-y-2 text-[13px] text-[#4F4941]">{section.items.map((item, i) => <li key={i}>• {cleanPortalText(item.title ? item.title + ': ' + (item.detail || item.description || '') : item)}</li>)}</ul>}{Array.isArray(section.points) && <ul className="space-y-2 text-[13px] text-[#4F4941]">{section.points.map((item, i) => <li key={i}>• {cleanPortalText(item)}</li>)}</ul>}{Array.isArray(section.selectors) && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">{section.selectors.map((sel, i) => <div key={i} className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-3"><p className="text-[10px] uppercase tracking-wide text-[#8A8A8A]">{cleanPortalText(sel.label || 'Selector')}</p><p className="text-[13px] font-semibold text-[#1F1B18] mt-0.5">{sel.selected ? cleanPortalText(sel.selected) : 'Not selected yet'}</p></div>)}</div>}{Array.isArray(section.rows) && <div className="overflow-x-auto"><table className="w-full text-[12px]"><tbody>{section.rows.map((row, i) => <tr key={i} className="border-t border-[#EEEAE0]">{Object.entries(row).map(([key, value]) => <td key={key} className="py-2 pr-4 align-top"><span className="block text-[#8A8A8A] uppercase text-[10px]">{cleanPortalText(key)}</span><span className="text-[#4F4941]">{cleanPortalText(value)}</span></td>)}</tr>)}</tbody></table></div>}{typeof onSectionComment === 'function' && <SectionCommentBox section={section} index={index} onSectionComment={onSectionComment} />}</div>)}</div>;
+export const SnapshotSections = ({ sections, sectionDrafts, onSectionChange }) => <div className="space-y-4">{(sections?.length ? sections : [{ heading: 'Document', content: emptyText }]).map((section, index) => <div key={(section.heading || 'section') + index} className="rounded-xl border border-[#E8E4DB] bg-white p-4"><h3 className="text-[13px] font-semibold uppercase tracking-wide text-[#1F4A3A] mb-2">{cleanPortalText(section.heading || section.title || 'Section')}</h3>{section.content && <p className="text-[13px] leading-6 text-[#4F4941] whitespace-pre-wrap">{cleanPortalText(section.content)}</p>}{Array.isArray(section.items) && <ul className="space-y-2 text-[13px] text-[#4F4941]">{section.items.map((item, i) => <li key={i}>• {cleanPortalText(item.title ? item.title + ': ' + (item.detail || item.description || '') : item)}</li>)}</ul>}{Array.isArray(section.points) && <ul className="space-y-2 text-[13px] text-[#4F4941]">{section.points.map((item, i) => <li key={i}>• {cleanPortalText(item)}</li>)}</ul>}{Array.isArray(section.selectors) && <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">{section.selectors.map((sel, i) => <div key={i} className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-3"><p className="text-[10px] uppercase tracking-wide text-[#8A8A8A]">{cleanPortalText(sel.label || 'Selector')}</p><p className="text-[13px] font-semibold text-[#1F1B18] mt-0.5">{sel.selected ? cleanPortalText(sel.selected) : 'Not selected yet'}</p></div>)}</div>}{Array.isArray(section.rows) && <div className="overflow-x-auto"><table className="w-full text-[12px]"><tbody>{section.rows.map((row, i) => <tr key={i} className="border-t border-[#EEEAE0]">{Object.entries(row).map(([key, value]) => <td key={key} className="py-2 pr-4 align-top"><span className="block text-[#8A8A8A] uppercase text-[10px]">{cleanPortalText(key)}</span><span className="text-[#4F4941]">{cleanPortalText(value)}</span></td>)}</tr>)}</tbody></table></div>}{typeof onSectionChange === 'function' && <SectionCommentBox section={section} index={index} value={sectionDrafts ? sectionDrafts[index] : ''} onChange={onSectionChange} />}</div>)}</div>;
 export const LoadingState = ({ label = 'Loading brand portal data...' }) => <div className="v3-card p-6 text-[13px] text-[#6B6258] flex items-center gap-2"><Clock3 className="w-4 h-4" />{label}</div>;
 export const ErrorState = ({ error }) => <div className="v3-card p-6 text-[13px] text-[#B54A37]">{error}</div>;
 export const DocumentIcon = ({ kind }) => { const Icon = kind === 'alignment' ? ShieldCheck : kind === 'strategy' ? FileText : kind === 'report' ? MessageSquare : Send; return <Icon className="w-4 h-4" />; };

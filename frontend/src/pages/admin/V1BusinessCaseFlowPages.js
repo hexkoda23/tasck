@@ -1114,6 +1114,13 @@ export const V3BusinessCaseConnect = () => {
   const contact = bc.brand_contact_snapshot || {};
   const connectStatus = bc.connect?.connect_status || 'needs_business_call';
   const statusUpdatedAt = connectStatusUpdatedAt(bundle);
+  // Whether the admin has already saved any Connect conversations (call
+  // transcripts, emails or WhatsApp chats). Once they have, the "Add
+  // Transcript" CTA on this page becomes "Next" — it is no longer the first
+  // time they are adding one, just a way back into the schedule page.
+  const connectMeetings = (Array.isArray(bundle?.meetings) ? bundle.meetings : [])
+    .filter((m) => (m.meeting_type === 'business_call' || m.type === 'business_call') && String(m.transcript || '').trim());
+  const hasSavedConversations = connectMeetings.length > 0 || Number(bc.connect?.connect_sources_count || 0) > 0;
   const about = valueFrom(brand, ['about', 'brand_about', 'description', 'company_description', 'notes']);
   const marketingBudget = valueFrom(brand, ['marketing_budget', 'budget', 'budget_range']) || valueFrom(bc, ['marketing_budget', 'budget', 'estimated_value']);
   const defaultEmail = contact.email || brand.email || '';
@@ -1227,7 +1234,7 @@ export const V3BusinessCaseConnect = () => {
         </InfoCard>
         <InfoCard title="Next steps">
           <div className="grid gap-3">
-            <button type="button" onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/schedule`))} className="v3-btn-primary" data-testid="connect-add-transcript-link"><Plus className="w-3.5 h-3.5" /> Add Transcript</button>
+            <button type="button" onClick={() => navigate(adminRoute(`/business-cases/${id}/connect/schedule`))} className="v3-btn-primary" data-testid="connect-add-transcript-link">{hasSavedConversations ? <ArrowRight className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />} {hasSavedConversations ? 'Next' : 'Add Transcript'}</button>
             <div className="rounded-lg border border-[#E8E4DB] bg-[#FAFAF7] p-3">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Send meeting schedule to brand</p>
               <div className="mt-3 grid gap-2">
@@ -2402,7 +2409,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   return (
-    <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 5. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval." nextAction="Send the snapshot to the brand. Once approved, Framing continues into Creator Selector, Creative Brief, and Strategy Snapshot.">
+    <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 5. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval.">
       {alignmentComments.length > 0 && (
         <InfoCard title={`Brand Comments (${alignmentComments.length})`}>
           <div className="space-y-3" data-testid="alignment-snapshot-brand-comments">
