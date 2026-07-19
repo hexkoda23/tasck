@@ -5884,31 +5884,15 @@ def make_v3_router(db):
         footer_bytes = _read_template_asset("footer_contact.png")
         footer_cx = _emu_inch(6.0)
         footer_cy = int(footer_cx * 180 / 2048)
-        # Background watermark (image3 in the approved template): a faint
-        # full-page graphic centred behind the body text. Artwork is 1770x2500
-        # (~Letter aspect), so it fills the printable area.
-        watermark_bytes = _read_template_asset("template_watermark.png")
-        watermark_cx = _emu_inch(6.5)
-        watermark_cy = int(watermark_cx * 2500 / 1770)
-
-        # ---- Header XML (watermark behind text + logo top-right) ----
-        # The header part carries BOTH the background watermark (rId2, a
-        # v:shape anchored behind the body) and the logo (rId1, inline
-        # top-right), matching the approved TASCK letterhead template.
+        # Background watermark intentionally omitted: the supplied
+        # template_watermark.png is a near-solid white sheet at ~84% opacity,
+        # which washes out the logo, footer and body text rather than adding
+        # visible branding. The TASCK identity is carried by the logo header,
+        # contact-strip footer and embedded fonts instead, so the document
+        # stays sharp and legible. (Restored sharper after Chioma feedback
+        # that the design looked faded.)
         header_drawing = _drawing_inline("rId1", logo_cx, logo_cy, 1, "TASCK logo") if logo_bytes else ""
-        watermark_shape = ""
-        if watermark_bytes:
-            watermark_shape = (
-                '<w:r><w:pict>'
-                '<v:shape id="TasckWatermark" style="position:absolute;'
-                f'width:{watermark_cx / 12700:.4f}pt;height:{watermark_cy / 12700:.4f}pt;'
-                'rotation:0;z-index:-503316481;mso-position-horizontal-relative:margin;'
-                'mso-position-horizontal:center;mso-position-vertical-relative:margin;'
-                'mso-position-vertical:center;" alt="" type="#_x0000_t75">'
-                '<v:imagedata cropbottom="0f" cropleft="0f" cropright="0f" croptop="0f" r:id="rId2" o:title="tasck_watermark"/>'
-                '</v:shape></w:pict></w:r>'
-            )
-        header_paragraph_body = watermark_shape + (f'<w:r>{header_drawing}</w:r>' if header_drawing else '')
+        header_paragraph_body = (f'<w:r>{header_drawing}</w:r>' if header_drawing else '')
         header_paragraph = (
             '<w:p><w:pPr><w:jc w:val="right"/></w:pPr>' + header_paragraph_body + '</w:p>'
         ) if header_paragraph_body else '<w:p/>'
@@ -5989,19 +5973,13 @@ def make_v3_router(db):
             "</Relationships>"
         )
 
-        # Header relationships (logo = rId1, watermark = rId2). Footer
-        # relationships (contact strip = rId1).
+        # Header relationships (logo = rId1 only). Footer relationships
+        # (contact strip = rId1). No watermark relationship (see header XML).
         header_rels_entries = [
             '<Relationship Id="rId1" '
             'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
             'Target="media/tasck_logo.png"/>',
         ]
-        if watermark_bytes:
-            header_rels_entries.append(
-                '<Relationship Id="rId2" '
-                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
-                'Target="media/template_watermark.png"/>'
-            )
         header_rels_xml = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
@@ -6126,8 +6104,6 @@ def make_v3_router(db):
                 docx.writestr("word/header1.xml", header_xml)
                 docx.writestr("word/_rels/header1.xml.rels", header_rels_xml)
                 docx.writestr("word/media/tasck_logo.png", logo_bytes)
-                if watermark_bytes:
-                    docx.writestr("word/media/template_watermark.png", watermark_bytes)
             if footer_bytes:
                 docx.writestr("word/footer1.xml", footer_xml)
                 docx.writestr("word/_rels/footer1.xml.rels", footer_rels_xml)
@@ -6171,10 +6147,10 @@ def make_v3_router(db):
             blocks.append(_docx_paragraph(""))
         # Route every generic document (Strategy Snapshot, emailed Creative
         # Brief, contract export) through the shared TASCK template packager
-        # so they all carry the watermark, logo header, contact-strip footer
-        # and embedded Bebas Neue + Century Gothic fonts — matching the
-        # approved letterhead exactly. (Chioma: every doc sent to a brand or
-        # creator must use the TASCK template.)
+        # so they all carry the logo header, contact-strip footer and embedded
+        # Bebas Neue + Century Gothic fonts — matching the approved letterhead
+        # exactly. (Chioma: every doc sent to a brand or creator must use the
+        # TASCK template.)
         return _docx_package(blocks)
 
     @router.get("/alignment-snapshots/{snapshot_id}/docx")
@@ -6720,41 +6696,25 @@ def make_v3_router(db):
 
     def _docx_package(blocks: List[str]) -> bytes:
         """Assemble a TASCK-template .docx around the given body blocks: full
-        approved letterhead — background watermark + logo band header (bold
-        circle top-right), contact-strip footer, embedded Bebas Neue +
-        Century Gothic fonts. Every TASCK document sent to a brand or creator
-        is routed through here so they all share the exact same template."""
+        approved letterhead — logo band header (bold circle top-right),
+        contact-strip footer, embedded Bebas Neue + Century Gothic fonts.
+        Every TASCK document sent to a brand or creator is routed through
+        here so they all share the exact same template."""
         logo_bytes = _read_template_asset("tasck_logo.png")
         logo_cx = _emu_inch(6.5)
         logo_cy = int(logo_cx * 286 / 2048)
         footer_bytes = _read_template_asset("footer_contact.png")
         footer_cx = _emu_inch(6.0)
         footer_cy = int(footer_cx * 180 / 2048)
-        # Background watermark (image3 in the approved template): a faint
-        # full-page graphic centred behind the body text. The artwork is
-        # 1770x2500 (~Letter aspect), so it fills the printable area.
-        watermark_bytes = _read_template_asset("template_watermark.png")
-        watermark_cx = _emu_inch(6.5)
-        watermark_cy = int(watermark_cx * 2500 / 1770)
-
-        # Header part carries BOTH the watermark (rId2, anchored behind text)
-        # and the logo (rId1, inline top-right), exactly as the template.
+        # Background watermark intentionally omitted: the supplied
+        # template_watermark.png is a near-solid white sheet at ~84% opacity,
+        # which washes out the logo, footer and body text rather than adding
+        # visible branding. The TASCK identity is carried by the logo header,
+        # contact-strip footer and embedded fonts instead, so the document
+        # stays sharp and legible. (Restored sharper after Chioma feedback
+        # that the design looked faded.)
         header_logo_drawing = _drawing_inline("rId1", logo_cx, logo_cy, 1, "TASCK logo") if logo_bytes else ""
-        watermark_shape = ""
-        if watermark_bytes:
-            watermark_shape = (
-                '<w:r><w:pict>'
-                '<v:shape id="TasckWatermark" style="position:absolute;'
-                f'width:{watermark_cx / 12700:.4f}pt;height:{watermark_cy / 12700:.4f}pt;'
-                'rotation:0;z-index:-503316481;mso-position-horizontal-relative:margin;'
-                'mso-position-horizontal:center;mso-position-vertical-relative:margin;'
-                'mso-position-vertical:center;" alt="" type="#_x0000_t75">'
-                '<v:imagedata cropbottom="0f" cropleft="0f" cropright="0f" croptop="0f" r:id="rId2" o:title="tasck_watermark"/>'
-                '</v:shape></w:pict></w:r>'
-            )
-        header_paragraph_body = watermark_shape
-        if header_logo_drawing:
-            header_paragraph_body += f'<w:r>{header_logo_drawing}</w:r>'
+        header_paragraph_body = f'<w:r>{header_logo_drawing}</w:r>' if header_logo_drawing else ''
         header_xml = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -6877,13 +6837,10 @@ def make_v3_router(db):
                     docx.writestr(f"word/fonts/{name}", data)
             if logo_bytes:
                 docx.writestr("word/header1.xml", header_xml)
-                # Header part references both the logo (rId1) and the
-                # background watermark (rId2).
+                # Header part references only the logo (rId1). No watermark.
                 header_rels_entries = [
                     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/tasck_logo.png"/>',
                 ]
-                if watermark_bytes:
-                    header_rels_entries.append('<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/template_watermark.png"/>')
                 docx.writestr(
                     "word/_rels/header1.xml.rels",
                     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -6891,8 +6848,6 @@ def make_v3_router(db):
                     + "".join(header_rels_entries) + "</Relationships>",
                 )
                 docx.writestr("word/media/tasck_logo.png", logo_bytes)
-                if watermark_bytes:
-                    docx.writestr("word/media/template_watermark.png", watermark_bytes)
             if footer_bytes:
                 docx.writestr("word/footer1.xml", footer_xml)
                 docx.writestr("word/_rels/footer1.xml.rels", rel_img % "footer_contact.png")
