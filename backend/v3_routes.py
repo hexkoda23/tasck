@@ -2582,10 +2582,46 @@ def make_v3_router(db):
         deliverables = []
         if case_ids:
             deliverables = await db.v3_deliverables.find({"business_case_id": {"$in": case_ids}}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+        # Every campaign this brand has from its Alignment Snapshots. One
+        # Connect call can produce several; admin progresses ONE at a time, so
+        # the rest surface here (ranked by the brand's priority) for admin to
+        # come back to later. `is_active` marks the snapshot the business case
+        # is currently pointed at.
+        alignment_projects: List[Dict[str, Any]] = []
+        if case_ids:
+            snaps = await db.v3_alignment_snapshots.find(
+                {"business_case_id": {"$in": case_ids}},
+                {"_id": 0, "id": 1, "business_case_id": 1, "title": 1, "opportunity_title": 1,
+                 "priority": 1, "status": 1, "generated_at": 1, "sent_to_brand_at": 1, "approved_at": 1},
+            ).to_list(200)
+            case_by_id = {c.get("id"): c for c in cases}
+            for snap in snaps:
+                case = case_by_id.get(snap.get("business_case_id")) or {}
+                active_id = ((case.get("frame") or {}).get("alignment_snapshot_id")) or ""
+                alignment_projects.append({
+                    "snapshot_id": snap.get("id"),
+                    "business_case_id": snap.get("business_case_id"),
+                    "title": snap.get("opportunity_title") or snap.get("title") or "Alignment Snapshot",
+                    "priority": snap.get("priority") or "",
+                    "status": snap.get("status") or "draft",
+                    "generated_at": snap.get("generated_at"),
+                    "sent_to_brand_at": snap.get("sent_to_brand_at"),
+                    "approved_at": snap.get("approved_at"),
+                    "is_active": bool(active_id) and snap.get("id") == active_id,
+                    "case_stage": case.get("stage") or "",
+                })
+            alignment_projects.sort(key=lambda p: (
+                0 if p["is_active"] else 1,
+                PRIORITY_OPTIONS.index(p["priority"]) if p["priority"] in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
+                str(p.get("generated_at") or ""),
+            ))
+
         return {
             "brand": brand,
             "contacts": contacts,
             "business_cases": cases,
+            "alignment_projects": alignment_projects,
             "interactions": interactions,
             "account": account,
             "emails": emails,

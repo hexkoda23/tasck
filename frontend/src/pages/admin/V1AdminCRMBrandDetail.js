@@ -29,6 +29,7 @@ import {
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { RelationshipStageSelect, relationshipStageMeta, relationshipStageOf } from '../../lib/relationshipStage';
+import { PriorityTag as RelationshipPriorityTag } from '../../lib/snapshotPriority';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
 import { BrandLogo as SharedBrandLogo } from '../../lib/brandLogo';
 import { toast } from 'sonner';
@@ -556,6 +557,9 @@ const V1AdminCRMBrandDetail = () => {
   const brand = bundle?.brand || null;
   const contacts = Array.isArray(bundle?.contacts) ? bundle.contacts : [];
   const businessCases = Array.isArray(bundle?.business_cases) ? bundle.business_cases : [];
+  // Campaigns from Alignment Snapshots: active one first, then the ones
+  // waiting to be picked up, in the brand's priority order.
+  const alignmentProjects = Array.isArray(bundle?.alignment_projects) ? bundle.alignment_projects : [];
   const activeBusinessCases = activeCasesForBrand(businessCases);
   const activeBusinessCase = activeBusinessCases[0] || null;
   const interactions = Array.isArray(bundle?.interactions) ? bundle.interactions : [];
@@ -1043,6 +1047,54 @@ const V1AdminCRMBrandDetail = () => {
             <p className="text-[13px] text-[#8A8A8A]">No contact records yet.</p>
           )}
         </InfoCard>
+
+        {/* Campaigns from this brand's Alignment Snapshots. One Connect call
+            can produce several; admin progresses ONE at a time, so the rest
+            wait here (ranked by the brand's priority) to be picked up later. */}
+        {alignmentProjects.length > 0 && (
+          <InfoCard title={`Campaigns from Alignment Snapshots (${alignmentProjects.length})`}>
+            <p className="text-[12px] text-[#6E6657] mb-3">
+              Each campaign the AI found has its own Alignment Snapshot. You can only take one forward at a time —
+              the rest stay here, in the brand's priority order, so you can come back and continue them later.
+            </p>
+            <div className="grid gap-2">
+              {alignmentProjects.map((project) => (
+                <div
+                  key={project.snapshot_id}
+                  className={`rounded-[8px] border p-3 ${project.is_active ? 'border-[#1F4A3A] bg-[#EAF4EE]' : 'border-[#E8E4DB] bg-white'}`}
+                  data-testid={`brand-campaign-${project.snapshot_id}`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-[13px] font-semibold text-[#1A1A1A] truncate">{cleanV1Text(project.title)}</p>
+                        <RelationshipPriorityTag priority={project.priority} />
+                        {project.is_active ? (
+                          <span className="rounded-full bg-[#1F4A3A] px-2 py-0.5 text-[10px] font-semibold text-white">In progress</span>
+                        ) : (
+                          <span className="rounded-full border border-[#E6D6B6] bg-[#F2EAD8] px-2 py-0.5 text-[10px] font-semibold text-[#7A5F23]">Waiting</span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[#8A8A8A] mt-0.5">
+                        {statusLabel(project.status, 'Draft')}
+                        {project.priority ? '' : ' · not ranked by the brand yet'}
+                        {project.case_stage ? ` · case stage: ${statusLabel(project.case_stage, '')}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/admin/business-cases/${project.business_case_id}/frame/snapshot?snapshot=${project.snapshot_id}`)}
+                      className={project.is_active ? 'v3-btn-primary text-[11px]' : 'v3-btn-secondary text-[11px]'}
+                      data-testid={`brand-campaign-open-${project.snapshot_id}`}
+                    >
+                      {project.is_active ? 'Continue' : 'Pick this up'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </InfoCard>
+        )}
 
         <InfoCard title="Active business cases">
           {businessCases.length ? (
