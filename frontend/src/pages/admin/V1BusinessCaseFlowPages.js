@@ -3892,32 +3892,26 @@ export const V3BusinessCasePlanBrief = () => {
               ? (allBriefsSent ? 'Briefs sent and Pitch Deck approved. Continue into Planning.' : 'Pitch Deck is approved. Send the creator briefs above, then continue into Planning.')
               : (allBriefsSent ? 'All selected creator briefs have been sent. Open the Pitch Deck next — once it is approved the flow moves into Planning.' : 'Send the creator briefs above, or open the Pitch Deck first — either order works.')}
           </p>
+          {/* ONE green button. If the Pitch Deck still needs doing it opens
+              that; once the Pitch Deck is done it becomes the Planning CTA. */}
           <div className="flex flex-wrap gap-2">
-            {!pitchDeckDone && (
+            {pitchDeckDone ? (
+              <button
+                onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))}
+                className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
+                data-testid="brief-open-planning-btn"
+              >
+                <ArrowRight className="w-3.5 h-3.5" /> Open business case planning phase
+              </button>
+            ) : (
               <button
                 onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/pitch-deck`))}
-                className="v3-btn-primary"
+                className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
                 data-testid="brief-open-pitch-deck-btn"
               >
                 <Presentation className="w-3.5 h-3.5" /> Open Pitch Deck
               </button>
             )}
-            {pitchDeckDone && allBriefsSent && (
-              <button
-                onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))}
-                className="v3-btn-primary"
-                data-testid="brief-continue-planning-btn"
-              >
-                <ArrowRight className="w-3.5 h-3.5" /> Continue to Planning
-              </button>
-            )}
-            <button
-              onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))}
-              className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
-              data-testid="brief-open-strategy-snapshot-btn"
-            >
-              <ArrowRight className="w-3.5 h-3.5" /> Open business case planning phase
-            </button>
           </div>
         </div>
       </InfoCard>
@@ -3974,16 +3968,43 @@ export const V3BusinessCasePitchDeck = () => {
 
   useEffect(() => { if (brandEmail) setRecipientEmail(brandEmail); }, [brandEmail]);
 
-  const generate = async () => {
+  // Auto-load: the Pitch Deck writes itself as soon as the page opens, so
+  // admin never has to press Generate. Fires once, only when the case has
+  // loaded and there is no deck yet. The loading popup only appears if this
+  // takes longer than 5 seconds.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (autoRanRef.current) return;
+    if (!bundle?.business_case?.id) return;   // wait for the bundle
+    if (bundle?.pitch_deck || deck) { autoRanRef.current = true; return; }
+    autoRanRef.current = true;
+    generate(5000).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.business_case?.id, bundle?.pitch_deck]);
+
+  // popupDelayMs: the manual button shows the loader immediately; the
+  // automatic load on page open stays quiet for 5s and only raises the
+  // 0-100% popup if it is actually going to take a while.
+  const generate = async (popupDelayMs = 0) => {
     setGenerating(true);
-    setGenPopup({ open: true, progress: 4, status: 'running', message: 'Loading Pitch Deck…' });
-    startGenTick();
+    let delayTimer = null;
+    const openPopup = () => {
+      setGenPopup({ open: true, progress: 4, status: 'running', message: 'Loading Pitch Deck…' });
+      startGenTick();
+    };
+    if (popupDelayMs > 0) {
+      delayTimer = window.setTimeout(openPopup, popupDelayMs);
+    } else {
+      openPopup();
+    }
+    const clearDelay = () => { if (delayTimer) { window.clearTimeout(delayTimer); delayTimer = null; } };
     try {
       const result = await v3GeneratePitchDeck(id, (job) => {
         // The backend sends a real progress value; stop the simulated tick
         // once we have it and reflect the server's number instead.
         const serverProgress = Math.max(0, Math.min(100, Number(job?.progress) || 0));
         if (serverProgress > 0) stopGenTick();
+        clearDelay();
         setGenPopup((prev) => prev.open ? {
           ...prev,
           progress: Math.max(prev.progress, serverProgress),
@@ -3991,6 +4012,7 @@ export const V3BusinessCasePitchDeck = () => {
         } : prev);
       });
       stopGenTick();
+      clearDelay();
       setDeck(result?.pitch_deck || null);
       await reload();
       setGenPopup({ open: true, progress: 100, status: 'complete', message: 'Pitch Deck ready. Review and edit each section before sending.' });
@@ -3998,6 +4020,7 @@ export const V3BusinessCasePitchDeck = () => {
       setTimeout(() => setGenPopup((prev) => ({ ...prev, open: false })), 1100);
     } catch (e) {
       stopGenTick();
+      clearDelay();
       const msg = e?.response?.data?.detail || e?.message || 'Could not generate the Pitch Deck.';
       toast.error(msg);
       setGenPopup({ open: true, progress: 100, status: 'failed', message: msg });
@@ -4088,13 +4111,13 @@ export const V3BusinessCasePitchDeck = () => {
     <FlowShell
       title="Pitch Deck"
       subtitle="The brand-facing pitch: ten sections written by the AI from the Alignment Snapshot, Creator Selector, and your selected creators. Edit each section, then approve or send it to the brand."
-      nextAction={briefDone ? 'Once the Pitch Deck is approved, the flow moves into Planning.' : 'Once the Pitch Deck is approved, the Creative Brief opens next.'}
+      nextAction="Edit each section, then approve or send the Pitch Deck to the brand."
     >
       <InfoCard
         title="Pitch Deck"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={generate} disabled={generating} className="v3-btn-primary text-[12px]" data-testid="pitch-generate-btn">
+            <button onClick={() => generate(0)} disabled={generating} className="v3-btn-primary text-[12px]" data-testid="pitch-generate-btn">
               {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
               {generating ? 'Writing…' : (deck ? 'Regenerate' : 'Generate Pitch Deck')}
             </button>
@@ -4150,7 +4173,7 @@ export const V3BusinessCasePitchDeck = () => {
         <InfoCard title="Send to brand">
           <p className="text-[12px] text-[#6E6657] mb-2">
             Emails the formatted Pitch Deck (TASCK-branded .docx attached) and makes it reviewable in the brand portal.
-            Once the brand approves it{briefDone ? ', the flow moves into Planning.' : ', the Creative Brief opens next.'}
+            The brand can review, comment, and approve it from their portal.
           </p>
           <div className="flex flex-col gap-2 md:flex-row md:items-center">
             <input
@@ -4164,6 +4187,36 @@ export const V3BusinessCasePitchDeck = () => {
           </div>
         </InfoCard>
       )}
+
+      {/* ONE green button, mirroring the Creative Brief page. If the brief
+          still needs doing it opens that; once it is done this becomes the
+          Planning CTA. */}
+      <InfoCard title="Next step">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">
+            {briefDone
+              ? 'The Creative Brief is done. Continue into the Business Case planning phase.'
+              : 'Open the Creator Brief next — once both are done the flow moves into the Business Case planning phase.'}
+          </p>
+          {briefDone ? (
+            <button
+              onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))}
+              className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
+              data-testid="pitch-open-planning-btn"
+            >
+              <ArrowRight className="w-3.5 h-3.5" /> Open business case planning phase
+            </button>
+          ) : (
+            <button
+              onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brief`))}
+              className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
+              data-testid="pitch-open-brief-btn"
+            >
+              <FileText className="w-3.5 h-3.5" /> Open Creator Brief
+            </button>
+          )}
+        </div>
+      </InfoCard>
 
       {deckComments.length > 0 && (
         <InfoCard title={`Brand Comments (${deckComments.length})`}>
