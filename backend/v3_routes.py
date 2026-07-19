@@ -1695,66 +1695,108 @@ async def _call_opportunity_detection_tool(
 # ---------------------------------------------------------------------------
 def _creative_brief_system_prompt() -> str:
     return """
-You are TASCK's senior brief writer. Write a creator-facing Creative Brief that follows the agency's approved template EXACTLY - same section headings, same order, same rhythm - with every sentence tailored to the brand and project you are given. The reader is the creator ("you"), so write directly to them, confident and warm, in polished Nigerian business English.
+You are TASCK's senior brief writer. Write a "Creative Alignment Brief (Creator Version)" that follows the agency's approved template EXACTLY - the same nine section headings, in the same order, worded for THIS brand and campaign. The reader is the creator ("you"). Write in polished Nigerian business English: confident, warm, concrete.
 
-Ground every claim in the brand data provided. Do NOT invent product features, benefit programmes, fees, percentages, or numbers that are not supported by the inputs - where a commercial detail is unknown, keep it directional ("a fixed base fee plus performance-based incentives") rather than inventing figures.
+Ground every claim in the brand and project data provided. Do NOT invent product features, benefit programmes, fees, percentages, or numbers that are not in the inputs - where a commercial detail is unknown, keep it directional ("to be confirmed after brand approval") rather than inventing figures.
 
-Return JSON only, no markdown fences, with EXACTLY this shape:
+Return JSON only, no markdown fences, with EXACTLY this shape (nine sections, in this order):
 {
-  "title": "string - '<BRAND NAME IN CAPS> CREATIVE BRIEF: <SHORT CAMPAIGN NAME IN CAPS>'",
-  "duration": "string - e.g. '6 Months' (use the project timeline if given, else a sensible default)",
+  "title": "TTA - Creative Alignment Brief",
+  "subtitle": "(Internal name: Creator Brief for Fee Confirmation)",
+  "project_reference": {
+    "brand_organisation": "string - the brand/organisation name",
+    "project_working_title": "string - the project working title (use the business case title)",
+    "tta_project_lead": "string - TASCK project lead if known, else 'TTA project lead'",
+    "date_shared_with_creator": "string - today's date in 'July 18, 2026' format",
+    "creator": "string - the creator's name, or 'To be confirmed'",
+    "creator_contact": "string - creator contact, or 'To be confirmed'"
+  },
   "sections": [
     {
-      "heading": "The Opportunity",
-      "paragraphs": ["1-2 short paragraphs introducing the brand and why this moment matters"],
-      "bullets": ["4-6 concrete things the brand/product lets the audience do"],
-      "closing": "one short punchline line, e.g. 'All in one place.'"
-    },
-    {
-      "heading": "Your Role",
-      "paragraphs": ["2 short paragraphs: what the creator's real role is (bigger than promotion), and what their content should naturally demonstrate"]
-    },
-    {
-      "heading": "Core Narrative (Non-Negotiable)",
-      "paragraphs": ["All content must reinforce one clear story:"],
-      "quote": "the single-sentence brand story every piece of content must reinforce",
-      "pillars_intro": "Your content should bring these 4 pillars to life:",
-      "pillars": ["Pillar name - what it means for content", "x4 exactly"]
-    },
-    {
-      "heading": "What You'll Do",
-      "subsections": [
-        {"title": "1. <action area>", "bullets": ["3 concrete content actions"]},
-        {"title": "2. <action area>", "bullets": ["3 concrete content actions"]},
-        {"title": "3. <action area>", "bullets": ["3 concrete content actions"]},
-        {"title": "4. <action area>", "bullets": ["3 concrete content actions"]}
+      "heading": "1. Project Reference",
+      "lines": [
+        {"label": "Brand / Organisation", "value": "..."},
+        {"label": "Project working title", "value": "..."},
+        {"label": "TTA project lead", "value": "..."},
+        {"label": "Date shared with creator", "value": "..."}
       ]
     },
     {
-      "heading": "Content Approach",
-      "paragraphs": ["Content is not one-off,  it is a series designed to:"],
-      "bullets": ["4 funnel outcomes the series drives, in order"],
-      "closing": "Your creativity is key, but every piece of content should move your audience to act."
+      "heading": "2. Context (High-Level)",
+      "lines": [
+        {"label": "Brand objective (summary)", "value": "one sentence on what the brand is trying to achieve, grounded in the inputs"},
+        {"label": "Why this project is happening now", "value": "one sentence on timing/urgency, grounded in the inputs"}
+      ]
     },
     {
-      "heading": "Founding Partner Benefits For You (Limited Access)",
-      "bullets": ["6-11 concrete benefits the creator gets, grounded in the inputs; keep directional where unknown"]
+      "heading": "3. Role of the Creative",
+      "intro": "The creative would act as:",
+      "checkboxes": ["Public-facing lead", "Conceptual lead", "Talent & cultural translator", "Executional partner", "Other"],
+      "primary_label": "Primary responsibility:",
+      "primary_value": "one sentence describing the creator's primary responsibility (describe responsibility, not outputs), tailored to the creator and brand"
     },
     {
-      "heading": "Success Metrics",
-      "bullets": ["4-6 measurable outcomes, matching the project's KPIs"]
+      "heading": "4. Expected Scope (Signal Only)",
+      "intro": "This engagement may include:",
+      "checkboxes": ["Content creation", "Appearances / representation", "Concept contribution", "Performance / activation involvement", "Other"],
+      "scope_signal": [
+        "Creator involvement is being explored for planning and pricing alignment only.",
+        "Specific deliverables are not yet defined.",
+        "Final scope is subject to brand approval."
+      ]
     },
     {
-      "heading": "Commercial Model",
-      "paragraphs": ["Hybrid structure:"],
-      "bullets": ["Fixed base fee", "Performance-based incentives (approx. 50%) tied to:"],
-      "sub_bullets": ["3-4 performance triggers matching the funnel milestones"]
+      "heading": "5. Indicative Timeline",
+      "lines": [
+        {"label": "Proposed engagement period", "value": "to be confirmed after brand approval and creator availability check (or the project timeline if known)"},
+        {"label": "Known timing constraints", "value": "confirm availability, blackout dates, production constraints, and any campaign launch windows"}
+      ],
+      "note": "No schedules. No milestones."
+    },
+    {
+      "heading": "6. Working Assumptions",
+      "intro": "Please assume:",
+      "assumptions": [
+        "TTA will coordinate the engagement and act as the administrative lead.",
+        "Contracts will be issued through TTA.",
+        "Payment will be processed through TTA.",
+        "Reporting and brand liaison will be handled by TTA."
+      ]
+    },
+    {
+      "heading": "7. Fee Indication Request",
+      "intro": "Based on the information above, please share:",
+      "lines": [
+        {"label": "Your fee for this engagement (range or fixed)", "value": "creator to propose"},
+        {"label": "Fee basis", "value": "Project-based / Time-based / Retainer-style"},
+        {"label": "What your fee covers (brief)", "value": "state what your indication includes (content, appearances, concept contribution, usage, exclusivity, production support, or management fees where relevant). No breakdown required at this stage."}
+      ]
+    },
+    {
+      "heading": "8. Availability & Conditions",
+      "availability_label": "Are you available within the proposed period?",
+      "availability_options": ["Yes", "Conditional", "No"],
+      "conditions_label": "Any conditions or exclusions we should note:",
+      "conditions_hint": "category conflicts, usage limits, exclusivity restrictions, production requirements, travel constraints, or anything that would affect the final scope."
+    },
+    {
+      "heading": "9. Confirmation",
+      "confirmations": [
+        "I understand that this is for planning and pricing alignment only.",
+        "I understand that this is not a confirmed booking.",
+        "I am open to proceeding subject to final scope and budget approval."
+      ]
     }
   ],
-  "closing_cta": "If you're interested, reply with your rate card or let us know a good time to connect - we'll take it from there."
+  "signature": {"name_label": "Name:", "date_label": "Date:"}
 }
 
-Keep headings EXACTLY as shown (you may adapt only the '<...>' placeholders). Keep "Core Narrative (Non-Negotiable)", "What You'll Do", "Content Approach", "Success Metrics", "Commercial Model" and the closing_cta line verbatim.
+Rules:
+- Keep the nine section headings EXACTLY as written, including the numbering.
+- Fill every field with content tailored to the brand, project and creator from the inputs. Where a detail genuinely is unknown, use "To be confirmed" rather than inventing it.
+- The role checkboxes (section 3) and scope checkboxes (section 4) are a fixed list - return them all; do not pre-select (the DOCX renders them as unchecked boxes).
+- Sections 3, 4, 6, 8, 9 have a fixed structure that does not change between briefs; only the tailored sentences (primary_value, scope_signal, conditions_hint, etc.) vary.
+- The closing Name/Date signature is always returned as labels only.
 """.strip()
 
 
@@ -6855,38 +6897,84 @@ def make_v3_router(db):
         return package.getvalue()
 
     def creative_brief_docx_bytes(brief: Dict[str, Any]) -> bytes:
-        """Render the generated Creative Brief in the client's approved PDF
-        layout: bold caps title, Duration line, bold section headings, bullet
-        rhythm, indented core-narrative quote, bold closing CTA."""
+        """Render the Creative Alignment Brief in the client's approved DOCX
+        template: bold title + subtitle, nine numbered sections in the fixed
+        order, label/value lines, unchecked-box role/scope lists, the fixed
+        working-assumptions and confirmation blocks, and a Name/Date signature.
+        Century Gothic throughout, bold section headings."""
         blocks: List[str] = []
-        title = str(brief.get("title") or "CREATIVE BRIEF").upper()
-        blocks.append(_docx_paragraph(title, bold=True, size_half_pt=30, before=240, after=200))
-        if brief.get("duration"):
-            blocks.append(_docx_paragraph(f"Duration: {brief.get('duration')}", bold=True, size_half_pt=22, after=200))
+        # Title + subtitle (bold), exactly as the approved template.
+        blocks.append(_docx_paragraph(str(brief.get("title") or "TTA - Creative Alignment Brief"), bold=True, size_half_pt=30, before=120, after=80))
+        if brief.get("subtitle"):
+            blocks.append(_docx_paragraph(str(brief.get("subtitle")), bold=True, size_half_pt=22, after=200))
+
+        # Project Reference block (sits above section 1 in the template).
+        pref = brief.get("project_reference") or {}
+        if pref:
+            for key, label in (
+                ("brand_organisation", "Brand / Organisation"),
+                ("project_working_title", "Project working title"),
+                ("tta_project_lead", "TTA project lead"),
+                ("date_shared_with_creator", "Date shared with creator"),
+                ("creator", "Creator"),
+                ("creator_contact", "Creator contact"),
+            ):
+                value = str(pref.get(key) or "").strip()
+                blocks.append(_docx_paragraph(f"{label}: {value or 'To be confirmed'}", after=60))
+            blocks.append(_docx_paragraph("", after=80))
+
+        def _label_value_line(label: str, value: str) -> str:
+            return _docx_paragraph(f"{label} {value}".strip(), after=60)
+
         for section in brief.get("sections", []) or []:
             heading = str(section.get("heading") or "").strip()
             if heading:
                 blocks.append(_docx_paragraph(heading, bold=True, size_half_pt=26, before=240, after=120))
-            for para in section.get("paragraphs", []) or []:
-                blocks.append(_docx_paragraph(para, after=160))
-            if section.get("quote"):
-                blocks.append(_docx_paragraph(f"        {section.get('quote')}", bold=True, after=200))
-            for bullet in section.get("bullets", []) or []:
-                blocks.append(_docx_paragraph(f"•   {bullet}", after=80))
-            if section.get("closing") and not section.get("pillars"):
-                blocks.append(_docx_paragraph(section.get("closing"), before=160, after=200))
-            if section.get("pillars_intro"):
-                blocks.append(_docx_paragraph(section.get("pillars_intro"), before=160, after=120))
-            for pillar in section.get("pillars", []) or []:
-                blocks.append(_docx_paragraph(f"•   {pillar}", after=80))
-            for sub in section.get("subsections", []) or []:
-                blocks.append(_docx_paragraph(str(sub.get("title") or ""), bold=True, size_half_pt=22, before=180, after=100))
-                for bullet in sub.get("bullets", []) or []:
-                    blocks.append(_docx_paragraph(f"•   {bullet}", after=80))
-            for sub_bullet in section.get("sub_bullets", []) or []:
-                blocks.append(_docx_paragraph(f"        ○   {sub_bullet}", after=80))
-        if brief.get("closing_cta"):
-            blocks.append(_docx_paragraph(brief.get("closing_cta"), bold=True, before=320, after=200))
+            # Label/value lines.
+            for line in section.get("lines", []) or []:
+                label = str(line.get("label") or "").strip()
+                value = str(line.get("value") or "").strip()
+                if label and value:
+                    blocks.append(_label_value_line(f"{label}:", value))
+                elif value:
+                    blocks.append(_docx_paragraph(value, after=60))
+            # Intro line (e.g. "The creative would act as:").
+            if section.get("intro"):
+                blocks.append(_docx_paragraph(str(section.get("intro")), after=60))
+            # Checkbox-style option list (rendered as unchecked boxes).
+            for option in section.get("checkboxes", []) or []:
+                blocks.append(_docx_paragraph(f"\u2610  {option}", after=40))
+            # Availability options (Yes / Conditional / No) on one logical group.
+            if section.get("availability_label"):
+                blocks.append(_docx_paragraph(str(section.get("availability_label")), after=40))
+                opts = "   ".join(f"\u2610 {o}" for o in (section.get("availability_options") or []))
+                blocks.append(_docx_paragraph(opts, after=60))
+            if section.get("conditions_label"):
+                blocks.append(_docx_paragraph(str(section.get("conditions_label")), after=40))
+                if section.get("conditions_hint"):
+                    blocks.append(_docx_paragraph(str(section.get("conditions_hint")), after=80))
+            # Primary responsibility (role of creative).
+            if section.get("primary_label"):
+                blocks.append(_docx_paragraph(str(section.get("primary_label")), bold=True, before=80, after=40))
+            if section.get("primary_value"):
+                blocks.append(_docx_paragraph(str(section.get("primary_value")), after=80))
+            # Scope signal bullets.
+            for bullet in section.get("scope_signal", []) or []:
+                blocks.append(_docx_paragraph(f"- {bullet}", after=40))
+            # Working assumptions list.
+            for item in section.get("assumptions", []) or []:
+                blocks.append(_docx_paragraph(f"- {item}", after=40))
+            # Confirmation checkboxes.
+            for item in section.get("confirmations", []) or []:
+                blocks.append(_docx_paragraph(f"\u2610  {item}", after=40))
+            # Free note line.
+            if section.get("note"):
+                blocks.append(_docx_paragraph(str(section.get("note")), italic=True, after=80))
+
+        # Name / Date signature.
+        sig = brief.get("signature") or {}
+        blocks.append(_docx_paragraph(str(sig.get("name_label") or "Name:"), before=200, after=60))
+        blocks.append(_docx_paragraph(str(sig.get("date_label") or "Date:"), after=60))
         return _docx_package(blocks)
 
     @router.post("/business-cases/{bc_id}/ai/creative-brief/generate")

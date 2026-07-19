@@ -1065,8 +1065,6 @@ const V1AdminCRMBrandDetail = () => {
                     <span className="text-[10px] text-[#D7CBB8]">·</span>
                     <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brief`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Brief</button>
                     <span className="text-[10px] text-[#D7CBB8]">·</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/strategy-snapshot`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Strategy</button>
-                    <span className="text-[10px] text-[#D7CBB8]">·</span>
                     <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/plan/planning`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Planning</button>
                     <span className="text-[10px] text-[#D7CBB8]">·</span>
                     <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/delivery/deliverables`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Delivery</button>

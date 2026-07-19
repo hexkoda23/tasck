@@ -335,8 +335,9 @@ export const businessCasePhasePath = (id, bc = {}) => {
     if (!plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm`);
     if (!Array.isArray(plan.selected_creator_ids) || plan.selected_creator_ids.length === 0) return adminRoute(`/business-cases/${id}/frame/creator-scan`);
     if (!plan.creative_brief_id) return adminRoute(`/business-cases/${id}/frame/brief`);
-    if (!plan.creative_snapshot_id && !plan.strategy_snapshot_status) return adminRoute(`/business-cases/${id}/frame/strategy-snapshot`);
-    return adminRoute(`/business-cases/${id}/frame/strategy-snapshot`);
+    // Strategy Snapshot step removed — once the brief exists, the flow moves
+    // straight into the Planning phase.
+    return adminRoute(`/business-cases/${id}/plan/planning`);
   }
   if (stage === 'frame') {
     const frame = bc.frame || {};
@@ -3311,6 +3312,27 @@ export const V3BusinessCasePlanCreatorScan = () => {
   const [selectedIds, setSelectedIds] = useState(Array.isArray(seededFromCase) ? seededFromCase : []);
   const [notice, setNotice] = useState('');
   const [scanning, setScanning] = useState(false);
+  // Scan progress popup. The creator scan is a single synchronous request
+  // (no server-side progress), so we run a smooth simulated 0->100% bar that
+  // holds near the top until the real result lands, then completes.
+  const [scanPopup, setScanPopup] = useState({ open: false, progress: 0, status: 'running', message: 'Loading creators…' });
+  const scanTickRef = useRef(null);
+  const stopScanTick = () => {
+    if (scanTickRef.current) { clearInterval(scanTickRef.current); scanTickRef.current = null; }
+  };
+  const startScanTick = () => {
+    stopScanTick();
+    scanTickRef.current = setInterval(() => {
+      setScanPopup((prev) => {
+        if (!prev.open || prev.status !== 'running') return prev;
+        // Ease toward a ceiling below 100 so the bar never finishes before
+        // the real result arrives; it locks to 100 when the scan resolves.
+        const next = prev.progress < 92 ? prev.progress + (prev.progress < 40 ? 3 : prev.progress < 70 ? 2 : 1) : 92;
+        return { ...prev, progress: next };
+      });
+    }, 350);
+  };
+  useEffect(() => () => stopScanTick(), []);
   useEffect(() => {
     v3GetCreators().then((rows) => {
       const list = Array.isArray(rows) ? rows : [];
@@ -3359,8 +3381,12 @@ export const V3BusinessCasePlanCreatorScan = () => {
   const runScan = async () => {
     setNotice('');
     setScanning(true);
+    // Open the loading popup first so the admin sees immediate feedback.
+    setScanPopup({ open: true, progress: 4, status: 'running', message: 'Loading creators…' });
+    startScanTick();
     try {
       const data = await v3SuggestCreatorMatches(id);
+      stopScanTick();
       setMatches(Array.isArray(data?.matches) ? data.matches : []);
       setAnalysisSource(data?.analysis_source || '');
       // Creators the team NAMED in the Creator Selector "Creator Matches"
@@ -3380,8 +3406,15 @@ export const V3BusinessCasePlanCreatorScan = () => {
           return next;
         });
       }
+      const found = (data?.matches || []).length + (named || []).length;
+      setScanPopup({ open: true, progress: 100, status: 'complete', message: found ? `Found ${found} creator${found === 1 ? '' : 's'} matching accurately.` : 'Scan complete.' });
+      // Auto-close shortly after completion so the admin lands on the results.
+      setTimeout(() => setScanPopup((prev) => ({ ...prev, open: false })), 1100);
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.');
+      stopScanTick();
+      const msg = e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.';
+      setNotice(msg);
+      setScanPopup({ open: true, progress: 100, status: 'failed', message: msg });
     } finally {
       setScanning(false);
     }
@@ -3530,6 +3563,36 @@ export const V3BusinessCasePlanCreatorScan = () => {
           </div>
         )}
       </InfoCard>
+
+      {scanPopup.open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="creator-scan-popup">
+          <div className="w-full max-w-md rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${scanPopup.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : scanPopup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#EFF5F1] text-[#1F4A3A]'}`}>
+                {scanPopup.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : scanPopup.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+              </span>
+              <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                {scanPopup.status === 'complete' ? 'Creators ready' : scanPopup.status === 'failed' ? 'Scan failed' : 'Loading creators'}
+              </h3>
+              <span className="ml-auto text-[12px] font-semibold text-[#4F3E2F]" data-testid="creator-scan-popup-percent">{scanPopup.progress}%</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-[#F4F2EC] overflow-hidden mb-3">
+              <div
+                className={`h-full transition-all duration-300 ease-out ${scanPopup.status === 'failed' ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
+                style={{ width: `${Math.max(2, scanPopup.progress)}%` }}
+                data-testid="creator-scan-popup-bar"
+              />
+            </div>
+            <p className="text-[13px] leading-6 text-[#4F3E2F]" data-testid="creator-scan-popup-message">{scanPopup.message}</p>
+            {scanPopup.status === 'running' && <p className="mt-1 text-[11px] text-[#6E6657]">Scanning the creator database for accurate matches. Please keep this page open.</p>}
+            {scanPopup.status === 'failed' && (
+              <div className="mt-4 flex justify-end">
+                <button type="button" onClick={() => setScanPopup((prev) => ({ ...prev, open: false }))} className="v3-btn-primary" data-testid="creator-scan-popup-close">OK</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </FlowShell>
   );
 };
@@ -3717,27 +3780,54 @@ export const V3BusinessCasePlanBrief = () => {
         )}
         {templateBrief && (
           <div className="rounded-lg border border-[#E8E4DB] bg-white p-5 space-y-3 max-h-[520px] overflow-y-auto" data-testid="brief-template-preview">
-            <p className="text-[16px] font-bold text-[#1A1A1A] uppercase">{templateBrief.title}</p>
-            {templateBrief.duration && <p className="text-[12px] text-[#4F3E2F]"><strong>Duration:</strong> {templateBrief.duration}</p>}
-            {(templateBrief.sections || []).map((section, index) => (
-              <div key={index} className="space-y-1.5">
-                <p className="text-[13px] font-bold text-[#1A1A1A] mt-3">{section.heading}</p>
-                {(section.paragraphs || []).map((para, i) => <p key={i} className="text-[12px] text-[#4F3E2F] leading-5">{para}</p>)}
-                {section.quote && <p className="text-[12px] font-semibold text-[#1F1B18] pl-6">{section.quote}</p>}
-                {(section.bullets || []).map((b, i) => <p key={`b${i}`} className="text-[12px] text-[#4F3E2F] pl-4">• {b}</p>)}
-                {section.pillars_intro && <p className="text-[12px] text-[#4F3E2F]">{section.pillars_intro}</p>}
-                {(section.pillars || []).map((b, i) => <p key={`p${i}`} className="text-[12px] text-[#4F3E2F] pl-4">• {b}</p>)}
-                {(section.subsections || []).map((sub, i) => (
-                  <div key={`s${i}`} className="pl-1">
-                    <p className="text-[12px] font-semibold text-[#1F1B18] mt-1.5">{sub.title}</p>
-                    {(sub.bullets || []).map((b, j) => <p key={j} className="text-[12px] text-[#4F3E2F] pl-4">• {b}</p>)}
-                  </div>
+            <p className="text-[16px] font-bold text-[#1A1A1A]">{templateBrief.title || 'TTA - Creative Alignment Brief'}</p>
+            {templateBrief.subtitle && <p className="text-[12px] font-semibold text-[#4F3E2F]">{templateBrief.subtitle}</p>}
+            {templateBrief.project_reference && (
+              <div className="space-y-0.5">
+                {[
+                  ['Brand / Organisation', templateBrief.project_reference.brand_organisation],
+                  ['Project working title', templateBrief.project_reference.project_working_title],
+                  ['TTA project lead', templateBrief.project_reference.tta_project_lead],
+                  ['Date shared with creator', templateBrief.project_reference.date_shared_with_creator],
+                  ['Creator', templateBrief.project_reference.creator],
+                  ['Creator contact', templateBrief.project_reference.creator_contact],
+                ].map(([label, value]) => (
+                  <p key={label} className="text-[12px] text-[#4F3E2F]"><span className="text-[#6E6657]">{label}:</span> {value || 'To be confirmed'}</p>
                 ))}
-                {(section.sub_bullets || []).map((b, i) => <p key={`sb${i}`} className="text-[12px] text-[#4F3E2F] pl-10">○ {b}</p>)}
-                {section.closing && <p className="text-[12px] text-[#4F3E2F] mt-1">{section.closing}</p>}
+              </div>
+            )}
+            {(templateBrief.sections || []).map((section, index) => (
+              <div key={index} className="space-y-1 mt-3 border-t border-[#F1ECDF] pt-3">
+                <p className="text-[13px] font-bold text-[#1A1A1A]">{section.heading}</p>
+                {(section.lines || []).map((line, i) => (
+                  <p key={i} className="text-[12px] text-[#4F3E2F] leading-5">
+                    <span className="text-[#6E6657]">{line.label}:</span> {line.value || ''}
+                  </p>
+                ))}
+                {section.intro && <p className="text-[12px] text-[#4F3E2F]">{section.intro}</p>}
+                {(section.checkboxes || []).map((opt, i) => (
+                  <p key={`cb${i}`} className="text-[12px] text-[#4F3E2F] pl-2">☐ {opt}</p>
+                ))}
+                {section.availability_label && <p className="text-[12px] text-[#4F3E2F]">{section.availability_label}</p>}
+                {section.availability_options && (
+                  <p className="text-[12px] text-[#4F3E2F] pl-2">{(section.availability_options || []).map((o) => `☐ ${o}`).join('   ')}</p>
+                )}
+                {section.conditions_label && <p className="text-[12px] text-[#4F3E2F]">{section.conditions_label}</p>}
+                {section.conditions_hint && <p className="text-[12px] italic text-[#8A8A8A] pl-2">{section.conditions_hint}</p>}
+                {section.primary_label && <p className="text-[12px] font-bold text-[#1F1B18]">{section.primary_label}</p>}
+                {section.primary_value && <p className="text-[12px] text-[#4F3E2F]">{section.primary_value}</p>}
+                {(section.scope_signal || []).map((b, i) => <p key={`ss${i}`} className="text-[12px] text-[#4F3E2F] pl-2">- {b}</p>)}
+                {(section.assumptions || []).map((b, i) => <p key={`as${i}`} className="text-[12px] text-[#4F3E2F] pl-2">- {b}</p>)}
+                {(section.confirmations || []).map((c, i) => <p key={`cf${i}`} className="text-[12px] text-[#4F3E2F] pl-2">☐ {c}</p>)}
+                {section.note && <p className="text-[12px] italic text-[#8A8A8A]">{section.note}</p>}
               </div>
             ))}
-            {templateBrief.closing_cta && <p className="text-[12px] font-bold text-[#1A1A1A] mt-4">{templateBrief.closing_cta}</p>}
+            {templateBrief.signature && (
+              <div className="mt-4 border-t border-[#F1ECDF] pt-3 space-y-1">
+                <p className="text-[12px] text-[#4F3E2F]">{templateBrief.signature.name_label || 'Name:'}</p>
+                <p className="text-[12px] text-[#4F3E2F]">{templateBrief.signature.date_label || 'Date:'}</p>
+              </div>
+            )}
           </div>
         )}
       </InfoCard>
@@ -3822,11 +3912,11 @@ export const V3BusinessCasePlanBrief = () => {
               </button>
             )}
             <button
-              onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/strategy-snapshot`))}
-              className="v3-btn-secondary"
+              onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))}
+              className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
               data-testid="brief-open-strategy-snapshot-btn"
             >
-              <ArrowRight className="w-3.5 h-3.5" /> Open Strategy Snapshot
+              <ArrowRight className="w-3.5 h-3.5" /> Open business case planning phase
             </button>
           </div>
         </div>
@@ -3850,7 +3940,24 @@ export const V3BusinessCasePitchDeck = () => {
   const brand = getBrand(bundle);
   const [deck, setDeck] = useState(null);
   const [generating, setGenerating] = useState(false);
-  const [progress, setProgress] = useState('');
+  // Pitch Deck generation popup. The polling wrapper reports the backend's
+  // real progress (5 -> 30 -> 100), so this shows a genuine 0-100% bar.
+  const [genPopup, setGenPopup] = useState({ open: false, progress: 0, status: 'running', message: '' });
+  const genTickRef = useRef(null);
+  const stopGenTick = () => { if (genTickRef.current) { clearInterval(genTickRef.current); genTickRef.current = null; } };
+  const startGenTick = () => {
+    stopGenTick();
+    // While waiting for the first real server progress value, ease toward a
+    // sub-100 ceiling so the bar keeps moving visibly.
+    genTickRef.current = setInterval(() => {
+      setGenPopup((prev) => {
+        if (!prev.open || prev.status !== 'running') return prev;
+        const next = prev.progress < 85 ? prev.progress + (prev.progress < 30 ? 4 : 2) : 85;
+        return { ...prev, progress: next };
+      });
+    }, 500);
+  };
+  useEffect(() => () => stopGenTick(), []);
   const [saving, setSaving] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [sendPopup, setSendPopup] = useState(null);
@@ -3869,17 +3976,33 @@ export const V3BusinessCasePitchDeck = () => {
 
   const generate = async () => {
     setGenerating(true);
-    setProgress('Queued: writing the Pitch Deck…');
+    setGenPopup({ open: true, progress: 4, status: 'running', message: 'Loading Pitch Deck…' });
+    startGenTick();
     try {
-      const result = await v3GeneratePitchDeck(id, (job) => setProgress(job?.message || ''));
+      const result = await v3GeneratePitchDeck(id, (job) => {
+        // The backend sends a real progress value; stop the simulated tick
+        // once we have it and reflect the server's number instead.
+        const serverProgress = Math.max(0, Math.min(100, Number(job?.progress) || 0));
+        if (serverProgress > 0) stopGenTick();
+        setGenPopup((prev) => prev.open ? {
+          ...prev,
+          progress: Math.max(prev.progress, serverProgress),
+          message: job?.message || prev.message,
+        } : prev);
+      });
+      stopGenTick();
       setDeck(result?.pitch_deck || null);
       await reload();
+      setGenPopup({ open: true, progress: 100, status: 'complete', message: 'Pitch Deck ready. Review and edit each section before sending.' });
       toast.success('Pitch Deck written. Review and edit each section before sending.');
+      setTimeout(() => setGenPopup((prev) => ({ ...prev, open: false })), 1100);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || e?.message || 'Could not generate the Pitch Deck.');
+      stopGenTick();
+      const msg = e?.response?.data?.detail || e?.message || 'Could not generate the Pitch Deck.';
+      toast.error(msg);
+      setGenPopup({ open: true, progress: 100, status: 'failed', message: msg });
     } finally {
       setGenerating(false);
-      setProgress('');
     }
   };
 
@@ -3986,9 +4109,6 @@ export const V3BusinessCasePitchDeck = () => {
           </div>
         )}
       >
-        {generating && progress && (
-          <p className="text-[12px] text-[#1F4A3A] mb-3 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress}</p>
-        )}
         {!deck && !generating && (
           <p className="text-[12px] text-[#6E6657]">
             Generates the ten-section Pitch Deck — About The Organisation, Context & Core Focus, The Problem, The
@@ -4067,6 +4187,35 @@ export const V3BusinessCasePitchDeck = () => {
             {sendPopup.tone !== 'pending' && (
               <div className="mt-4 flex justify-end">
                 <button onClick={() => setSendPopup(null)} className="v3-btn-primary" data-testid="pitch-popup-close">OK</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {genPopup.open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="pitch-gen-popup">
+          <div className="w-full max-w-md rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${genPopup.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : genPopup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#EFF5F1] text-[#1F4A3A]'}`}>
+                {genPopup.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : genPopup.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+              </span>
+              <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+                {genPopup.status === 'complete' ? 'Pitch Deck ready' : genPopup.status === 'failed' ? 'Generation failed' : 'Loading Pitch Deck'}
+              </h3>
+              <span className="ml-auto text-[12px] font-semibold text-[#4F3E2F]" data-testid="pitch-gen-popup-percent">{genPopup.progress}%</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-[#F4F2EC] overflow-hidden mb-3">
+              <div
+                className={`h-full transition-all duration-300 ease-out ${genPopup.status === 'failed' ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
+                style={{ width: `${Math.max(2, genPopup.progress)}%` }}
+                data-testid="pitch-gen-popup-bar"
+              />
+            </div>
+            <p className="text-[13px] leading-6 text-[#4F3E2F]" data-testid="pitch-gen-popup-message">{genPopup.message || (genPopup.status === 'running' ? 'Writing all ten Pitch Deck sections…' : '')}</p>
+            {genPopup.status === 'running' && <p className="mt-1 text-[11px] text-[#6E6657]">Claude is writing the Pitch Deck. Please keep this page open.</p>}
+            {genPopup.status === 'failed' && (
+              <div className="mt-4 flex justify-end">
+                <button type="button" onClick={() => setGenPopup((prev) => ({ ...prev, open: false }))} className="v3-btn-primary" data-testid="pitch-gen-popup-close">OK</button>
               </div>
             )}
           </div>
@@ -4535,10 +4684,12 @@ export const V3BusinessCasePlanWaitingBrand = () => {
   const { id, bundle, loading } = useBusinessCaseBundle();
   useEffect(() => {
     if (!loading && bundle) {
-      navigate(adminRoute(`/business-cases/${id}/frame/strategy-snapshot`), { replace: true });
+      // Strategy Snapshot step removed — the brief flow now continues straight
+      // into the Planning phase.
+      navigate(adminRoute(`/business-cases/${id}/plan/planning`), { replace: true });
     }
   }, [bundle, id, loading, navigate]);
-  return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Redirecting to Strategy Snapshot Studio...</div>;
+  return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Opening Planning...</div>;
 };
 
 // ============================================================================
@@ -5427,9 +5578,6 @@ export const V3BusinessCaseDeliverySummary = () => {
           </button>
           <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brief`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-brief-btn">
             <FileText className="w-3.5 h-3.5" /> Creative Brief
-          </button>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/strategy-snapshot`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-strategy-btn">
-            <FileText className="w-3.5 h-3.5" /> Strategy Snapshot
           </button>
           <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-connect-btn">
             <Eye className="w-3.5 h-3.5" /> Connect

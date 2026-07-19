@@ -101,8 +101,6 @@ import {
   V3BusinessCasePlanBrief as V1BusinessCasePlanBrief,
   V3BusinessCasePitchDeck as V1BusinessCasePitchDeck,
   V3BusinessCasePlanCreatorBriefingCall as V1BusinessCasePlanCreatorBriefingCall,
-  V3BusinessCasePlanStrategySnapshot as V1BusinessCasePlanStrategySnapshot,
-  V3BusinessCasePlanWaitingBrand as V1BusinessCasePlanWaitingBrand,
   V3BusinessCasePlanFeedback as V1BusinessCasePlanFeedback,
   V3BusinessCaseDeliverySummary as V1BusinessCaseDeliverySummary,
   V3BusinessCaseContractStudio as V1BusinessCaseContractStudio,
@@ -449,15 +447,18 @@ function AppRoutes() {
         <Route path="business-cases/:id/frame/brief" element={<V1BusinessCasePlanBrief />} />
         <Route path="business-cases/:id/frame/pitch-deck" element={<V1BusinessCasePitchDeck />} />
         <Route path="business-cases/:id/frame/creator-briefing-call" element={<V1BusinessCasePlanCreatorBriefingCall />} />
-        <Route path="business-cases/:id/frame/strategy-snapshot" element={<V1BusinessCasePlanStrategySnapshot />} />
-        <Route path="business-cases/:id/frame/waiting-brand-strategy" element={<V1BusinessCasePlanWaitingBrand />} />
+        {/* Strategy Snapshot step removed — both paths now land on Planning so
+            old bookmarks/emails resolve instead of 404ing. */}
+        <Route path="business-cases/:id/frame/strategy-snapshot" element={<V1BusinessCaseDeliverySummary />} />
+        <Route path="business-cases/:id/frame/waiting-brand-strategy" element={<V1BusinessCaseDeliverySummary />} />
         {/* Legacy /plan/* aliases - kept so old bookmarks/emails still resolve. */}
         <Route path="business-cases/:id/plan/brainstorm" element={<V1BusinessCasePlanBrainstorm />} />
         <Route path="business-cases/:id/plan/creator-scan" element={<V1BusinessCasePlanCreatorScan />} />
         <Route path="business-cases/:id/plan/brief" element={<V1BusinessCasePlanBrief />} />
         <Route path="business-cases/:id/plan/creator-briefing-call" element={<V1BusinessCasePlanCreatorBriefingCall />} />
-        <Route path="business-cases/:id/plan/strategy-snapshot" element={<V1BusinessCasePlanStrategySnapshot />} />
-        <Route path="business-cases/:id/plan/waiting-brand" element={<V1BusinessCasePlanWaitingBrand />} />
+        {/* Strategy Snapshot step removed — redirects to Planning. */}
+        <Route path="business-cases/:id/plan/strategy-snapshot" element={<V1BusinessCaseDeliverySummary />} />
+        <Route path="business-cases/:id/plan/waiting-brand" element={<V1BusinessCaseDeliverySummary />} />
         {/* Planning phase (Business Case area). Three pages:
               1. /plan/planning -> Planning landing (project value, brand/
                  creator details, timelines, invoicing). Same component as
