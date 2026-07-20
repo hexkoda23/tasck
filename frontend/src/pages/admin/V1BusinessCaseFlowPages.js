@@ -4365,7 +4365,7 @@ export const V3BusinessCasePitchDeck = () => {
         </div>
       )}
 
-      {previewOpen && deck && (
+      {previewOpen && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm" data-testid="pitch-flipbook-modal">
           <div className="w-full max-w-6xl rounded-2xl border-2 border-[#1F4A3A] bg-white p-5 shadow-2xl">
             <div className="mb-3 flex items-center justify-between gap-3">

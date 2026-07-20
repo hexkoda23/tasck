@@ -303,6 +303,7 @@ const PF_CSS = `
 .pf-book{position:relative;width:100%;max-width:1000px;height:min(78vh,700px);margin:0 auto;transform-style:preserve-3d;}
 .pf-leaf{position:absolute;top:0;left:0;width:50%;height:100%;transform-style:preserve-3d;transform-origin:left center;transition:transform .7s ease;backface-visibility:hidden;}
 .pf-face{position:absolute;inset:0;width:100%;height:100%;background:#FBFAF7;border:1px solid #E6E0D2;border-radius:4px;overflow:hidden;box-shadow:0 6px 22px rgba(12,35,28,.12);backface-visibility:hidden;}
+.pf-page{height:100%;display:flex;flex-direction:column;background:#FBFAF7;}
 .pf-back{transform:rotateY(180deg);}
 .pf-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:2px solid #1F4A3A;background:#fff;}
 .pf-header-compact{padding:8px 16px;}
@@ -314,7 +315,7 @@ const PF_CSS = `
 .pf-footer span{white-space:nowrap;}
 .pf-footer-min{justify-content:center;gap:0;}
 .pf-closing-centered{width:100%;max-width:1000px;height:min(78vh,700px);border-radius:6px;overflow:hidden;box-shadow:0 10px 34px rgba(12,35,28,.22);}
-.pf-cover{display:flex;flex-direction:column;background:radial-gradient(120% 90% at 20% 90%, #1c5c46 0%, #12352a 46%, #0c231c 100%);color:#fff;}
+.pf-cover{display:flex;flex-direction:column;height:100%;background:radial-gradient(120% 90% at 20% 90%, #1c5c46 0%, #12352a 46%, #0c231c 100%);color:#fff;}
 .pf-cover .pf-header{background:transparent;border-bottom-color:rgba(255,255,255,.25);}
 .pf-cover .pf-logo-mark{background:rgba(255,255,255,.16);}
 .pf-cover .pf-logo-word,.pf-cover .pf-header-tag{color:#EAF4EE;}
