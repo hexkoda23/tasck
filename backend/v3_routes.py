@@ -7013,6 +7013,68 @@ def make_v3_router(db):
         blocks.append(_docx_paragraph(str(sig.get("date_label") or "Date:"), after=60))
         return _docx_package(blocks)
 
+    def creative_brief_from_raw_text(title: str, raw_text: str, *, creator_name: str = "") -> Dict[str, Any]:
+        """Wrap a free-text creator brief (the per-creator briefs sent from the
+        admin studio store only plain `brief_text`) into the same approved
+        'Creative Alignment Brief (Creator Version)' shape the template renderer
+        expects, so the .docx download and the email attachment match the
+        approved template word-for-word. The raw text becomes section 1's body;
+        the remaining fixed sections use the template's standard wording so the
+        document is identical in structure to the generated brief."""
+        return {
+            "title": title or "TTA – Creative Alignment Brief (Creator Version)",
+            "subtitle": "(Internal name: Creator Brief for Fee Confirmation)",
+            "project_reference": {
+                "brand_organisation": "",
+                "project_working_title": "",
+                "tta_project_lead": "",
+                "date_shared_with_creator": "",
+                "creator": creator_name or "To be confirmed",
+                "creator_contact": "",
+            },
+            "sections": [
+                {"heading": "1. Project Reference", "lines": [
+                    {"label": "Brand / Organisation", "value": ""},
+                    {"label": "Project working title", "value": ""},
+                    {"label": "TTA project lead", "value": ""},
+                    {"label": "Date shared with creator", "value": ""},
+                ]},
+                {"heading": "2. Context (High-Level)", "lines": [
+                    {"label": "Brand objective (summary)", "value": raw_text or "To be confirmed"},
+                    {"label": "Why this project is happening now", "value": "To be confirmed"},
+                ]},
+                {"heading": "3. Role of the Creative", "intro": "The creative would act as:",
+                 "checkboxes": ["Public-facing lead", "Conceptual lead", "Talent & cultural translator", "Executional partner"],
+                 "primary_label": "Primary responsibility:", "primary_value": "To be confirmed"},
+                {"heading": "4. Expected Scope (Signal Only)", "intro": "This engagement may include:",
+                 "checkboxes": ["Content creation", "Appearances / representation", "Concept contribution", "Performance / activation involvement", "Other"],
+                 "scope_signal": ["Creator involvement is being explored for planning and pricing alignment only.",
+                                   "Specific deliverables are not yet defined.", "Final scope is subject to brand approval."]},
+                {"heading": "5. Indicative Timeline", "lines": [
+                    {"label": "Proposed engagement period", "value": "To be confirmed after brand approval and creator availability check"},
+                    {"label": "Known timing constraints", "value": "To be confirmed"}],
+                 "note": "No schedules. No milestones."},
+                {"heading": "6. Working Assumptions", "intro": "Please assume:", "assumptions": [
+                    "TTA will coordinate the engagement and act as the administrative lead.",
+                    "Contracts will be issued through TTA.",
+                    "Payment will be processed through TTA.",
+                    "Reporting and brand liaison will be handled by TTA."]},
+                {"heading": "7. Fee Indication Request", "intro": "Based on the information above, please share:",
+                 "lines": [{"label": "Your fee for this engagement (range or fixed)", "value": "creator to propose"},
+                           {"label": "Fee basis", "value": "Project-based / Time-based / Retainer-style"},
+                           {"label": "What your fee covers (brief)", "value": "state what your indication includes. No breakdown required at this stage."}]},
+                {"heading": "8. Availability & Conditions", "availability_label": "Are you available within the proposed period?",
+                 "availability_options": ["Yes", "Conditional", "No"],
+                 "conditions_label": "Any conditions or exclusions we should note:",
+                 "conditions_hint": "category conflicts, usage limits, exclusivity restrictions, production requirements, travel constraints, or anything that would affect the final scope."},
+                {"heading": "9. Confirmation", "confirmations": [
+                    "I understand that this is for planning and pricing alignment only.",
+                    "I understand that this is not a confirmed booking.",
+                    "I am open to proceeding subject to final scope and budget approval."]},
+            ],
+            "signature": {"name_label": "Name:", "date_label": "Date:"},
+        }
+
     @router.post("/business-cases/{bc_id}/ai/creative-brief/generate")
     async def generate_creative_brief(bc_id: str):
         """Claude writes the Creative Brief for this case in the approved 4-page
@@ -7445,7 +7507,7 @@ def make_v3_router(db):
                 "title": doc["subject"],
                 "filename": f"{cb_id}-creative-brief.docx",
                 "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "content": document_docx_bytes(doc["subject"], [{"heading": "Creative Brief", "content": payload.brief_text}], "Creator brief for review and response."),
+                "content": creative_brief_docx_bytes(creative_brief_from_raw_text(doc["subject"], payload.brief_text, creator_name=creator.get("name") or "")),
             }],
         )
         doc["email"] = email
@@ -7493,11 +7555,12 @@ def make_v3_router(db):
         brief = await db.v3_creative_briefs.find_one({"id": brief_id}, {"_id": 0})
         if not brief:
             raise HTTPException(404, "Creative Brief not found")
-        docx_bytes = document_docx_bytes(
+        creator = await db.v3_creators.find_one({"id": brief.get("creator_id")}, {"_id": 0}) or {}
+        docx_bytes = creative_brief_docx_bytes(creative_brief_from_raw_text(
             brief.get("subject") or "Creative Brief",
-            [{"heading": "Creative Brief", "content": brief.get("brief_text") or ""}],
-            "Google Docs-compatible creator brief. The creator may review, comment, and respond through TASCK.",
-        )
+            brief.get("brief_text") or "",
+            creator_name=creator.get("name") or "",
+        ))
         return StreamingResponse(
             BytesIO(docx_bytes),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

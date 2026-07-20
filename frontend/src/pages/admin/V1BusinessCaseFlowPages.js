@@ -86,6 +86,10 @@ import {
   Trash2,
   X,
   Loader2,
+  UserRound,
+  Clock,
+  Hash,
+  CircleDot,
 } from 'lucide-react';
 import {
   v3AcceptCreatorBriefing,
@@ -451,6 +455,78 @@ const InfoCard = ({ title, children, action }) => (
     {children}
   </div>
 );
+
+// Reusable, well-segmented brand comment card used by the Alignment Snapshot,
+// Brainstorm review and Contract comment blocks in the v1 admin. Replaces the
+// old low-contrast stacked-amber boxes: a clear header strip (icon + type +
+// revision + status), an obvious "Re:" subject line, the comment body in high
+// contrast, and a footer with author / timestamp chips.
+const BrandCommentCard = ({ comment, index }) => {
+  const c = comment || {};
+  const revision = Number(c.revision || 0);
+  const status = c.status || 'open';
+  const isOpen = String(status).toLowerCase() === 'open';
+  const subject = c.quoted_text && c.quoted_text !== 'Brand review' ? c.quoted_text : (c.subject || null);
+  const body = c.comment || c.content || c.summary || '';
+  const author = c.author || 'Brand';
+  const date = c.created_at || c.date_iso;
+  const statusLabel = humanStatus(status);
+  return (
+    <article
+      data-testid={`brand-comment-${c.id || index}`}
+      className="overflow-hidden rounded-xl border border-[#E6D7B8] bg-[#FFFFFF] shadow-sm"
+    >
+      {/* Header strip */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#F0E7D4] bg-[#FCF6EA] px-4 py-2.5">
+        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#F3E2C0] text-[#B06E16]">
+          <MessageSquare className="h-3.5 w-3.5" />
+        </span>
+        <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
+        {revision > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-md bg-[#EEF1F6] px-1.5 py-0.5 text-[10px] font-semibold text-[#3A5BA0] border border-[#C9D6EE]">
+            <Hash className="h-3 w-3" /> Rev {revision}
+          </span>
+        )}
+        <span
+          className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${
+            isOpen
+              ? 'border-[#E8A33A] bg-[#FDEBD0] text-[#C47A1A]'
+              : 'border-[#2E7D5B] bg-[#E8F5ED] text-[#2E7D5B]'
+          }`}
+        >
+          <CircleDot className="h-3 w-3" /> {statusLabel}
+        </span>
+        <span className="ml-auto text-[11px] font-medium text-[#9A8F7C]">#{String(index + 1).padStart(2, '0')}</span>
+      </div>
+
+      {/* Body */}
+      <div className="px-4 py-3">
+        {subject && (
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#8A6E2F]">
+            Re: {subject}
+          </p>
+        )}
+        <p className="whitespace-pre-wrap text-[13px] font-medium leading-relaxed text-[#1A1A1A]">
+          {cleanV1Text(body)}
+        </p>
+      </div>
+
+      {/* Footer meta */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[#F0E7D4] bg-[#FAFCFB] px-4 py-2 text-[11px] text-[#6E6657]">
+        <span className="inline-flex items-center gap-1.5">
+          <UserRound className="h-3.5 w-3.5 text-[#8A6E2F]" />
+          By <strong className="font-semibold text-[#4F3E2F]">{author}</strong>
+        </span>
+        {date && (
+          <span className="inline-flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5 text-[#8A6E2F]" />
+            {formatDateTime(date)}
+          </span>
+        )}
+      </div>
+    </article>
+  );
+};
 
 const TextInput = ({ label, value, onChange, rows = 1 }) => (
   <label className="space-y-1">
@@ -2422,20 +2498,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
           </div>
           <div className="space-y-3" data-testid="alignment-snapshot-brand-comments">
             {alignmentComments.map((c, index) => (
-              <div key={c.id || index} className="rounded-xl border-2 border-[#E8A33A] bg-[#FFF8E1] p-4 shadow-sm">
-                <div className="flex items-center gap-2 mb-1">
-                  <MessageSquare className="w-4 h-4 text-[#C47A1A]" />
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
-                  {Number(c.revision) > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded-md font-semibold bg-[#EEF1F6] text-[#3A5BA0] border border-[#C9D6EE]">Rev {c.revision}</span>}
-                  {c.status && <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${c.status === 'open' ? 'bg-[#FDEBD0] text-[#C47A1A] border border-[#E8A33A]' : 'bg-[#E8F5ED] text-[#2E7D5B] border border-[#2E7D5B]'}`}>{humanStatus(c.status)}</span>}
-                </div>
-                {c.quoted_text && c.quoted_text !== 'Brand review' && <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Re: <strong className="text-[#4F3E2F]">{c.quoted_text}</strong></p>}
-                <p className="text-[13px] text-[#1A1A1A] font-medium leading-relaxed whitespace-pre-wrap">{cleanV1Text(c.comment || c.content || '')}</p>
-                <div className="mt-2 flex items-center gap-3 text-[11px] text-[#8A8A8A]">
-                  <span>By: <strong className="text-[#C47A1A]">{c.author || 'Brand'}</strong></span>
-                  {c.created_at && <span>{formatDateTime(c.created_at)}</span>}
-                </div>
-              </div>
+              <BrandCommentCard key={c.id || index} comment={c} index={index} />
             ))}
           </div>
           <p className="mt-3 text-[11px] text-[#6E6657]">Edit the relevant section below to address each comment, save, then re-send to the brand.</p>
@@ -2756,22 +2819,8 @@ export const V3BusinessCaseFrameAdminReview = () => {
       <InfoCard title={`Brand Comments (${comments.length})`}>
         {comments.length ? (
           <div className="space-y-3">
-            {comments.map((c) => (
-              <div key={c.id} className="rounded-xl border-2 border-[#E8A33A] bg-[#FFF8E1] p-4 shadow-sm" data-testid={`brand-comment-${c.id}`}>
-                <div className="flex items-center gap-2 mb-2">
-                  <MessageSquare className="w-4 h-4 text-[#C47A1A]" />
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
-                  {c.status && <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-semibold ${c.status === 'open' ? 'bg-[#FDEBD0] text-[#C47A1A] border border-[#E8A33A]' : 'bg-[#E8F5ED] text-[#2E7D5B] border border-[#2E7D5B]'}`}>{humanStatus(c.status)}</span>}
-                </div>
-                <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">
-                  Re: <strong className="text-[#4F3E2F]">{c.quoted_text || 'Snapshot section'}</strong>
-                </p>
-                <p className="text-[13px] text-[#1A1A1A] font-medium leading-relaxed">{c.comment}</p>
-                <div className="mt-2 flex items-center gap-3 text-[11px] text-[#8A8A8A]">
-                  <span>By: <strong className="text-[#C47A1A]">{c.author || 'Brand'}</strong></span>
-                  {c.created_at && <span>{new Date(c.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} at {new Date(c.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true })}</span>}
-                </div>
-              </div>
+            {comments.map((c, index) => (
+              <BrandCommentCard key={c.id || index} comment={c} index={index} />
             ))}
           </div>
         ) : (
@@ -3786,53 +3835,41 @@ export const V3BusinessCasePlanBrief = () => {
           </p>
         )}
         {templateBrief && (
-          <div className="rounded-lg border border-[#E8E4DB] bg-white p-5 space-y-3 max-h-[520px] overflow-y-auto" data-testid="brief-template-preview">
-            <p className="text-[16px] font-bold text-[#1A1A1A]">{templateBrief.title || 'TTA - Creative Alignment Brief'}</p>
-            {templateBrief.subtitle && <p className="text-[12px] font-semibold text-[#4F3E2F]">{templateBrief.subtitle}</p>}
-            {templateBrief.project_reference && (
-              <div className="space-y-0.5">
-                {[
-                  ['Brand / Organisation', templateBrief.project_reference.brand_organisation],
-                  ['Project working title', templateBrief.project_reference.project_working_title],
-                  ['TTA project lead', templateBrief.project_reference.tta_project_lead],
-                  ['Date shared with creator', templateBrief.project_reference.date_shared_with_creator],
-                  ['Creator', templateBrief.project_reference.creator],
-                  ['Creator contact', templateBrief.project_reference.creator_contact],
-                ].map(([label, value]) => (
-                  <p key={label} className="text-[12px] text-[#4F3E2F]"><span className="text-[#6E6657]">{label}:</span> {value || 'To be confirmed'}</p>
-                ))}
-              </div>
-            )}
+          <div className="rounded-lg border border-[#E8E4DB] bg-white p-5 space-y-4 max-h-[560px] overflow-y-auto font-['Century_Gothic','Century Gothic',sans-serif]" data-testid="brief-template-preview">
+            <div>
+              <p className="text-[16px] font-bold text-[#1A1A1A]">{templateBrief.title || 'TTA – Creative Alignment Brief (Creator Version)'}</p>
+              {templateBrief.subtitle && <p className="text-[11px] font-semibold text-[#6E6657] mt-0.5">{templateBrief.subtitle}</p>}
+            </div>
             {(templateBrief.sections || []).map((section, index) => (
-              <div key={index} className="space-y-1 mt-3 border-t border-[#F1ECDF] pt-3">
-                <p className="text-[13px] font-bold text-[#1A1A1A]">{section.heading}</p>
+              <div key={index} className="border-t border-[#F1ECDF] pt-3">
+                <p className="text-[13px] font-bold text-[#0C343D] mb-1.5">{section.heading}</p>
                 {(section.lines || []).map((line, i) => (
-                  <p key={i} className="text-[12px] text-[#4F3E2F] leading-5">
-                    <span className="text-[#6E6657]">{line.label}:</span> {line.value || ''}
+                  <p key={i} className="text-[12px] text-[#1F1B18] leading-5">
+                    <span className="text-[#6E6657]">{line.label}:</span> {line.value || 'To be confirmed'}
                   </p>
                 ))}
-                {section.intro && <p className="text-[12px] text-[#4F3E2F]">{section.intro}</p>}
+                {section.intro && <p className="text-[12px] text-[#1F1B18] mt-1">{section.intro}</p>}
                 {(section.checkboxes || []).map((opt, i) => (
-                  <p key={`cb${i}`} className="text-[12px] text-[#4F3E2F] pl-2">☐ {opt}</p>
+                  <p key={`cb${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">☐ {opt}</p>
                 ))}
-                {section.availability_label && <p className="text-[12px] text-[#4F3E2F]">{section.availability_label}</p>}
+                {section.primary_label && <p className="text-[12px] font-bold text-[#1F1B18] mt-1">{section.primary_label}</p>}
+                {section.primary_value && <p className="text-[12px] text-[#1F1B18]">{section.primary_value}</p>}
+                {(section.scope_signal || []).map((b, i) => <p key={`ss${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">- {b}</p>)}
+                {(section.assumptions || []).map((b, i) => <p key={`as${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">- {b}</p>)}
+                {section.availability_label && <p className="text-[12px] text-[#1F1B18] mt-1">{section.availability_label}</p>}
                 {section.availability_options && (
-                  <p className="text-[12px] text-[#4F3E2F] pl-2">{(section.availability_options || []).map((o) => `☐ ${o}`).join('   ')}</p>
+                  <p className="text-[12px] text-[#1F1B18] pl-2 leading-5">{(section.availability_options || []).map((o) => `☐ ${o}`).join('   ')}</p>
                 )}
-                {section.conditions_label && <p className="text-[12px] text-[#4F3E2F]">{section.conditions_label}</p>}
-                {section.conditions_hint && <p className="text-[12px] italic text-[#8A8A8A] pl-2">{section.conditions_hint}</p>}
-                {section.primary_label && <p className="text-[12px] font-bold text-[#1F1B18]">{section.primary_label}</p>}
-                {section.primary_value && <p className="text-[12px] text-[#4F3E2F]">{section.primary_value}</p>}
-                {(section.scope_signal || []).map((b, i) => <p key={`ss${i}`} className="text-[12px] text-[#4F3E2F] pl-2">- {b}</p>)}
-                {(section.assumptions || []).map((b, i) => <p key={`as${i}`} className="text-[12px] text-[#4F3E2F] pl-2">- {b}</p>)}
-                {(section.confirmations || []).map((c, i) => <p key={`cf${i}`} className="text-[12px] text-[#4F3E2F] pl-2">☐ {c}</p>)}
-                {section.note && <p className="text-[12px] italic text-[#8A8A8A]">{section.note}</p>}
+                {section.conditions_label && <p className="text-[12px] font-bold text-[#1F1B18] mt-1">{section.conditions_label}</p>}
+                {section.conditions_hint && <p className="text-[12px] italic text-[#6E6657] pl-2">{section.conditions_hint}</p>}
+                {(section.confirmations || []).map((c, i) => <p key={`cf${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">☐ {c}</p>)}
+                {section.note && <p className="text-[12px] italic text-[#6E6657] mt-1">{section.note}</p>}
               </div>
             ))}
             {templateBrief.signature && (
-              <div className="mt-4 border-t border-[#F1ECDF] pt-3 space-y-1">
-                <p className="text-[12px] text-[#4F3E2F]">{templateBrief.signature.name_label || 'Name:'}</p>
-                <p className="text-[12px] text-[#4F3E2F]">{templateBrief.signature.date_label || 'Date:'}</p>
+              <div className="border-t border-[#F1ECDF] pt-3 space-y-1">
+                <p className="text-[12px] text-[#1F1B18]">{templateBrief.signature.name_label || 'Name:'}</p>
+                <p className="text-[12px] text-[#1F1B18]">{templateBrief.signature.date_label || 'Date:'}</p>
               </div>
             )}
           </div>
@@ -3977,15 +4014,16 @@ export const V3BusinessCasePitchDeck = () => {
 
   // Auto-load: the Pitch Deck writes itself as soon as the page opens, so
   // admin never has to press Generate. Fires once, only when the case has
-  // loaded and there is no deck yet. The loading popup only appears if this
-  // takes longer than 5 seconds.
+  // loaded and there is no deck yet. The loading popup appears once the
+  // generation has been running for a beat (1.2s) so quick writes don't flash
+  // a popup for a fraction of a second, but anything slower shows real progress.
   const autoRanRef = useRef(false);
   useEffect(() => {
     if (autoRanRef.current) return;
     if (!bundle?.business_case?.id) return;   // wait for the bundle
     if (bundle?.pitch_deck || deck) { autoRanRef.current = true; return; }
     autoRanRef.current = true;
-    generate(5000).catch(() => {});
+    generate(1200).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundle?.business_case?.id, bundle?.pitch_deck]);
 
@@ -4253,28 +4291,31 @@ export const V3BusinessCasePitchDeck = () => {
         </div>
       )}
       {genPopup.open && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="pitch-gen-popup">
-          <div className="w-full max-w-md rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
-            <div className="mb-3 flex items-center gap-2">
-              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${genPopup.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : genPopup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#EFF5F1] text-[#1F4A3A]'}`}>
-                {genPopup.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : genPopup.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm" data-testid="pitch-gen-popup">
+          <div className="w-full max-w-lg rounded-2xl border-2 border-[#1F4A3A] bg-white p-7 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${genPopup.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : genPopup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#1F4A3A] text-white'}`}>
+                {genPopup.status === 'complete' ? <CheckCircle2 className="h-5 w-5" /> : genPopup.status === 'failed' ? <X className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
               </span>
-              <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
-                {genPopup.status === 'complete' ? 'Pitch Deck ready' : genPopup.status === 'failed' ? 'Generation failed' : 'Loading Pitch Deck'}
-              </h3>
-              <span className="ml-auto text-[12px] font-semibold text-[#4F3E2F]" data-testid="pitch-gen-popup-percent">{genPopup.progress}%</span>
+              <div className="min-w-0">
+                <h3 className="text-[17px] font-semibold text-[#1A1A1A] leading-tight" style={{ fontFamily: "'Fraunces', serif" }}>
+                  {genPopup.status === 'complete' ? 'Pitch Deck ready' : genPopup.status === 'failed' ? 'Generation failed' : 'Generating Pitch Deck'}
+                </h3>
+                <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">V1 Admin · Pitch Deck</p>
+              </div>
+              <span className="ml-auto text-[28px] font-bold leading-none text-[#1F4A3A] tabular-nums" data-testid="pitch-gen-popup-percent">{genPopup.progress}%</span>
             </div>
-            <div className="h-2 w-full rounded-full bg-[#F4F2EC] overflow-hidden mb-3">
+            <div className="h-3 w-full rounded-full bg-[#EDE9E0] overflow-hidden ring-1 ring-inset ring-[#D7CBB8]">
               <div
-                className={`h-full transition-all duration-300 ease-out ${genPopup.status === 'failed' ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
+                className={`h-full rounded-full transition-all duration-300 ease-out ${genPopup.status === 'failed' ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
                 style={{ width: `${Math.max(2, genPopup.progress)}%` }}
                 data-testid="pitch-gen-popup-bar"
               />
             </div>
-            <p className="text-[13px] leading-6 text-[#4F3E2F]" data-testid="pitch-gen-popup-message">{genPopup.message || (genPopup.status === 'running' ? 'Writing all ten Pitch Deck sections…' : '')}</p>
-            {genPopup.status === 'running' && <p className="mt-1 text-[11px] text-[#6E6657]">Claude is writing the Pitch Deck. Please keep this page open.</p>}
+            <p className="mt-4 text-[13px] leading-6 text-[#4F3E2F]" data-testid="pitch-gen-popup-message">{genPopup.message || (genPopup.status === 'running' ? 'Writing all ten Pitch Deck sections…' : '')}</p>
+            {genPopup.status === 'running' && <p className="mt-1 text-[11px] text-[#6E6657]">Claude is writing the Pitch Deck. Please keep this page open — this window will close automatically when it reaches 100%.</p>}
             {genPopup.status === 'failed' && (
-              <div className="mt-4 flex justify-end">
+              <div className="mt-5 flex justify-end">
                 <button type="button" onClick={() => setGenPopup((prev) => ({ ...prev, open: false }))} className="v3-btn-primary" data-testid="pitch-gen-popup-close">OK</button>
               </div>
             )}
@@ -5963,17 +6004,7 @@ ${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`
         <InfoCard title={`Brand Comments (${contractComments.length})`}>
           <div className="space-y-3" data-testid="contract-brand-comments">
             {contractComments.map((c, index) => (
-              <div key={c.id || index} className="rounded-xl border-2 border-[#E8A33A] bg-[#FFF8E1] p-4 shadow-sm">
-                <div className="flex items-center gap-2 mb-1">
-                  <MessageSquare className="w-4 h-4 text-[#C47A1A]" />
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#B06E16]">Brand Comment</span>
-                </div>
-                <p className="text-[13px] text-[#1A1A1A] font-medium leading-relaxed whitespace-pre-wrap">{cleanV1Text(c.content || c.comment || c.summary || '')}</p>
-                <div className="mt-2 flex items-center gap-3 text-[11px] text-[#8A8A8A]">
-                  <span>By: <strong className="text-[#C47A1A]">{c.author || 'Brand'}</strong></span>
-                  {(c.date_iso || c.created_at) && <span>{formatDateTime(c.date_iso || c.created_at)}</span>}
-                </div>
-              </div>
+              <BrandCommentCard key={c.id || index} comment={c} index={index} />
             ))}
           </div>
           <p className="mt-3 text-[11px] text-[#6E6657]">Edit the relevant contract clause below to address each comment, then re-send to the brand.</p>
