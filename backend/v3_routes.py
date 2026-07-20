@@ -5962,15 +5962,27 @@ def make_v3_router(db):
         footer_bytes = _read_template_asset("footer_contact.png")
         footer_cx = _emu_inch(6.0)
         footer_cy = int(footer_cx * 180 / 2048)
-        # Background watermark intentionally omitted: the supplied
-        # template_watermark.png is a near-solid white sheet at ~84% opacity,
-        # which washes out the logo, footer and body text rather than adding
-        # visible branding. The TASCK identity is carried by the logo header,
-        # contact-strip footer and embedded fonts instead, so the document
-        # stays sharp and legible. (Restored sharper after Chioma feedback
-        # that the design looked faded.)
+        # Faint curved decorative watermark (decorative_curves.png) — two pale
+        # grey curves, matched from the approved TTA letterhead template. Sits
+        # behind all body text (low opacity, centred) like the .docx watermark.
+        watermark_bytes = _read_template_asset("decorative_curves.png")
         header_drawing = _drawing_inline("rId1", logo_cx, logo_cy, 1, "TASCK logo") if logo_bytes else ""
         header_paragraph_body = (f'<w:r>{header_drawing}</w:r>' if header_drawing else '')
+        # Watermark VML shape anchored to the page, behind text.
+        if watermark_bytes:
+            wm_cx = _emu_inch(8.5)
+            wm_cy = _emu_inch(11.0)
+            watermark_vml = (
+                '<w:r><w:pict>'
+                '<v:shape id="TasckWatermark" type="#_x0000_t75" style="position:absolute;'
+                'width:648pt;height:840pt;rotation:0;z-index:-251657216;'
+                'mso-position-horizontal:center;mso-position-horizontal-relative:page;'
+                'mso-position-vertical:center;mso-position-vertical-relative:page;'
+                'visibility:visible;margin-left:0;margin-top:0;" fillcolor="white" stroked="f">'
+                f'<v:imagedata r:id="rIdWatermark" o:title="TASCK curves"/>'
+                '</v:shape></w:pict></w:r>'
+            )
+            header_paragraph_body = watermark_vml + header_paragraph_body
         header_paragraph = (
             '<w:p><w:pPr><w:jc w:val="right"/></w:pPr>' + header_paragraph_body + '</w:p>'
         ) if header_paragraph_body else '<w:p/>'
@@ -6051,13 +6063,18 @@ def make_v3_router(db):
             "</Relationships>"
         )
 
-        # Header relationships (logo = rId1 only). Footer relationships
-        # (contact strip = rId1). No watermark relationship (see header XML).
+        # Header relationships (logo = rId1, watermark = rIdWatermark).
         header_rels_entries = [
             '<Relationship Id="rId1" '
             'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
             'Target="media/tasck_logo.png"/>',
         ]
+        if watermark_bytes:
+            header_rels_entries.append(
+                '<Relationship Id="rIdWatermark" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+                'Target="media/decorative_curves.png"/>'
+            )
         header_rels_xml = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
@@ -6182,6 +6199,8 @@ def make_v3_router(db):
                 docx.writestr("word/header1.xml", header_xml)
                 docx.writestr("word/_rels/header1.xml.rels", header_rels_xml)
                 docx.writestr("word/media/tasck_logo.png", logo_bytes)
+            if watermark_bytes:
+                docx.writestr("word/media/decorative_curves.png", watermark_bytes)
             if footer_bytes:
                 docx.writestr("word/footer1.xml", footer_xml)
                 docx.writestr("word/_rels/footer1.xml.rels", footer_rels_xml)

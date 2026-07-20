@@ -8,6 +8,7 @@ import { PrioritySelect } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
 import { PitchDeckFlipbook, buildFlipbookHtml } from '../../components/v1/PitchDeckFlipbook';
+import { TtaLetterhead } from '../../components/v1/TtaLetterhead';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
 
 // Detect a cell that contains a KPI list (either real array of dicts, or a
@@ -3134,7 +3135,6 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
     <FlowShell
       title="Creator Selector & Transcript Analysis"
       subtitle="Framing step 2 of 5. Run the creator selection session using the suggested questions, then upload the transcript here. Claude will analyse it and fill the entire Creator Selector for you to review."
-      nextAction="Upload the creator selection transcript and click Analyze to auto-fill the Creator Selector."
     >
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
 
@@ -3837,44 +3837,43 @@ export const V3BusinessCasePlanBrief = () => {
           </p>
         )}
         {templateBrief && (
-          <div className="rounded-lg border border-[#E8E4DB] bg-white p-5 space-y-4 max-h-[560px] overflow-y-auto font-['Century_Gothic','Century Gothic',sans-serif]" data-testid="brief-template-preview">
-            <div>
-              <p className="text-[16px] font-bold text-[#1A1A1A]">{templateBrief.title || 'TTA – Creative Alignment Brief (Creator Version)'}</p>
-              {templateBrief.subtitle && <p className="text-[11px] font-semibold text-[#6E6657] mt-0.5">{templateBrief.subtitle}</p>}
+          <TtaLetterhead title={templateBrief.title || 'TTA – Creative Alignment Brief (Creator Version)'}>
+            <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1 font-['Century_Gothic','Century Gothic',sans-serif]" data-testid="brief-template-preview">
+              {templateBrief.subtitle && <p className="text-[11px] font-semibold text-[#6E6657] mb-1">{templateBrief.subtitle}</p>}
+              {(templateBrief.sections || []).map((section, index) => (
+                <div key={index} className="border-t border-[#F1ECDF] pt-3">
+                  <p className="text-[14px] font-bold text-[#0C343D] mb-1.5">{section.heading}</p>
+                  {(section.lines || []).map((line, i) => (
+                    <p key={i} className="text-[12px] text-[#1F1B18] leading-5">
+                      <span className="text-[#6E6657]">{line.label}:</span> {line.value || 'To be confirmed'}
+                    </p>
+                  ))}
+                  {section.intro && <p className="text-[12px] text-[#1F1B18] mt-1">{section.intro}</p>}
+                  {section.primary_label && <p className="text-[12px] font-bold text-[#1F1B18] mt-1">{section.primary_label}</p>}
+                  {section.primary_value && <p className="text-[12px] text-[#1F1B18]">{section.primary_value}</p>}
+                  {(section.checkboxes || []).map((opt, i) => (
+                    <p key={`cb${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">☐ {opt}</p>
+                  ))}
+                  {(section.scope_signal || []).map((b, i) => <p key={`ss${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">- {b}</p>)}
+                  {(section.assumptions || []).map((b, i) => <p key={`as${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">- {b}</p>)}
+                  {section.availability_label && <p className="text-[12px] text-[#1F1B18] mt-1">{section.availability_label}</p>}
+                  {section.availability_options && (
+                    <p className="text-[12px] text-[#1F1B18] pl-2 leading-5">{(section.availability_options || []).map((o) => `☐ ${o}`).join('   ')}</p>
+                  )}
+                  {section.conditions_label && <p className="text-[12px] font-bold text-[#1F1B18] mt-1">{section.conditions_label}</p>}
+                  {section.conditions_hint && <p className="text-[12px] italic text-[#6E6657] pl-2">{section.conditions_hint}</p>}
+                  {(section.confirmations || []).map((c, i) => <p key={`cf${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">☐ {c}</p>)}
+                  {section.note && <p className="text-[12px] italic text-[#6E6657] mt-1">{section.note}</p>}
+                </div>
+              ))}
+              {templateBrief.signature && (
+                <div className="border-t border-[#F1ECDF] pt-3 space-y-1">
+                  <p className="text-[12px] text-[#1F1B18]">{templateBrief.signature.name_label || 'Name:'}</p>
+                  <p className="text-[12px] text-[#1F1B18]">{templateBrief.signature.date_label || 'Date:'}</p>
+                </div>
+              )}
             </div>
-            {(templateBrief.sections || []).map((section, index) => (
-              <div key={index} className="border-t border-[#F1ECDF] pt-3">
-                <p className="text-[13px] font-bold text-[#0C343D] mb-1.5">{section.heading}</p>
-                {(section.lines || []).map((line, i) => (
-                  <p key={i} className="text-[12px] text-[#1F1B18] leading-5">
-                    <span className="text-[#6E6657]">{line.label}:</span> {line.value || 'To be confirmed'}
-                  </p>
-                ))}
-                {section.intro && <p className="text-[12px] text-[#1F1B18] mt-1">{section.intro}</p>}
-                {(section.checkboxes || []).map((opt, i) => (
-                  <p key={`cb${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">☐ {opt}</p>
-                ))}
-                {section.primary_label && <p className="text-[12px] font-bold text-[#1F1B18] mt-1">{section.primary_label}</p>}
-                {section.primary_value && <p className="text-[12px] text-[#1F1B18]">{section.primary_value}</p>}
-                {(section.scope_signal || []).map((b, i) => <p key={`ss${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">- {b}</p>)}
-                {(section.assumptions || []).map((b, i) => <p key={`as${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">- {b}</p>)}
-                {section.availability_label && <p className="text-[12px] text-[#1F1B18] mt-1">{section.availability_label}</p>}
-                {section.availability_options && (
-                  <p className="text-[12px] text-[#1F1B18] pl-2 leading-5">{(section.availability_options || []).map((o) => `☐ ${o}`).join('   ')}</p>
-                )}
-                {section.conditions_label && <p className="text-[12px] font-bold text-[#1F1B18] mt-1">{section.conditions_label}</p>}
-                {section.conditions_hint && <p className="text-[12px] italic text-[#6E6657] pl-2">{section.conditions_hint}</p>}
-                {(section.confirmations || []).map((c, i) => <p key={`cf${i}`} className="text-[12px] text-[#1F1B18] pl-2 leading-5">☐ {c}</p>)}
-                {section.note && <p className="text-[12px] italic text-[#6E6657] mt-1">{section.note}</p>}
-              </div>
-            ))}
-            {templateBrief.signature && (
-              <div className="border-t border-[#F1ECDF] pt-3 space-y-1">
-                <p className="text-[12px] text-[#1F1B18]">{templateBrief.signature.name_label || 'Name:'}</p>
-                <p className="text-[12px] text-[#1F1B18]">{templateBrief.signature.date_label || 'Date:'}</p>
-              </div>
-            )}
-          </div>
+          </TtaLetterhead>
         )}
       </InfoCard>
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
