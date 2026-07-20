@@ -2413,6 +2413,13 @@ export const V3BusinessCaseFrameSnapshot = () => {
     <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 5. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval.">
       {alignmentComments.length > 0 && (
         <InfoCard title={`Brand Comments (${alignmentComments.length})`}>
+          {/* Comments are scoped to THIS snapshot - name it so, when a Connect
+              call produced several, admin knows exactly which campaign the
+              brand is commenting on. */}
+          <div className="mb-3 inline-flex items-center gap-2 rounded-lg border border-[#C7D7CF] bg-[#EAF4EE] px-3 py-1.5">
+            <MessageSquare className="w-3.5 h-3.5 text-[#1F4A3A]" />
+            <span className="text-[11px] text-[#1F4A3A]">Comments on: <strong>{snapshot?.opportunity_title || snapshot?.title || 'this Alignment Snapshot'}</strong></span>
+          </div>
           <div className="space-y-3" data-testid="alignment-snapshot-brand-comments">
             {alignmentComments.map((c, index) => (
               <div key={c.id || index} className="rounded-xl border-2 border-[#E8A33A] bg-[#FFF8E1] p-4 shadow-sm">
