@@ -63,7 +63,9 @@ export const v3SuggestCreatorMatches = (bcId) => v3.post(`/business-cases/${bcId
 // -------- Business Cases (the primitive) --------
 export const v3ListBusinessCases = (params) => v3.get('/business-cases', { params }).then(r => r.data);
 
-export const v3GetBusinessCase = (bcId) => v3.get(`/business-cases/${bcId}`).then(r => r.data);
+export const v3GetBusinessCase = (bcId, snapshotId) => v3.get(`/business-cases/${bcId}`, {
+  params: snapshotId ? { alignment_snapshot_id: snapshotId } : undefined,
+}).then(r => r.data);
 
 export const v3CreateBusinessCase = (payload) => v3.post('/business-cases', payload).then(r => r.data);
 
@@ -146,7 +148,10 @@ export const v3UpdatePlanningText = (bcId, payload) => v3.patch(`/business-cases
 // Creator Match Scanner: persist the picked-creator shortlist so the Planning
 // page Creator details card lights up immediately (instead of only after the
 // brief is sent).
-export const v3UpdateSelectedCreators = (bcId, ids) => v3.patch(`/business-cases/${bcId}/selected-creators`, { selected_creator_ids: ids }).then(r => r.data);
+export const v3UpdateSelectedCreators = (bcId, ids, snapshotId) => v3.patch(`/business-cases/${bcId}/selected-creators`, {
+  selected_creator_ids: ids,
+  alignment_snapshot_id: snapshotId,
+}).then(r => r.data);
 // Track which Business Case sub-phase (planning / delivery / reporting) the
 // admin is on so businessCasePhasePath can land them on the right page when
 // opening a brand from the Business Case list.
@@ -303,8 +308,10 @@ export const v3GenerateOpportunitySnapshots = (bcId) =>
 
 // --- Creative brief: Claude writes it in the approved TASCK template ------
 // Background job (Claude takes 20-60s); resolves when the brief is ready.
-export const v3GenerateCreativeBrief = async (bcId, onProgress) => {
-  const started = await v3.post(`/business-cases/${bcId}/ai/creative-brief/generate`).then(r => r.data);
+export const v3GenerateCreativeBrief = async (bcId, onProgress, snapshotId) => {
+  const started = await v3.post(`/business-cases/${bcId}/ai/creative-brief/generate`, null, {
+    params: snapshotId ? { alignment_snapshot_id: snapshotId } : undefined,
+  }).then(r => r.data);
   const jobId = started?.job_id;
   if (!jobId) return started;
   for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -316,12 +323,16 @@ export const v3GenerateCreativeBrief = async (bcId, onProgress) => {
   }
   throw new Error('Brief generation timed out. Please retry.');
 };
-export const v3TemplateBriefDocxUrl = (bcId) => `${V3}/business-cases/${bcId}/creative-brief/docx`;
+export const v3TemplateBriefDocxUrl = (bcId, snapshotId) => `${V3}/business-cases/${bcId}/creative-brief/docx${snapshotId ? `?alignment_snapshot_id=${encodeURIComponent(snapshotId)}` : ''}`;
 
 // --- Pitch Deck: ten AI-written sections, brand-facing -------------------
-export const v3GetPitchDeck = (bcId) => v3.get(`/business-cases/${bcId}/pitch-deck`).then(r => r.data);
-export const v3GeneratePitchDeck = async (bcId, onProgress) => {
-  const started = await v3.post(`/business-cases/${bcId}/ai/pitch-deck/generate`).then(r => r.data);
+export const v3GetPitchDeck = (bcId, snapshotId) => v3.get(`/business-cases/${bcId}/pitch-deck`, {
+  params: snapshotId ? { alignment_snapshot_id: snapshotId } : undefined,
+}).then(r => r.data);
+export const v3GeneratePitchDeck = async (bcId, onProgress, snapshotId) => {
+  const started = await v3.post(`/business-cases/${bcId}/ai/pitch-deck/generate`, null, {
+    params: snapshotId ? { alignment_snapshot_id: snapshotId } : undefined,
+  }).then(r => r.data);
   const jobId = started?.job_id;
   if (!jobId) return started;
   for (let attempt = 0; attempt < 120; attempt += 1) {

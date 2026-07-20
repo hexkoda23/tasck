@@ -2294,6 +2294,68 @@ def make_v3_router(db):
 
     router.seed_v3 = seed_v3  # exposed so server.py can call it on startup
 
+    async def migrate_snapshot_segmentation():
+        """One-off, idempotent: attach existing Pitch Deck / Creative Brief /
+        selected-creator data to a specific alignment snapshot so each snapshot
+        owns its downstream artifacts. Runs safely on every startup — it only
+        stamps docs that have no `alignment_snapshot_id` yet.
+
+        Rule: pick the target snapshot per case as
+          case.frame.alignment_snapshot_id (active) -> the case's only snapshot.
+        Cases with >1 snapshot and no active id are skipped (ambiguous) so we
+        never guess wrong; the runtime fallbacks keep them working meanwhile.
+        """
+        stamped_decks = stamped_briefs = stamped_creators = 0
+        cases = await db.v3_business_cases.find({}, {"_id": 0, "id": 1, "frame": 1, "plan": 1}).to_list(5000)
+        for case in cases:
+            bc_id = case.get("id")
+            if not bc_id:
+                continue
+            snaps = await db.v3_alignment_snapshots.find(
+                {"business_case_id": bc_id}, {"_id": 0, "id": 1, "selected_creator_ids": 1, "generated_brief": 1},
+            ).to_list(50)
+            if not snaps:
+                continue
+            active_id = (case.get("frame") or {}).get("alignment_snapshot_id")
+            if not active_id:
+                active_id = snaps[0]["id"] if len(snaps) == 1 else None
+            if not active_id:
+                continue  # ambiguous multi-snapshot case; leave for runtime fallback
+            # Pitch deck: stamp any unstamped deck for this case.
+            res = await db.v3_pitch_decks.update_many(
+                {"business_case_id": bc_id, "alignment_snapshot_id": {"$exists": False}},
+                {"$set": {"alignment_snapshot_id": active_id}},
+            )
+            stamped_decks += res.modified_count or 0
+            # Creative brief doc collection (if used) — stamp unstamped.
+            res = await db.v3_creative_briefs.update_many(
+                {"business_case_id": bc_id, "alignment_snapshot_id": {"$exists": False}},
+                {"$set": {"alignment_snapshot_id": active_id}},
+            )
+            stamped_briefs += res.modified_count or 0
+            # Copy case.plan.selected_creator_ids -> snapshot, and the generated
+            # brief blob -> snapshot, only if the snapshot has none yet.
+            target = next((s for s in snaps if s.get("id") == active_id), None) or {}
+            plan = case.get("plan") or {}
+            snap_set = {}
+            if not target.get("selected_creator_ids") and plan.get("selected_creator_ids"):
+                snap_set["selected_creator_ids"] = plan.get("selected_creator_ids")
+            if not target.get("generated_brief") and plan.get("generated_brief"):
+                snap_set["generated_brief"] = plan.get("generated_brief")
+                snap_set["generated_brief_at"] = plan.get("generated_brief_at")
+                snap_set["generated_brief_source"] = plan.get("generated_brief_source")
+            if snap_set:
+                await db.v3_alignment_snapshots.update_one({"id": active_id}, {"$set": snap_set})
+                stamped_creators += 1
+        if stamped_decks or stamped_briefs or stamped_creators:
+            logger.info(
+                "Snapshot segmentation migration: decks=%s briefs=%s snapshots_filled=%s",
+                stamped_decks, stamped_briefs, stamped_creators,
+            )
+        return {"decks": stamped_decks, "briefs": stamped_briefs, "snapshots_filled": stamped_creators}
+
+    router.migrate_snapshot_segmentation = migrate_snapshot_segmentation
+
     def _smtp_flag(name: str, default: bool) -> bool:
         value = os.getenv(name)
         if value is None:
@@ -4537,7 +4599,7 @@ def make_v3_router(db):
         return {"ok": True, "business_case": updated, "business_case_id": bc_id}
 
     @router.get("/business-cases/{bc_id}")
-    async def get_business_case(bc_id: str):
+    async def get_business_case(bc_id: str, alignment_snapshot_id: Optional[str] = None):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
@@ -4549,36 +4611,63 @@ def make_v3_router(db):
         #      Creator Match Scanner + Creative Brief flow actually writes -
         #      previously the Planning page Creator card was always empty
         #      because we only looked at #1).
-        creator = None
-        creator_id = case.get("creator_id")
-        if not creator_id:
-            selected_ids = ((case.get("plan") or {}).get("selected_creator_ids") or [])
-            if isinstance(selected_ids, list) and selected_ids:
-                creator_id = selected_ids[0]
-        if creator_id:
-            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0})
-        alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
-        # Defensive fallback: if the business_case_id lookup misses but the case
-        # has a snapshot_id stored on it, try that. Prevents the "snapshot
-        # disappeared" symptom if business_case_id was ever stored with a different
-        # cast/whitespace.
-        if not alignment:
-            stored_snapshot_id = (case.get("frame") or {}).get("alignment_snapshot_id")
-            if stored_snapshot_id:
-                alignment = await db.v3_alignment_snapshots.find_one({"id": stored_snapshot_id}, {"_id": 0})
-        # One Connect call can produce several snapshots (one per opportunity).
-        # `alignment_snapshot` stays the primary one for pages that expect a
-        # single doc; `alignment_snapshots` is the full list, ranked by the
-        # brand's priority (most urgent first, unranked last).
+        # ---- Resolve the ACTIVE alignment snapshot for this request --------
+        # A case can hold several snapshots (one per Connect opportunity). The
+        # Creator Selector, Pitch Deck and Creative Brief are segmented PER
+        # snapshot, so we first decide which snapshot this request is scoped to:
+        #   1. explicit ?alignment_snapshot_id= (deep-linked snapshot page)
+        #   2. case.frame.alignment_snapshot_id (the active/primary snapshot)
+        #   3. first ranked snapshot (back-compat)
         alignment_snapshots = await db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0}).to_list(50)
         alignment_snapshots.sort(key=lambda s: (
             PRIORITY_OPTIONS.index(s.get("priority")) if s.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
             str(s.get("generated_at") or ""),
         ))
+        alignment = None
+        if alignment_snapshot_id:
+            alignment = next((s for s in alignment_snapshots if s.get("id") == alignment_snapshot_id), None)
+            if not alignment:
+                alignment = await db.v3_alignment_snapshots.find_one({"id": alignment_snapshot_id}, {"_id": 0})
+        if not alignment:
+            stored_snapshot_id = (case.get("frame") or {}).get("alignment_snapshot_id")
+            if stored_snapshot_id:
+                alignment = next((s for s in alignment_snapshots if s.get("id") == stored_snapshot_id), None) \
+                    or await db.v3_alignment_snapshots.find_one({"id": stored_snapshot_id}, {"_id": 0})
         if not alignment and alignment_snapshots:
             alignment = alignment_snapshots[0]
-        brief = await db.v3_creative_briefs.find_one({"business_case_id": bc_id}, {"_id": 0})
-        pitch_deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+        active_snapshot_id = (alignment or {}).get("id")
+
+        # Downstream artifacts are scoped to the active snapshot. New docs carry
+        # `alignment_snapshot_id`; legacy docs (pre-segmentation) have it unset,
+        # so we fall back to the case-level doc only when the snapshot-scoped
+        # lookup misses AND the legacy doc has no snapshot stamp yet.
+        async def _scoped_one(coll):
+            doc = None
+            if active_snapshot_id:
+                doc = await coll.find_one({"business_case_id": bc_id, "alignment_snapshot_id": active_snapshot_id}, {"_id": 0})
+            if not doc:
+                legacy = await coll.find_one({"business_case_id": bc_id, "alignment_snapshot_id": {"$exists": False}}, {"_id": 0})
+                doc = legacy
+            return doc
+
+        brief = await _scoped_one(db.v3_creative_briefs)
+        pitch_deck = await _scoped_one(db.v3_pitch_decks)
+
+        # Selected creators live on the snapshot doc (segmented). Fall back to
+        # the legacy case.plan list only when the snapshot has none yet.
+        selected_creator_ids = []
+        if alignment and isinstance(alignment.get("selected_creator_ids"), list):
+            selected_creator_ids = alignment.get("selected_creator_ids") or []
+        if not selected_creator_ids:
+            selected_creator_ids = ((case.get("plan") or {}).get("selected_creator_ids") or [])
+
+        creator = None
+        creator_id = case.get("creator_id")
+        if not creator_id and selected_creator_ids:
+            creator_id = selected_creator_ids[0]
+        if creator_id:
+            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0})
+
         snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
         contract = await db.v3_contracts.find_one({"business_case_id": bc_id}, {"_id": 0})
         # Connect conversations: every business-call meeting (carries the
@@ -4603,6 +4692,8 @@ def make_v3_router(db):
             "creator": creator,
             "alignment_snapshot": alignment,
             "alignment_snapshots": alignment_snapshots,
+            "active_snapshot_id": active_snapshot_id,
+            "selected_creator_ids": selected_creator_ids,
             "creative_brief": brief,
             "pitch_deck": pitch_deck,
             "creative_snapshot": snapshot,
@@ -6694,6 +6785,7 @@ def make_v3_router(db):
     # already resolves the primary creator from this array as a fallback.
     class SelectedCreatorsPayload(BaseModel):
         selected_creator_ids: List[str] = Field(default_factory=list)
+        alignment_snapshot_id: Optional[str] = None
 
     @router.patch("/business-cases/{bc_id}/selected-creators")
     async def update_selected_creators(bc_id: str, payload: SelectedCreatorsPayload):
@@ -6707,6 +6799,17 @@ def make_v3_router(db):
             present = await db.v3_creators.find({"id": {"$in": ids}}, {"_id": 0, "id": 1}).to_list(len(ids))
             present_ids = {row["id"] for row in present}
             ids = [cid for cid in ids if cid in present_ids]
+        # Segmented store: the shortlist belongs to a specific alignment snapshot
+        # so different snapshots of the same case keep independent creator picks.
+        # Resolve the target snapshot: explicit id -> case active snapshot.
+        snap_id = payload.alignment_snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
+        if snap_id:
+            await db.v3_alignment_snapshots.update_one(
+                {"id": snap_id},
+                {"$set": {"selected_creator_ids": ids, "updated_at": _now_iso()}},
+            )
+        # Keep case.plan in sync as a back-compat fallback (Planning page primary
+        # creator resolution + legacy cases without a snapshot scope).
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {
@@ -7095,24 +7198,33 @@ def make_v3_router(db):
         }
 
     @router.post("/business-cases/{bc_id}/ai/creative-brief/generate")
-    async def generate_creative_brief(bc_id: str):
+    async def generate_creative_brief(bc_id: str, alignment_snapshot_id: Optional[str] = None):
         """Claude writes the Creative Brief for this case in the approved 4-page
         template, tailored to the brand from the alignment snapshot + Creator
-        Selector data. Background job (Claude takes 20-60s; sync would 504)."""
+        Selector data. Background job (Claude takes 20-60s; sync would 504).
+        Scoped to a specific alignment snapshot so each snapshot keeps its own
+        Creative Brief."""
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
-        # Prefer the approved snapshot; else the brand's top-priority one.
+        # Scope to the requested snapshot: explicit id -> case active -> best ranked.
         snaps = await db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0}).to_list(50)
-        snaps.sort(key=lambda s: (
-            0 if s.get("status") == "approved" else 1,
-            PRIORITY_OPTIONS.index(s.get("priority")) if s.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
-        ))
-        snapshot = snaps[0] if snaps else {}
+        target_snap_id = alignment_snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
+        snapshot = None
+        if target_snap_id:
+            snapshot = next((s for s in snaps if s.get("id") == target_snap_id), None)
+        if not snapshot:
+            snaps.sort(key=lambda s: (
+                0 if s.get("status") == "approved" else 1,
+                PRIORITY_OPTIONS.index(s.get("priority")) if s.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
+            ))
+            snapshot = snaps[0] if snaps else {}
+        scoped_snapshot_id = snapshot.get("id") if snapshot else target_snap_id
         round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
         selector = round_doc.get("creator_selector") or {}
-        selected_ids = (case.get("plan") or {}).get("selected_creator_ids") or []
+        selected_ids = (snapshot.get("selected_creator_ids") if snapshot else None) \
+            or (case.get("plan") or {}).get("selected_creator_ids") or []
         creators = await db.v3_creators.find({"id": {"$in": selected_ids}}, {"_id": 0}).to_list(50) if selected_ids else []
 
         job_id = f"brief-job-{uuid.uuid4().hex[:10]}"
@@ -7139,13 +7251,22 @@ def make_v3_router(db):
                                   "updated_at": _now_iso()}})
                     return
                 now = _now_iso()
+                # Store on the snapshot (segmented) so each snapshot keeps its
+                # own brief, and mirror onto case.plan for back-compat.
+                if scoped_snapshot_id:
+                    await db.v3_alignment_snapshots.update_one(
+                        {"id": scoped_snapshot_id},
+                        {"$set": {"generated_brief": brief,
+                                  "generated_brief_at": now,
+                                  "generated_brief_source": brief.get("analysis_source"),
+                                  "updated_at": now}})
                 await db.v3_business_cases.update_one(
                     {"id": bc_id},
                     {"$set": {"plan.generated_brief": brief,
                               "plan.generated_brief_at": now,
                               "plan.generated_brief_source": brief.get("analysis_source"),
                               "updated_at": now},
-                     "$push": {"timeline": {"at": now, "event": "creative_brief_generated"}}})
+                     "$push": {"timeline": {"at": now, "event": "creative_brief_generated", "alignment_snapshot_id": scoped_snapshot_id}}})
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "completed", "progress": 100,
@@ -7170,11 +7291,17 @@ def make_v3_router(db):
         return {"ok": True, "job": job}
 
     @router.get("/business-cases/{bc_id}/creative-brief/docx")
-    async def download_creative_brief_docx(bc_id: str):
+    async def download_creative_brief_docx(bc_id: str, alignment_snapshot_id: Optional[str] = None):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        brief = (case.get("plan") or {}).get("generated_brief")
+        brief = None
+        snap_id = alignment_snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
+        if snap_id:
+            snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0}) or {}
+            brief = snap.get("generated_brief")
+        if not brief:
+            brief = (case.get("plan") or {}).get("generated_brief")
         if not brief:
             raise HTTPException(404, "No generated Creative Brief on this Business Case yet.")
         data = creative_brief_docx_bytes(brief)
@@ -7216,28 +7343,44 @@ def make_v3_router(db):
         return _docx_package(blocks)
 
     @router.get("/business-cases/{bc_id}/pitch-deck")
-    async def get_pitch_deck(bc_id: str):
-        deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+    async def get_pitch_deck(bc_id: str, alignment_snapshot_id: Optional[str] = None):
+        query = {"business_case_id": bc_id}
+        deck = None
+        if alignment_snapshot_id:
+            deck = await db.v3_pitch_decks.find_one({**query, "alignment_snapshot_id": alignment_snapshot_id}, {"_id": 0})
+        if not deck:
+            deck = await db.v3_pitch_decks.find_one(query, {"_id": 0})
         return {"ok": True, "pitch_deck": deck}
 
     @router.post("/business-cases/{bc_id}/ai/pitch-deck/generate")
-    async def generate_pitch_deck(bc_id: str):
+    async def generate_pitch_deck(bc_id: str, alignment_snapshot_id: Optional[str] = None):
         """Background job: Claude writes all ten Pitch Deck sections from
         everything known so far. Regenerating overwrites the sections but
-        keeps brand comments; status returns to under_review."""
+        keeps brand comments; status returns to under_review. The deck is
+        scoped to a specific alignment snapshot so each snapshot keeps its
+        own Pitch Deck."""
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
         snaps = await db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0}).to_list(50)
-        snaps.sort(key=lambda s: (
-            0 if s.get("status") == "approved" else 1,
-            PRIORITY_OPTIONS.index(s.get("priority")) if s.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
-        ))
-        snapshot = snaps[0] if snaps else {}
+        # Scope to the requested snapshot: explicit id -> case active -> best ranked.
+        target_snap_id = alignment_snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
+        snapshot = None
+        if target_snap_id:
+            snapshot = next((s for s in snaps if s.get("id") == target_snap_id), None)
+        if not snapshot:
+            snaps.sort(key=lambda s: (
+                0 if s.get("status") == "approved" else 1,
+                PRIORITY_OPTIONS.index(s.get("priority")) if s.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
+            ))
+            snapshot = snaps[0] if snaps else {}
+        scoped_snapshot_id = snapshot.get("id") if snapshot else target_snap_id
         round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
         selector = round_doc.get("creator_selector") or {}
-        selected_ids = (case.get("plan") or {}).get("selected_creator_ids") or []
+        # Prefer the snapshot's own creator shortlist; fall back to case.plan.
+        selected_ids = (snapshot.get("selected_creator_ids") if snapshot else None) \
+            or (case.get("plan") or {}).get("selected_creator_ids") or []
         creators = await db.v3_creators.find({"id": {"$in": selected_ids}}, {"_id": 0}).to_list(50) if selected_ids else []
 
         job_id = f"pitch-job-{uuid.uuid4().hex[:10]}"
@@ -7264,11 +7407,17 @@ def make_v3_router(db):
                                   "updated_at": _now_iso()}})
                     return
                 now = _now_iso()
-                existing = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+                deck_query = {"business_case_id": bc_id}
+                if scoped_snapshot_id:
+                    deck_query["alignment_snapshot_id"] = scoped_snapshot_id
+                else:
+                    deck_query["alignment_snapshot_id"] = {"$exists": False}
+                existing = await db.v3_pitch_decks.find_one(deck_query, {"_id": 0})
                 deck_id = (existing or {}).get("id") or f"pd-{uuid.uuid4().hex[:8]}"
                 deck = {
                     "id": deck_id,
                     "business_case_id": bc_id,
+                    "alignment_snapshot_id": scoped_snapshot_id,
                     "title": result.get("title") or f"{brand.get('company') or 'Brand'} x TASCK - Creator Campaign Pitch",
                     "sections": [
                         {"heading": str(s.get("heading") or ""), "content": str(s.get("content") or "")}

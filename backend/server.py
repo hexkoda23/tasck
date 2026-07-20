@@ -89,6 +89,12 @@ async def startup_event():
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Seed v3 failed (non-fatal for readiness): {exc}")
         try:
+            migrate = getattr(v3_router, "migrate_snapshot_segmentation", None)
+            if migrate:
+                await migrate()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Snapshot segmentation migration skipped or failed: {exc}")
+        try:
             await WorkbookImporter.import_all(db)
             logger.info("Workbook import completed.")
         except Exception as exc:  # noqa: BLE001

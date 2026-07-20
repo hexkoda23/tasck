@@ -188,18 +188,19 @@ const brainstormingSections = [
 export const useBusinessCaseBundle = () => {
   const params = useParams();
   const id = params.id || params.businessCaseId;
+  const snapshotId = params.snapshotId || params.alignmentSnapshotId || null;
   const [bundle, setBundle] = useState(null);
   const [loading, setLoading] = useState(true);
-  const reload = useCallback(() => v3GetBusinessCase(id).then((data) => {
+  const reload = useCallback(() => v3GetBusinessCase(id, snapshotId).then((data) => {
     setBundle(data);
     setLoading(false);
     return data;
-  }), [id]);
+  }), [id, snapshotId]);
   useEffect(() => {
     setLoading(true);
     reload().catch(() => setLoading(false));
   }, [reload]);
-  return { id, bundle, loading, reload };
+  return { id, snapshotId, bundle, loading, reload };
 };
 
 const getCase = (bundle) => bundle?.business_case || {};
@@ -2520,6 +2521,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
             {allSnapshots.map((snapshotItem) => {
               const isEditing = snapshot?.id === snapshotItem.id;
               return (
+                <React.Fragment>
                 <div
                   key={snapshotItem.id}
                   role="button"
@@ -2561,6 +2563,30 @@ export const V3BusinessCaseFrameSnapshot = () => {
                     />
                   </div>
                 </div>
+                {/* Per-snapshot quick links: each snapshot owns its own Creator
+                    Selector, Pitch Deck and Creative Brief, so deep-link into
+                    that snapshot's segmented pages. */}
+                <div className="mt-2 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    type="button"
+                    data-testid={`snapshot-open-cs-${snapshotItem.id}`}
+                    onClick={() => navigate(adminRoute(`/business-cases/${id}/snapshot/${snapshotItem.id}/frame/creator-scan`))}
+                    className="v3-btn-secondary text-[11px]"
+                  >Creator Selector</button>
+                  <button
+                    type="button"
+                    data-testid={`snapshot-open-pd-${snapshotItem.id}`}
+                    onClick={() => navigate(adminRoute(`/business-cases/${id}/snapshot/${snapshotItem.id}/frame/pitch-deck`))}
+                    className="v3-btn-secondary text-[11px]"
+                  >Pitch Deck</button>
+                  <button
+                    type="button"
+                    data-testid={`snapshot-open-brief-${snapshotItem.id}`}
+                    onClick={() => navigate(adminRoute(`/business-cases/${id}/snapshot/${snapshotItem.id}/frame/brief`))}
+                    className="v3-btn-secondary text-[11px]"
+                  >Brief</button>
+                </div>
+                </React.Fragment>
               );
             })}
           </div>
@@ -3360,7 +3386,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
 export const V3BusinessCasePlanCreatorScan = () => {
   const navigate = useNavigate();
-  const { id, bundle } = useBusinessCaseBundle();
+  const { id, snapshotId, bundle } = useBusinessCaseBundle();
   const [creators, setCreators] = useState([]);
   const [matches, setMatches] = useState([]);
   const [manualCreatorId, setManualCreatorId] = useState('');
@@ -3411,7 +3437,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
   // Fire-and-forget: the local UI state is the source of truth for this page.
   const persistSelectedIds = (nextIds) => {
     if (!id) return;
-    v3UpdateSelectedCreators(id, nextIds).catch(() => { /* non-blocking */ });
+    v3UpdateSelectedCreators(id, nextIds, snapshotId).catch(() => { /* non-blocking */ });
   };
   const addCreator = (creatorId) => {
     if (!creatorId) return;
@@ -3658,7 +3684,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
 export const V3BusinessCasePlanBrief = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { id, bundle } = useBusinessCaseBundle();
+  const { id, snapshotId, bundle } = useBusinessCaseBundle();
   const [creators, setCreators] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [manualCreatorId, setManualCreatorId] = useState('');
@@ -3682,7 +3708,7 @@ export const V3BusinessCasePlanBrief = () => {
     setGeneratingBrief(true);
     setBriefProgress('Queued: writing the Creative Brief…');
     try {
-      const result = await v3GenerateCreativeBrief(id, (job) => setBriefProgress(job?.message || ''));
+      const result = await v3GenerateCreativeBrief(id, (job) => setBriefProgress(job?.message || ''), snapshotId);
       setTemplateBrief(result?.brief || null);
       toast.success('Creative Brief written in the TASCK template.');
     } catch (e) {
@@ -3820,7 +3846,7 @@ export const V3BusinessCasePlanBrief = () => {
               {generatingBrief ? 'Writing…' : (templateBrief ? 'Regenerate brief' : 'Generate brief')}
             </button>
             {templateBrief && (
-              <a href={v3TemplateBriefDocxUrl(id)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brief-download-docx">
+              <a href={v3TemplateBriefDocxUrl(id, snapshotId)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brief-download-docx">
                 <Download className="w-3.5 h-3.5" /> Download (.docx)
               </a>
             )}
@@ -3979,7 +4005,7 @@ export const V3BusinessCasePlanBrief = () => {
 // -----------------------------------------------------------------------
 export const V3BusinessCasePitchDeck = () => {
   const navigate = useNavigate();
-  const { id, bundle, reload } = useBusinessCaseBundle();
+  const { id, snapshotId, bundle, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const [deck, setDeck] = useState(null);
@@ -4062,7 +4088,7 @@ export const V3BusinessCasePitchDeck = () => {
           progress: Math.max(prev.progress, serverProgress),
           message: job?.message || prev.message,
         } : prev);
-      });
+      }, snapshotId);
       stopGenTick();
       clearDelay();
       setDeck(result?.pitch_deck || null);
@@ -4358,7 +4384,7 @@ export const V3BusinessCasePitchDeck = () => {
 };
 
 export const V3BusinessCasePlanCreatorBriefingCall = () => {
-  const { id, bundle } = useBusinessCaseBundle();
+  const { id, snapshotId, bundle } = useBusinessCaseBundle();
   const [meeting, setMeeting] = useState(null);
   const [transcript, setTranscript] = useState('');
   const [analysis, setAnalysis] = useState(null);

@@ -447,6 +447,15 @@ function AppRoutes() {
         <Route path="business-cases/:id/frame/brief" element={<V1BusinessCasePlanBrief />} />
         <Route path="business-cases/:id/frame/pitch-deck" element={<V1BusinessCasePitchDeck />} />
         <Route path="business-cases/:id/frame/creator-briefing-call" element={<V1BusinessCasePlanCreatorBriefingCall />} />
+        {/* Snapshot-scoped (segmented) pages: each alignment snapshot owns its
+            own Creator Selector, Pitch Deck and Creative Brief. The backend
+            resolves the active snapshot when no id is supplied, so the
+            non-scoped routes above stay as back-compat aliases. */}
+        <Route path="business-cases/:id/snapshot/:snapshotId/frame/creator-scan" element={<V1BusinessCasePlanCreatorScan />} />
+        <Route path="business-cases/:id/snapshot/:snapshotId/frame/brief" element={<V1BusinessCasePlanBrief />} />
+        <Route path="business-cases/:id/snapshot/:snapshotId/frame/pitch-deck" element={<V1BusinessCasePitchDeck />} />
+        <Route path="business-cases/:id/snapshot/:snapshotId/plan/creator-scan" element={<V1BusinessCasePlanCreatorScan />} />
+        <Route path="business-cases/:id/snapshot/:snapshotId/plan/brief" element={<V1BusinessCasePlanBrief />} />
         {/* Strategy Snapshot step removed — both paths now land on Planning so
             old bookmarks/emails resolve instead of 404ing. */}
         <Route path="business-cases/:id/frame/strategy-snapshot" element={<V1BusinessCaseDeliverySummary />} />
