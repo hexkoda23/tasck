@@ -3978,6 +3978,7 @@ export const V3BusinessCasePitchDeck = () => {
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const [deck, setDeck] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
   // Pitch Deck generation popup. The polling wrapper reports the backend's
   // real progress (5 -> 30 -> 100), so this shows a genuine 0-100% bar.
