@@ -2599,7 +2599,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
             {snapshot?.id && <PrioritySelect snapshotId={snapshot.id} value={snapshot.priority} actor="admin" onChange={(next, error) => { if (error) { toast.error('Could not save the priority.'); return; } toast.success('Priority updated.'); reload(); }} />}
             <button data-testid="alignment-generate-btn" onClick={generateSnapshot} disabled={generating} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"><Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> {generating ? 'Generating…' : (hasSnapshot ? 'Regenerate Snapshot' : 'Generate Snapshot')}</button>
             <button data-testid="alignment-preview-btn" onClick={openPreview} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Preview</button>
-            <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
+            <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> {snapshot?.brand_approved ? 'Admin approve & continue' : 'Admin approve'}</button>
           </div>
         )}
       >
@@ -2622,6 +2622,27 @@ export const V3BusinessCaseFrameSnapshot = () => {
           <div className="rounded-lg border border-[#C7D7CF] bg-[#EAF4EE] px-3 py-2 mb-3 text-[12px] text-[#1F4A3A]" data-testid="alignment-pending-changes">
             <span className="font-semibold">Pending on next send:</span> these sections were edited and will be flagged to the brand as updated —
             <span className="font-medium"> {snapshot.pending_change_summary.join(', ')}</span>.
+          </div>
+        )}
+
+        {/* Brand approval reflection: the moment the brand approves this
+            snapshot in their portal it shows here immediately (the brand
+            approval is a distinct field, snapshot.brand_approved, not the
+            overall status). The admin still has to click "Admin approve" to
+            move the case to the next phase. */}
+        {hasSnapshot && snapshot?.brand_approved && (
+          <div className="rounded-lg border border-[#1F7A4D] bg-[#E8F5ED] px-3 py-2.5 mb-3 text-[12px] text-[#1F4A3A] flex flex-wrap items-center gap-2" data-testid="alignment-brand-approved-banner">
+            <CheckCircle2 className="w-4 h-4 text-[#1F7A4D]" />
+            <span className="font-semibold">Approved by brand</span>
+            {snapshot.brand_approved_by ? <span>· {snapshot.brand_approved_by}</span> : null}
+            {snapshot.brand_approved_at ? <span>· {formatDateTime(snapshot.brand_approved_at)}</span> : null}
+            <span className="ml-auto text-[#2E7D5B]">Admin can now approve to move to the next phase.</span>
+          </div>
+        )}
+        {hasSnapshot && !snapshot?.brand_approved && snapshot?.brand_viewed_at && (
+          <div className="rounded-lg border border-[#C7D7CF] bg-[#F4F8F6] px-3 py-2 mb-3 text-[12px] text-[#4F6B5E] flex items-center gap-2" data-testid="alignment-brand-viewed-banner">
+            <Eye className="w-4 h-4 text-[#4F6B5E]" />
+            <span>Brand viewed this snapshot{snapshot.brand_viewed_at ? ` on ${formatDateTime(snapshot.brand_viewed_at)}` : ''}. Awaiting their approval.</span>
           </div>
         )}
 

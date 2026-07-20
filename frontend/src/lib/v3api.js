@@ -84,6 +84,8 @@ export const v3ApproveAlignment = (bcId, approver) => v3.post(`/business-cases/$
 
 export const v3ApproveAlignmentAs = (bcId, approver, approver_party = 'admin', snapshotId = undefined) => v3.post(`/business-cases/${bcId}/ai/alignment/approve`, { approver, approver_party, snapshot_id: snapshotId }).then(r => r.data);
 
+export const v3MarkAlignmentViewed = (bcId, snapshotId, viewer) => v3.post(`/business-cases/${bcId}/ai/alignment/viewed`, { viewer, snapshot_id: snapshotId }).then(r => r.data);
+
 export const v3UpdateAlignment = (snapshotId, payload) => v3.patch(`/alignment-snapshots/${snapshotId}`, payload).then(r => r.data);
 
 export const v3SendAlignmentToBrand = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/ai/alignment/send`, payload).then(r => r.data);

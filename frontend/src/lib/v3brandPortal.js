@@ -203,6 +203,14 @@ const makePresentationBundle = ({
     business_case_id: id,
     status: alignmentStatus,
     generated_at: '2026-03-13T09:00:00Z',
+    // In the demo, a brand approval is only reflected once the brand themselves
+    // approved — mirror the real backend: a separate brand_approved flag, not
+    // the overall status. Here we treat a final 'approved' status as brand
+    // approved so the demo portal shows the right button state.
+    brand_approved: alignmentStatus === 'approved',
+    brand_approved_at: alignmentStatus === 'approved' ? '2026-03-14T12:00:00Z' : null,
+    brand_approved_by: alignmentStatus === 'approved' ? brand?.primaryContact : null,
+    brand_viewed_at: alignmentStatus && alignmentStatus !== 'draft' ? '2026-03-14T10:00:00Z' : null,
     approved_at: alignmentStatus === 'approved' ? '2026-03-14T12:00:00Z' : null,
     approved_by: alignmentStatus === 'approved' ? brand?.primaryContact : null,
     approved_by_party: alignmentStatus === 'approved' ? 'brand' : null,

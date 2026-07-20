@@ -5632,6 +5632,35 @@ def make_v3_router(db):
             raise HTTPException(404, "No Alignment Snapshot to approve.")
 
         approved_at = _now_iso()
+
+        # BRAND approval: record that the brand approved this snapshot, but do
+        # NOT flip the overall status to "approved" yet and do NOT advance the
+        # stage. The admin must still approve to move to the next phase. This
+        # keeps the two approvals distinct so the admin page can show "approved
+        # by brand" immediately and the brand page only shows "Approved" once
+        # the brand themselves approved.
+        if payload.approver_party == "brand":
+            await db.v3_alignment_snapshots.update_one(
+                {"id": snap["id"]},
+                {"$set": {
+                    "brand_approved": True,
+                    "brand_approved_at": approved_at,
+                    "brand_approved_by": payload.approver,
+                    "status": snap.get("status") or "sent_to_brand",
+                }},
+            )
+            await db.v3_business_cases.update_one(
+                {"id": bc_id},
+                {"$set": {
+                    "frame.alignment_brand_approved_at": approved_at,
+                    "frame.alignment_brand_approved_by": payload.approver,
+                    "updated_at": _now_iso(),
+                }, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_brand_approved", "by": payload.approver, "party": "brand", "snapshot_id": snap["id"]}}},
+            )
+            return {"ok": True, "brand_approved": True, "approved_at": approved_at, "next_action": "Awaiting admin approval to move to the next phase."}
+
+        # ADMIN approval: the existing behaviour — snapshot is approved and the
+        # case advances to the Plan phase so the downstream data slots open.
         await db.v3_alignment_snapshots.update_one(
             {"id": snap["id"]},
             {"$set": {
@@ -5648,10 +5677,9 @@ def make_v3_router(db):
             "frame.alignment_approved_by_party": payload.approver_party,
             "updated_at": _now_iso(),
         }
-        if payload.approver_party == "brand":
-            updates["stage"] = "plan"
-            updates["plan.brainstorm_status"] = "ready"
-            updates["next_action"] = "Open Brainstorming and continue the Plan phase."
+        # (Brand approval is handled in the early-return branch above and does
+        # NOT advance the stage — the admin approval below is what moves the
+        # case to the Plan phase.)
 
         if case.get("engagement_track") == "grant":
             updates["frame.strategy_development_fee_invoice_id"] = None
@@ -5667,6 +5695,36 @@ def make_v3_router(db):
             {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_approved", "by": payload.approver, "party": payload.approver_party}}},
         )
         return {"ok": True, "approved_at": approved_at, "stage": updates.get("stage", case.get("stage")), "next_action": updates.get("next_action"), "fee_due_stage": updates.get("frame.strategy_development_fee_due_stage")}
+
+    class MarkAlignmentViewedPayload(BaseModel):
+        viewer: str
+        snapshot_id: Optional[str] = None
+
+    @router.post("/business-cases/{bc_id}/ai/alignment/viewed")
+    async def mark_alignment_viewed(bc_id: str, payload: MarkAlignmentViewedPayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        snap = None
+        if payload.snapshot_id:
+            snap = await db.v3_alignment_snapshots.find_one(
+                {"id": payload.snapshot_id, "business_case_id": bc_id}, {"_id": 0},
+            )
+        else:
+            snap = await db.v3_alignment_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "No Alignment Snapshot to mark viewed.")
+        # Idempotent: only set the first time the brand opens it.
+        if not snap.get("brand_viewed_at"):
+            await db.v3_alignment_snapshots.update_one(
+                {"id": snap["id"]},
+                {"$set": {"brand_viewed_at": _now_iso(), "brand_viewed_by": payload.viewer}},
+            )
+            await db.v3_business_cases.update_one(
+                {"id": bc_id},
+                {"$set": {"frame.alignment_brand_viewed_at": _now_iso(), "updated_at": _now_iso()}},
+            )
+        return {"ok": True, "brand_viewed": True}
 
         # If paid engagement, generate the Strategy Development Fee invoice.
         updates: Dict[str, Any] = {
