@@ -49,13 +49,24 @@ const TasckHeader = ({ compact }) => (
   </div>
 );
 
-const TasckFooter = ({ brandName, pageNo, pageCount }) => (
-  <div className="pf-footer">
-    <span>tasck.org</span>
-    <span>{brandName || 'Your brand'}</span>
-    {pageNo != null && <span>{pageNo} / {pageCount}</span>}
-  </div>
-);
+const TasckFooter = ({ brandName, pageNo, pageCount, minimal }) => {
+  if (minimal) {
+    return (
+      <div className="pf-footer pf-footer-min">
+        <span>tasck.org</span>
+      </div>
+    );
+  }
+  const items = ['tasck.org', brandName || 'Your brand'];
+  if (pageNo != null) items.push(`${pageNo} / ${pageCount}`);
+  return (
+    <div className="pf-footer">
+      {items.map((it, i) => (
+        <span key={i}>{it}</span>
+      ))}
+    </div>
+  );
+};
 
 const CoverPage = ({ title, brandName }) => (
   <div className="pf-cover" data-testid="pf-cover">
@@ -92,30 +103,32 @@ const ClosingPage = ({ brandName }) => (
       <h1 className="pf-cover-title" style={{ fontSize: 30 }}>Let&#39;s build this together.</h1>
       <p className="pf-cover-sub">Review the campaign, add your comments to any section, and approve when you&#39;re ready. TASCK will take it from there.</p>
     </div>
-    <TasckFooter brandName={brandName} />
+    <TasckFooter minimal />
   </div>
 );
 
 export const PitchDeckFlipbook = ({ deck, brandName }) => {
   const deckTitle = deck?.title || 'Creator Campaign Pitch';
 
-  // Build the ordered list of page renderers: cover -> content -> closing,
-  // padded to an even count so leaves (2 pages each) pair up cleanly.
+  // Build the ordered list of leaf pages: cover -> content pages. Padded to
+  // an even count so leaves (2 pages each) pair up cleanly. The closing
+  // "Let's build this together." page is rendered separately as a centred
+  // final panel (not a leaf), so it never appears as a side panel next to a
+  // blank page.
   const pages = useMemo(() => {
     const contentPages = paginateSections(deck?.sections);
-    const total = contentPages.length + 2; // cover + content + closing
-    const pageCount = total;
     const out = [];
     out.push(<CoverPage key="cover" title={deckTitle} brandName={brandName} />);
     contentPages.forEach((secs, i) => out.push(
-      <ContentPage key={`c${i}`} sections={secs} deckTitle={deckTitle} brandName={brandName} pageNo={i + 2} pageCount={pageCount} />,
+      <ContentPage key={`c${i}`} sections={secs} deckTitle={deckTitle} brandName={brandName} pageNo={i + 2} pageCount={contentPages.length + 2} />,
     ));
-    out.push(<ClosingPage key="closing" brandName={brandName} />);
-    if (out.length % 2 !== 0) out.push(<div key="blank" className="pf-page" />); // keep leaves paired
+    // Pad to an even number of pages so every leaf has a front + back.
+    if (out.length % 2 !== 0) out.push(<div key="blank" className="pf-page pf-page-blank" />);
     return out;
   }, [deck, deckTitle, brandName]);
 
   const leafCount = Math.ceil(pages.length / 2);
+  const atEnd = spread >= leafCount;
   // `spread` = number of leaves flipped to the left (0 = closed on cover).
   const [spread, setSpread] = useState(0);
   const [flipping, setFlipping] = useState(-1);
@@ -123,7 +136,8 @@ export const PitchDeckFlipbook = ({ deck, brandName }) => {
   useEffect(() => { setSpread(0); }, [deck?.id]);
 
   const turn = (dir) => {
-    const next = Math.min(Math.max(spread + dir, 0), leafCount);
+    // Allow turning one past the last leaf so the centred closing panel shows.
+    const next = Math.min(Math.max(spread + dir, 0), leafCount + (leafCount > 0 ? 1 : 0));
     if (next === spread) return;
     setFlipping(dir > 0 ? spread : next); // the leaf that moves
     setSpread(next);
@@ -143,30 +157,36 @@ export const PitchDeckFlipbook = ({ deck, brandName }) => {
   return (
     <div className="pf-wrap" data-testid="pitch-deck-flipbook">
       <div className="pf-stage">
-        <div className="pf-book">
-          {Array.from({ length: leafCount }).map((_, i) => {
-            const flipped = i < spread;
-            const z = i === flipping ? 999 : (flipped ? i : leafCount - i);
-            return (
-              <div
-                key={i}
-                className="pf-leaf"
-                style={{ transform: flipped ? 'rotateY(-180deg)' : 'rotateY(0deg)', zIndex: z }}
-              >
-                <div className="pf-face pf-front">{pages[i * 2]}</div>
-                <div className="pf-face pf-back">{pages[i * 2 + 1] || <div className="pf-page" />}</div>
-              </div>
-            );
-          })}
-        </div>
+        {atEnd ? (
+          <div className="pf-closing-centered" data-testid="pf-closing-centered">
+            <ClosingPage brandName={brandName} />
+          </div>
+        ) : (
+          <div className="pf-book">
+            {Array.from({ length: leafCount }).map((_, i) => {
+              const flipped = i < spread;
+              const z = i === flipping ? 999 : (flipped ? i : leafCount - i);
+              return (
+                <div
+                  key={i}
+                  className="pf-leaf"
+                  style={{ transform: flipped ? 'rotateY(-180deg)' : 'rotateY(0deg)', zIndex: z }}
+                >
+                  <div className="pf-face pf-front">{pages[i * 2]}</div>
+                  <div className="pf-face pf-back">{pages[i * 2 + 1] || <div className="pf-page" />}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {/* Click hotspots: left edge = previous, right edge = next */}
         {spread > 0 && <div className="pf-hot pf-hot-l" onClick={() => turn(-1)} data-testid="pf-prev-hot" />}
-        {spread < leafCount && <div className="pf-hot pf-hot-r" onClick={() => turn(1)} data-testid="pf-next-hot" />}
+        {!atEnd && <div className="pf-hot pf-hot-r" onClick={() => turn(1)} data-testid="pf-next-hot" />}
       </div>
       <div className="pf-nav">
         <button type="button" onClick={() => turn(-1)} disabled={spread === 0} aria-label="Previous page"><ChevronLeft className="w-4 h-4" /></button>
-        <span>{spread === 0 ? 'Cover' : `Spread ${spread} of ${leafCount}`}</span>
-        <button type="button" onClick={() => turn(1)} disabled={spread === leafCount} aria-label="Next page"><ChevronRight className="w-4 h-4" /></button>
+        <span>{spread === 0 ? 'Cover' : atEnd ? 'Closing' : `Spread ${spread} of ${leafCount}`}</span>
+        <button type="button" onClick={() => turn(1)} disabled={atEnd} aria-label="Next page"><ChevronRight className="w-4 h-4" /></button>
       </div>
     </div>
   );
@@ -208,8 +228,8 @@ export const buildFlipbookHtml = (deck, brandName) => {
     const secsHtml = secs.map((s) => `<div class="pf-sec"><h3 class="pf-sec-h">${esc(s.heading)}</h3><p class="pf-sec-p">${esc(s.content)}</p></div>`).join('');
     pageEls.push(`<div class="pf-page"><div class="pf-header pf-header-compact"><div class="pf-logo"><span class="pf-logo-mark">T</span><span class="pf-logo-word">TASCK</span></div><span class="pf-header-tag">Creator Campaign Pitch</span></div><div class="pf-page-body">${secsHtml}</div><div class="pf-footer"><span>tasck.org</span><span>${esc(bName || 'Your brand')}</span><span>${i + 2} / ${pageCount}</span></div></div>`);
   });
-  // Closing
-  pageEls.push(`<div class="pf-cover pf-cover-closing" style="background:radial-gradient(120% 90% at 20% 90%, ${TASCK_GREEN} 0%, #12352a 46%, ${TASCK_GREEN_DARK} 100%)"><div class="pf-cover-body"><div class="pf-cover-rule" style="margin-top:auto"></div><h1 class="pf-cover-title" style="font-size:30px">Let&#39;s build this together.</h1><p class="pf-cover-sub">Review the campaign, add your comments to any section, and approve when you&#39;re ready. TASCK will take it from there.</p></div><div class="pf-footer"><span>tasck.org</span><span>${esc(bName || 'Your brand')}</span></div></div>`);
+  // Closing — minimal footer (no brand concat -> no "tasck.orgBrand" merge).
+  pageEls.push(`<div class="pf-cover pf-cover-closing" style="background:radial-gradient(120% 90% at 20% 90%, ${TASCK_GREEN} 0%, #12352a 46%, ${TASCK_GREEN_DARK} 100%)"><div class="pf-cover-body"><div class="pf-cover-rule" style="margin-top:auto"></div><h1 class="pf-cover-title" style="font-size:30px">Let&#39;s build this together.</h1><p class="pf-cover-sub">Review the campaign, add your comments to any section, and approve when you&#39;re ready. TASCK will take it from there.</p></div><div class="pf-footer pf-footer-min"><span>tasck.org</span></div></div>`);
   // pad to even leaf count
   while (pageEls.length % 2 !== 0) pageEls.push('<div class="pf-page"></div>');
 
@@ -227,6 +247,7 @@ export const buildFlipbookHtml = (deck, brandName) => {
 <body>
 <div class="pf-wrap">
   <div class="pf-stage"><div class="pf-book" id="book"></div>
+    <div class="pf-closing-centered" id="closing" style="display:none"></div>
     <div class="pf-hot pf-hot-l" id="prev" onclick="turn(-1)"></div>
     <div class="pf-hot pf-hot-r" id="next" onclick="turn(1)"></div>
   </div>
@@ -254,12 +275,17 @@ export const buildFlipbookHtml = (deck, brandName) => {
   }
   var spread=0, flipping=-1, timer=null;
   function turn(dir){
-    var next=Math.min(Math.max(spread+dir,0),leafCount);
+    var next=Math.min(Math.max(spread+dir,0),leafCount+1);
     if(next===spread) return;
     flipping = dir>0?spread:next;
     leaves.forEach(function(l,idx){ var flipped=idx<next; l.style.transform=flipped?'rotateY(-180deg)':'rotateY(0deg)'; l.style.zIndex=(idx===flipping?999:(flipped?idx:leafCount-idx)); });
     spread=next;
-    document.getElementById('label').textContent = spread===0?'Cover':('Spread '+spread+' of '+leafCount);
+    var atEnd = spread>=leafCount;
+    document.getElementById('book').style.display = atEnd ? 'none' : '';
+    var closing = document.getElementById('closing');
+    closing.style.display = atEnd ? '' : 'none';
+    if(atEnd){ closing.innerHTML = PAGES[PAGES.length-1] || ''; }
+    document.getElementById('label').textContent = spread===0?'Cover':(atEnd?'Closing':('Spread '+spread+' of '+leafCount));
     clearTimeout(timer); timer=setTimeout(function(){ flipping=-1; leaves.forEach(function(l,idx){ var flipped=idx<spread; l.style.zIndex=(flipped?idx:leafCount-idx); }); },760);
   }
   window.turn=turn;
@@ -284,7 +310,10 @@ const PF_CSS = `
 .pf-logo-mark{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:#1F4A3A;color:#fff;font-weight:700;font-size:15px;}
 .pf-logo-word{font-weight:700;letter-spacing:.12em;color:#1F4A3A;font-size:15px;}
 .pf-header-tag{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#6E6657;}
-.pf-footer{display:flex;align-items:center;justify-content:space-between;padding:8px 20px;border-top:1px solid #E6E0D2;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8A8A8A;background:#fff;}
+.pf-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 20px;border-top:1px solid #E6E0D2;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8A8A8A;background:#fff;}
+.pf-footer span{white-space:nowrap;}
+.pf-footer-min{justify-content:center;gap:0;}
+.pf-closing-centered{width:760px;max-width:100%;height:540px;border-radius:6px;overflow:hidden;box-shadow:0 10px 34px rgba(12,35,28,.22);}
 .pf-cover{display:flex;flex-direction:column;background:radial-gradient(120% 90% at 20% 90%, #1c5c46 0%, #12352a 46%, #0c231c 100%);color:#fff;}
 .pf-cover .pf-header{background:transparent;border-bottom-color:rgba(255,255,255,.25);}
 .pf-cover .pf-logo-mark{background:rgba(255,255,255,.16);}
