@@ -77,7 +77,7 @@ const Watermark = () => (
 export const TtaLetterhead = ({ title, children, className = '' }) => (
   <div className={`relative overflow-hidden rounded-2xl border border-[#E6E0D2] bg-white ${className}`}>
     <Watermark />
-    <div className="relative flex flex-col min-h-[calc(100vh-200px)]">
+    <div className="relative flex flex-col min-h-[420px]">
       {/* Header: logo top-right */}
       <div className="flex items-start justify-end px-8 pt-7">
         <TasckLogo size={96} />

@@ -3901,7 +3901,12 @@ export const V3BusinessCasePlanBrief = () => {
                   </div>
                   <button onClick={() => setSelectedIds((current) => current.filter((value) => value !== creator.id))} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove ${creatorName(creator)}`}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
-                <textarea value={briefs[creator.id] || ''} onChange={(e) => setBriefs({ ...briefs, [creator.id]: e.target.value })} rows={14} className="w-full rounded-lg border border-[#E8E4DB] bg-white p-3 text-[13px]" data-testid={`brief-editor-${creator.id}`} />
+                <TtaLetterhead title="TTA – Creative Alignment Brief (Creator Version)" className="!max-w-none">
+                  <div className="font-['Century_Gothic','Century Gothic',sans-serif]">
+                    {templateBrief?.subtitle && <p className="text-[11px] font-semibold text-[#6E6657] mb-2">{templateBrief.subtitle}</p>}
+                    <textarea value={briefs[creator.id] || ''} onChange={(e) => setBriefs({ ...briefs, [creator.id]: e.target.value })} rows={16} className="w-full rounded-lg border border-[#E8E4DB] bg-white p-3 text-[13px] leading-relaxed focus:outline-none focus:border-[#1F4A3A]" data-testid={`brief-editor-${creator.id}`} />
+                  </div>
+                </TtaLetterhead>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button onClick={() => send(creator)} className="v3-btn-primary" data-testid={`brief-email-${creator.id}`}><Mail className="w-3.5 h-3.5" /> Email to creator</button>
                   <button onClick={() => copyLink(creator)} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
@@ -4336,7 +4341,7 @@ export const V3BusinessCasePitchDeck = () => {
 
       {previewOpen && deck && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm" data-testid="pitch-flipbook-modal">
-          <div className="w-full max-w-4xl rounded-2xl border-2 border-[#1F4A3A] bg-white p-5 shadow-2xl">
+          <div className="w-full max-w-6xl rounded-2xl border-2 border-[#1F4A3A] bg-white p-5 shadow-2xl">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h3 className="text-[17px] font-semibold text-[#1A1A1A] leading-tight" style={{ fontFamily: "'Fraunces', serif" }}>Pitch Deck — flipbook preview</h3>
@@ -4344,9 +4349,7 @@ export const V3BusinessCasePitchDeck = () => {
               </div>
               <button type="button" onClick={() => setPreviewOpen(false)} className="v3-btn-secondary text-[12px]" data-testid="pitch-flipbook-close">Close</button>
             </div>
-            <div className="max-h-[70vh] overflow-auto rounded-xl border border-[#E6E0D2] bg-[#F6F4EE] p-4">
-              <PitchDeckFlipbook deck={deck} brandName={bundle?.brand?.company || bundle?.brand?.name} />
-            </div>
+            <PitchDeckFlipbook deck={deck} brandName={bundle?.brand?.company || bundle?.brand?.name} />
           </div>
         </div>
       )}

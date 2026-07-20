@@ -298,11 +298,11 @@ export const buildFlipbookHtml = (deck, brandName) => {
 
 // Shared CSS for both the live React component and the exported HTML.
 const PF_CSS = `
-.pf-wrap{max-width:920px;margin:24px auto;font-family:'Fraunces',Georgia,serif;color:#1A1A1A;}
-.pf-stage{position:relative;perspective:2200px;display:flex;justify-content:center;}
-.pf-book{position:relative;width:760px;height:540px;transform-style:preserve-3d;}
-.pf-leaf{position:absolute;top:0;left:0;width:380px;height:540px;transform-style:preserve-3d;transform-origin:left center;transition:transform .7s ease;backface-visibility:hidden;}
-.pf-face{position:absolute;inset:0;background:#FBFAF7;border:1px solid #E6E0D2;border-radius:4px;overflow:hidden;box-shadow:0 6px 22px rgba(12,35,28,.12);backface-visibility:hidden;}
+.pf-wrap{max-width:1000px;margin:24px auto;font-family:'Fraunces',Georgia,serif;color:#1A1A1A;}
+.pf-stage{position:relative;perspective:2200px;display:flex;justify-content:center;align-items:center;min-height:min(78vh,700px);}
+.pf-book{position:relative;width:100%;max-width:1000px;height:min(78vh,700px);margin:0 auto;transform-style:preserve-3d;}
+.pf-leaf{position:absolute;top:0;left:0;width:50%;height:100%;transform-style:preserve-3d;transform-origin:left center;transition:transform .7s ease;backface-visibility:hidden;}
+.pf-face{position:absolute;inset:0;width:100%;height:100%;background:#FBFAF7;border:1px solid #E6E0D2;border-radius:4px;overflow:hidden;box-shadow:0 6px 22px rgba(12,35,28,.12);backface-visibility:hidden;}
 .pf-back{transform:rotateY(180deg);}
 .pf-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:2px solid #1F4A3A;background:#fff;}
 .pf-header-compact{padding:8px 16px;}
@@ -313,18 +313,18 @@ const PF_CSS = `
 .pf-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 20px;border-top:1px solid #E6E0D2;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8A8A8A;background:#fff;}
 .pf-footer span{white-space:nowrap;}
 .pf-footer-min{justify-content:center;gap:0;}
-.pf-closing-centered{width:760px;max-width:100%;height:540px;border-radius:6px;overflow:hidden;box-shadow:0 10px 34px rgba(12,35,28,.22);}
+.pf-closing-centered{width:100%;max-width:1000px;height:min(78vh,700px);border-radius:6px;overflow:hidden;box-shadow:0 10px 34px rgba(12,35,28,.22);}
 .pf-cover{display:flex;flex-direction:column;background:radial-gradient(120% 90% at 20% 90%, #1c5c46 0%, #12352a 46%, #0c231c 100%);color:#fff;}
 .pf-cover .pf-header{background:transparent;border-bottom-color:rgba(255,255,255,.25);}
 .pf-cover .pf-logo-mark{background:rgba(255,255,255,.16);}
 .pf-cover .pf-logo-word,.pf-cover .pf-header-tag{color:#EAF4EE;}
 .pf-cover .pf-footer{background:transparent;border-top-color:rgba(255,255,255,.2);color:rgba(234,244,238,.75);}
-.pf-cover-body{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 40px;}
+.pf-cover-body{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 48px;}
 .pf-cover-kicker{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:#BFE3D2;}
 .pf-cover-rule{width:54px;height:3px;background:#7FD1A8;margin:14px 0 18px;border-radius:2px;}
-.pf-cover-title{font-size:38px;line-height:1.08;font-weight:600;margin:0;}
-.pf-cover-sub{margin-top:16px;max-width:30ch;font-size:13px;line-height:1.5;color:#DCEFE6;font-family:system-ui,sans-serif;}
-.pf-page-body{padding:22px 24px;overflow:auto;height:calc(100% - 0px);}
+.pf-cover-title{font-size:clamp(28px,4vw,40px);line-height:1.08;font-weight:600;margin:0;}
+.pf-cover-sub{margin-top:16px;max-width:34ch;font-size:14px;line-height:1.5;color:#DCEFE6;font-family:system-ui,sans-serif;}
+.pf-page-body{padding:24px 28px;overflow:auto;height:100%;}
 .pf-sec{margin-bottom:16px;}
 .pf-sec-h{font-size:15px;font-weight:600;color:#1F4A3A;margin:0 0 4px;}
 .pf-sec-p{font-size:12px;line-height:1.55;color:#2A2A2A;font-family:system-ui,sans-serif;white-space:pre-wrap;margin:0;}
