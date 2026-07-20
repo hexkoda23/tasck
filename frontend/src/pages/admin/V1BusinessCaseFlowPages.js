@@ -7,6 +7,7 @@ import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PrioritySelect } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
+import { PitchDeckFlipbook, buildFlipbookHtml } from '../../components/v1/PitchDeckFlipbook';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
 
 // Detect a cell that contains a KPI list (either real array of dicts, or a
@@ -66,6 +67,7 @@ const KpiCardList = ({ items }) => {
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   CheckCircle2,
   Download,
   Upload,
@@ -4138,16 +4140,24 @@ export const V3BusinessCasePitchDeck = () => {
 
   const openPreview = () => {
     if (!deck) return;
-    const win = window.open('', '_blank', 'noopener,noreferrer');
-    if (!win) return;
-    const sectionsHtml = (deck.sections || []).map((section) => (
-      `<section><h2>${escapeHtml(section.heading)}</h2><p style="white-space:pre-wrap">${escapeHtml(section.content)}</p></section>`
-    )).join('');
-    win.document.write(`<!doctype html><html><head><title>${escapeHtml(deck.title || 'Pitch Deck')}</title><style>
-      body{font-family:'Century Gothic',Arial,sans-serif;color:#1A1A1A;margin:40px auto;max-width:760px;line-height:1.6}
-      h1{font-size:22px;text-transform:uppercase} h2{font-size:15px;margin-top:26px} p{font-size:13px}
-    </style></head><body><h1>${escapeHtml(deck.title || 'Pitch Deck')}</h1>${sectionsHtml}</body></html>`);
-    win.document.close();
+    setPreviewOpen(true);
+  };
+
+  const downloadFlipbook = () => {
+    if (!deck) return;
+    const brand = bundle?.brand?.company || bundle?.brand?.name || '';
+    const html = buildFlipbookHtml(deck, brand);
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const safe = (deck.title || 'pitch-deck').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'pitch-deck';
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safe}-flipbook.html`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success('Flipbook downloaded as a self-contained HTML file.');
   };
 
   const deckComments = Array.isArray(deck?.brand_comments) ? deck.brand_comments : [];
@@ -4169,8 +4179,9 @@ export const V3BusinessCasePitchDeck = () => {
             {deck && (
               <>
                 <button onClick={saveEdits} disabled={saving} className="v3-btn-secondary text-[12px]" data-testid="pitch-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save edits'}</button>
-                <button onClick={openPreview} className="v3-btn-secondary text-[12px]" data-testid="pitch-preview-btn"><FileText className="w-3.5 h-3.5" /> Preview</button>
+                <button onClick={openPreview} className="v3-btn-secondary text-[12px]" data-testid="pitch-preview-btn"><Presentation className="w-3.5 h-3.5" /> Preview flipbook</button>
                 <a href={v3PitchDeckDocxUrl(deck.id)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="pitch-download-btn"><Download className="w-3.5 h-3.5" /> Download (.docx)</a>
+                <button onClick={downloadFlipbook} className="v3-btn-secondary text-[12px]" data-testid="pitch-download-flipbook-btn"><BookOpen className="w-3.5 h-3.5" /> Download flipbook (.html)</button>
                 <button onClick={approve} className="v3-btn-secondary text-[12px]" data-testid="pitch-approve-btn"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
               </>
             )}
@@ -4319,6 +4330,23 @@ export const V3BusinessCasePitchDeck = () => {
                 <button type="button" onClick={() => setGenPopup((prev) => ({ ...prev, open: false }))} className="v3-btn-primary" data-testid="pitch-gen-popup-close">OK</button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {previewOpen && deck && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm" data-testid="pitch-flipbook-modal">
+          <div className="w-full max-w-4xl rounded-2xl border-2 border-[#1F4A3A] bg-white p-5 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-[17px] font-semibold text-[#1A1A1A] leading-tight" style={{ fontFamily: "'Fraunces', serif" }}>Pitch Deck — flipbook preview</h3>
+                <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">V1 Admin · Pitch Deck</p>
+              </div>
+              <button type="button" onClick={() => setPreviewOpen(false)} className="v3-btn-secondary text-[12px]" data-testid="pitch-flipbook-close">Close</button>
+            </div>
+            <div className="max-h-[70vh] overflow-auto rounded-xl border border-[#E6E0D2] bg-[#F6F4EE] p-4">
+              <PitchDeckFlipbook deck={deck} brandName={bundle?.brand?.company || bundle?.brand?.name} />
+            </div>
           </div>
         </div>
       )}
