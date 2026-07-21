@@ -128,10 +128,9 @@ export const PitchDeckFlipbook = ({ deck, brandName }) => {
   }, [deck, deckTitle, brandName]);
 
   const leafCount = Math.ceil(pages.length / 2);
-  const atEnd = spread >= leafCount;
-  // `spread` = number of leaves flipped to the left (0 = closed on cover).
   const [spread, setSpread] = useState(0);
   const [flipping, setFlipping] = useState(-1);
+  const atEnd = spread >= leafCount;
 
   useEffect(() => { setSpread(0); }, [deck?.id]);
 
@@ -298,20 +297,21 @@ export const buildFlipbookHtml = (deck, brandName) => {
 
 // Shared CSS for both the live React component and the exported HTML.
 const PF_CSS = `
-.pf-wrap{max-width:1000px;margin:24px auto;font-family:'Fraunces',Georgia,serif;color:#1A1A1A;}
-.pf-stage{position:relative;perspective:2200px;display:flex;justify-content:center;align-items:center;min-height:min(78vh,700px);}
-.pf-book{position:relative;width:100%;max-width:1000px;height:min(78vh,700px);margin:0 auto;transform-style:preserve-3d;}
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Fraunces:[email protected],opsz,wght@9..144,400,600,700&display=swap');
+.pf-wrap{max-width:1000px;margin:0 auto;font-family:'Fraunces',Georgia,serif;color:#1A1A1A;}
+.pf-stage{position:relative;perspective:2200px;display:flex;justify-content:center;align-items:center;height:min(70vh,680px);}
+.pf-book{position:relative;width:100%;max-width:1000px;height:100%;margin:0 auto;transform-style:preserve-3d;}
 .pf-leaf{position:absolute;top:0;left:0;width:50%;height:100%;transform-style:preserve-3d;transform-origin:left center;transition:transform .7s ease;backface-visibility:hidden;}
 .pf-face{position:absolute;inset:0;width:100%;height:100%;background:#FBFAF7;border:1px solid #E6E0D2;border-radius:4px;overflow:hidden;box-shadow:0 6px 22px rgba(12,35,28,.12);backface-visibility:hidden;}
 .pf-page{height:100%;display:flex;flex-direction:column;background:#FBFAF7;}
 .pf-back{transform:rotateY(180deg);}
-.pf-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:2px solid #1F4A3A;background:#fff;}
+.pf-header{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:2px solid #1F4A3A;background:#fff;font-family:'Bebas Neue','Century Gothic','CenturyGothic',AppleGothic,sans-serif;}
 .pf-header-compact{padding:8px 16px;}
-.pf-logo{display:flex;align-items:center;gap:8px;}
+.pf-logo{display:flex;align-items:center;gap:8px;font-family: inherit;}
 .pf-logo-mark{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;background:#1F4A3A;color:#fff;font-weight:700;font-size:15px;}
 .pf-logo-word{font-weight:700;letter-spacing:.12em;color:#1F4A3A;font-size:15px;}
-.pf-header-tag{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:#6E6657;}
-.pf-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 20px;border-top:1px solid #E6E0D2;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8A8A8A;background:#fff;}
+.pf-header-tag{font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:#6E6657;}
+.pf-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 20px;border-top:1px solid #E6E0D2;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#8A8A8A;background:#fff;font-family:'Century Gothic','CenturyGothic',AppleGothic,sans-serif;}
 .pf-footer span{white-space:nowrap;}
 .pf-footer-min{justify-content:center;gap:0;}
 .pf-closing-centered{width:100%;max-width:1000px;height:min(78vh,700px);border-radius:6px;overflow:hidden;box-shadow:0 10px 34px rgba(12,35,28,.22);}
@@ -321,19 +321,20 @@ const PF_CSS = `
 .pf-cover .pf-logo-word,.pf-cover .pf-header-tag{color:#EAF4EE;}
 .pf-cover .pf-footer{background:transparent;border-top-color:rgba(255,255,255,.2);color:rgba(234,244,238,.75);}
 .pf-cover-body{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 48px;}
-.pf-cover-kicker{font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:#BFE3D2;}
+.pf-cover-kicker{font-size:13px;letter-spacing:.22em;text-transform:uppercase;color:#BFE3D2;font-family:'Bebas Neue','Century Gothic','CenturyGothic',AppleGothic,sans-serif;}
 .pf-cover-rule{width:54px;height:3px;background:#7FD1A8;margin:14px 0 18px;border-radius:2px;}
-.pf-cover-title{font-size:clamp(28px,4vw,40px);line-height:1.08;font-weight:600;margin:0;}
-.pf-cover-sub{margin-top:16px;max-width:34ch;font-size:14px;line-height:1.5;color:#DCEFE6;font-family:system-ui,sans-serif;}
-.pf-page-body{padding:24px 28px;overflow:auto;height:100%;}
-.pf-sec{margin-bottom:16px;}
-.pf-sec-h{font-size:15px;font-weight:600;color:#1F4A3A;margin:0 0 4px;}
-.pf-sec-p{font-size:12px;line-height:1.55;color:#2A2A2A;font-family:system-ui,sans-serif;white-space:pre-wrap;margin:0;}
+.pf-cover-title{font-size:clamp(30px,4.2vw,46px);line-height:1.08;font-weight:700;margin:0;letter-spacing:.01em;}
+.pf-cover-sub{margin-top:18px;max-width:36ch;font-size:15px;line-height:1.6;color:#DCEFE6;font-family:'Bebas Neue','Century Gothic','CenturyGothic',AppleGothic,sans-serif;letter-spacing:.04em;}
+.pf-page-body{padding:30px 34px;overflow:auto;height:100%;}
+.pf-sec{margin-bottom:22px;padding-bottom:18px;border-bottom:1px dashed #E6E0D2;}
+.pf-sec:last-child{margin-bottom:0;padding-bottom:0;border-bottom:none;}
+.pf-sec-h{font-size:26px;line-height:1.05;font-weight:400;color:#0C343D;margin:0 0 10px;letter-spacing:.08em;font-family:'Bebas Neue','Century Gothic','CenturyGothic',AppleGothic,sans-serif;}
+.pf-sec-p{font-size:15px;line-height:1.75;color:#1A1A1A;font-family:'Century Gothic','CenturyGothic',AppleGothic,sans-serif;white-space:pre-wrap;margin:0;}
 .pf-hot{position:absolute;top:0;bottom:0;width:45%;cursor:pointer;z-index:50;}
 .pf-hot-l{left:0;}.pf-hot-r{right:0;}
-.pf-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;color:#1F4A3A;font-size:13px;}
-.pf-nav button{border:1px solid #C7D7CF;background:#fff;border-radius:8px;width:32px;height:32px;cursor:pointer;color:#1F4A3A;}
-.pf-nav button:disabled{opacity:.4;cursor:default;}
+.pf-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:18px;color:#1F4A3A;font-size:14px;font-family:'Century Gothic','CenturyGothic',AppleGothic,sans-serif;}
+.pf-nav button{border:1px solid #C7D7CF;background:#fff;border-radius:8px;width:34px;height:34px;cursor:pointer;color:#1F4A3A;display:inline-flex;align-items:center;justify-content:center;}
+.pf-nav button:disabled{opacity:.35;cursor:default;}
 `;
 
 export default PitchDeckFlipbook;
