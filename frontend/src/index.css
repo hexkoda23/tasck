@@ -1474,4 +1474,79 @@ div:has(> a[href*="utm_source=emergent"]) {
 /* Coloured stage/priority chips set their colours inline (style=...), which
    dark mode must NOT touch - they are designed to work on both themes. */
 
-/* Old flipbook CSS removed from index.css to avoid class conflicts with PitchDeckFlipbook.jsx */
+/* ============================================================
+   Pitch Deck flip book (brand portal viewer)
+   Two-page spread with a real page-turn, a branded TASCK cover,
+   and paper-styled content pages. Self-contained (no libraries).
+   ============================================================ */
+.pf-wrap { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.pf-stage {
+  position: relative; width: 100%; max-width: 980px; aspect-ratio: 1.55 / 1;
+  perspective: 2400px; user-select: none; container-type: inline-size;
+}
+.pf-book { position: absolute; inset: 0; transform-style: preserve-3d; }
+/* Backing so the closed cover has a spine/shadow behind it */
+.pf-book::before {
+  content: ""; position: absolute; top: 2%; bottom: 2%; left: 50%; width: 49%;
+  background: #0e2a22; border-radius: 2px 8px 8px 2px;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+}
+.pf-leaf {
+  position: absolute; top: 0; right: 0; width: 50%; height: 100%;
+  transform-style: preserve-3d; transform-origin: left center;
+  transition: transform 0.75s cubic-bezier(0.3, 0.1, 0.2, 1);
+}
+.pf-face {
+  position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden;
+  overflow: hidden; background: #fdfcf9;
+  box-shadow: inset 0 0 40px rgba(0,0,0,0.04);
+}
+.pf-face.pf-front { border-radius: 2px 6px 6px 2px; box-shadow: inset 6px 0 14px -8px rgba(0,0,0,0.25); }
+.pf-face.pf-back  { transform: rotateY(180deg); border-radius: 6px 2px 2px 6px; box-shadow: inset -6px 0 14px -8px rgba(0,0,0,0.25); }
+
+/* Paper content page */
+.pf-page { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 7% 8% 5.5%; }
+.pf-page-head { display: flex; justify-content: space-between; font-size: clamp(7px, 0.95cqw, 11px); letter-spacing: .04em;
+  color: #9a927f; text-transform: uppercase; border-bottom: 1px solid #eee6d8; padding-bottom: 6px; }
+.pf-page-body { flex: 1; overflow-y: auto; padding-top: 12px; }
+.pf-page-body::-webkit-scrollbar { width: 5px; }
+.pf-page-body::-webkit-scrollbar-thumb { background: #e2d9c6; border-radius: 4px; }
+.pf-sec { margin-bottom: 14px; }
+.pf-sec-h { font-family: 'Bebas Neue', 'Archivo Black', sans-serif; letter-spacing: .02em;
+  font-size: clamp(13px, 1.85cqw, 22px); color: #12352a; margin: 0 0 3px; }
+.pf-sec-h::after { content: ""; display: block; width: 34px; height: 2px; background: #C4442F; margin-top: 4px; }
+.pf-sec-p { font-family: 'Century Gothic', 'Questrial', sans-serif; font-size: clamp(9.5px, 1.22cqw, 14px); line-height: 1.62;
+  color: #2f2a24; white-space: pre-wrap; margin: 6px 0 0; }
+.pf-page-foot { display: flex; justify-content: space-between; font-size: clamp(7px, 0.95cqw, 11px); color: #b3ab98;
+  border-top: 1px solid #eee6d8; padding-top: 6px; margin-top: 6px; }
+
+/* Branded cover page */
+.pf-cover { position: absolute; inset: 0; display: flex; flex-direction: column;
+  background: radial-gradient(120% 90% at 78% 8%, #1c5c46 0%, #12352a 46%, #0c231c 100%);
+  color: #f4efe6; padding: 12% 10%; overflow: hidden; }
+.pf-cover::after { content: ""; position: absolute; right: -18%; top: -22%; width: 62%; height: 62%;
+  border: 1px solid rgba(255,255,255,0.10); border-radius: 50%; }
+.pf-cover::before { content: ""; position: absolute; right: -6%; bottom: -30%; width: 55%; height: 66%;
+  border: 1px solid rgba(196,68,47,0.28); border-radius: 50%; }
+.pf-badge { width: clamp(46px, 6.4cqw, 74px); height: clamp(46px, 6.4cqw, 74px); border-radius: 50%; background: #1246e6;
+  display: flex; align-items: center; justify-content: center; flex-direction: column; line-height: 1;
+  box-shadow: 0 8px 26px rgba(18,70,230,0.45); }
+.pf-badge b { font-family: 'Bebas Neue', sans-serif; font-size: clamp(8px, 1.15cqw, 13px); letter-spacing: .06em; }
+.pf-badge b .grn { color: #46e08a; }
+.pf-cover-kicker { margin-top: auto; font-size: clamp(8px, 1.05cqw, 12px); letter-spacing: .28em; text-transform: uppercase; color: #9fd8bf; }
+.pf-cover-title { font-family: 'Bebas Neue','Archivo Black',sans-serif; font-size: clamp(24px, 4.3cqw, 46px); line-height: 1.03;
+  letter-spacing: .01em; margin: 8px 0 0; color: #ffffff; overflow-wrap: anywhere; }
+.pf-cover-sub { font-family: 'Century Gothic',sans-serif; font-size: clamp(10px, 1.35cqw, 15px); color: #d6ccbe; margin-top: 14px; max-width: 90%; }
+.pf-cover-rule { width: 54px; height: 3px; background: #C4442F; margin: 16px 0 0; }
+.pf-cover-foot { margin-top: 18px; font-size: clamp(8px, 1.02cqw, 12px); color: #8fb9a8; letter-spacing: .04em; }
+
+/* Nav + edge hotspots */
+.pf-nav { display: flex; align-items: center; gap: 14px; }
+.pf-nav button { width: 38px; height: 38px; border-radius: 50%; border: 1px solid #d7cbb8;
+  background: #fff; color: #1F4A3A; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.pf-nav button:disabled { opacity: .4; cursor: default; }
+.pf-nav span { font-size: 12px; color: #6E6657; min-width: 92px; text-align: center; }
+.pf-hot { position: absolute; top: 0; bottom: 0; width: 22%; z-index: 60; cursor: pointer; }
+.pf-hot-l { left: 0; } .pf-hot-r { right: 0; }
+.v3-dark .pf-face, .v3-dark .pf-page { background: #fdfcf9; }
+.v3-dark .pf-sec-p, .v3-dark .pf-page-head, .v3-dark .pf-page-foot { color: inherit; }
