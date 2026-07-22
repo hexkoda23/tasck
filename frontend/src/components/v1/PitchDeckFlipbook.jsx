@@ -17,11 +17,12 @@ const paginateSections = (sections) => {
   const pages = [];
   let current = [];
   let budget = 0;
-  // Character budget tuned so a page holds ~2-3 medium sections without
-  // clipping. The heading base cost accounts for line-height + border.
-  const MAX = 1050;
+  // Character budget tuned so each page fills top-to-bottom without leaving
+  // half the sheet blank. Heavier per-section cost accounts for heading +
+  // dashed divider.
+  const MAX = 1800;
   list.forEach((section) => {
-    const cost = 180 + String(section.content || '').length;
+    const cost = 220 + String(section.content || '').length;
     if (current.length && budget + cost > MAX) {
       pages.push(current);
       current = [];
@@ -331,9 +332,9 @@ export const buildFlipbookHtml = (deck, brandName) => {
   const pages = [];
   let cur = [];
   let budget = 0;
-  const MAX = 1050;
+  const MAX = 1800;
   sections.forEach((s) => {
-    const cost = 180 + String(s.content || '').length;
+    const cost = 220 + String(s.content || '').length;
     if (cur.length && budget + cost > MAX) { pages.push(cur); cur = []; budget = 0; }
     cur.push(s);
     budget += cost;

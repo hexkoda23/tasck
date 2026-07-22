@@ -3859,23 +3859,43 @@ export const V3BusinessCasePlanBrief = () => {
     }
     navigator.clipboard.writeText(link).then(() => setNotice(`Creator brief link copied for ${creatorName(creator)}.`)).catch(() => setNotice(`Creator brief link: ${link}`));
   };
-  const downloadGoogleDoc = (creator) => {
+  const downloadGoogleDoc = async (creator) => {
+    // Prefer the saved-brief DOCX endpoint — that's the fully-templated file
+    // (TASCK banner + watermark + contact footer + embedded fonts) served by
+    // the backend against a persisted brief row.
     const savedBrief = sentBriefs[creator.id];
     if (savedBrief?.id) {
       window.open(v3CreativeBriefDocxUrl(savedBrief.id), '_blank');
       setNotice('Creative brief Google Docs-compatible document opened for download.');
       return;
     }
-    const title = `Creative Brief - ${creatorName(creator)}`;
-    const printWindow = window.open('', '_blank', 'width=900,height=1100');
-    if (!printWindow) {
-      setNotice('Allow pop-ups to download the creative brief as a Google Docs-compatible document.');
-      return;
+    // Unsaved draft: previously we opened a plain HTML print window here,
+    // which the brand received as a bare Chrome tab with no design. Instead,
+    // render the templated .docx via the new preview endpoint so an admin
+    // downloading a draft gets the identical TASCK-templated file.
+    const draftText = briefs[creator.id] || '';
+    const subject = `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title || ''}`.trim();
+    try {
+      const resp = await fetch(`${(process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '')}/api/v3/business-cases/${id}/creative-briefs/preview-docx`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject, brief_text: draftText, creator_id: creator.id, creator_name: creatorName(creator) }),
+      });
+      if (!resp.ok) throw new Error(`Preview download failed: ${resp.status}`);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safe = (creatorName(creator) || 'Creator').replace(/[^A-Za-z0-9_-]+/g, '_');
+      a.download = `TASCK_Creative_Brief_${safe}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice('Templated creative brief downloaded. Open it in Word or Google Docs.');
+    } catch (e) {
+      setNotice(e?.message || 'Could not download the templated creative brief. Try sending the brief first, then download.');
     }
-    printWindow.document.write(briefPrintHtml(title, briefs[creator.id] || ''));
-    printWindow.document.close();
-    printWindow.focus();
-    setNotice('Unsaved draft opened in a printable Google Docs-compatible layout. Email/save the brief first to download the official .docx file.');
   };
   const shareWhatsApp = (creator) => {
     const text = `${getCase(bundle).title || 'Creative Brief'}\n${creatorBriefLink(id, creator.id)}`;

@@ -7851,6 +7851,40 @@ def make_v3_router(db):
             headers={"Content-Disposition": f'attachment; filename="{brief_id}-creative-brief.docx"'},
         )
 
+    class BriefPreviewDocxPayload(BaseModel):
+        subject: Optional[str] = None
+        brief_text: str
+        creator_id: Optional[str] = None
+        creator_name: Optional[str] = None
+
+    @router.post("/business-cases/{bc_id}/creative-briefs/preview-docx")
+    async def creative_brief_preview_docx(bc_id: str, payload: BriefPreviewDocxPayload):
+        """Render a draft creator-scoped Creative Brief straight to the fully
+        templated .docx (TASCK banner + watermark + contact footer + Century
+        Gothic body) without persisting anything. The Creative Brief Studio
+        calls this when the admin clicks 'Download Google Docs' before the
+        brief has been sent — previously that path fell back to plain HTML
+        in a browser tab with no design, which the client flagged."""
+        # Confirm the business case exists so we don't leak DOCX generation.
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        creator_name = payload.creator_name or ""
+        if not creator_name and payload.creator_id:
+            creator = await db.v3_creators.find_one({"id": payload.creator_id}, {"_id": 0}) or {}
+            creator_name = creator.get("name") or ""
+        docx_bytes = creative_brief_docx_bytes(creative_brief_from_raw_text(
+            payload.subject or "Creative Brief",
+            payload.brief_text or "",
+            creator_name=creator_name,
+        ))
+        safe_name = "".join(ch for ch in (creator_name or "Creator") if ch.isalnum() or ch in ("-", "_")) or "Creator"
+        return StreamingResponse(
+            BytesIO(docx_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="TASCK_Creative_Brief_{safe_name}.docx"'},
+        )
+
     @router.get("/creative-briefs")
     async def list_briefs(business_case_id: Optional[str] = None, creator_id: Optional[str] = None):
         query = {}
