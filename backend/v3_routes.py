@@ -8357,6 +8357,11 @@ def make_v3_router(db):
 
     class BrainstormCreate(BaseModel):
         business_case_id: str
+        # Alignment Snapshot this Creator Selector belongs to. Every snapshot
+        # on a Business Case gets its own dedicated Creator Selector so a
+        # brand with multiple snapshots can carry a distinct creator strategy
+        # per snapshot.
+        alignment_snapshot_id: Optional[str] = None
         scored_creators: List[BrainstormScore] = Field(default_factory=list)
         planning_fields: Dict[str, Any] = Field(default_factory=dict)
         # Template-aligned phase outputs (all optional - the page progressively fills them in)
@@ -8370,9 +8375,22 @@ def make_v3_router(db):
         phase_7_recommendation: Optional[Dict[str, Any]] = None
         snapshot_summary: Optional[Dict[str, Any]] = None
 
+    async def _resolve_active_snapshot_id(bc_id: str, provided: Optional[str] = None) -> Optional[str]:
+        """Fall back to the Business Case's active snapshot when the caller
+        didn't provide one — keeps the endpoint usable while still stamping
+        every row with the correct snapshot."""
+        if provided:
+            return provided
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or {}
+        return ((case.get("frame") or {}).get("alignment_snapshot_id")) or None
+
     @router.post("/brainstorm-rounds")
     async def create_brainstorm(payload: BrainstormCreate):
         bs_id = f"bs-{uuid.uuid4().hex[:8]}"
+        # Resolve the Alignment Snapshot this round belongs to. New rounds
+        # created through the UI always pass this in; legacy callers fall
+        # back to the Business Case's active snapshot.
+        snapshot_id = await _resolve_active_snapshot_id(payload.business_case_id, payload.alignment_snapshot_id)
         scored = []
         for s in payload.scored_creators:
             # Auto-eliminate if Conversion Behaviour < 3 (template rule)
@@ -8394,6 +8412,7 @@ def make_v3_router(db):
         doc = {
             "id": bs_id,
             "business_case_id": payload.business_case_id,
+            "alignment_snapshot_id": snapshot_id,
             "status": "in_progress",
             "planning_fields": payload.planning_fields,
             # The eight Creator Selector fields (client-specified). Filled
@@ -8523,8 +8542,21 @@ def make_v3_router(db):
         return await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0})
 
     @router.get("/brainstorm-rounds")
-    async def list_brainstorms(business_case_id: Optional[str] = None):
-        query = {"business_case_id": business_case_id} if business_case_id else {}
+    async def list_brainstorms(
+        business_case_id: Optional[str] = None,
+        alignment_snapshot_id: Optional[str] = None,
+    ):
+        query: Dict[str, Any] = {}
+        if business_case_id:
+            query["business_case_id"] = business_case_id
+        if alignment_snapshot_id:
+            # Return this snapshot's Creator Selector only. Older rounds that
+            # were created before snapshot-scoping was introduced (and still
+            # have an empty alignment_snapshot_id) count as belonging to the
+            # snapshot the case now has active — the migration in
+            # `_backfill_snapshot_ids` already stamps them, so we just match
+            # exactly here.
+            query["alignment_snapshot_id"] = alignment_snapshot_id
         return await db.v3_brainstorm_rounds.find(query, {"_id": 0}).to_list(100)
 
     # ------------------------------------------------------------------------
@@ -8538,18 +8570,27 @@ def make_v3_router(db):
 
     class BrainstormTranscriptPayload(BaseModel):
         transcript: str
+        alignment_snapshot_id: Optional[str] = None
 
     @router.post("/business-cases/{bc_id}/brainstorm/analyze-transcript")
     async def analyze_brainstorm_transcript(bc_id: str, payload: BrainstormTranscriptPayload):
         """Read the brainstorm-session transcript with the LLM and fill the
-        entire TTA Snapshot Brainstorm. Creates the brainstorm round if it
-        doesn't exist yet, otherwise updates it in place. Returns the round."""
+        entire TTA Snapshot Brainstorm for the Alignment Snapshot in scope.
+        Every snapshot on a Business Case keeps its own Creator Selector, so
+        we find-or-create scoped to `(business_case_id, alignment_snapshot_id)`."""
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
         transcript = (payload.transcript or "").strip()
         if len(transcript) < 40:
             raise HTTPException(400, "Please paste or upload a fuller brainstorm transcript before analyzing.")
+
+        snapshot_id = await _resolve_active_snapshot_id(bc_id, payload.alignment_snapshot_id)
+        if not snapshot_id:
+            raise HTTPException(
+                400,
+                "This Business Case has no active Alignment Snapshot yet. Approve a snapshot before running the Creator Selector.",
+            )
 
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
         mi = _marketing_intelligence_from_case(case)
@@ -8563,10 +8604,17 @@ def make_v3_router(db):
 
         analysis_source = str(analyzed.get("analysis_source") or "llm")
 
-        # Find or create the round.
-        existing = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0})
+        # Find or create the round scoped to this snapshot. A brand with
+        # multiple snapshots ends up with one Creator Selector per snapshot.
+        existing = await db.v3_brainstorm_rounds.find_one(
+            {"business_case_id": bc_id, "alignment_snapshot_id": snapshot_id}, {"_id": 0}
+        )
         if not existing:
-            created = await create_brainstorm(BrainstormCreate(business_case_id=bc_id, scored_creators=[]))
+            created = await create_brainstorm(BrainstormCreate(
+                business_case_id=bc_id,
+                alignment_snapshot_id=snapshot_id,
+                scored_creators=[],
+            ))
             round_id = created["id"]
             existing = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0}) or created
         round_id = existing["id"]

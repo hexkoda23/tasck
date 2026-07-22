@@ -3133,7 +3133,13 @@ const BSPhase = ({ phase, title, subtitle, children }) => (
 // ============================================================================
 export const V3BusinessCasePlanBrainstormTranscript = () => {
   const navigate = useNavigate();
-  const { id } = useBusinessCaseBundle();
+  const { id, snapshotId: urlSnapshotId, bundle } = useBusinessCaseBundle();
+  // The Creator Selector is unique per Alignment Snapshot — pick the snapshot
+  // in scope from the URL, then fall back to the business case's active one.
+  const activeSnapshotId = urlSnapshotId
+    || bundle?.business_case?.frame?.alignment_snapshot_id
+    || bundle?.alignment_snapshot?.id
+    || null;
   const [transcript, setTranscript] = useState('');
   const [questions, setQuestions] = useState([]);
   const [analyzing, setAnalyzing] = useState(false);
@@ -3163,11 +3169,15 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
       setNotice('Paste or upload a fuller Creator Selector transcript before analyzing.');
       return;
     }
+    if (!activeSnapshotId) {
+      setNotice('This Business Case has no active Alignment Snapshot yet. Approve a snapshot first, then come back to run the Creator Selector.');
+      return;
+    }
     setNotice('');
     setAnalyzing(true);
     setPopup({ status: 'running', message: 'Reading the transcript and filling the TTA Creator Selector…' });
     try {
-      await v3AnalyzeBrainstormTranscript(id, transcript.trim());
+      await v3AnalyzeBrainstormTranscript(id, transcript.trim(), activeSnapshotId);
       setPopup({ status: 'complete', message: 'Creator Selector filled from the transcript. Opening it to review and edit.' });
       setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`)), 800);
     } catch (e) {
@@ -3277,7 +3287,11 @@ const CREATOR_SELECTOR_FIELDS = [
 
 export const V3BusinessCasePlanBrainstorm = () => {
   const navigate = useNavigate();
-  const { id } = useBusinessCaseBundle();
+  const { id, snapshotId: urlSnapshotId, bundle } = useBusinessCaseBundle();
+  const activeSnapshotId = urlSnapshotId
+    || bundle?.business_case?.frame?.alignment_snapshot_id
+    || bundle?.alignment_snapshot?.id
+    || null;
   const [round, setRound] = useState(null);
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
@@ -3288,15 +3302,36 @@ export const V3BusinessCasePlanBrainstorm = () => {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // We need to know which Alignment Snapshot is in scope BEFORE we load
+      // or create the Creator Selector, so different snapshots on the same
+      // Business Case each get their own selector document.
+      if (!activeSnapshotId) {
+        // Bundle may still be resolving — wait for it before deciding.
+        if (bundle === null || bundle === undefined) return;
+        if (!cancelled) {
+          setNotice('This Business Case has no active Alignment Snapshot yet. Approve a snapshot to unlock the Creator Selector.');
+          setBootstrapping(false);
+        }
+        return;
+      }
       try {
-        const rows = await v3ListBrainstorms(id);
-        const latest = Array.isArray(rows) && rows.length ? rows[rows.length - 1] : null;
+        const rows = await v3ListBrainstorms(id, activeSnapshotId);
+        // Prefer a round whose alignment_snapshot_id matches the active one;
+        // fall back to the newest matching row.
+        const scoped = Array.isArray(rows)
+          ? rows.filter((r) => r?.alignment_snapshot_id === activeSnapshotId)
+          : [];
+        const latest = scoped.length ? scoped[scoped.length - 1] : null;
         if (cancelled) return;
         if (latest) {
           setRound(latest);
         } else {
-          // No round yet -> create one silently and use it.
-          const doc = await v3CreateBrainstorm({ business_case_id: id, scored_creators: [] });
+          // No round for this snapshot yet -> create one silently.
+          const doc = await v3CreateBrainstorm({
+            business_case_id: id,
+            alignment_snapshot_id: activeSnapshotId,
+            scored_creators: [],
+          });
           if (cancelled) return;
           setRound(doc);
         }
@@ -3307,7 +3342,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
       }
     })();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, activeSnapshotId, bundle]);
 
   const updateField = (phaseKey, field, value) => {
     setRound((prev) => ({ ...prev, [phaseKey]: { ...prev[phaseKey], [field]: value } }));

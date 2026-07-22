@@ -114,10 +114,17 @@ export const v3AddStrategySnapshotComment = (snapshotId, payload) => v3.post(`/c
 export const v3ResolveStrategySnapshotComment = (snapshotId, commentId) => v3.post(`/creative-snapshots/${snapshotId}/comments/${commentId}/resolve`).then(r => r.data);
 export const v3CreateBrainstorm = (payload) => v3.post('/brainstorm-rounds', payload).then(r => r.data);
 export const v3UpdateBrainstorm = (roundId, payload) => v3.patch(`/brainstorm-rounds/${roundId}`, payload).then(r => r.data);
-export const v3ListBrainstorms = (bcId) => v3.get('/brainstorm-rounds', { params: { business_case_id: bcId } }).then(r => r.data);
+export const v3ListBrainstorms = (bcId, alignmentSnapshotId) => v3.get('/brainstorm-rounds', {
+  params: alignmentSnapshotId
+    ? { business_case_id: bcId, alignment_snapshot_id: alignmentSnapshotId }
+    : { business_case_id: bcId },
+}).then(r => r.data);
 // Brainstorm transcript upload + AI fill of the entire TTA Snapshot Brainstorm.
 export const v3BrainstormSuggestedQuestions = (bcId) => v3.get(`/business-cases/${bcId}/brainstorm/suggested-questions`).then(r => r.data);
-export const v3AnalyzeBrainstormTranscript = (bcId, transcript) => v3.post(`/business-cases/${bcId}/brainstorm/analyze-transcript`, { transcript }).then(r => r.data);
+export const v3AnalyzeBrainstormTranscript = (bcId, transcript, alignmentSnapshotId) =>
+  v3.post(`/business-cases/${bcId}/brainstorm/analyze-transcript`,
+    alignmentSnapshotId ? { transcript, alignment_snapshot_id: alignmentSnapshotId } : { transcript }
+  ).then(r => r.data);
 export const v3ContractPdfUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/pdf`;
 export const v3AlignmentDocxUrl = (snapshotId) => `${BACKEND_URL}/api/v3/alignment-snapshots/${snapshotId}/docx`;
 export const v3CreativeBriefDocxUrl = (briefId) => `${BACKEND_URL}/api/v3/creative-briefs/${briefId}/docx`;
