@@ -1701,7 +1701,7 @@ Ground every claim in the brand and project data provided. Do NOT invent product
 
 Return JSON only, no markdown fences, with EXACTLY this shape (nine sections, in this order):
 {
-  "title": "TTA - Creative Alignment Brief",
+  "title": "TTA – Creative Alignment Brief (Creator Version)",
   "subtitle": "(Internal name: Creator Brief for Fee Confirmation)",
   "project_reference": {
     "brand_organisation": "string - the brand/organisation name",
@@ -6954,35 +6954,55 @@ def make_v3_router(db):
 
     def _docx_package(blocks: List[str]) -> bytes:
         """Assemble a TASCK-template .docx around the given body blocks: full
-        approved letterhead — logo band header (bold circle top-right),
-        contact-strip footer, embedded Bebas Neue + Century Gothic fonts.
-        Every TASCK document sent to a brand or creator is routed through
-        here so they all share the exact same template."""
+        approved letterhead — header banner (black bar + TASCK Agency circle),
+        contact-strip footer, faint decorative-curves watermark on the
+        background, embedded Bebas Neue + Century Gothic fonts. Every TASCK
+        document sent to a brand or creator is routed through here so they
+        all share the exact same client-approved template."""
+        # Template banner: full 6.5" content width, aspect ratio derived from
+        # the source PNG (2048 × 286 → 5943600 × 825500 EMU in the reference).
         logo_bytes = _read_template_asset("tasck_logo.png")
         logo_cx = _emu_inch(6.5)
         logo_cy = int(logo_cx * 286 / 2048)
+        # Footer contact-strip: same 6.5" width as the reference template so
+        # the ~envelope / globe / map icons land where the client expects.
         footer_bytes = _read_template_asset("footer_contact.png")
-        footer_cx = _emu_inch(6.0)
+        footer_cx = _emu_inch(6.5)
         footer_cy = int(footer_cx * 180 / 2048)
-        # Background watermark intentionally omitted: the supplied
-        # template_watermark.png is a near-solid white sheet at ~84% opacity,
-        # which washes out the logo, footer and body text rather than adding
-        # visible branding. The TASCK identity is carried by the logo header,
-        # contact-strip footer and embedded fonts instead, so the document
-        # stays sharp and legible. (Restored sharper after Chioma feedback
-        # that the design looked faded.)
-        header_logo_drawing = _drawing_inline("rId1", logo_cx, logo_cy, 1, "TASCK logo") if logo_bytes else ""
-        header_paragraph_body = f'<w:r>{header_logo_drawing}</w:r>' if header_logo_drawing else ''
+        # Faint decorative curves watermark (image3.png in the reference
+        # template). Positioned centred on the page, behind the body text.
+        # Rendered via VML so it survives the Word → Google Docs conversion
+        # and stays behind text on both viewers.
+        watermark_bytes = _read_template_asset("decorative_curves.png")
+
+        header_logo_drawing = _drawing_inline("rIdLogo", logo_cx, logo_cy, 1, "TASCK banner") if logo_bytes else ""
+        watermark_vml = ""
+        if watermark_bytes:
+            # Dimensions come from the client-shared .docx: 458.85pt wide ×
+            # 648pt tall, centred against the page margin box.
+            watermark_vml = (
+                '<w:r><w:pict>'
+                '<v:shape id="TasckWatermark" type="#_x0000_t75" '
+                'style="position:absolute;width:458.85pt;height:648pt;'
+                'z-index:-503316481;mso-position-horizontal:center;'
+                'mso-position-horizontal-relative:margin;'
+                'mso-position-vertical:center;'
+                'mso-position-vertical-relative:margin;" alt="" stroked="f">'
+                '<v:imagedata r:id="rIdWatermark" o:title="decorative curves"/>'
+                '</v:shape>'
+                '</w:pict></w:r>'
+            )
+        header_body = watermark_vml + (f'<w:r>{header_logo_drawing}</w:r>' if header_logo_drawing else '')
         header_xml = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
             'xmlns:v="urn:schemas-microsoft-com:vml" '
             'xmlns:o="urn:schemas-microsoft-com:office:office">'
-            + (f'<w:p><w:pPr><w:jc w:val="right"/></w:pPr>{header_paragraph_body}</w:p>' if header_paragraph_body else '<w:p/>')
+            + (f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>{header_body}</w:p>' if header_body else '<w:p/>')
             + "</w:hdr>"
         )
-        footer_drawing = _drawing_inline("rId1", footer_cx, footer_cy, 1, "Contact strip") if footer_bytes else ""
+        footer_drawing = _drawing_inline("rIdFooter", footer_cx, footer_cy, 2, "Contact strip") if footer_bytes else ""
         footer_xml = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
             '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -6995,7 +7015,8 @@ def make_v3_router(db):
             + ('<w:headerReference xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdHeader1" w:type="default"/>' if logo_bytes else "")
             + ('<w:footerReference xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdFooter1" w:type="default"/>' if footer_bytes else "")
             + '<w:pgSz w:w="12240" w:h="15840"/>'
-            '<w:pgMar w:top="1800" w:right="1440" w:bottom="1800" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
+            # 1" margins on all sides to match the template.
+            '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
             "</w:sectPr>"
         )
         document_xml = (
@@ -7021,7 +7042,27 @@ def make_v3_router(db):
             '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
             + "".join(doc_rels_items) + "</Relationships>"
         )
-        rel_img = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/%s"/></Relationships>'
+        # Header rels: banner (rIdLogo) + watermark (rIdWatermark).
+        header_rels_entries = []
+        if logo_bytes:
+            header_rels_entries.append(
+                '<Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/tasck_logo.png"/>'
+            )
+        if watermark_bytes:
+            header_rels_entries.append(
+                '<Relationship Id="rIdWatermark" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/decorative_curves.png"/>'
+            )
+        header_rels_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            + "".join(header_rels_entries) + "</Relationships>"
+        )
+        footer_rels_xml = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/footer_contact.png"/>'
+            "</Relationships>"
+        )
         _font_files = {
             "font_bebas.ttf": "fonts/BebasNeue-regular.ttf",
             "font_century.ttf": "fonts/CenturyGothic-regular.ttf",
@@ -7095,20 +7136,13 @@ def make_v3_router(db):
                     docx.writestr(f"word/fonts/{name}", data)
             if logo_bytes:
                 docx.writestr("word/header1.xml", header_xml)
-                # Header part references only the logo (rId1). No watermark.
-                header_rels_entries = [
-                    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/tasck_logo.png"/>',
-                ]
-                docx.writestr(
-                    "word/_rels/header1.xml.rels",
-                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-                    + "".join(header_rels_entries) + "</Relationships>",
-                )
+                docx.writestr("word/_rels/header1.xml.rels", header_rels_xml)
                 docx.writestr("word/media/tasck_logo.png", logo_bytes)
+                if watermark_bytes:
+                    docx.writestr("word/media/decorative_curves.png", watermark_bytes)
             if footer_bytes:
                 docx.writestr("word/footer1.xml", footer_xml)
-                docx.writestr("word/_rels/footer1.xml.rels", rel_img % "footer_contact.png")
+                docx.writestr("word/_rels/footer1.xml.rels", footer_rels_xml)
                 docx.writestr("word/media/footer_contact.png", footer_bytes)
         return package.getvalue()
 
@@ -7142,25 +7176,14 @@ def make_v3_router(db):
         blocks.append(para(str(brief.get("title") or "TTA – Creative Alignment Brief (Creator Version)"),
                            bold=True, size=TITLE_SIZE, before=0, after=60))
         if brief.get("subtitle"):
-            blocks.append(para(str(brief.get("subtitle")), bold=True, size=TITLE_SIZE, after=240))
+            blocks.append(para(str(brief.get("subtitle")), bold=True, italic=True, size=TITLE_SIZE, after=240))
+        else:
+            blocks.append(para("(Internal name: Creator Brief for Fee Confirmation)", bold=True, italic=True, size=TITLE_SIZE, after=240))
 
-        # Optional project-reference key/values shown above section 1.
-        pref = brief.get("project_reference") or {}
-        pref_lines = [
-            ("brand_organisation", "Brand / Organisation"),
-            ("project_working_title", "Project working title"),
-            ("tta_project_lead", "TTA project lead"),
-            ("date_shared_with_creator", "Date shared with creator"),
-            ("creator", "Creator"),
-            ("creator_contact", "Creator contact"),
-        ]
-        if any(str(pref.get(k) or "").strip() for k, _ in pref_lines):
-            for key, label in pref_lines:
-                value = str(pref.get(key) or "").strip()
-                if not value:
-                    continue
-                blocks.append(para(f"{label}: {value}", after=60))
-            blocks.append(blank(after=120))
+        # NOTE: the top-of-page project-reference block is intentionally
+        # omitted — Section 1 ("1. Project Reference") in the template already
+        # carries Brand/Organisation, Project working title, TTA project lead
+        # and Date, so we do not duplicate them here.
 
         # Sections 1-9.
         for section in brief.get("sections", []) or []:
