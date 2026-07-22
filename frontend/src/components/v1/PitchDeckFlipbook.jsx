@@ -170,6 +170,7 @@ export const PitchDeckFlipbook = ({ deck, brandName }) => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, maxView]);
 
   const currentLeftIdx = view >= 1 && view <= spreadCount ? (view - 1) * 2 : -1;
@@ -843,6 +844,38 @@ html, body {
   .pf-sec-h { font-size: 26px; }
   .pf-sec-p { font-size: 15px; line-height: 1.7; }
   .pf-cover-title { font-size: clamp(32px, 8vw, 52px); }
+}
+
+/* Compact mode for tight viewports (preview modal iframe). Keeps the whole
+   book, controls and margins visible without any inner scroll. */
+@media (max-height: 780px) {
+  .pf-root { padding: 6px 0 10px; }
+  .pf-scene { height: calc(100vh - 88px); min-height: 380px; perspective: 2000px; }
+  .pf-single-stage { width: min(420px, 42%); }
+  .pf-book { width: min(880px, 96%); }
+  .pf-header { padding: 12px 20px; }
+  .pf-header-compact { padding: 10px 16px; }
+  .pf-logo-mark { width: 26px; height: 26px; font-size: 16px; }
+  .pf-logo-word { font-size: 16px; letter-spacing: .18em; }
+  .pf-header-tag { font-size: 11px; letter-spacing: .22em; }
+  .pf-footer { padding: 8px 18px; font-size: 10px; letter-spacing: .14em; }
+  .pf-cover-body { padding: 18px 40px 26px; }
+  .pf-cover-kicker { font-size: 13px; letter-spacing: .28em; }
+  .pf-cover-rule { width: 48px; height: 3px; margin: 10px 0 14px; }
+  .pf-cover-title { font-size: clamp(26px, 3.4vw, 42px); }
+  .pf-cover-sub { font-size: 13px; margin-top: 14px; line-height: 1.5; }
+  .pf-closing-brand { font-size: 12px; right: 20px; bottom: 44px; }
+  .pf-page-body { padding: 20px 28px; gap: 12px; }
+  .pf-sec { padding-bottom: 10px; margin-bottom: 2px; }
+  .pf-sec-h { font-size: 22px; margin: 0 0 8px; letter-spacing: .08em; }
+  .pf-sec-p { font-size: 12.5px; line-height: 1.55; }
+  .pf-pad { padding-top: 10px; }
+  .pf-nav-row { gap: 12px; }
+  .pf-nav-row button { width: 34px; height: 34px; border-radius: 17px; }
+  .pf-nav-icon { width: 16px; height: 16px; }
+  .pf-nav-thumb { font-size: 14px; letter-spacing: .18em; }
+  .pf-nav-label { font-size: 10px; letter-spacing: .14em; }
+  .pf-spine { width: 14px; }
 }
 `;
 

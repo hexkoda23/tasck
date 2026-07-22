@@ -4397,7 +4397,7 @@ export const V3BusinessCasePitchDeck = () => {
         >
           <div
             className="relative flex flex-col rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] shadow-2xl overflow-hidden"
-            style={{ width: '1200px', maxWidth: '95vw', height: '800px', maxHeight: '92vh' }}
+            style={{ width: '1120px', maxWidth: '94vw', height: '720px', maxHeight: '88vh' }}
           >
             <div className="flex items-center justify-between gap-3 border-b border-[#E6E0D2] bg-[#FBFAF7] px-5 py-4">
               <div>

@@ -7114,83 +7114,118 @@ def make_v3_router(db):
 
     def creative_brief_docx_bytes(brief: Dict[str, Any]) -> bytes:
         """Render the Creative Alignment Brief in the client's approved DOCX
-        template: bold title + subtitle, nine numbered sections in the fixed
-        order, label/value lines, unchecked-box role/scope lists, the fixed
-        working-assumptions and confirmation blocks, and a Name/Date signature.
-        Century Gothic throughout, bold section headings."""
+        template: Century Gothic 11pt throughout, black text, bold title and
+        section headings (also 11pt — the template uses uniform sizing), no
+        colored accents or horizontal rules. Nine numbered sections in the
+        fixed order, with checkbox options rendered inline exactly as the
+        template does."""
+        # Template constants (mirror the .docx we were given).
+        TITLE_SIZE = 22       # 11pt
+        HEADING_SIZE = 22     # 11pt (uniform with body)
+        BODY_SIZE = 22        # 11pt
+        BLACK = "000000"
+        CHECKBOX = "\u2610"
+
+        def para(value, *, bold=False, italic=False, size=BODY_SIZE, before=0, after=120):
+            return _docx_paragraph(
+                value, bold=bold, italic=italic, size_half_pt=size,
+                color=BLACK, font=_DOCX_BODY_FONT, before=before, after=after,
+            )
+
+        def blank(after=120):
+            return para("", after=after)
+
         blocks: List[str] = []
-        # Title + subtitle (bold), exactly as the approved template.
-        blocks.append(_docx_paragraph(str(brief.get("title") or "TTA - Creative Alignment Brief"), bold=True, size_half_pt=30, before=120, after=80))
+
+        # Title + subtitle: bold Century Gothic, 11pt, black — matches the
+        # template ("TTA – Creative Alignment Brief (Creator Version)" / "(Internal name…)").
+        blocks.append(para(str(brief.get("title") or "TTA – Creative Alignment Brief (Creator Version)"),
+                           bold=True, size=TITLE_SIZE, before=0, after=60))
         if brief.get("subtitle"):
-            blocks.append(_docx_paragraph(str(brief.get("subtitle")), bold=True, size_half_pt=22, after=200))
+            blocks.append(para(str(brief.get("subtitle")), bold=True, size=TITLE_SIZE, after=240))
 
-        # Project Reference block (sits above section 1 in the template).
+        # Optional project-reference key/values shown above section 1.
         pref = brief.get("project_reference") or {}
-        if pref:
-            for key, label in (
-                ("brand_organisation", "Brand / Organisation"),
-                ("project_working_title", "Project working title"),
-                ("tta_project_lead", "TTA project lead"),
-                ("date_shared_with_creator", "Date shared with creator"),
-                ("creator", "Creator"),
-                ("creator_contact", "Creator contact"),
-            ):
+        pref_lines = [
+            ("brand_organisation", "Brand / Organisation"),
+            ("project_working_title", "Project working title"),
+            ("tta_project_lead", "TTA project lead"),
+            ("date_shared_with_creator", "Date shared with creator"),
+            ("creator", "Creator"),
+            ("creator_contact", "Creator contact"),
+        ]
+        if any(str(pref.get(k) or "").strip() for k, _ in pref_lines):
+            for key, label in pref_lines:
                 value = str(pref.get(key) or "").strip()
-                blocks.append(_docx_paragraph(f"{label}: {value or 'To be confirmed'}", after=60))
-            blocks.append(_docx_paragraph("", after=80))
+                if not value:
+                    continue
+                blocks.append(para(f"{label}: {value}", after=60))
+            blocks.append(blank(after=120))
 
-        def _label_value_line(label: str, value: str) -> str:
-            return _docx_paragraph(f"{label} {value}".strip(), after=60)
-
+        # Sections 1-9.
         for section in brief.get("sections", []) or []:
             heading = str(section.get("heading") or "").strip()
             if heading:
-                blocks.append(_docx_paragraph(heading, bold=True, size_half_pt=26, before=240, after=120))
-            # Label/value lines.
+                blocks.append(para(heading, bold=True, size=HEADING_SIZE, before=240, after=120))
+
+            # Label / value lines — one per paragraph.
             for line in section.get("lines", []) or []:
                 label = str(line.get("label") or "").strip()
                 value = str(line.get("value") or "").strip()
                 if label and value:
-                    blocks.append(_label_value_line(f"{label}:", value))
+                    blocks.append(para(f"{label}: {value}", after=60))
+                elif label:
+                    blocks.append(para(f"{label}:", after=60))
                 elif value:
-                    blocks.append(_docx_paragraph(value, after=60))
-            # Intro line (e.g. "The creative would act as:").
-            if section.get("intro"):
-                blocks.append(_docx_paragraph(str(section.get("intro")), after=60))
-            # Checkbox-style option list (rendered as unchecked boxes).
-            for option in section.get("checkboxes", []) or []:
-                blocks.append(_docx_paragraph(f"\u2610  {option}", after=40))
-            # Availability options (Yes / Conditional / No) on one logical group.
+                    blocks.append(para(value, after=60))
+
+            # Intro line (e.g. "The creative would act as:") + inline checkboxes.
+            checkboxes = section.get("checkboxes") or []
+            intro = str(section.get("intro") or "").strip()
+            if intro or checkboxes:
+                joined = intro
+                if checkboxes:
+                    box_str = "  ".join(f"{CHECKBOX} {opt}" for opt in checkboxes)
+                    joined = f"{intro} {box_str}".strip() if intro else box_str
+                blocks.append(para(joined, after=80))
+
+            # Availability question (Section 8) — question + inline Yes/Conditional/No.
             if section.get("availability_label"):
-                blocks.append(_docx_paragraph(str(section.get("availability_label")), after=40))
-                opts = "   ".join(f"\u2610 {o}" for o in (section.get("availability_options") or []))
-                blocks.append(_docx_paragraph(opts, after=60))
+                q = str(section.get("availability_label")).strip()
+                opts = section.get("availability_options") or []
+                box_str = "  ".join(f"{CHECKBOX} {o}" for o in opts)
+                blocks.append(para(f"{q} {box_str}".strip(), after=80))
             if section.get("conditions_label"):
-                blocks.append(_docx_paragraph(str(section.get("conditions_label")), after=40))
+                blocks.append(para(str(section.get("conditions_label")), after=40))
                 if section.get("conditions_hint"):
-                    blocks.append(_docx_paragraph(str(section.get("conditions_hint")), after=80))
-            # Primary responsibility (role of creative).
+                    blocks.append(para(str(section.get("conditions_hint")), italic=True, after=80))
+
+            # Primary responsibility (Section 3).
             if section.get("primary_label"):
-                blocks.append(_docx_paragraph(str(section.get("primary_label")), bold=True, before=80, after=40))
+                blocks.append(para(str(section.get("primary_label")), bold=True, before=60, after=40))
             if section.get("primary_value"):
-                blocks.append(_docx_paragraph(str(section.get("primary_value")), after=80))
-            # Scope signal bullets.
+                blocks.append(para(str(section.get("primary_value")), after=80))
+
+            # Scope signal caveats (Section 4).
             for bullet in section.get("scope_signal", []) or []:
-                blocks.append(_docx_paragraph(f"- {bullet}", after=40))
-            # Working assumptions list.
+                blocks.append(para(str(bullet), after=40))
+
+            # Working assumptions (Section 6) — one per line, matching template.
             for item in section.get("assumptions", []) or []:
-                blocks.append(_docx_paragraph(f"- {item}", after=40))
-            # Confirmation checkboxes.
+                blocks.append(para(str(item), after=40))
+
+            # Confirmations (Section 9) — inline checkbox line per item, matching template.
             for item in section.get("confirmations", []) or []:
-                blocks.append(_docx_paragraph(f"\u2610  {item}", after=40))
-            # Free note line.
+                blocks.append(para(f"{CHECKBOX} {item}", after=40))
+
+            # Free note (e.g. "No schedules. No milestones.").
             if section.get("note"):
-                blocks.append(_docx_paragraph(str(section.get("note")), italic=True, after=80))
+                blocks.append(para(str(section.get("note")), italic=True, after=80))
 
         # Name / Date signature.
         sig = brief.get("signature") or {}
-        blocks.append(_docx_paragraph(str(sig.get("name_label") or "Name:"), before=200, after=60))
-        blocks.append(_docx_paragraph(str(sig.get("date_label") or "Date:"), after=60))
+        blocks.append(para(str(sig.get("name_label") or "Name:"), before=200, after=60))
+        blocks.append(para(str(sig.get("date_label") or "Date:"), after=60))
         return _docx_package(blocks)
 
     def creative_brief_from_raw_text(title: str, raw_text: str, *, creator_name: str = "") -> Dict[str, Any]:
