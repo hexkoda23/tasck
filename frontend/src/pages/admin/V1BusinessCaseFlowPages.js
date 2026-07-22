@@ -7,7 +7,7 @@ import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PrioritySelect } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
-import { PitchDeckFlipbook, buildFlipbookHtml } from '../../components/v1/PitchDeckFlipbook';
+import { buildFlipbookHtml } from '../../components/v1/PitchDeckFlipbook';
 import { TtaLetterhead } from '../../components/v1/TtaLetterhead';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
 
@@ -4354,31 +4354,34 @@ export const V3BusinessCasePitchDeck = () => {
         </div>
       )}
       {genPopup.open && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm" data-testid="pitch-gen-popup">
-          <div className="w-full max-w-lg rounded-2xl border-2 border-[#1F4A3A] bg-white p-7 shadow-2xl">
-            <div className="mb-4 flex items-center gap-3">
-              <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${genPopup.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : genPopup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#1F4A3A] text-white'}`}>
-                {genPopup.status === 'complete' ? <CheckCircle2 className="h-5 w-5" /> : genPopup.status === 'failed' ? <X className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4" data-testid="pitch-gen-popup">
+          <div className="w-full max-w-md rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${genPopup.status === 'complete' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : genPopup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#E8F3ED] text-[#1F4A3A]'}`}>
+                {genPopup.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : genPopup.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
               </span>
-              <div className="min-w-0">
-                <h3 className="text-[17px] font-semibold text-[#1A1A1A] leading-tight" style={{ fontFamily: "'Fraunces', serif" }}>
-                  {genPopup.status === 'complete' ? 'Pitch Deck ready' : genPopup.status === 'failed' ? 'Generation failed' : 'Generating Pitch Deck'}
-                </h3>
-                <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">V1 Admin · Pitch Deck</p>
-              </div>
-              <span className="ml-auto text-[28px] font-bold leading-none text-[#1F4A3A] tabular-nums" data-testid="pitch-gen-popup-percent">{genPopup.progress}%</span>
+              <h3 className="text-[16px] font-semibold text-[#1A1A1A]" data-testid="pitch-gen-popup-title">
+                {genPopup.status === 'complete' ? 'Pitch Deck ready' : genPopup.status === 'failed' ? 'Generation failed' : 'Generating Pitch Deck'}
+              </h3>
+              <span className="ml-auto text-[15px] font-semibold text-[#1F4A3A] tabular-nums" data-testid="pitch-gen-popup-percent">{genPopup.progress}%</span>
             </div>
-            <div className="h-3 w-full rounded-full bg-[#EDE9E0] overflow-hidden ring-1 ring-inset ring-[#D7CBB8]">
+            <div className="h-2 w-full rounded-full bg-[#EDE9E0] overflow-hidden ring-1 ring-inset ring-[#D7CBB8]">
               <div
                 className={`h-full rounded-full transition-all duration-300 ease-out ${genPopup.status === 'failed' ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
                 style={{ width: `${Math.max(2, genPopup.progress)}%` }}
                 data-testid="pitch-gen-popup-bar"
               />
             </div>
-            <p className="mt-4 text-[13px] leading-6 text-[#4F3E2F]" data-testid="pitch-gen-popup-message">{genPopup.message || (genPopup.status === 'running' ? 'Writing all ten Pitch Deck sections…' : '')}</p>
-            {genPopup.status === 'running' && <p className="mt-1 text-[11px] text-[#6E6657]">Claude is writing the Pitch Deck. Please keep this page open — this window will close automatically when it reaches 100%.</p>}
+            <p className="mt-3 text-[13px] leading-6 text-[#4F3E2F]" data-testid="pitch-gen-popup-message">
+              {genPopup.message || (genPopup.status === 'running' ? 'Writing all ten Pitch Deck sections…' : '')}
+            </p>
+            {genPopup.status === 'running' && (
+              <p className="mt-1 text-[11px] text-[#6E6657]">
+                Claude is writing the Pitch Deck. Please keep this page open — this window will close automatically when it reaches 100%.
+              </p>
+            )}
             {genPopup.status === 'failed' && (
-              <div className="mt-5 flex justify-end">
+              <div className="mt-4 flex justify-end">
                 <button type="button" onClick={() => setGenPopup((prev) => ({ ...prev, open: false }))} className="v3-btn-primary" data-testid="pitch-gen-popup-close">OK</button>
               </div>
             )}
@@ -4388,23 +4391,18 @@ export const V3BusinessCasePitchDeck = () => {
 
       {previewOpen && (
         <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 py-6"
           data-testid="pitch-flipbook-modal"
           onClick={(e) => { if (e.target === e.currentTarget) setPreviewOpen(false); }}
         >
           <div
-            className="relative flex flex-col rounded-2xl border-2 border-[#1F4A3A] bg-[#F6F4EE] shadow-2xl"
+            className="relative flex flex-col rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] shadow-2xl overflow-hidden"
             style={{ width: '1200px', maxWidth: '95vw', height: '800px', maxHeight: '92vh' }}
           >
-            <div className="flex items-center justify-between gap-3 border-b border-[#E6E0D2] bg-white px-6 py-4 rounded-t-2xl">
+            <div className="flex items-center justify-between gap-3 border-b border-[#E6E0D2] bg-[#FBFAF7] px-5 py-4">
               <div>
-                <h3
-                  className="text-[18px] font-semibold text-[#1A1A1A] leading-tight uppercase tracking-[0.16em]"
-                  style={{ fontFamily: "'Bebas Neue', 'Questrial', sans-serif" }}
-                >
-                  Pitch Deck — Flipbook Preview
-                </h3>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-[#8A8A8A]">V1 Admin · Pitch Deck</p>
+                <h3 className="text-[16px] font-semibold text-[#1A1A1A] leading-tight">Pitch Deck — Flipbook Preview</h3>
+                <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">V1 Admin · Pitch Deck</p>
               </div>
               <button
                 type="button"
@@ -4415,11 +4413,13 @@ export const V3BusinessCasePitchDeck = () => {
                 Close
               </button>
             </div>
-            <div className="flex-1 overflow-auto flex items-center justify-center px-6 py-6" data-testid="pitch-flipbook-viewport">
-              <div className="w-full h-full flex items-center justify-center">
-                <PitchDeckFlipbook deck={deck} brandName={bundle?.brand?.company || bundle?.brand?.name} />
-              </div>
-            </div>
+            <iframe
+              title="Pitch Deck Flipbook Preview"
+              srcDoc={buildFlipbookHtml(deck, bundle?.brand?.company || bundle?.brand?.name || '')}
+              className="flex-1 w-full border-0 bg-transparent"
+              data-testid="pitch-flipbook-iframe"
+              sandbox="allow-scripts allow-same-origin"
+            />
           </div>
         </div>
       )}
