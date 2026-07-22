@@ -4387,16 +4387,39 @@ export const V3BusinessCasePitchDeck = () => {
       )}
 
       {previewOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm" data-testid="pitch-flipbook-modal">
-          <div className="w-full max-w-6xl rounded-2xl border-2 border-[#1F4A3A] bg-white p-5 shadow-2xl">
-            <div className="mb-3 flex items-center justify-between gap-3">
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4 py-6 backdrop-blur-sm"
+          data-testid="pitch-flipbook-modal"
+          onClick={(e) => { if (e.target === e.currentTarget) setPreviewOpen(false); }}
+        >
+          <div
+            className="relative flex flex-col rounded-2xl border-2 border-[#1F4A3A] bg-[#F6F4EE] shadow-2xl"
+            style={{ width: '1200px', maxWidth: '95vw', height: '800px', maxHeight: '92vh' }}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-[#E6E0D2] bg-white px-6 py-4 rounded-t-2xl">
               <div>
-                <h3 className="text-[17px] font-semibold text-[#1A1A1A] leading-tight" style={{ fontFamily: "'Fraunces', serif" }}>Pitch Deck — flipbook preview</h3>
-                <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">V1 Admin · Pitch Deck</p>
+                <h3
+                  className="text-[18px] font-semibold text-[#1A1A1A] leading-tight uppercase tracking-[0.16em]"
+                  style={{ fontFamily: "'Bebas Neue', 'Questrial', sans-serif" }}
+                >
+                  Pitch Deck — Flipbook Preview
+                </h3>
+                <p className="text-[11px] uppercase tracking-[0.22em] text-[#8A8A8A]">V1 Admin · Pitch Deck</p>
               </div>
-              <button type="button" onClick={() => setPreviewOpen(false)} className="v3-btn-secondary text-[12px]" data-testid="pitch-flipbook-close">Close</button>
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(false)}
+                className="v3-btn-secondary text-[12px]"
+                data-testid="pitch-flipbook-close"
+              >
+                Close
+              </button>
             </div>
-            <PitchDeckFlipbook deck={deck} brandName={bundle?.brand?.company || bundle?.brand?.name} />
+            <div className="flex-1 overflow-auto flex items-center justify-center px-6 py-6" data-testid="pitch-flipbook-viewport">
+              <div className="w-full h-full flex items-center justify-center">
+                <PitchDeckFlipbook deck={deck} brandName={bundle?.brand?.company || bundle?.brand?.name} />
+              </div>
+            </div>
           </div>
         </div>
       )}

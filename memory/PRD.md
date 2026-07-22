@@ -1,5 +1,33 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 22 Feb 2026 (Pitch Deck Flipbook — CSS 3D flip, fonts, centering, preview modal fixed)
+
+### Issue reported by user
+1. HTML download started on the "Budget Assumption" page instead of the Cover.
+2. Flipbook wasn't centered (visibly shifted left; content clipped).
+3. Fonts felt tiny; user wanted **Bebas Neue** for headings + **Century Gothic** for body.
+4. "Preview Flipbook" modal opened a blank white screen instead of rendering the book.
+5. Existing CSS 3D flip looked cheap — user wanted a natural paper-turn effect.
+
+### Fix — `/app/frontend/src/components/v1/PitchDeckFlipbook.jsx` (full rewrite of layout + animation)
+- **Fonts**: Imported Google Fonts **Bebas Neue** (headings, kicker, logo, footer captions) and **Questrial** (body, closest free geometric-sans to Century Gothic). CSS font-family stacks fall back to `'Century Gothic', 'CenturyGothic', AppleGothic` if the user has Century Gothic installed locally.
+- **Type scale bumped**: cover title 44-68px, section headings 34px (Bebas), body 18px/1.75 (Questrial), kicker 20px, page footer 12px caps.
+- **Centered layout, no more shift**: cover and closing render in a `.pf-single-stage` (max 560px, `justify-content:center`). Content spreads render in a two-column `.pf-book` (left slot + right slot + centered spine) so both pages of every spread are visible and the whole book sits in the middle of the viewport.
+- **Natural page-turn animation**: static left/right pages + a single overlay `.pf-flip-leaf` that rotates from `rotateY(0deg) → rotateY(-180deg)` (or reverse) with `transform-origin: 0% 50%`, `backface-visibility: hidden`, and a graduated `.pf-flip-shade` gradient that fades in during the turn to simulate paper curl shadow. 0.8s `cubic-bezier(.42, .02, .28, 1)` easing.
+- **Pagination tuned** (`MAX = 1050`, section cost `180 + content.length`) so 2-3 medium sections fit per page without clipping. `pf-page-body` gets `overflow:auto` as a safety net.
+- **HTML download logic aligned** — `buildFlipbookHtml` mirrors the React component: view 0 = centered cover, view 1..N = spreads with animated overlay, view N+1 = centered closing. Verified: opening the downloaded file now starts on the Cover.
+
+### Fix — `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js`
+- **Preview modal rebuilt** (~line 4389): 1200×800 (max 95vw / 92vh) centered dialog with header row (Bebas title + close button) and a full-height `overflow-auto` viewport that hosts `<PitchDeckFlipbook />`. Click on backdrop closes.
+
+### Verified
+- Standalone `buildFlipbookHtml` snapshot rendered against a 10-section sample deck across 4 screenshots: cover centered ✓, spreads show both pages ✓, page numbers correct, closing centered ✓, no content overflow. Frontend compiles cleanly (only pre-existing eslint warning unrelated to this change).
+
+### Files touched
+- `/app/frontend/src/components/v1/PitchDeckFlipbook.jsx` — full rewrite (~700 lines).
+- `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js` — preview modal container replaced.
+
+
 ## Update — 25 Feb 2026 (Production deployment "failed to become ready" fixed — 6 root causes)
 
 ### Bug
