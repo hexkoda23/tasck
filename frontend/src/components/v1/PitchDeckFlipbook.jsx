@@ -18,9 +18,9 @@ const paginateSections = (sections) => {
   const pages = [];
   let current = [];
   let budget = 0;
-  const MAX = 900; // tighter so pages fill better
+  const MAX = 1800;
   list.forEach((section) => {
-    const cost = 100 + String(section.content || '').length;
+    const cost = 220 + String(section.content || '').length;
     if (current.length && budget + cost > MAX) {
       pages.push(current);
       current = [];
@@ -215,9 +215,9 @@ export const buildFlipbookHtml = (deck, brandName) => {
   const pages = [];
   let cur = [];
   let budget = 0;
-  const MAX = 900;
+  const MAX = 1800;
   sections.forEach((s) => {
-    const cost = 100 + String(s.content || '').length;
+    const cost = 220 + String(s.content || '').length;
     if (cur.length && budget + cost > MAX) { pages.push(cur); cur = []; budget = 0; }
     cur.push(s);
     budget += cost;
