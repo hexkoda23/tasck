@@ -478,10 +478,10 @@ const BrandCommentCard = ({ comment, index }) => {
   return (
     <article
       data-testid={`brand-comment-${c.id || index}`}
-      className="overflow-hidden rounded-xl border border-[#E6D7B8] bg-[#FFFFFF] shadow-sm"
+      className="brand-comment-card overflow-hidden rounded-xl border border-[#E6D7B8] bg-[#FFFFFF] shadow-sm"
     >
       {/* Header strip */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-[#F0E7D4] bg-[#FCF6EA] px-4 py-2.5">
+      <div className="bc-strip flex flex-wrap items-center gap-2 border-b border-[#F0E7D4] bg-[#FCF6EA] px-4 py-2.5">
         <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#F3E2C0] text-[#B06E16]">
           <MessageSquare className="h-3.5 w-3.5" />
         </span>
@@ -504,7 +504,7 @@ const BrandCommentCard = ({ comment, index }) => {
       </div>
 
       {/* Body */}
-      <div className="px-4 py-3">
+      <div className="bc-body px-4 py-3">
         {subject && (
           <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#8A6E2F]">
             Re: {subject}
@@ -516,7 +516,7 @@ const BrandCommentCard = ({ comment, index }) => {
       </div>
 
       {/* Footer meta */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[#F0E7D4] bg-[#FAFCFB] px-4 py-2 text-[11px] text-[#6E6657]">
+      <div className="bc-foot flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[#F0E7D4] bg-[#FAFCFB] px-4 py-2 text-[11px] text-[#6E6657]">
         <span className="inline-flex items-center gap-1.5">
           <UserRound className="h-3.5 w-3.5 text-[#8A6E2F]" />
           By <strong className="font-semibold text-[#4F3E2F]">{author}</strong>

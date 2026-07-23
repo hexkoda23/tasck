@@ -1550,3 +1550,46 @@ div:has(> a[href*="utm_source=emergent"]) {
 .pf-hot-l { left: 0; } .pf-hot-r { right: 0; }
 .v3-dark .pf-face, .v3-dark .pf-page { background: #fdfcf9; }
 .v3-dark .pf-sec-p, .v3-dark .pf-page-head, .v3-dark .pf-page-foot { color: inherit; }
+
+/* ============================================================
+   Brand comment card — dark-mode legibility.
+   The card uses light hardcoded colours (white surface, dark ink)
+   which the global dark sweep half-flips, leaving light ink on a
+   light card = invisible. Force a coherent dark surface with light
+   ink so comments are always readable in either theme.
+   ============================================================ */
+.v3-dark .brand-comment-card {
+  background: #1f242c !important;
+  border-color: #3a414c !important;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.30) !important;
+}
+.v3-dark .brand-comment-card .bc-strip {
+  background: #2b2a20 !important;
+  border-color: #40402d !important;
+}
+.v3-dark .brand-comment-card .bc-body { background: transparent !important; }
+.v3-dark .brand-comment-card .bc-foot {
+  background: #191d24 !important;
+  border-color: #333a44 !important;
+}
+/* Ink: the comment body must be bright; supporting text a soft grey. */
+.v3-dark .brand-comment-card .bc-body p { color: #F4EFE6 !important; }
+.v3-dark .brand-comment-card .bc-body p.text-\[\#8A6E2F\] { color: #E6C889 !important; }
+.v3-dark .brand-comment-card .bc-foot span,
+.v3-dark .brand-comment-card .bc-foot strong { color: #CFC6B7 !important; }
+.v3-dark .brand-comment-card .bc-strip span { color: #F0C674 !important; }
+/* Keep the coloured status/rev chips readable on the dark strip. */
+.v3-dark .brand-comment-card .bc-strip span[class*="bg-\[\#EEF1F6\]"] {
+  background: #23324f !important; border-color: #395089 !important; color: #b8cdf5 !important;
+}
+.v3-dark .brand-comment-card .bc-strip span[class*="bg-\[\#FDEBD0\]"] {
+  background: #3a2c14 !important; border-color: #7a5a1e !important; color: #f0c06a !important;
+}
+.v3-dark .brand-comment-card .bc-strip span[class*="bg-\[\#E8F5ED\]"] {
+  background: #16311f !important; border-color: #2E7D5B !important; color: #7fd4a3 !important;
+}
+/* The little icon badge on the comment strip: darken in dark mode so the
+   icon reads as a crisp amber accent instead of amber-on-amber. */
+.v3-dark .brand-comment-card .bc-strip span[class*="bg-\[\#F3E2C0\]"] {
+  background: #4a3a18 !important; color: #f2c979 !important;
+}
