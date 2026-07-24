@@ -1,20 +1,21 @@
 """Standalone HTML flip-book renderer for the TASCK Pitch Deck.
 
-Produces ONE self-contained HTML file (inline CSS/JS, base64-embedded fonts)
-that opens offline in any browser: a TASCK-blue cover, the deck's sections
-paginated across clean white pages in a two-page spread, and a smooth
-page-turn — matching the approved flip-book reference video. The same file is
+Produces ONE self-contained HTML file (inline CSS/JS, base64-embedded fonts,
+inlined StPageFlip engine) that opens offline in any browser: a TASCK-blue
+cover, the deck's sections paginated across clean white pages, and the smooth
+drag/click page-curl flip from the approved reference video. The same file is
 served inline for Preview and as an attachment for Download, so admin can
 send it straight to clients.
 """
 import base64
 import html as _html
-import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-_FONT_DIR = Path(__file__).resolve().parent / "static" / "alignment_template" / "fonts"
+_STATIC = Path(__file__).resolve().parent / "static"
+_FONT_DIR = _STATIC / "alignment_template" / "fonts"
+_PAGEFLIP_JS = _STATIC / "pageflip" / "page-flip.browser.js"
 
 _FONT_FILES = {
     "bebas": "BebasNeue-regular.ttf",
@@ -41,6 +42,14 @@ def _font_face_css() -> str:
             f"src:url(data:font/ttf;base64,{b64}) format('truetype');font-display:swap;}}"
         )
     return "\n".join(css)
+
+
+def _pageflip_js() -> str:
+    """Inline the StPageFlip engine (MIT) so the file works fully offline."""
+    try:
+        return _PAGEFLIP_JS.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 def _esc(value: Any) -> str:
@@ -111,46 +120,36 @@ html,body{height:100%}
 body{
   background:#3b3b40; font-family:'Century Gothic FB','Century Gothic',Questrial,Arial,sans-serif;
   display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:18px; padding:26px 14px; min-height:100vh;
+  gap:12px; padding:22px 12px; min-height:100vh; overflow-x:hidden;
 }
-.stage{position:relative; width:min(1150px,96vw); aspect-ratio:1.42/1; perspective:2600px; user-select:none; container-type:inline-size;}
-.book{position:absolute; inset:0; transform-style:preserve-3d;}
-.book::before{content:""; position:absolute; top:1.2%; bottom:1.2%; left:50%; width:49.4%;
-  background:#0b1c56; border-radius:2px 10px 10px 2px; box-shadow:0 30px 70px rgba(0,0,0,.5);}
-.leaf{position:absolute; top:0; right:0; width:50%; height:100%; transform-style:preserve-3d;
-  transform-origin:left center; transition:transform .85s cubic-bezier(.32,.08,.24,1);}
-.face{position:absolute; inset:0; backface-visibility:hidden; -webkit-backface-visibility:hidden;
-  overflow:hidden; background:var(--paper);}
-.face.front{border-radius:2px 8px 8px 2px; box-shadow:inset 10px 0 22px -14px rgba(0,0,0,.35);}
-.face.back{transform:rotateY(180deg); border-radius:8px 2px 2px 8px; box-shadow:inset -10px 0 22px -14px rgba(0,0,0,.35);}
+.viewport{position:relative; width:min(1220px,97vw); display:flex; align-items:center; justify-content:center;}
+/* The book block is two pages wide. When the cover (right half) or back cover
+   (left half) is shown alone, glide the block sideways so the single page sits
+   centered — exactly like the reference viewer. */
+.book-wrap{width:min(1020px,82vw); transition:transform .8s cubic-bezier(.4,.1,.2,1);}
+.viewport.at-start .book-wrap{transform:translateX(-25%);}
+.viewport.at-end .book-wrap{transform:translateX(25%);}
 
-/* Closing cover: single-page width on the RIGHT half — same size and side as
-   the opening cover, so the book ends exactly the way it starts: one closed
-   cover. The book itself fades out underneath so no pages peek beside it. */
-.endcover{position:absolute; top:0; bottom:0; left:50%; width:50%;
-  border-radius:3px 12px 12px 3px; overflow:hidden;
-  opacity:0; pointer-events:none; transition:opacity .5s ease;
-  box-shadow:0 34px 80px rgba(0,0,0,.55);}
-.endcover.show{opacity:1; pointer-events:auto;}
-.endcover .cover{position:absolute; inset:0;}
-.book{transition:opacity .5s ease;}
-.stage.closed .book{opacity:0;}
+/* Pages handed to StPageFlip */
+.sheet{width:100%; height:100%; background:var(--paper); overflow:hidden;
+  container-type:inline-size; position:relative;}
+.stf__parent{filter:drop-shadow(0 26px 45px rgba(0,0,0,.4));}
 
-/* ---- Paper page ---- */
+/* ---- Paper page (cqw = single page width) ---- */
 .page{position:absolute; inset:0; display:flex; flex-direction:column; padding:5.4% 7% 4.2%;}
 .page-head{display:flex; justify-content:space-between; gap:8px;
-  font-size:clamp(7px,.95cqw,11px); letter-spacing:.06em; text-transform:uppercase;
+  font-size:clamp(7px,1.9cqw,11px); letter-spacing:.06em; text-transform:uppercase;
   color:var(--muted); border-bottom:1px solid #ececf0; padding-bottom:7px;}
 .page-body{flex:1; overflow:hidden; padding-top:16px;}
 .sec{margin-bottom:20px;}
 .sec h2{font-family:'Century Gothic FB','Century Gothic',sans-serif; font-weight:700;
-  font-size:clamp(12px,1.6cqw,19px); color:#101528; letter-spacing:.01em;}
+  font-size:clamp(12px,3.2cqw,19px); color:#101528; letter-spacing:.01em;}
 .sec h2::after{content:""; display:block; height:2px; margin-top:5px;
   background:linear-gradient(90deg,var(--accent) 0 38%, #e8ebf5 38% 100%);}
-.sec p{font-size:clamp(9px,1.18cqw,13.5px); line-height:1.75; color:var(--ink);
+.sec p{font-size:clamp(9px,2.36cqw,13.5px); line-height:1.75; color:var(--ink);
   margin-top:9px;}
 .sec p + p{margin-top:11px;}
-.page-foot{display:flex; justify-content:space-between; gap:8px; font-size:clamp(7px,.92cqw,10.5px);
+.page-foot{display:flex; justify-content:space-between; gap:8px; font-size:clamp(7px,1.84cqw,10.5px);
   color:#b6bac2; border-top:1px solid #ececf0; padding-top:7px; margin-top:8px;}
 .page-foot .dot{color:var(--accent);}
 
@@ -162,112 +161,100 @@ body{
   border:1px solid rgba(255,255,255,.14); border-radius:50%;}
 .cover::before{content:""; position:absolute; left:-12%; bottom:-30%; width:58%; height:64%;
   border:1px solid rgba(70,224,138,.25); border-radius:50%;}
-.badge{width:clamp(50px,7cqw,84px); height:clamp(50px,7cqw,84px); border-radius:50%; background:#fff;
+.badge{width:clamp(50px,14cqw,84px); height:clamp(50px,14cqw,84px); border-radius:50%; background:#fff;
   color:var(--blue); display:flex; flex-direction:column; align-items:center; justify-content:center;
   line-height:1.02; box-shadow:0 10px 30px rgba(4,14,60,.5); z-index:1;}
 .badge b{font-family:'Bebas Neue FB','Bebas Neue',sans-serif; font-weight:400;
-  font-size:clamp(9px,1.25cqw,15px); letter-spacing:.08em;}
+  font-size:clamp(9px,2.5cqw,15px); letter-spacing:.08em;}
 .badge b .g{color:#0eb864;}
-.kicker{margin-top:auto; font-size:clamp(8px,1.05cqw,12px); letter-spacing:.3em;
+.kicker{margin-top:auto; font-size:clamp(8px,2.1cqw,12px); letter-spacing:.3em;
   text-transform:uppercase; color:#9db6ff; z-index:1;}
 .rule{width:56px; height:3px; background:var(--green); margin:14px 0 0; z-index:1;}
 .cv-title{font-family:'Bebas Neue FB','Bebas Neue',sans-serif; font-weight:400;
-  font-size:clamp(26px,4.6cqw,52px); line-height:1.02; color:#fff; margin-top:10px;
+  font-size:clamp(26px,9.2cqw,52px); line-height:1.02; color:#fff; margin-top:10px;
   overflow-wrap:anywhere; z-index:1;}
-.cv-sub{font-size:clamp(10px,1.3cqw,15px); color:#c9d4f5; margin-top:14px; max-width:92%; z-index:1;}
-.cv-foot{margin-top:20px; font-size:clamp(8px,1cqw,12px); color:#8fa4e8; letter-spacing:.05em; z-index:1;}
+.cv-sub{font-size:clamp(10px,2.6cqw,15px); color:#c9d4f5; margin-top:14px; max-width:92%; z-index:1;}
+.cv-foot{margin-top:20px; font-size:clamp(8px,2cqw,12px); color:#8fa4e8; letter-spacing:.05em; z-index:1;}
 .cv-foot .g{color:var(--green);}
 
-/* ---- Nav ---- */
-.nav{display:flex; align-items:center; gap:16px;}
-.nav button{width:42px; height:42px; border-radius:50%; border:1px solid #55555c; background:#2c2c31;
-  color:#e8e8ee; cursor:pointer; font-size:17px; line-height:1; transition:background .2s;}
-.nav button:hover:not(:disabled){background:#3d3d44;}
-.nav button:disabled{opacity:.35; cursor:default;}
-.nav span{font-size:12.5px; color:#c9c9d1; min-width:110px; text-align:center; letter-spacing:.04em;}
-.stage{cursor:pointer}
-@media print{ body{background:#fff} .nav{display:none} }
+/* ---- Controls (reference style: side chevrons + corner jumps) ---- */
+.side{position:absolute; top:50%; transform:translateY(-50%); z-index:30;
+  background:none; border:none; color:#c3c3cb; font-size:clamp(40px,5vw,62px); line-height:1;
+  cursor:pointer; padding:6px 12px; opacity:.8; transition:opacity .2s, color .2s; user-select:none;}
+.side:hover:not(:disabled){opacity:1; color:#fff;}
+.side:disabled{opacity:.15; cursor:default;}
+.side.prev{left:0;} .side.next{right:0;}
+.corner{position:absolute; bottom:-4px; z-index:30; background:none; border:none;
+  color:#8e8e97; font-size:20px; cursor:pointer; padding:6px 10px; opacity:.7;
+  transition:opacity .2s, color .2s; user-select:none;}
+.corner:hover:not(:disabled){opacity:1; color:#fff;}
+.corner:disabled{opacity:.15; cursor:default;}
+.corner.first{left:8px;} .corner.last{right:8px;}
+.indicator{font-size:12.5px; color:#bdbdc6; letter-spacing:.05em; user-select:none;}
+@media print{ body{background:#fff} .side,.corner,.indicator{display:none} }
 </style>
 </head>
 <body>
-<div class="stage" id="stage" title="Click the right page to flip forward, the left page to flip back">
-  <div class="book" id="book"></div>
-  <div class="endcover" id="endcover">__ENDCOVER__</div>
+<div class="viewport at-start" id="viewport">
+  <button class="side prev" id="prev" aria-label="Previous page">&#8249;</button>
+  <div class="book-wrap"><div id="book">__SHEETS__</div></div>
+  <button class="side next" id="next" aria-label="Next page">&#8250;</button>
+  <button class="corner first" id="first" aria-label="First page">&#171;</button>
+  <button class="corner last" id="last" aria-label="Last page">&#187;</button>
 </div>
-<div class="nav">
-  <button id="prev" aria-label="Previous">&#8249;</button>
-  <span id="label">Cover</span>
-  <button id="next" aria-label="Next">&#8250;</button>
-</div>
+<div class="indicator" id="indicator">Cover</div>
+<script>__PAGEFLIP_JS__</script>
 <script>
-var PAGES = __PAGES_JSON__;
-var book = document.getElementById('book');
-var leafCount = Math.ceil(PAGES.length / 2);
-// PAGES holds content only. The final step (spread === leafCount) flips every
-// content leaf away and reveals the full-stage closing cover, so the book ends
-// as a single closed cover. Page count is ODD, so the last leaf's back is blank
-// and nothing is left peeking behind the cover.
-var maxSpread = Math.max(1, leafCount);
-var spread = 0, animating = false;
+var pf = new St.PageFlip(document.getElementById('book'), {
+  width: 510, height: 715,
+  size: "stretch",
+  minWidth: 280, maxWidth: 740,
+  minHeight: 390, maxHeight: 1030,
+  showCover: true,
+  maxShadowOpacity: 0.45,
+  flippingTime: 750,
+  mobileScrollSupport: false,
+  disableFlipByClick: true
+});
+pf.loadFromHTML(document.querySelectorAll('.sheet'));
+var total = pf.getPageCount();
 
-function renderLeaves(){
-  var htmlOut = '';
-  for (var i = 0; i < leafCount; i++){
-    htmlOut += '<div class="leaf" id="leaf'+i+'">'
-      + '<div class="face front">'+(PAGES[i*2]||'')+'</div>'
-      + '<div class="face back">'+(PAGES[i*2+1]||'<div class="page"></div>')+'</div>'
-      + '</div>';
-  }
-  book.innerHTML = htmlOut;
-  paint();
+function sync(idx){
+  var atStart = idx <= 0, atEnd = idx >= total - 1;
+  var vp = document.getElementById('viewport');
+  vp.classList.toggle('at-start', atStart);
+  vp.classList.toggle('at-end', atEnd);
+  document.getElementById('prev').disabled = atStart;
+  document.getElementById('first').disabled = atStart;
+  document.getElementById('next').disabled = atEnd;
+  document.getElementById('last').disabled = atEnd;
+  document.getElementById('indicator').textContent =
+    atStart ? 'Cover' : (atEnd ? 'Back cover' : 'Page ' + idx + ' of ' + (total - 2));
 }
-// In a preserve-3d scene z-index is IGNORED — paint order follows 3D depth.
-// So we set a tiny translateZ per leaf to force the correct page to the top of
-// each pile: on the flipped (left) pile later leaves sit forward; on the
-// unflipped (right) pile earlier leaves sit forward.
-function leafTransform(i, flipped){
-  return flipped
-    ? 'rotateY(-180deg) translateZ(' + (-i * 2) + 'px)'
-    : 'rotateY(0deg) translateZ(' + ((leafCount - i) * 2) + 'px)';
-}
-function paint(){
-  for (var i = 0; i < leafCount; i++){
-    var el = document.getElementById('leaf'+i);
-    el.style.transform = leafTransform(i, i < spread);
-  }
-  var closing = spread >= maxSpread;
-  document.getElementById('endcover').classList.toggle('show', closing);
-  document.getElementById('stage').classList.toggle('closed', closing);
-  document.getElementById('prev').disabled = spread === 0;
-  document.getElementById('next').disabled = closing;
-  document.getElementById('label').textContent =
-    spread === 0 ? 'Cover' : (closing ? 'Closing cover' : 'Spread ' + spread + ' / ' + (maxSpread - 1));
-}
-function turn(dir){
-  if (animating) return;
-  var next = Math.min(Math.max(spread + dir, 0), maxSpread);
-  if (next === spread) return;
-  animating = true;
-  var moving = dir > 0 ? spread : next;
-  spread = next;
-  paint();
-  // Lift the turning leaf clear above both piles for the whole animation.
-  var el = document.getElementById('leaf'+moving);
-  el.style.transform = (moving < spread ? 'rotateY(-180deg)' : 'rotateY(0deg)') + ' translateZ(140px)';
-  setTimeout(function(){ animating = false; paint(); }, 870);
-}
-document.getElementById('prev').onclick = function(){ turn(-1); };
-document.getElementById('next').onclick = function(){ turn(1); };
-// Click ANYWHERE on the book: right half flips forward, left half back.
-document.getElementById('stage').addEventListener('click', function(e){
-  var r = this.getBoundingClientRect();
-  turn((e.clientX - r.left) > r.width / 2 ? 1 : -1);
-});
+pf.on('flip', function(e){ sync(e.data); });
+document.getElementById('prev').onclick = function(){ pf.flipPrev(); };
+document.getElementById('next').onclick = function(){ pf.flipNext(); };
+document.getElementById('first').onclick = function(){ pf.flip(0); };
+document.getElementById('last').onclick = function(){ pf.flip(total - 1); };
 document.addEventListener('keydown', function(e){
-  if (e.key === 'ArrowRight') turn(1);
-  if (e.key === 'ArrowLeft') turn(-1);
+  if (e.key === 'ArrowRight') pf.flipNext();
+  if (e.key === 'ArrowLeft') pf.flipPrev();
 });
-renderLeaves();
+// Deterministic click-to-flip: the library's own click handling is disabled
+// (disableFlipByClick) so a plain click can never double-flip after a drag.
+// A click right of the book's spine flips forward, left flips back; moves
+// larger than a few px are drags and are left to the library's page-curl.
+var downX = 0, downY = 0;
+var vp = document.getElementById('viewport');
+vp.addEventListener('mousedown', function(e){ downX = e.clientX; downY = e.clientY; });
+vp.addEventListener('click', function(e){
+  if (e.target.closest('button')) return;
+  if (Math.abs(e.clientX - downX) > 6 || Math.abs(e.clientY - downY) > 6) return;
+  var book = document.querySelector('.stf__parent') || document.getElementById('book');
+  var r = book.getBoundingClientRect();
+  if (e.clientX > r.left + r.width / 2) pf.flipNext(); else pf.flipPrev();
+});
+sync(0);
 </script>
 </body>
 </html>
@@ -301,7 +288,7 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
         '<div class="cover" style="background:radial-gradient(130% 95% at 18% 92%, #2b63ff 0%, '
         '#1246E6 34%, #0A1E7A 72%, #071246 100%)">' + badge +
         '<div class="rule" style="margin-top:auto"></div>'
-        '<h1 class="cv-title" style="font-size:clamp(20px,3.4cqw,38px)">Let&#39;s build this together.</h1>'
+        '<h1 class="cv-title" style="font-size:clamp(20px,6.8cqw,38px)">Let&#39;s build this together.</h1>'
         '<p class="cv-sub">Review the campaign, share your comments, and approve when you&#39;re ready. '
         'TASCK will take it from there.</p>'
         f'<p class="cv-foot">{contact} &nbsp;<span class="g">&bull;</span>&nbsp; {site}'
@@ -310,14 +297,14 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
     )
 
     # A clean blue "title" endpaper (inside front cover). Only inserted when
-    # parity needs it, to keep the closing page on the RIGHT of the final
-    # spread so the book never ends on an empty trailing page.
+    # parity needs it — with showCover, the front and back covers each display
+    # alone, so the inner page count must be EVEN for spreads to line up.
     endpaper = (
         '<div class="cover" style="background:linear-gradient(155deg,#0A1E7A 0%,#1246E6 60%,#2b63ff 100%)">'
         + badge +
         '<p class="kicker" style="margin-top:auto">The TASCK Agency</p>'
         '<div class="rule"></div>'
-        '<h1 class="cv-title" style="font-size:clamp(20px,3.4cqw,38px)">Creator Campaign Pitch</h1>'
+        '<h1 class="cv-title" style="font-size:clamp(20px,6.8cqw,38px)">Creator Campaign Pitch</h1>'
         f'<p class="cv-sub">Prepared for {_esc(brand_name or "your brand")} by TASCK.</p>'
         f'<p class="cv-foot">{site} &nbsp;<span class="g">&bull;</span>&nbsp; {contact}</p>'
         '</div>'
@@ -342,20 +329,24 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
             f'<span>{idx + 1} / {content_total}</span></div>'
             '</div>'
         )
-    # The closing cover is NOT a leaf page — it is a full-stage overlay shown as
-    # the final "closed book" step, so no content page ever sits beside it.
-    # Guarantee an ODD page count so the LAST leaf's back is blank: the reader
-    # turns the last content page and the book simply closes onto the cover,
-    # with nothing left visible behind it.
-    if len(pages_html) % 2 == 0:
+    pages_html.append(closing)
+    # Total must be EVEN (cover alone + inner spreads + back cover alone).
+    if len(pages_html) % 2 == 1:
         pages_html.insert(1, endpaper)
+
+    sheets = "".join(
+        '<div class="sheet"'
+        + (' data-density="hard"' if i in (0, len(pages_html) - 1) else "")
+        + f'>{page}</div>'
+        for i, page in enumerate(pages_html)
+    )
 
     return (
         _TEMPLATE
         .replace("__TITLE__", _esc(deck_title))
         .replace("__FONTS__", _font_face_css())
-        .replace("__ENDCOVER__", closing)
-        .replace("__PAGES_JSON__", json.dumps(pages_html))
+        .replace("__PAGEFLIP_JS__", _pageflip_js())
+        .replace("__SHEETS__", sheets)
     )
 
 
