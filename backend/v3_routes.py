@@ -4572,6 +4572,31 @@ def make_v3_router(db):
         )
         updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         return {"ok": True, "business_case": updated, "business_case_id": bc_id}
+
+    @router.post("/business-cases/{bc_id}/touch")
+    async def touch_business_case(bc_id: str):
+        """Record that an admin OPENED this project just now.
+
+        Called every time an admin lands on a project's flow page (edit or not),
+        so the CRM list shows the most recent visit time rather than the created
+        date. Stamps both the case and its brand (the CRM card reads the brand's
+        `last_interaction_at`). Idempotent and cheap.
+        """
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0, "brand_id": 1})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        now = _now_iso()
+        await db.v3_business_cases.update_one(
+            {"id": bc_id}, {"$set": {"last_interaction_at": now}}
+        )
+        brand_id = case.get("brand_id")
+        if brand_id:
+            await db.v3_brands.update_one(
+                {"id": brand_id},
+                {"$set": {"last_interaction_at": now, "last_interaction": "just now"}},
+            )
+        return {"ok": True, "business_case_id": bc_id, "last_interaction_at": now}
+
     class BusinessCaseValueUpdate(BaseModel):
         estimated_value: float = Field(..., ge=0)
         approved_by: Optional[str] = "admin"

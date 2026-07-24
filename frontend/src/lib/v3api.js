@@ -67,6 +67,11 @@ export const v3GetBusinessCase = (bcId, snapshotId) => v3.get(`/business-cases/$
   params: snapshotId ? { alignment_snapshot_id: snapshotId } : undefined,
 }).then(r => r.data);
 
+// Stamp "an admin opened this project just now" on the brand + case, so the
+// CRM list shows the most recent visit time (not the created date). Fire-and-
+// forget: a failure here must never block loading the project.
+export const v3TouchBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}/touch`).then(r => r.data);
+
 export const v3CreateBusinessCase = (payload) => v3.post('/business-cases', payload).then(r => r.data);
 
 export const v3AdvanceBusinessCase = (bcId, payload = { actor: 'rm' }) => v3.post(`/business-cases/${bcId}/advance`, payload).then(r => r.data);

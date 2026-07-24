@@ -142,6 +142,7 @@ import {
   v3GenerateAlignmentFromTranscripts,
   v3GenerateFinalReport,
   v3GetBusinessCase,
+  v3TouchBusinessCase,
   v3UpdateBusinessCaseValue,
   v3GetCreators,
   v3ListMeetings,
@@ -201,6 +202,13 @@ export const useBusinessCaseBundle = () => {
     setLoading(true);
     reload().catch(() => setLoading(false));
   }, [reload]);
+  // Stamp "an admin opened this project just now" ONCE per project id, so the
+  // CRM list shows the most recent visit time regardless of whether anything
+  // was edited. Fire-and-forget — never blocks or fails the page load.
+  useEffect(() => {
+    if (!id) return;
+    v3TouchBusinessCase(id).catch(() => {});
+  }, [id]);
   return { id, snapshotId, bundle, loading, reload };
 };
 
