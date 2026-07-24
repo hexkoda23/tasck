@@ -47,6 +47,35 @@ def _esc(value: Any) -> str:
     return _html.escape(str(value or ""))
 
 
+def _paragraphs(content: Any) -> List[str]:
+    """Break a section's content into readable paragraphs. Honour existing
+    newlines; if the AI wrote one long block, split it on sentence boundaries
+    every ~2 sentences so pages read with proper spacing, not a wall of text."""
+    text = str(content or "").strip()
+    if not text:
+        return []
+    chunks = [c.strip() for c in re.split(r"\n{1,}", text) if c.strip()]
+    out: List[str] = []
+    for chunk in chunks:
+        if len(chunk) <= 320:
+            out.append(chunk)
+            continue
+        sentences = re.split(r"(?<=[.!?])\s+", chunk)
+        buff: List[str] = []
+        size = 0
+        for sentence in sentences:
+            # Flush BEFORE overflowing so each paragraph stays ~1-2 sentences
+            # and the last sentence can't drag everything into one block.
+            if buff and size + len(sentence) > 260:
+                out.append(" ".join(buff))
+                buff, size = [], 0
+            buff.append(sentence)
+            size += len(sentence)
+        if buff:
+            out.append(" ".join(buff))
+    return out
+
+
 def _paginate(sections: List[Dict[str, Any]], budget: int = 1600) -> List[List[Dict[str, Any]]]:
     """Split sections across pages so each page is a comfortable read."""
     rows = [s for s in (sections or []) if isinstance(s, dict) and (s.get("heading") or s.get("content"))]
@@ -100,14 +129,15 @@ body{
 .page-head{display:flex; justify-content:space-between; gap:8px;
   font-size:clamp(7px,.95cqw,11px); letter-spacing:.06em; text-transform:uppercase;
   color:var(--muted); border-bottom:1px solid #ececf0; padding-bottom:7px;}
-.page-body{flex:1; overflow:hidden; padding-top:14px;}
-.sec{margin-bottom:15px;}
+.page-body{flex:1; overflow:hidden; padding-top:16px;}
+.sec{margin-bottom:20px;}
 .sec h2{font-family:'Century Gothic FB','Century Gothic',sans-serif; font-weight:700;
   font-size:clamp(12px,1.6cqw,19px); color:#101528; letter-spacing:.01em;}
 .sec h2::after{content:""; display:block; height:2px; margin-top:5px;
   background:linear-gradient(90deg,var(--accent) 0 38%, #e8ebf5 38% 100%);}
-.sec p{font-size:clamp(9px,1.18cqw,13.5px); line-height:1.66; color:var(--ink);
-  margin-top:7px; white-space:pre-wrap;}
+.sec p{font-size:clamp(9px,1.18cqw,13.5px); line-height:1.75; color:var(--ink);
+  margin-top:9px;}
+.sec p + p{margin-top:11px;}
 .page-foot{display:flex; justify-content:space-between; gap:8px; font-size:clamp(7px,.92cqw,10.5px);
   color:#b6bac2; border-top:1px solid #ececf0; padding-top:7px; margin-top:8px;}
 .page-foot .dot{color:var(--accent);}
@@ -143,16 +173,13 @@ body{
 .nav button:hover:not(:disabled){background:#3d3d44;}
 .nav button:disabled{opacity:.35; cursor:default;}
 .nav span{font-size:12.5px; color:#c9c9d1; min-width:110px; text-align:center; letter-spacing:.04em;}
-.hot{position:absolute; top:0; bottom:0; width:50%; z-index:600; cursor:pointer;}
-.hot.l{left:0}.hot.r{right:0}
-@media print{ body{background:#fff} .nav,.hot{display:none} }
+.stage{cursor:pointer}
+@media print{ body{background:#fff} .nav{display:none} }
 </style>
 </head>
 <body>
-<div class="stage" id="stage">
+<div class="stage" id="stage" title="Click the right page to flip forward, the left page to flip back">
   <div class="book" id="book"></div>
-  <div class="hot l" id="hotL" title="Previous page"></div>
-  <div class="hot r" id="hotR" title="Next page"></div>
 </div>
 <div class="nav">
   <button id="prev" aria-label="Previous">&#8249;</button>
@@ -187,8 +214,6 @@ function paint(){
   document.getElementById('next').disabled = spread === leafCount;
   document.getElementById('label').textContent =
     spread === 0 ? 'Cover' : (spread === leafCount ? 'Back cover' : 'Spread ' + spread + ' / ' + leafCount);
-  document.getElementById('hotL').style.display = spread === 0 ? 'none' : 'block';
-  document.getElementById('hotR').style.display = spread === leafCount ? 'none' : 'block';
 }
 function turn(dir){
   if (animating) return;
@@ -205,8 +230,11 @@ function turn(dir){
 }
 document.getElementById('prev').onclick = function(){ turn(-1); };
 document.getElementById('next').onclick = function(){ turn(1); };
-document.getElementById('hotL').onclick = function(){ turn(-1); };
-document.getElementById('hotR').onclick = function(){ turn(1); };
+// Click ANYWHERE on the book: right half flips forward, left half back.
+document.getElementById('stage').addEventListener('click', function(e){
+  var r = this.getBoundingClientRect();
+  turn((e.clientX - r.left) > r.width / 2 ? 1 : -1);
+});
 document.addEventListener('keydown', function(e){
   if (e.key === 'ArrowRight') turn(1);
   if (e.key === 'ArrowLeft') turn(-1);
@@ -258,7 +286,9 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
     pages_html: List[str] = [cover]
     for idx, sections in enumerate(content_pages):
         body = "".join(
-            f'<div class="sec"><h2>{_esc(s.get("heading"))}</h2><p>{_esc(s.get("content"))}</p></div>'
+            '<div class="sec"><h2>' + _esc(s.get("heading")) + '</h2>'
+            + "".join(f'<p>{_esc(par)}</p>' for par in _paragraphs(s.get("content")))
+            + '</div>'
             for s in sections
         )
         pages_html.append(
