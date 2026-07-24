@@ -255,6 +255,16 @@ const connectStatusUpdatedAt = (bundle) => {
   return time ? new Date(time).toISOString() : '';
 };
 
+// Pitch Deck and Creative Brief are sibling Framing steps and the admin can
+// enter either FIRST from the Creator Match Scanner. Whichever page they open
+// first shows a button to the sibling page; the sibling (second) page shows
+// "Move to Business Case" instead — no looping back. The entry order is
+// remembered per business case for the session; re-entering from the scanner
+// resets it.
+const frameEntryKey = (id) => `v1FrameEntry:${id}`;
+const setFrameEntry = (id, page) => { try { sessionStorage.setItem(frameEntryKey(id), page); } catch { /* private mode */ } };
+const getFrameEntry = (id) => { try { return sessionStorage.getItem(frameEntryKey(id)); } catch { return null; } };
+
 // Client-clarified workflow (Chioma's feedback): two distinct areas.
 //
 // CRM area: Connect + Framing.
@@ -3573,16 +3583,19 @@ export const V3BusinessCasePlanCreatorScan = () => {
       setNotice('Select at least one creator before generating briefs.');
       return;
     }
+    // Entering the Brief FIRST: the Brief page links to the Pitch Deck, and
+    // the Pitch Deck (second) page moves on to the Business Case.
+    setFrameEntry(id, 'brief');
     navigate(adminRoute(`/business-cases/${id}/frame/brief?creators=${selectedCreatorQuery(selectedIds)}`));
   };
-  // Pitch Deck and Creative Brief are siblings: admin can do either first;
-  // approving one opens the other, and when both are done the flow moves
-  // into Planning.
   const continueToPitchDeck = () => {
     if (selectedIds.length === 0) {
       setNotice('Select at least one creator before opening the Pitch Deck.');
       return;
     }
+    // Entering the Pitch Deck FIRST: the Pitch Deck page links to the Brief,
+    // and the Brief (second) page moves on to the Business Case.
+    setFrameEntry(id, 'pitch');
     navigate(adminRoute(`/business-cases/${id}/frame/pitch-deck`));
   };
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
@@ -3753,6 +3766,10 @@ export const V3BusinessCasePlanBrief = () => {
   const [templateBrief, setTemplateBrief] = useState(null);
   const [generatingBrief, setGeneratingBrief] = useState(false);
   const [briefProgress, setBriefProgress] = useState('');
+
+  // If the admin landed here without going through the scanner buttons,
+  // this page counts as the FIRST of the Pitch Deck / Brief pair.
+  useEffect(() => { if (id && !getFrameEntry(id)) setFrameEntry(id, 'brief'); }, [id]);
 
   // Adopt a brief generated earlier (persisted on the case).
   useEffect(() => {
@@ -4035,26 +4052,25 @@ export const V3BusinessCasePlanBrief = () => {
           </div>
         </div>
       )}
-      {/* Pitch Deck and Creative Brief are siblings: whichever admin does
-          first, the other opens next; when both are done the flow moves into
-          Planning. */}
+      {/* Pitch Deck and Creative Brief are siblings. The ENTRY ORDER from the
+          Creator Match Scanner decides this button: if the Brief was opened
+          first, this links to the Pitch Deck; if the Pitch Deck came first,
+          this page is the second stop and moves on to the Business Case. */}
       <InfoCard title="Next step">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <p className="text-[13px] text-[#6E6657]">
-            {pitchDeckDone
-              ? (allBriefsSent ? 'Briefs sent and Pitch Deck approved. Continue into Planning.' : 'Pitch Deck is approved. Send the creator briefs above, then continue into Planning.')
-              : (allBriefsSent ? 'All selected creator briefs have been sent. Open the Pitch Deck next — once it is approved the flow moves into Planning.' : 'Send the creator briefs above, or open the Pitch Deck first — either order works.')}
+            {(getFrameEntry(id) === 'pitch' || pitchDeckDone)
+              ? 'The Pitch Deck is done. Move this project into the Business Case planning phase.'
+              : 'Open the Pitch Deck next — once both are done the flow moves into the Business Case planning phase.'}
           </p>
-          {/* ONE green button. If the Pitch Deck still needs doing it opens
-              that; once the Pitch Deck is done it becomes the Planning CTA. */}
           <div className="flex flex-wrap gap-2">
-            {pitchDeckDone ? (
+            {(getFrameEntry(id) === 'pitch' || pitchDeckDone) ? (
               <button
                 onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))}
                 className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
                 data-testid="brief-open-planning-btn"
               >
-                <ArrowRight className="w-3.5 h-3.5" /> Open business case planning phase
+                <ArrowRight className="w-3.5 h-3.5" /> Move to Business Case
               </button>
             ) : (
               <button
@@ -4110,9 +4126,13 @@ export const V3BusinessCasePitchDeck = () => {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [sendPopup, setSendPopup] = useState(null);
   const brandEmail = brand?.email || brand?.contact_email || '';
-  // The Creative Brief is "done" once at least one brief was sent - that is
-  // what decides whether approval here continues to the Brief page or Planning.
+  // The Creative Brief is "done" once at least one brief was sent.
   const briefDone = Boolean(bc?.plan?.creative_brief_id);
+  // Entry order decides this page's next step: if the Brief was opened FIRST
+  // (from the scanner or directly), this page is the second stop and moves on
+  // to the Business Case; otherwise it links to the Brief.
+  useEffect(() => { if (id && !getFrameEntry(id)) setFrameEntry(id, 'pitch'); }, [id]);
+  const briefWasFirst = getFrameEntry(id) === 'brief' || briefDone;
 
   useEffect(() => {
     const persisted = bundle?.pitch_deck;
@@ -4217,9 +4237,9 @@ export const V3BusinessCasePitchDeck = () => {
       await persist();
       await v3ApprovePitchDeckAs(id, 'admin', 'admin');
       await reload();
-      const nextLabel = briefDone ? 'Planning' : 'the Creative Brief';
+      const nextLabel = briefWasFirst ? 'the Business Case' : 'the Creative Brief';
       setSendPopup({ title: 'Approved', message: `Pitch Deck approved. Opening ${nextLabel}…`, tone: 'success' });
-      window.setTimeout(() => navigate(adminRoute(briefDone
+      window.setTimeout(() => navigate(adminRoute(briefWasFirst
         ? `/business-cases/${id}/plan/planning`
         : `/business-cases/${id}/frame/brief`)), 600);
     } catch (e) {
@@ -4344,23 +4364,23 @@ export const V3BusinessCasePitchDeck = () => {
         </InfoCard>
       )}
 
-      {/* ONE green button, mirroring the Creative Brief page. If the brief
-          still needs doing it opens that; once it is done this becomes the
-          Planning CTA. */}
+      {/* Entry order decides this button (mirrors the Creative Brief page):
+          if the Brief was opened first, this page is the second stop and moves
+          the project to the Business Case; otherwise it opens the Brief. */}
       <InfoCard title="Next step">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <p className="text-[13px] text-[#6E6657]">
-            {briefDone
-              ? 'The Creative Brief is done. Continue into the Business Case planning phase.'
-              : 'Open the Creator Brief next — once both are done the flow moves into the Business Case planning phase.'}
+            {briefWasFirst
+              ? 'The Creative Brief is done. Move this project into the Business Case planning phase.'
+              : 'Open the Creative Brief next — once both are done the flow moves into the Business Case planning phase.'}
           </p>
-          {briefDone ? (
+          {briefWasFirst ? (
             <button
               onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/planning`))}
               className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
               data-testid="pitch-open-planning-btn"
             >
-              <ArrowRight className="w-3.5 h-3.5" /> Open business case planning phase
+              <ArrowRight className="w-3.5 h-3.5" /> Move to Business Case
             </button>
           ) : (
             <button
@@ -4368,7 +4388,7 @@ export const V3BusinessCasePitchDeck = () => {
               className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
               data-testid="pitch-open-brief-btn"
             >
-              <FileText className="w-3.5 h-3.5" /> Open Creator Brief
+              <FileText className="w-3.5 h-3.5" /> Open Creative Brief
             </button>
           )}
         </div>
