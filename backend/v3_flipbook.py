@@ -124,6 +124,15 @@ body{
 .face.front{border-radius:2px 8px 8px 2px; box-shadow:inset 10px 0 22px -14px rgba(0,0,0,.35);}
 .face.back{transform:rotateY(180deg); border-radius:8px 2px 2px 8px; box-shadow:inset -10px 0 22px -14px rgba(0,0,0,.35);}
 
+/* Full-stage closing cover: the book's final "closed" page. Hidden until the
+   reader turns the last content page, then it covers the whole stage as a
+   single closing cover (no content beside it). */
+.endcover{position:absolute; inset:0; border-radius:3px 12px 12px 3px; overflow:hidden;
+  opacity:0; pointer-events:none; transition:opacity .5s ease;
+  box-shadow:0 34px 80px rgba(0,0,0,.55);}
+.endcover.show{opacity:1; pointer-events:auto;}
+.endcover .cover{position:absolute; inset:0;}
+
 /* ---- Paper page ---- */
 .page{position:absolute; inset:0; display:flex; flex-direction:column; padding:5.4% 7% 4.2%;}
 .page-head{display:flex; justify-content:space-between; gap:8px;
@@ -180,6 +189,7 @@ body{
 <body>
 <div class="stage" id="stage" title="Click the right page to flip forward, the left page to flip back">
   <div class="book" id="book"></div>
+  <div class="endcover" id="endcover">__ENDCOVER__</div>
 </div>
 <div class="nav">
   <button id="prev" aria-label="Previous">&#8249;</button>
@@ -190,11 +200,11 @@ body{
 var PAGES = __PAGES_JSON__;
 var book = document.getElementById('book');
 var leafCount = Math.ceil(PAGES.length / 2);
-// Page count is guaranteed ODD, so the last leaf has an empty back. Cap the
-// max spread at leafCount-1 so that empty back (which would reveal the dark
-// spine backing) is never reachable - the book ends showing the closing page
-// on the RIGHT of the final spread.
-var maxSpread = Math.max(1, (PAGES.length % 2 === 1) ? leafCount - 1 : leafCount);
+// PAGES holds content only. The final step (spread === leafCount) flips every
+// content leaf away and reveals the full-stage closing cover, so the book ends
+// as a single closed cover. Page count is ODD, so the last leaf's back is blank
+// and nothing is left peeking behind the cover.
+var maxSpread = Math.max(1, leafCount);
 var spread = 0, animating = false;
 
 function renderLeaves(){
@@ -222,10 +232,12 @@ function paint(){
     var el = document.getElementById('leaf'+i);
     el.style.transform = leafTransform(i, i < spread);
   }
+  var closing = spread >= maxSpread;
+  document.getElementById('endcover').classList.toggle('show', closing);
   document.getElementById('prev').disabled = spread === 0;
-  document.getElementById('next').disabled = spread >= maxSpread;
+  document.getElementById('next').disabled = closing;
   document.getElementById('label').textContent =
-    spread === 0 ? 'Cover' : (spread >= maxSpread ? 'Final page' : 'Spread ' + spread + ' / ' + maxSpread);
+    spread === 0 ? 'Cover' : (closing ? 'Closing cover' : 'Spread ' + spread + ' / ' + (maxSpread - 1));
 }
 function turn(dir){
   if (animating) return;
@@ -326,10 +338,11 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
             f'<span>{idx + 1} / {content_total}</span></div>'
             '</div>'
         )
-    pages_html.append(closing)
-    # Guarantee an ODD page count so the last page (closing) sits on the RIGHT
-    # of the final spread. When even, add the title endpaper after the cover
-    # (an intentional inside-cover, not a trailing blank).
+    # The closing cover is NOT a leaf page — it is a full-stage overlay shown as
+    # the final "closed book" step, so no content page ever sits beside it.
+    # Guarantee an ODD page count so the LAST leaf's back is blank: the reader
+    # turns the last content page and the book simply closes onto the cover,
+    # with nothing left visible behind it.
     if len(pages_html) % 2 == 0:
         pages_html.insert(1, endpaper)
 
@@ -337,6 +350,7 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
         _TEMPLATE
         .replace("__TITLE__", _esc(deck_title))
         .replace("__FONTS__", _font_face_css())
+        .replace("__ENDCOVER__", closing)
         .replace("__PAGES_JSON__", json.dumps(pages_html))
     )
 
