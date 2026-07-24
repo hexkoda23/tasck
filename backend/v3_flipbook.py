@@ -190,6 +190,11 @@ body{
 var PAGES = __PAGES_JSON__;
 var book = document.getElementById('book');
 var leafCount = Math.ceil(PAGES.length / 2);
+// Page count is guaranteed ODD, so the last leaf has an empty back. Cap the
+// max spread at leafCount-1 so that empty back (which would reveal the dark
+// spine backing) is never reachable - the book ends showing the closing page
+// on the RIGHT of the final spread.
+var maxSpread = Math.max(1, (PAGES.length % 2 === 1) ? leafCount - 1 : leafCount);
 var spread = 0, animating = false;
 
 function renderLeaves(){
@@ -203,29 +208,36 @@ function renderLeaves(){
   book.innerHTML = htmlOut;
   paint();
 }
+// In a preserve-3d scene z-index is IGNORED — paint order follows 3D depth.
+// So we set a tiny translateZ per leaf to force the correct page to the top of
+// each pile: on the flipped (left) pile later leaves sit forward; on the
+// unflipped (right) pile earlier leaves sit forward.
+function leafTransform(i, flipped){
+  return flipped
+    ? 'rotateY(-180deg) translateZ(' + (-i * 2) + 'px)'
+    : 'rotateY(0deg) translateZ(' + ((leafCount - i) * 2) + 'px)';
+}
 function paint(){
   for (var i = 0; i < leafCount; i++){
     var el = document.getElementById('leaf'+i);
-    var flipped = i < spread;
-    el.style.transform = flipped ? 'rotateY(-180deg)' : 'rotateY(0deg)';
-    el.style.zIndex = flipped ? i : (leafCount - i) + 10;
+    el.style.transform = leafTransform(i, i < spread);
   }
   document.getElementById('prev').disabled = spread === 0;
-  document.getElementById('next').disabled = spread === leafCount;
+  document.getElementById('next').disabled = spread >= maxSpread;
   document.getElementById('label').textContent =
-    spread === 0 ? 'Cover' : (spread === leafCount ? 'Back cover' : 'Spread ' + spread + ' / ' + leafCount);
+    spread === 0 ? 'Cover' : (spread >= maxSpread ? 'Final page' : 'Spread ' + spread + ' / ' + maxSpread);
 }
 function turn(dir){
   if (animating) return;
-  var next = Math.min(Math.max(spread + dir, 0), leafCount);
+  var next = Math.min(Math.max(spread + dir, 0), maxSpread);
   if (next === spread) return;
   animating = true;
   var moving = dir > 0 ? spread : next;
-  var el = document.getElementById('leaf'+moving);
-  el.style.zIndex = 999;
   spread = next;
   paint();
-  el.style.zIndex = 999;
+  // Lift the turning leaf clear above both piles for the whole animation.
+  var el = document.getElementById('leaf'+moving);
+  el.style.transform = (moving < spread ? 'rotateY(-180deg)' : 'rotateY(0deg)') + ' translateZ(140px)';
   setTimeout(function(){ animating = false; paint(); }, 870);
 }
 document.getElementById('prev').onclick = function(){ turn(-1); };
@@ -281,8 +293,22 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
         '</div>'
     )
 
+    # A clean blue "title" endpaper (inside front cover). Only inserted when
+    # parity needs it, to keep the closing page on the RIGHT of the final
+    # spread so the book never ends on an empty trailing page.
+    endpaper = (
+        '<div class="cover" style="background:linear-gradient(155deg,#0A1E7A 0%,#1246E6 60%,#2b63ff 100%)">'
+        + badge +
+        '<p class="kicker" style="margin-top:auto">The TASCK Agency</p>'
+        '<div class="rule"></div>'
+        '<h1 class="cv-title" style="font-size:clamp(20px,3.4cqw,38px)">Creator Campaign Pitch</h1>'
+        f'<p class="cv-sub">Prepared for {_esc(brand_name or "your brand")} by TASCK.</p>'
+        f'<p class="cv-foot">{site} &nbsp;<span class="g">&bull;</span>&nbsp; {contact}</p>'
+        '</div>'
+    )
+
     content_pages = _paginate(deck.get("sections") or [])
-    page_count = len(content_pages) + 2
+    content_total = len(content_pages)
     pages_html: List[str] = [cover]
     for idx, sections in enumerate(content_pages):
         body = "".join(
@@ -297,12 +323,15 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
             f'<span>{_esc(brand_name)}</span></div>'
             f'<div class="page-body">{body}</div>'
             f'<div class="page-foot"><span>{site} <span class="dot">&bull;</span> {contact}</span>'
-            f'<span>{idx + 2} / {page_count}</span></div>'
+            f'<span>{idx + 1} / {content_total}</span></div>'
             '</div>'
         )
     pages_html.append(closing)
-    if len(pages_html) % 2 != 0:
-        pages_html.append('<div class="page"></div>')
+    # Guarantee an ODD page count so the last page (closing) sits on the RIGHT
+    # of the final spread. When even, add the title endpaper after the cover
+    # (an intentional inside-cover, not a trailing blank).
+    if len(pages_html) % 2 == 0:
+        pages_html.insert(1, endpaper)
 
     return (
         _TEMPLATE
