@@ -143,7 +143,7 @@ body{
 .nav button:hover:not(:disabled){background:#3d3d44;}
 .nav button:disabled{opacity:.35; cursor:default;}
 .nav span{font-size:12.5px; color:#c9c9d1; min-width:110px; text-align:center; letter-spacing:.04em;}
-.hot{position:absolute; top:0; bottom:0; width:18%; z-index:600; cursor:pointer;}
+.hot{position:absolute; top:0; bottom:0; width:50%; z-index:600; cursor:pointer;}
 .hot.l{left:0}.hot.r{right:0}
 @media print{ body{background:#fff} .nav,.hot{display:none} }
 </style>
