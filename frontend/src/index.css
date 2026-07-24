@@ -1593,3 +1593,13 @@ div:has(> a[href*="utm_source=emergent"]) {
 .v3-dark .brand-comment-card .bc-strip span[class*="bg-\[\#F3E2C0\]"] {
   background: #4a3a18 !important; color: #f2c979 !important;
 }
+
+/* Brand comment cards: self-contained dark-mode styling so the global
+   contrast sweep can't turn them cream-on-cream / white-on-white again. */
+.v3-dark .brand-comment-card { background: #26241f !important; border-color: #4a4230 !important; }
+.v3-dark .brand-comment-card .bc-strip { background: #302a1e !important; border-color: #4a4230 !important; }
+.v3-dark .brand-comment-card .bc-strip span { color: #E5C578 !important; }
+.v3-dark .brand-comment-card .bc-body p { color: #F4EFE6 !important; }
+.v3-dark .brand-comment-card .bc-body p:first-child { color: #CBB877 !important; }
+.v3-dark .brand-comment-card .bc-foot { background: #232119 !important; border-color: #4a4230 !important; color: #B8AE99 !important; }
+.v3-dark .brand-comment-card .bc-foot strong { color: #E5C578 !important; }

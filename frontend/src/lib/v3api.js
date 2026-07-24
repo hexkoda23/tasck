@@ -358,6 +358,9 @@ export const v3ApprovePitchDeckAs = (bcId, approver, approver_party = 'admin') =
 export const v3SendPitchDeckToBrand = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/pitch-deck/send`, payload).then(r => r.data);
 export const v3AddPitchDeckComment = (deckId, payload) => v3.post(`/pitch-decks/${deckId}/comments`, payload).then(r => r.data);
 export const v3PitchDeckDocxUrl = (deckId) => `${V3}/pitch-decks/${deckId}/docx`;
+// Standalone flip-book HTML (fonts embedded, works offline). Inline for
+// preview; ?download=1 saves the file so admin can send it to clients.
+export const v3PitchDeckFlipbookUrl = (deckId, download = false) => `${V3}/pitch-decks/${deckId}/flipbook${download ? '?download=1' : ''}`;
 
 // --- Alignment snapshot priority (brand ranks; admin can override) --------
 export const v3ListPriorityOptions = () => v3.get('/priority-options').then(r => r.data);

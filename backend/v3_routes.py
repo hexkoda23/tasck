@@ -7700,6 +7700,23 @@ def make_v3_router(db):
         await db.v3_pitch_decks.update_one({"id": deck_id}, {"$push": {"brand_comments": comment}})
         return {"ok": True, "comment": comment}
 
+    @router.get("/pitch-decks/{deck_id}/flipbook")
+    async def pitch_deck_flipbook(deck_id: str, download: int = 0):
+        """The Pitch Deck as a standalone TASCK-blue flip book (single HTML
+        file, fonts embedded - works offline). Serves inline for Preview;
+        ?download=1 downloads the same file so admin can send it to clients."""
+        from v3_flipbook import pitch_deck_flipbook_html, flipbook_filename
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0}) or {}
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        html_out = pitch_deck_flipbook_html(deck, brand)
+        headers = {}
+        if download:
+            headers["Content-Disposition"] = f'attachment; filename="{flipbook_filename(deck)}"'
+        return StreamingResponse(BytesIO(html_out.encode("utf-8")), media_type="text/html; charset=utf-8", headers=headers)
+
     @router.get("/pitch-decks/{deck_id}/docx")
     async def download_pitch_deck_docx(deck_id: str):
         deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})

@@ -118,6 +118,7 @@ import {
   v3ApprovePitchDeckAs,
   v3SendPitchDeckToBrand,
   v3PitchDeckDocxUrl,
+  v3PitchDeckFlipbookUrl,
   v3GenerateCreativeBrief,
   v3StrategySnapshotDocxUrl,
   v3ContractDocxUrl,
@@ -4245,26 +4246,18 @@ export const V3BusinessCasePitchDeck = () => {
     }
   };
 
+  // Preview + download both use the server-rendered flip book: one source of
+  // truth, TASCK-blue design, and the brand fonts are EMBEDDED in the file so
+  // it looks identical when a client opens it offline.
   const openPreview = () => {
-    if (!deck) return;
-    setPreviewOpen(true);
+    if (!deck?.id) return;
+    window.open(v3PitchDeckFlipbookUrl(deck.id), '_blank', 'noopener,noreferrer');
   };
 
   const downloadFlipbook = () => {
-    if (!deck) return;
-    const brand = bundle?.brand?.company || bundle?.brand?.name || '';
-    const html = buildFlipbookHtml(deck, brand);
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const safe = (deck.title || 'pitch-deck').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'pitch-deck';
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${safe}-flipbook.html`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    toast.success('Flipbook downloaded as a self-contained HTML file.');
+    if (!deck?.id) return;
+    window.open(v3PitchDeckFlipbookUrl(deck.id, true), '_blank', 'noopener,noreferrer');
+    toast.success('Flip book downloading - a single HTML file you can send to the client.');
   };
 
   const deckComments = Array.isArray(deck?.brand_comments) ? deck.brand_comments : [];
