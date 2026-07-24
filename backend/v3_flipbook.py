@@ -124,14 +124,17 @@ body{
 .face.front{border-radius:2px 8px 8px 2px; box-shadow:inset 10px 0 22px -14px rgba(0,0,0,.35);}
 .face.back{transform:rotateY(180deg); border-radius:8px 2px 2px 8px; box-shadow:inset -10px 0 22px -14px rgba(0,0,0,.35);}
 
-/* Full-stage closing cover: the book's final "closed" page. Hidden until the
-   reader turns the last content page, then it covers the whole stage as a
-   single closing cover (no content beside it). */
-.endcover{position:absolute; inset:0; border-radius:3px 12px 12px 3px; overflow:hidden;
+/* Closing cover: single-page width on the RIGHT half — same size and side as
+   the opening cover, so the book ends exactly the way it starts: one closed
+   cover. The book itself fades out underneath so no pages peek beside it. */
+.endcover{position:absolute; top:0; bottom:0; left:50%; width:50%;
+  border-radius:3px 12px 12px 3px; overflow:hidden;
   opacity:0; pointer-events:none; transition:opacity .5s ease;
   box-shadow:0 34px 80px rgba(0,0,0,.55);}
 .endcover.show{opacity:1; pointer-events:auto;}
 .endcover .cover{position:absolute; inset:0;}
+.book{transition:opacity .5s ease;}
+.stage.closed .book{opacity:0;}
 
 /* ---- Paper page ---- */
 .page{position:absolute; inset:0; display:flex; flex-direction:column; padding:5.4% 7% 4.2%;}
@@ -234,6 +237,7 @@ function paint(){
   }
   var closing = spread >= maxSpread;
   document.getElementById('endcover').classList.toggle('show', closing);
+  document.getElementById('stage').classList.toggle('closed', closing);
   document.getElementById('prev').disabled = spread === 0;
   document.getElementById('next').disabled = closing;
   document.getElementById('label').textContent =
