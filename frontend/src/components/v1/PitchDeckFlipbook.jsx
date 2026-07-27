@@ -1,5 +1,35 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { v3PitchDeckFlipbookUrl } from '../../lib/v3api';
+
+// Brand-facing Pitch Deck viewer that embeds the EXACT same server-rendered
+// flip book the admin previews (TASCK-blue cover, real page-curl, embedded
+// fonts + logo). Using the shared endpoint guarantees the brand sees a
+// pixel-identical deck — no separate renderer to drift out of sync.
+export const PitchDeckFlipbookEmbed = ({ deckId }) => {
+  if (!deckId) {
+    return (
+      <div className="v3-card p-6 text-[13px] text-[#6B6258]" data-testid="pitch-deck-flipbook-empty">
+        The Pitch Deck is being prepared. Check back shortly.
+      </div>
+    );
+  }
+  const url = v3PitchDeckFlipbookUrl(deckId);
+  return (
+    <div className="v3-card overflow-hidden" style={{ padding: 0 }} data-testid="pitch-deck-flipbook-embed">
+      <iframe
+        title="TASCK Pitch Deck"
+        src={url}
+        loading="lazy"
+        style={{ width: '100%', height: '80vh', minHeight: 560, border: 'none', display: 'block', background: '#3b3b40' }}
+      />
+      <div className="flex justify-end gap-2 border-t border-[#EEE7D6] bg-[#FBFAF7] px-4 py-2.5">
+        <a href={url} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]">Open full screen</a>
+        <a href={v3PitchDeckFlipbookUrl(deckId, true)} target="_blank" rel="noreferrer" className="v3-btn-primary text-[12px]">Download</a>
+      </div>
+    </div>
+  );
+};
 
 // Brand-facing Pitch Deck viewer rendered as a paper flip book: a
 // TASCK-branded cover, then deck sections paginated across real paper pages

@@ -16,6 +16,9 @@ from typing import Any, Dict, List, Optional
 _STATIC = Path(__file__).resolve().parent / "static"
 _FONT_DIR = _STATIC / "alignment_template" / "fonts"
 _PAGEFLIP_JS = _STATIC / "pageflip" / "page-flip.browser.js"
+# Square crop of the disc from tasck_logo.png (the source art is a wide banner
+# with the disc offset to the right, so it can't be used square as-is).
+_LOGO_FILE = _STATIC / "alignment_template" / "tasck_logo_mark.png"
 
 _FONT_FILES = {
     "bebas": "BebasNeue-regular.ttf",
@@ -48,6 +51,15 @@ def _pageflip_js() -> str:
     """Inline the StPageFlip engine (MIT) so the file works fully offline."""
     try:
         return _PAGEFLIP_JS.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _logo_data_uri() -> str:
+    """Base64-embed the real TASCK logo so the file renders it offline."""
+    try:
+        b64 = base64.b64encode(_LOGO_FILE.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{b64}"
     except OSError:
         return ""
 
@@ -161,12 +173,12 @@ body{
   border:1px solid rgba(255,255,255,.14); border-radius:50%;}
 .cover::before{content:""; position:absolute; left:-12%; bottom:-30%; width:58%; height:64%;
   border:1px solid rgba(70,224,138,.25); border-radius:50%;}
-.badge{width:clamp(50px,14cqw,84px); height:clamp(50px,14cqw,84px); border-radius:50%; background:#fff;
-  color:var(--blue); display:flex; flex-direction:column; align-items:center; justify-content:center;
-  line-height:1.02; box-shadow:0 10px 30px rgba(4,14,60,.5); z-index:1;}
-.badge b{font-family:'Bebas Neue FB','Bebas Neue',sans-serif; font-weight:400;
-  font-size:clamp(9px,2.5cqw,15px); letter-spacing:.08em;}
-.badge b .g{color:#0eb864;}
+/* The real TASCK logo (blue disc) on a white coin so it stays crisp and
+   visible on the blue covers. On the white content pages it reads clean too. */
+.badge{width:clamp(54px,15cqw,92px); height:clamp(54px,15cqw,92px); border-radius:50%; background:#fff;
+  display:flex; align-items:center; justify-content:center; padding:9%;
+  box-shadow:0 10px 30px rgba(4,14,60,.5); z-index:1;}
+.badge img{width:100%; height:100%; object-fit:contain; display:block;}
 .kicker{margin-top:auto; font-size:clamp(8px,2.1cqw,12px); letter-spacing:.3em;
   text-transform:uppercase; color:#9db6ff; z-index:1;}
 .rule{width:56px; height:3px; background:var(--green); margin:14px 0 0; z-index:1;}
@@ -269,7 +281,12 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
     contact = "hitusup@thetasck.com"
     site = "tasck.org"
 
-    badge = ('<div class="badge"><b>THE</b><b>TASCK</b><b><span class="g">A</span>GENCY.</b></div>')
+    logo_uri = _logo_data_uri()
+    badge = (
+        f'<div class="badge"><img src="{logo_uri}" alt="The TASCK Agency" /></div>'
+        if logo_uri else
+        '<div class="badge"></div>'
+    )
 
     cover = (
         '<div class="cover">' + badge +
