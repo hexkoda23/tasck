@@ -3776,6 +3776,10 @@ export const V3BusinessCasePlanBrief = () => {
   const [generatingBrief, setGeneratingBrief] = useState(false);
   const [briefProgress, setBriefProgress] = useState('');
 
+  // Brand contact (used to pre-fill the Creative Brief "Send to brand" email).
+  const brand = getBrand(bundle);
+  const brandEmail = brand?.email || brand?.contact_email || brand?.primary_contact_email || '';
+
   // If the admin landed here without going through the scanner buttons,
   // this page counts as the FIRST of the Pitch Deck / Brief pair.
   useEffect(() => { if (id && !getFrameEntry(id)) setFrameEntry(id, 'brief'); }, [id]);
@@ -3805,18 +3809,17 @@ export const V3BusinessCasePlanBrief = () => {
   // Top-level "Send to brand" card (mirrors the Pitch Deck page): admin can
   // type or change the recipient email, then email the Creative Brief (.docx)
   // to that creator/brand address. Reuses the component's existing sendPopup.
-  const [recipientEmail, setRecipientEmail] = useState(brand?.email || brand?.contact_email || '');
+  const [recipientEmail, setRecipientEmail] = useState(brandEmail);
   useEffect(() => {
-    const email = brand?.email || brand?.contact_email || '';
-    if (email) setRecipientEmail(email);
-  }, [brand?.email, brand?.contact_email]);
+    if (brandEmail) setRecipientEmail(brandEmail);
+  }, [brandEmail]);
 
   const sendCreativeBriefToEmail = async () => {
     if (!templateBrief) {
       setSendPopup({ title: 'Generate first', message: 'Generate the Creative Brief before sending it.', tone: 'warning' });
       return;
     }
-    const recipient = recipientEmail.trim() || brand?.email || brand?.contact_email || '';
+    const recipient = recipientEmail.trim() || brandEmail;
     if (!recipient) {
       setSendPopup({ title: 'Add an email', message: 'Enter a recipient email to send the Creative Brief to.', tone: 'warning' });
       return;
