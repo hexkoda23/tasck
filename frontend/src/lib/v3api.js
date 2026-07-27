@@ -109,6 +109,9 @@ export const v3CreateBrief = (payload) => v3.post('/creative-briefs', payload).t
 export const v3ListBriefs = (params) => v3.get('/creative-briefs', { params }).then(r => r.data);
 export const v3SimulateBriefResponse = (briefId) => v3.post(`/creative-briefs/${briefId}/simulate-response`).then(r => r.data);
 export const v3SendBriefReminder = (briefId) => v3.post(`/creative-briefs/${briefId}/remind`).then(r => r.data);
+// Email the brand-tailored Creative Brief (.docx) to an arbitrary recipient
+// email typed by the admin on the Creative Brief Studio "Send to brand" card.
+export const v3SendCreativeBriefToEmail = (bcId, payload) => v3.post(`/business-cases/${bcId}/creative-brief/send`, payload).then(r => r.data);
 export const v3ListSnapshots = (bcId) => v3.get('/creative-snapshots', { params: { business_case_id: bcId } }).then(r => r.data);
 export const v3CreateSnapshot = (payload) => v3.post('/creative-snapshots', payload).then(r => r.data);
 export const v3ApproveSnapshot = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/creative-snapshot/approve`, { approver, approver_party }).then(r => r.data);

@@ -7850,6 +7850,56 @@ def make_v3_router(db):
         )
         return doc
 
+    @router.post("/business-cases/{bc_id}/creative-brief/send")
+    async def send_creative_brief_to_email(
+        bc_id: str,
+        payload: Dict[str, Any] = Body(default={}),
+    ):
+        """Email the brand-tailored Creative Brief (.docx) to an arbitrary
+        recipient email (the admin types/changes it on the Creative Brief
+        Studio page). Mirrors the Pitch Deck 'Send to brand' flow but lets
+        the admin target any creator email, not just a pre-selected creator."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        recipient = str(payload.get("recipient_email") or "").strip()
+        if not recipient:
+            raise HTTPException(400, "recipient_email is required")
+        subject = str(payload.get("subject") or f"Creative Brief - {case.get('title') or 'Creative Brief'}").strip()
+        brief_text = str(payload.get("brief_text") or "").strip()
+        if not brief_text:
+            raise HTTPException(400, "brief_text is required — generate the Creative Brief first")
+        docx_bytes = creative_brief_docx_bytes(
+            creative_brief_from_raw_text(subject, brief_text, creator_name="")
+        )
+        email = await queue_email(
+            to=recipient,
+            subject=subject,
+            body=(
+                f"Hello,\n\n"
+                f"Please find the TASCK Creative Alignment Brief attached for {case.get('title') or 'your project'}.\n\n"
+                "Review the scope, fee, availability, and working assumptions, then reply to confirm.\n\n"
+                "TASCK will take it from there.\n"
+            ),
+            kind="creative_brief",
+            brand_id=case.get("brand_id"),
+            business_case_id=bc_id,
+            attachments=[{
+                "type": "google_docs_compatible_creative_brief",
+                "title": subject,
+                "filename": f"{case.get('title') or 'Creative_Brief'}-creative-brief.docx",
+                "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "content": docx_bytes,
+            }],
+        )
+        return {
+            "ok": True,
+            "to": recipient,
+            "subject": subject,
+            "email": email,
+        }
+
     @router.post("/creative-briefs/{brief_id}/remind")
     async def remind_creator(brief_id: str):
         brief = await db.v3_creative_briefs.find_one({"id": brief_id}, {"_id": 0})

@@ -125,6 +125,7 @@ import {
   v3FinalReportPdfUrl,
   v3FeedbackPdfUrl,
   v3CreateBrief,
+  v3SendCreativeBriefToEmail,
   v3CreateContract,
   v3UpdateContract,
   v3SendContractEmail,
@@ -3800,6 +3801,47 @@ export const V3BusinessCasePlanBrief = () => {
       setBriefProgress('');
     }
   };
+
+  // Top-level "Send to brand" card (mirrors the Pitch Deck page): admin can
+  // type or change the recipient email, then email the Creative Brief (.docx)
+  // to that creator/brand address. Reuses the component's existing sendPopup.
+  const [recipientEmail, setRecipientEmail] = useState(brand?.email || brand?.contact_email || '');
+  useEffect(() => {
+    const email = brand?.email || brand?.contact_email || '';
+    if (email) setRecipientEmail(email);
+  }, [brand?.email, brand?.contact_email]);
+
+  const sendCreativeBriefToEmail = async () => {
+    if (!templateBrief) {
+      setSendPopup({ title: 'Generate first', message: 'Generate the Creative Brief before sending it.', tone: 'warning' });
+      return;
+    }
+    const recipient = recipientEmail.trim() || brand?.email || brand?.contact_email || '';
+    if (!recipient) {
+      setSendPopup({ title: 'Add an email', message: 'Enter a recipient email to send the Creative Brief to.', tone: 'warning' });
+      return;
+    }
+    const subject = templateBrief?.title || `Creative Brief - ${getCase(bundle).title || 'Creative Brief'}`;
+    const briefText = (templateBrief?.sections || [])
+      .map((s) => `${s.heading || ''}\n${(s.lines || []).map((l) => `${l.label || ''}: ${l.value || ''}`).join('\n')}\n${(s.checkboxes || []).map((c) => `☐ ${c}`).join('  ')}\n${s.intro || ''}\n${s.primary_label || ''} ${s.primary_value || ''}\n${(s.assumptions || []).join('\n')}\n${s.note || ''}`)
+      .join('\n\n');
+    setSendPopup({ title: 'Sending', message: `Sending the Creative Brief to ${recipient}…`, tone: 'pending' });
+    try {
+      const result = await v3SendCreativeBriefToEmail(id, {
+        recipient_email: recipient,
+        subject,
+        brief_text: briefText,
+      });
+      const status = result?.email?.status || 'queued';
+      if (status === 'sent') {
+        setSendPopup({ title: 'Sent', message: `Creative Brief sent to ${result?.to || recipient} with the formatted document attached.`, tone: 'success' });
+      } else {
+        setSendPopup({ title: status === 'delivery_failed' ? 'Email not delivered' : 'Email queued', message: result?.email?.delivery_error || `Creative Brief queued for ${recipient}.`, tone: 'warning' });
+      }
+    } catch (e) {
+      setSendPopup({ title: 'Email not sent', message: e?.response?.data?.detail || e?.message || 'Could not send the Creative Brief. Generate it first.', tone: 'warning' });
+    }
+  };
   useEffect(() => {
     const ids = (new URLSearchParams(location.search).get('creators') || '').split(',').map((value) => value.trim()).filter(Boolean);
     if (ids.length) setSelectedIds(ids);
@@ -4004,6 +4046,24 @@ export const V3BusinessCasePlanBrief = () => {
           </TtaLetterhead>
         )}
       </InfoCard>
+      {templateBrief && (
+        <InfoCard title="Send to brand">
+          <p className="text-[12px] text-[#6E6657] mb-2">
+            Emails the formatted Creative Brief (TASCK-branded .docx attached) and makes it reviewable in the creator portal.
+            The creator can review, comment, and confirm it from their portal.
+          </p>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center">
+            <input
+              value={recipientEmail}
+              onChange={(e) => setRecipientEmail(e.target.value)}
+              placeholder="creator@email.com"
+              className="flex-1 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"
+              data-testid="brief-recipient-input"
+            />
+            <button onClick={sendCreativeBriefToEmail} className="v3-btn-primary text-[12px]" data-testid="brief-send-btn"><Send className="w-3.5 h-3.5" /> Send Creative Brief</button>
+          </div>
+        </InfoCard>
+      )}
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Selected creator briefs" action={<button onClick={generateAll} className="v3-btn-primary" data-testid="brief-generate-all-btn"><Sparkles className="w-3.5 h-3.5" /> Generate AI briefs</button>}>
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end">
