@@ -3768,6 +3768,7 @@ export const V3BusinessCasePlanBrief = () => {
   const [selectedIds, setSelectedIds] = useState([]);
   const [manualCreatorId, setManualCreatorId] = useState('');
   const [briefs, setBriefs] = useState({});
+  const [briefEmails, setBriefEmails] = useState({});
   const [sentBriefs, setSentBriefs] = useState({});
   const [sendPopup, setSendPopup] = useState(null);
   const [notice, setNotice] = useState('');
@@ -3903,23 +3904,25 @@ export const V3BusinessCasePlanBrief = () => {
     setNotice('AI generated a draft brief for every selected creator.');
   };
   const send = async (creator) => {
+    const overrideEmail = (briefEmails[creator.id] || '').trim();
+    const recipient = overrideEmail || creatorContact(creator) || creatorName(creator);
     setNotice(`Sending creative brief to ${creatorName(creator)}...`);
-    setSendPopup({ title: 'Sending', message: `Sending creative brief to ${creatorContact(creator) || creatorName(creator)}...`, tone: 'pending' });
+    setSendPopup({ title: 'Sending', message: `Sending creative brief to ${recipient}...`, tone: 'pending' });
     const brief = briefs[creator.id] || generateCreatorBriefDraft(bundle, creator, planningFields || {});
     try {
-      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, brief_text: brief, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
+      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, brief_text: brief, creator_contact_email: overrideEmail || undefined, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
       setSentBriefs((current) => ({ ...current, [creator.id]: doc }));
       const status = doc?.email?.status || doc?.email_status || 'queued';
-      const recipient = doc?.email?.to || doc?.creator_contact_email || creatorContact(creator) || creatorName(creator);
+      const sentTo = doc?.email?.to || doc?.creator_contact_email || overrideEmail || creatorContact(creator) || creatorName(creator);
       if (status === 'sent') {
-        setNotice(`Creative brief sent to ${recipient} with creator portal login details.`);
-        setSendPopup({ title: 'Sent', message: `Creative brief sent to ${recipient}. The Google Docs-compatible brief is attached.`, tone: 'success' });
+        setNotice(`Creative brief sent to ${sentTo} with creator portal login details.`);
+        setSendPopup({ title: 'Sent', message: `Creative brief sent to ${sentTo}. The Google Docs-compatible brief is attached.`, tone: 'success' });
       } else if (status === 'delivery_failed') {
-        setNotice(doc?.email?.delivery_error || doc?.email_error || `Creative brief was saved but email delivery failed for ${recipient}.`);
-        setSendPopup({ title: 'Email not delivered', message: doc?.email?.delivery_error || doc?.email_error || `Creative brief was saved but email delivery failed for ${recipient}.`, tone: 'warning' });
+        setNotice(doc?.email?.delivery_error || doc?.email_error || `Creative brief was saved but email delivery failed for ${sentTo}.`);
+        setSendPopup({ title: 'Email not delivered', message: doc?.email?.delivery_error || doc?.email_error || `Creative brief was saved but email delivery failed for ${sentTo}.`, tone: 'warning' });
       } else {
-        setNotice(`Creative brief saved and queued for ${recipient}.`);
-        setSendPopup({ title: 'Email queued', message: `Creative brief saved and queued for ${recipient}.`, tone: 'warning' });
+        setNotice(`Creative brief saved and queued for ${sentTo}.`);
+        setSendPopup({ title: 'Email queued', message: `Creative brief saved and queued for ${sentTo}.`, tone: 'warning' });
       }
     } catch (e) {
       const message = e?.response?.data?.detail || e?.message || `Could not email ${creatorName(creator)} yet.`;
@@ -4103,8 +4106,17 @@ export const V3BusinessCasePlanBrief = () => {
                     <textarea value={briefs[creator.id] || ''} onChange={(e) => setBriefs({ ...briefs, [creator.id]: e.target.value })} rows={16} className="w-full rounded-lg border border-[#E8E4DB] bg-white p-3 text-[13px] leading-relaxed focus:outline-none focus:border-[#1F4A3A]" data-testid={`brief-editor-${creator.id}`} />
                   </div>
                 </TtaLetterhead>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button onClick={() => send(creator)} className="v3-btn-primary" data-testid={`brief-email-${creator.id}`}><Mail className="w-3.5 h-3.5" /> Email to creator</button>
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    value={briefEmails[creator.id] ?? creatorContact(creator) ?? ''}
+                    onChange={(e) => setBriefEmails({ ...briefEmails, [creator.id]: e.target.value })}
+                    placeholder="creator@email.com"
+                    className="flex-1 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"
+                    data-testid={`brief-email-input-${creator.id}`}
+                  />
+                  <button onClick={() => send(creator)} className="v3-btn-primary rounded-full text-[12px] whitespace-nowrap" data-testid={`brief-email-${creator.id}`}><Send className="w-3.5 h-3.5" /> Send to creator</button>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
                   <button onClick={() => copyLink(creator)} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
                   <button onClick={() => downloadGoogleDoc(creator)} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download Google Docs</button>
                   <button onClick={() => shareWhatsApp(creator)} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
