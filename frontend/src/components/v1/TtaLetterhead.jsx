@@ -18,13 +18,13 @@ const TasckLogo = ({ size = 92, className = '' }) => (
     style={{ width: size, height: size, backgroundColor: TASCK_BLUE, lineHeight: 1.05, fontFamily: "'Arial', 'Helvetica Neue', sans-serif", textAlign: 'left', paddingLeft: size * 0.12, paddingRight: size * 0.12, alignItems: 'flex-start' }}
     aria-label="THE TASCK AGENCY"
   >
-    <span style={{ fontSize: size * 0.18, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+    <span style={{ fontSize: size * 0.17, fontWeight: 700, letterSpacing: 0, display: 'block', whiteSpace: 'nowrap' }}>
       <span style={{ color: TASCK_GREEN }}>T</span>HE
     </span>
-    <span style={{ fontSize: size * 0.18, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+    <span style={{ fontSize: size * 0.17, fontWeight: 700, letterSpacing: 0, display: 'block', whiteSpace: 'nowrap' }}>
       <span style={{ color: TASCK_GREEN }}>T</span>A<span style={{ color: TASCK_GREEN }}>S</span>CK
     </span>
-    <span style={{ fontSize: size * 0.18, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+    <span style={{ fontSize: size * 0.17, fontWeight: 700, letterSpacing: 0, display: 'block', whiteSpace: 'nowrap' }}>
       <span style={{ color: TASCK_GREEN }}>A</span>GENC<span style={{ color: TASCK_GREEN }}>Y</span><span style={{ color: TASCK_GREEN }}>.</span>
     </span>
   </div>
@@ -80,13 +80,16 @@ export const TtaLetterhead = ({ title, children, className = '' }) => (
   <div className={`relative overflow-hidden rounded-2xl border border-[#E6E0D2] bg-white ${className}`}>
     <Watermark />
     <div className="relative flex flex-col min-h-[380px]">
-      {/* Header: compact logo top-right, tight spacing */}
-      <div className="flex items-start justify-end px-6 pt-4">
-        <TasckLogo size={64} />
+      {/* Header row: title left (in line with the logo), compact logo right —
+          no empty band between header and body. */}
+      <div className="flex items-center justify-between gap-4 px-6 pt-4 pb-1">
+        <div className="min-w-0">
+          {title && <h1 className="text-[26px] font-bold tracking-wide text-[#0024FF]" style={{ fontFamily: "'Bebas Neue', 'Arial Narrow', sans-serif" }}>{title}</h1>}
+        </div>
+        <TasckLogo size={64} className="flex-shrink-0" />
       </div>
       {/* Body */}
-      <div className="flex-1 px-6 pb-4 pt-1">
-        {title && <h1 className="text-[26px] font-bold tracking-wide text-[#0024FF] mb-1" style={{ fontFamily: "'Bebas Neue', 'Arial Narrow', sans-serif" }}>{title}</h1>}
+      <div className="flex-1 px-6 pb-4">
         {children}
       </div>
       {/* Footer: contact strip */}
