@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useThemeMode } from '../../lib/useThemeMode';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Bell, Building2, BriefcaseBusiness, ChevronLeft, Home, LogIn, LogOut, Moon, Search, Settings, Sun } from 'lucide-react';
+import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, Home, LogIn, LogOut, Moon, PanelLeftClose, Search, Settings, Sun } from 'lucide-react';
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 import { useAdminNotifications } from '../../hooks/useAdminNotifications';
@@ -59,6 +59,7 @@ const V1AdminLayout = () => {
   const { isAuthenticated, logout } = useAuth();
   const [darkMode, setDarkMode] = useThemeMode();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const notificationsBoxRef = useRef(null);
 
   const handleSessionButton = () => {
@@ -109,17 +110,30 @@ const V1AdminLayout = () => {
 
   return (
     <div className={`v3-shell ${darkMode ? 'v3-dark' : ''}`} data-testid="v1-admin-layout">
-      <aside className="v3-sidebar" data-testid="v1-admin-sidebar">
-        <div className="p-5 pb-3">
+      <aside className={`v3-sidebar ${sidebarCollapsed ? 'v3-sidebar--collapsed' : ''}`} data-testid="v1-admin-sidebar">
+        <div className={sidebarCollapsed ? 'p-3 pb-2 flex flex-col items-center' : 'p-5 pb-3'}>
+          {/* Retract / expand toggle sits at the very top of the sidebar. */}
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed((c) => !c)}
+            className={`flex items-center justify-center rounded-md border border-[#E8E4DB] bg-white text-[#8A8A8A] hover:text-[#1A1A1A] hover:border-[#D4CDBF] transition-colors ${sidebarCollapsed ? 'w-8 h-8 mb-3' : 'w-7 h-7 mb-3 ml-auto'}`}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            data-testid="v1-admin-sidebar-toggle"
+          >
+            {sidebarCollapsed ? <ChevronRight className="w-4 h-4" strokeWidth={1.5} /> : <PanelLeftClose className="w-4 h-4" strokeWidth={1.5} />}
+          </button>
           <div className="cursor-pointer" onClick={() => navigate('/select')}>
-            <Logo variant="light" size="sm" />
+            <Logo variant="light" size="sm" showText={!sidebarCollapsed} />
           </div>
-          <div className="mt-3 px-1">
-            <span className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Admin Control Centre</span>
-          </div>
+          {!sidebarCollapsed && (
+            <div className="mt-3 px-1">
+              <span className="text-[10px] text-[#8A8A8A] uppercase tracking-wider">Admin Control Centre</span>
+            </div>
+          )}
         </div>
 
-        <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto">
+        <nav className={`flex-1 space-y-0.5 overflow-y-auto ${sidebarCollapsed ? 'px-2' : 'px-3'}`}>
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isNavActive(location.pathname, item);
@@ -127,25 +141,26 @@ const V1AdminLayout = () => {
               <button
                 key={item.path}
                 onClick={() => navigate(item.path)}
-                className={`v3-nav-item ${active ? 'v3-nav-item--active' : ''}`}
+                className={`v3-nav-item ${active ? 'v3-nav-item--active' : ''} ${sidebarCollapsed ? 'justify-center' : ''}`}
                 data-testid={navTestId(item.label)}
+                title={sidebarCollapsed ? item.label : undefined}
               >
                 <Icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
-                <span className="text-[13px]">{item.label}</span>
+                {!sidebarCollapsed && <span className="text-[13px]">{item.label}</span>}
               </button>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-[#E8E4DB]">
-          <button onClick={() => navigate('/v1')} className="v3-nav-item text-[#8A8A8A] hover:text-[#5C5C5C]" data-testid="v1-admin-exit">
+        <div className={`border-t border-[#E8E4DB] ${sidebarCollapsed ? 'p-2' : 'p-4'}`}>
+          <button onClick={() => navigate('/v1')} className={`v3-nav-item text-[#8A8A8A] hover:text-[#5C5C5C] ${sidebarCollapsed ? 'justify-center' : ''}`} data-testid="v1-admin-exit" title={sidebarCollapsed ? 'Exit Portal' : undefined}>
             <ChevronLeft className="w-4 h-4" strokeWidth={1.5} />
-            <span className="text-[13px]">Exit Portal</span>
+            {!sidebarCollapsed && <span className="text-[13px]">Exit Portal</span>}
           </button>
         </div>
       </aside>
 
-      <div className="v3-main">
+      <div className={`v3-main ${sidebarCollapsed ? 'v3-main--collapsed' : ''}`}>
         <div className="v3-topbar sticky top-0 z-20 bg-[#FAFAF7]/80 backdrop-blur-md border-b border-[#E8E4DB] px-6 py-2.5 flex items-center gap-3 min-w-0">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#E8E4DB] bg-white min-w-0">
             <Search className="w-3.5 h-3.5 text-[#8A8A8A]" />

@@ -1,47 +1,45 @@
 import React from 'react';
 
-// TASCK agency logo: small, compact blue circle with stacked
-// "THE / TASCK / AGENCY." — tight line spacing, text fills the
-// circle snugly. Green letters: T of THE, T+A of TASCK, A of
-// AGENCY., the Y of AGENCY., and the trailing period.
+// TASCK agency logo: compact blue circle with stacked "THE / TASCK / AGENCY."
+// Text sizes are DERIVED from the circle diameter so all three lines always
+// fit INSIDE the circle (no overflow), matching the approved reference.
+// Green letters: T of THE, T+A of TASCK, A + Y of AGENCY., trailing period.
 const TASCK_BLUE = '#0024FF';
 const TASCK_GREEN = '#00D651';
 
 export const Logo = ({ variant = 'dark', size = 'md', showText = true }) => {
-  const sizes = {
-    sm: { circle: 30, line: 10, padY: 3, padX: 5 },
-    md: { circle: 44, line: 14, padY: 4, padX: 7 },
-    lg: { circle: 60, line: 19, padY: 6, padX: 9 },
-  };
-  const { circle, line, padY, padX } = sizes[size] || sizes.md;
+  const circles = { sm: 40, md: 52, lg: 68 };
+  const circle = circles[size] || circles.md;
+  // Derived so 3 lines + padding always fit: total text block ~= 0.62 * circle
+  const lineMain = Math.round(circle * 0.165); // TASCK / AGENCY. line size
+  const lineThe = Math.round(circle * 0.12);   // THE line size
+  const padX = Math.round(circle * 0.14);
   const textColor = variant === 'dark' ? 'text-white' : 'text-[#0F172A]';
 
   return (
     <div className="flex items-center gap-2">
       <div
-        className="flex flex-col justify-center rounded-full text-white flex-shrink-0"
+        className="flex flex-col justify-center rounded-full text-white flex-shrink-0 overflow-hidden"
         style={{
           width: circle,
           height: circle,
           backgroundColor: TASCK_BLUE,
-          lineHeight: 0.92,
+          lineHeight: 1.04,
           fontFamily: "'Arial', 'Helvetica Neue', sans-serif",
-          paddingTop: padY,
-          paddingBottom: padY,
           paddingLeft: padX,
-          paddingRight: padX,
+          paddingRight: 2,
           textAlign: 'left',
           alignItems: 'flex-start',
         }}
         aria-label="THE TASCK AGENCY"
       >
-        <span style={{ fontSize: line * 0.72, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+        <span style={{ fontSize: lineThe, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
           <span style={{ color: TASCK_GREEN }}>T</span>HE
         </span>
-        <span style={{ fontSize: line, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+        <span style={{ fontSize: lineMain, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
           <span style={{ color: TASCK_GREEN }}>T</span>A<span style={{ color: TASCK_GREEN }}>S</span>CK
         </span>
-        <span style={{ fontSize: line, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+        <span style={{ fontSize: lineMain, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
           <span style={{ color: TASCK_GREEN }}>A</span>GENC<span style={{ color: TASCK_GREEN }}>Y</span><span style={{ color: TASCK_GREEN }}>.</span>
         </span>
       </div>

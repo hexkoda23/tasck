@@ -813,6 +813,11 @@ div:has(> a[href*="utm_source=emergent"]) {
   left: 0;
   top: 0;
   z-index: 30;
+  transition: width 0.2s ease;
+}
+
+.v3-sidebar--collapsed {
+  width: 64px;
 }
 
 .v3-main {
@@ -823,6 +828,12 @@ div:has(> a[href*="utm_source=emergent"]) {
   min-height: 100vh;
   min-width: 0;
   width: calc(100% - 240px);
+  transition: margin-left 0.2s ease, width 0.2s ease;
+}
+
+.v3-main--collapsed {
+  margin-left: 64px;
+  width: calc(100% - 64px);
 }
 
 .v3-content {
