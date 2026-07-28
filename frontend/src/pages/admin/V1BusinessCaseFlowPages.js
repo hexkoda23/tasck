@@ -3809,19 +3809,22 @@ export const V3BusinessCasePlanBrief = () => {
   // Top-level "Send to creator" card (mirrors the Pitch Deck page): admin can
   // type or change the recipient email, then email the Creative Brief (.docx)
   // to that creator address. Reuses the component's existing sendPopup.
-  const [recipientEmail, setRecipientEmail] = useState(firstCreatorEmail || brandEmail);
+  // Derive the default recipient inline (from creators/selectedIds, both
+  // declared above) so we avoid any temporal-dead-zone ordering issues.
+  const firstSelectedCreator = selectedIds.map((cid) => creators.find((c) => c.id === cid)).filter(Boolean)[0];
+  const defaultRecipient = creatorContact(firstSelectedCreator) || brandEmail;
+  const [recipientEmail, setRecipientEmail] = useState(defaultRecipient);
   useEffect(() => {
-    const fallback = firstCreatorEmail || brandEmail;
-    if (fallback && !recipientEmail) setRecipientEmail(fallback);
+    if (defaultRecipient && !recipientEmail) setRecipientEmail(defaultRecipient);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstCreatorEmail, brandEmail]);
+  }, [defaultRecipient]);
 
   const sendCreativeBriefToEmail = async () => {
     if (!templateBrief) {
       setSendPopup({ title: 'Generate first', message: 'Generate the Creative Brief before sending it.', tone: 'warning' });
       return;
     }
-    const recipient = recipientEmail.trim() || firstCreatorEmail || brandEmail;
+    const recipient = recipientEmail.trim() || defaultRecipient || brandEmail;
     if (!recipient) {
       setSendPopup({ title: 'Add an email', message: 'Enter a recipient email to send the Creative Brief to.', tone: 'warning' });
       return;
@@ -3868,9 +3871,6 @@ export const V3BusinessCasePlanBrief = () => {
   }, [id]);
   const creatorById = (creatorId) => creators.find((creator) => creator.id === creatorId);
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
-  // Default the top-level "Send to creator" recipient to the first selected
-  // creator's contact (editable). Falls back to the brand email if no creator.
-  const firstCreatorEmail = selectedCreators[0] ? (creatorContact(selectedCreators[0]) || '') : '';
   const allBriefsSent = selectedCreators.length > 0 && selectedCreators.every((creator) => sentBriefs[creator.id]);
   // Sibling document: the Pitch Deck. Approved (by admin or brand) counts as done.
   const pitchDeckDone = bundle?.pitch_deck?.status === 'approved' || bundle?.business_case?.plan?.pitch_deck_status === 'approved';
