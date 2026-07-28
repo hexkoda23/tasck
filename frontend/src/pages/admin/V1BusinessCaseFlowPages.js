@@ -3776,9 +3776,12 @@ export const V3BusinessCasePlanBrief = () => {
   const [generatingBrief, setGeneratingBrief] = useState(false);
   const [briefProgress, setBriefProgress] = useState('');
 
-  // Brand contact (used to pre-fill the Creative Brief "Send to brand" email).
+  // Brand contact (kept available for other flows).
   const brand = getBrand(bundle);
   const brandEmail = brand?.email || brand?.contact_email || brand?.primary_contact_email || '';
+  // Default the top-level "Send to creator" recipient to the first selected
+  // creator's contact (editable). Falls back to the brand email if no creator.
+  const firstCreatorEmail = selectedCreators[0] ? (creatorContact(selectedCreators[0]) || '') : '';
 
   // If the admin landed here without going through the scanner buttons,
   // this page counts as the FIRST of the Pitch Deck / Brief pair.
@@ -3806,20 +3809,22 @@ export const V3BusinessCasePlanBrief = () => {
     }
   };
 
-  // Top-level "Send to brand" card (mirrors the Pitch Deck page): admin can
+  // Top-level "Send to creator" card (mirrors the Pitch Deck page): admin can
   // type or change the recipient email, then email the Creative Brief (.docx)
-  // to that creator/brand address. Reuses the component's existing sendPopup.
-  const [recipientEmail, setRecipientEmail] = useState(brandEmail);
+  // to that creator address. Reuses the component's existing sendPopup.
+  const [recipientEmail, setRecipientEmail] = useState(firstCreatorEmail || brandEmail);
   useEffect(() => {
-    if (brandEmail) setRecipientEmail(brandEmail);
-  }, [brandEmail]);
+    const fallback = firstCreatorEmail || brandEmail;
+    if (fallback && !recipientEmail) setRecipientEmail(fallback);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstCreatorEmail, brandEmail]);
 
   const sendCreativeBriefToEmail = async () => {
     if (!templateBrief) {
       setSendPopup({ title: 'Generate first', message: 'Generate the Creative Brief before sending it.', tone: 'warning' });
       return;
     }
-    const recipient = recipientEmail.trim() || brandEmail;
+    const recipient = recipientEmail.trim() || firstCreatorEmail || brandEmail;
     if (!recipient) {
       setSendPopup({ title: 'Add an email', message: 'Enter a recipient email to send the Creative Brief to.', tone: 'warning' });
       return;
@@ -4050,7 +4055,7 @@ export const V3BusinessCasePlanBrief = () => {
         )}
       </InfoCard>
       {templateBrief && (
-        <InfoCard title="Send to brand">
+        <InfoCard title="Send to creator">
           <p className="text-[12px] text-[#6E6657] mb-2">
             Emails the formatted Creative Brief (TASCK-branded .docx attached) and makes it reviewable in the creator portal.
             The creator can review, comment, and confirm it from their portal.
@@ -4063,7 +4068,7 @@ export const V3BusinessCasePlanBrief = () => {
               className="flex-1 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"
               data-testid="brief-recipient-input"
             />
-            <button onClick={sendCreativeBriefToEmail} className="v3-btn-primary text-[12px]" data-testid="brief-send-btn"><Send className="w-3.5 h-3.5" /> Send Creative Brief</button>
+            <button onClick={sendCreativeBriefToEmail} className="v3-btn-primary rounded-full text-[12px] whitespace-nowrap" data-testid="brief-send-btn"><Send className="w-3.5 h-3.5" /> Send Creative Brief</button>
           </div>
         </InfoCard>
       )}
