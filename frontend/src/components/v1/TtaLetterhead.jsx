@@ -79,13 +79,13 @@ const Watermark = () => (
 export const TtaLetterhead = ({ title, children, className = '' }) => (
   <div className={`relative overflow-hidden rounded-2xl border border-[#E6E0D2] bg-white ${className}`}>
     <Watermark />
-    <div className="relative flex flex-col min-h-[420px]">
-      {/* Header: logo top-right */}
-      <div className="flex items-start justify-end px-8 pt-7">
-        <TasckLogo size={96} />
+    <div className="relative flex flex-col min-h-[380px]">
+      {/* Header: compact logo top-right, tight spacing */}
+      <div className="flex items-start justify-end px-6 pt-4">
+        <TasckLogo size={64} />
       </div>
       {/* Body */}
-      <div className="flex-1 px-8 py-4">
+      <div className="flex-1 px-6 pb-4 pt-1">
         {title && <h1 className="text-[26px] font-bold tracking-wide text-[#0024FF] mb-1" style={{ fontFamily: "'Bebas Neue', 'Arial Narrow', sans-serif" }}>{title}</h1>}
         {children}
       </div>
