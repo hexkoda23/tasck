@@ -1,0 +1,193 @@
+{
+  "work_dir": "/app/test_reports/generated/creative_brief_logo_iter32/20260728_170739",
+  "base_url": "http://localhost:8001/api",
+  "brief_count": 5,
+  "brief_id_used": "cb-d99d9d55",
+  "checks": {
+    "existing": {
+      "docx_path": "/app/test_reports/generated/creative_brief_logo_iter32/20260728_170739/existing_brief.docx",
+      "docx_size_bytes": 460221,
+      "xml_media_checks": {
+        "has_header_right_alignment": true,
+        "has_watermark_shape": true,
+        "has_decorative_curves_media": true,
+        "has_footer_contact_media": true,
+        "footer_has_center_alignment": true,
+        "has_bebas_neue": true,
+        "has_century_gothic": true,
+        "has_heading_blue_4A90E2": true,
+        "logo_png_size": [
+          1024,
+          1024
+        ],
+        "footer_png_size": [
+          2048,
+          180
+        ],
+        "all_xml_sanity_checks_pass": true
+      },
+      "rendered_logo_position": {
+        "png_path": "/app/test_reports/generated/creative_brief_logo_iter32/20260728_170739/render_existing/existing_page1.png",
+        "page_size_px": [
+          1275,
+          1650
+        ],
+        "logo_blue_bbox_px": [
+          972,
+          79,
+          1121,
+          228
+        ],
+        "logo_blue_area_px": 15713,
+        "logo_center_x_pct": 0.8208,
+        "logo_center_y_pct": 0.093,
+        "logo_bbox_width_pct": 0.1176,
+        "logo_bbox_height_pct": 0.0909,
+        "top_right_pass": true,
+        "not_centered_pass": true,
+        "component_count": 71,
+        "top_components_sample": [
+          {
+            "bbox": [
+              972,
+              79,
+              1121,
+              228
+            ],
+            "area": 15713
+          },
+          {
+            "bbox": [
+              397,
+              239,
+              411,
+              261
+            ],
+            "area": 235
+          },
+          {
+            "bbox": [
+              250,
+              239,
+              260,
+              261
+            ],
+            "area": 188
+          },
+          {
+            "bbox": [
+              542,
+              239,
+              552,
+              261
+            ],
+            "area": 182
+          },
+          {
+            "bbox": [
+              805,
+              239,
+              815,
+              261
+            ],
+            "area": 182
+          }
+        ]
+      },
+      "pass": true
+    },
+    "preview": {
+      "docx_path": "/app/test_reports/generated/creative_brief_logo_iter32/20260728_170739/preview_brief.docx",
+      "docx_size_bytes": 459609,
+      "xml_media_checks": {
+        "has_header_right_alignment": true,
+        "has_watermark_shape": true,
+        "has_decorative_curves_media": true,
+        "has_footer_contact_media": true,
+        "footer_has_center_alignment": true,
+        "has_bebas_neue": true,
+        "has_century_gothic": true,
+        "has_heading_blue_4A90E2": true,
+        "logo_png_size": [
+          1024,
+          1024
+        ],
+        "footer_png_size": [
+          2048,
+          180
+        ],
+        "all_xml_sanity_checks_pass": true
+      },
+      "rendered_logo_position": {
+        "png_path": "/app/test_reports/generated/creative_brief_logo_iter32/20260728_170739/render_preview/preview_page1.png",
+        "page_size_px": [
+          1275,
+          1650
+        ],
+        "logo_blue_bbox_px": [
+          972,
+          79,
+          1121,
+          228
+        ],
+        "logo_blue_area_px": 15713,
+        "logo_center_x_pct": 0.8208,
+        "logo_center_y_pct": 0.093,
+        "logo_bbox_width_pct": 0.1176,
+        "logo_bbox_height_pct": 0.0909,
+        "top_right_pass": true,
+        "not_centered_pass": true,
+        "component_count": 38,
+        "top_components_sample": [
+          {
+            "bbox": [
+              972,
+              79,
+              1121,
+              228
+            ],
+            "area": 15713
+          },
+          {
+            "bbox": [
+              302,
+              239,
+              316,
+              261
+            ],
+            "area": 233
+          },
+          {
+            "bbox": [
+              151,
+              239,
+              162,
+              263
+            ],
+            "area": 176
+          },
+          {
+            "bbox": [
+              377,
+              239,
+              387,
+              261
+            ],
+            "area": 173
+          },
+          {
+            "bbox": [
+              333,
+              239,
+              343,
+              261
+            ],
+            "area": 167
+          }
+        ]
+      },
+      "pass": true
+    }
+  },
+  "overall_pass": true
+}

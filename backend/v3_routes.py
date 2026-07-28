@@ -7030,7 +7030,7 @@ def make_v3_router(db):
             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
             'xmlns:v="urn:schemas-microsoft-com:vml" '
             'xmlns:o="urn:schemas-microsoft-com:office:office">'
-            + (f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>{header_body}</w:p>' if header_body else '<w:p/>')
+            + (f'<w:p><w:pPr><w:jc w:val="right"/></w:pPr>{header_body}</w:p>' if header_body else '<w:p/>')
             + "</w:hdr>"
         )
         footer_drawing = _drawing_inline("rIdFooter", footer_cx, footer_cy, 2, "Contact strip") if footer_bytes else ""
