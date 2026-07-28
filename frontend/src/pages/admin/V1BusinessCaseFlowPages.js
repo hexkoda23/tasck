@@ -3779,9 +3779,6 @@ export const V3BusinessCasePlanBrief = () => {
   // Brand contact (kept available for other flows).
   const brand = getBrand(bundle);
   const brandEmail = brand?.email || brand?.contact_email || brand?.primary_contact_email || '';
-  // Default the top-level "Send to creator" recipient to the first selected
-  // creator's contact (editable). Falls back to the brand email if no creator.
-  const firstCreatorEmail = selectedCreators[0] ? (creatorContact(selectedCreators[0]) || '') : '';
 
   // If the admin landed here without going through the scanner buttons,
   // this page counts as the FIRST of the Pitch Deck / Brief pair.
@@ -3871,6 +3868,9 @@ export const V3BusinessCasePlanBrief = () => {
   }, [id]);
   const creatorById = (creatorId) => creators.find((creator) => creator.id === creatorId);
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
+  // Default the top-level "Send to creator" recipient to the first selected
+  // creator's contact (editable). Falls back to the brand email if no creator.
+  const firstCreatorEmail = selectedCreators[0] ? (creatorContact(selectedCreators[0]) || '') : '';
   const allBriefsSent = selectedCreators.length > 0 && selectedCreators.every((creator) => sentBriefs[creator.id]);
   // Sibling document: the Pitch Deck. Approved (by admin or brand) counts as done.
   const pitchDeckDone = bundle?.pitch_deck?.status === 'approved' || bundle?.business_case?.plan?.pitch_deck_status === 'approved';
