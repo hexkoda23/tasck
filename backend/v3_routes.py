@@ -7192,18 +7192,24 @@ def make_v3_router(db):
             return _read_template_asset('tasck_logo.png') or b''
 
     def creative_brief_docx_bytes(brief: Dict[str, Any]) -> bytes:
-        """Render the Creative Alignment Brief in the client's approved DOCX
-        template: Century Gothic 11pt throughout, black text, bold title and
-        section headings (also 11pt — the template uses uniform sizing), no
-        colored accents or horizontal rules. Nine numbered sections in the
-        fixed order, with checkbox options rendered inline exactly as the
-        template does."""
+        """Render the Creative Alignment Brief on the TTA letterhead template
+        (banner + faint decorative-curves watermark + contact-strip footer).
+        Headings render in Bebas Neue light-blue; body copy stays Century
+        Gothic in black, matching the client's approved template look."""
         # Template constants (mirror the .docx we were given).
-        TITLE_SIZE = 22       # 11pt
-        HEADING_SIZE = 22     # 11pt (uniform with body)
-        BODY_SIZE = 22        # 11pt
+        TITLE_SIZE = 32       # 16pt heading
+        HEADING_SIZE = 28     # 14pt section heading in Bebas Neue
+        BODY_SIZE = 22        # 11pt body in Century Gothic
         BLACK = "000000"
+        HEADING_BLUE = "4A90E2"  # Light TASCK blue used for section titles
         CHECKBOX = "\u2610"
+
+        def head(value, *, size=HEADING_SIZE, before=240, after=120):
+            # Section / title heading: Bebas Neue in light blue.
+            return _docx_paragraph(
+                value, bold=False, italic=False, size_half_pt=size,
+                color=HEADING_BLUE, font="Bebas Neue", before=before, after=after,
+            )
 
         def para(value, *, bold=False, italic=False, size=BODY_SIZE, before=0, after=120):
             return _docx_paragraph(
@@ -7216,14 +7222,13 @@ def make_v3_router(db):
 
         blocks: List[str] = []
 
-        # Title + subtitle: bold Century Gothic, 11pt, black — matches the
-        # template ("TTA – Creative Alignment Brief (Creator Version)" / "(Internal name…)").
-        blocks.append(para(str(brief.get("title") or "TTA – Creative Alignment Brief (Creator Version)"),
-                           bold=True, size=TITLE_SIZE, before=0, after=60))
+        # Title + subtitle. Title uses Bebas Neue light blue (heading style).
+        blocks.append(head(str(brief.get("title") or "TTA – Creative Alignment Brief (Creator Version)"),
+                           size=TITLE_SIZE, before=0, after=60))
         if brief.get("subtitle"):
-            blocks.append(para(str(brief.get("subtitle")), bold=True, italic=True, size=TITLE_SIZE, after=240))
+            blocks.append(para(str(brief.get("subtitle")), bold=True, italic=True, after=240))
         else:
-            blocks.append(para("(Internal name: Creator Brief for Fee Confirmation)", bold=True, italic=True, size=TITLE_SIZE, after=240))
+            blocks.append(para("(Internal name: Creator Brief for Fee Confirmation)", bold=True, italic=True, after=240))
 
         # NOTE: the top-of-page project-reference block is intentionally
         # omitted — Section 1 ("1. Project Reference") in the template already
@@ -7234,7 +7239,7 @@ def make_v3_router(db):
         for section in brief.get("sections", []) or []:
             heading = str(section.get("heading") or "").strip()
             if heading:
-                blocks.append(para(heading, bold=True, size=HEADING_SIZE, before=240, after=120))
+                blocks.append(head(heading))
 
             # Label / value lines — one per paragraph.
             for line in section.get("lines", []) or []:
