@@ -10,9 +10,10 @@ const TASCK_GREEN = '#00D651';
 export const Logo = ({ variant = 'dark', size = 'md', showText = true }) => {
   const circles = { sm: 40, md: 52, lg: 68 };
   const circle = circles[size] || circles.md;
-  // Derived so 3 lines + padding always fit: total text block ~= 0.62 * circle
-  const lineMain = Math.round(circle * 0.165); // TASCK / AGENCY. line size
-  const lineThe = Math.round(circle * 0.12);   // THE line size
+  // All three lines share ONE font size (per reference). 3 lines * 0.15 * 1.04
+  // line-height ≈ 47% of the diameter, so the block always fits inside.
+  const lineMain = Math.round(circle * 0.15); // same size for THE / TASCK / AGENCY.
+  const lineThe = lineMain;
   const padX = Math.round(circle * 0.14);
   const textColor = variant === 'dark' ? 'text-white' : 'text-[#0F172A]';
 
