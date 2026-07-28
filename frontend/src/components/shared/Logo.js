@@ -32,7 +32,7 @@ export const Logo = ({ variant = 'dark', size = 'md', showText = true }) => {
       >
         <span style={{ fontSize: the, fontWeight: 700, letterSpacing: 0.5 }}>THE</span>
         <span style={{ fontSize: main, fontWeight: 700, letterSpacing: 0 }}>
-          <span style={{ color: TASCK_GREEN }}>T</span>ASCK
+          <span style={{ color: TASCK_GREEN }}>T</span>A<span style={{ color: TASCK_GREEN }}>S</span>CK
         </span>
         <span style={{ fontSize: main, fontWeight: 700, letterSpacing: 0 }}>
           <span style={{ color: TASCK_GREEN }}>A</span>GENCY<span style={{ color: TASCK_GREEN }}>.</span>
