@@ -1,28 +1,42 @@
 import React from 'react';
 
+// TASCK agency logo: blue circle with stacked "THE / TASCK / AGENCY."
+// where the first letter of each line is green (T of THE is WHITE per the
+// approved artwork; T of TASCK and A of AGENCY. are green) and the
+// trailing period is green. Matches the brand reference exactly.
+const TASCK_BLUE = '#0024FF';
+const TASCK_GREEN = '#00D651';
+
 export const Logo = ({ variant = 'dark', size = 'md', showText = true }) => {
   const sizes = {
-    sm: { circle: 32, text: 'text-xs' },
-    md: { circle: 48, text: 'text-sm' },
-    lg: { circle: 64, text: 'text-base' }
+    sm: { circle: 34, the: 9, main: 11, pad: 4 },
+    md: { circle: 48, the: 12, main: 15, pad: 6 },
+    lg: { circle: 64, the: 16, main: 20, pad: 8 },
   };
-
-  const { circle, text } = sizes[size];
+  const { circle, the, main, pad } = sizes[size] || sizes.md;
   const textColor = variant === 'dark' ? 'text-white' : 'text-[#0F172A]';
 
   return (
     <div className="flex items-center gap-3">
-      <div 
-        className="flex items-center justify-center rounded-full bg-[#2F55FF] flex-shrink-0"
-        style={{ width: circle, height: circle }}
+      <div
+        className="flex flex-col items-center justify-center rounded-full text-white flex-shrink-0"
+        style={{
+          width: circle,
+          height: circle,
+          backgroundColor: TASCK_BLUE,
+          lineHeight: 1.02,
+          fontFamily: "'Arial', 'Helvetica Neue', sans-serif",
+          padding: pad,
+        }}
+        aria-label="THE TASCK AGENCY"
       >
-        <div className={`font-bold ${text} leading-tight text-center`}>
-          <span className="text-[#6BFF9A]">T</span>
-          <span className="text-white">A</span>
-          <span className="text-white">S</span>
-          <span className="text-white">C</span>
-          <span className="text-white">K</span>
-        </div>
+        <span style={{ fontSize: the, fontWeight: 700, letterSpacing: 0.5 }}>THE</span>
+        <span style={{ fontSize: main, fontWeight: 700, letterSpacing: 0 }}>
+          <span style={{ color: TASCK_GREEN }}>T</span>ASCK
+        </span>
+        <span style={{ fontSize: main, fontWeight: 700, letterSpacing: 0 }}>
+          <span style={{ color: TASCK_GREEN }}>A</span>GENCY<span style={{ color: TASCK_GREEN }}>.</span>
+        </span>
       </div>
       {showText && (
         <div className={`font-bold ${textColor} leading-tight`}>
