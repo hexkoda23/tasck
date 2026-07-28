@@ -18,12 +18,14 @@ const TasckLogo = ({ size = 92, className = '' }) => (
     style={{ width: size, height: size, backgroundColor: TASCK_BLUE, lineHeight: 1.05, fontFamily: "'Arial', 'Helvetica Neue', sans-serif", textAlign: 'left', paddingLeft: size * 0.12, paddingRight: size * 0.12, alignItems: 'flex-start' }}
     aria-label="THE TASCK AGENCY"
   >
-    <span style={{ fontSize: size * 0.17, fontWeight: 700, letterSpacing: 1, display: 'block' }}>THE</span>
-    <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0.5, display: 'block' }}>
-      <span style={{ color: TASCK_GREEN }}>T</span>ASCK
+    <span style={{ fontSize: size * 0.13, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+      <span style={{ color: TASCK_GREEN }}>T</span>HE
     </span>
-    <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0.5, display: 'block' }}>
-      <span style={{ color: TASCK_GREEN }}>A</span>GENCY<span style={{ color: TASCK_GREEN }}>.</span>
+    <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+      <span style={{ color: TASCK_GREEN }}>T</span>A<span style={{ color: TASCK_GREEN }}>S</span>CK
+    </span>
+    <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0, display: 'block' }}>
+      <span style={{ color: TASCK_GREEN }}>A</span>GENC<span style={{ color: TASCK_GREEN }}>Y</span><span style={{ color: TASCK_GREEN }}>.</span>
     </span>
   </div>
 );
