@@ -14,15 +14,15 @@ const TASCK_GREEN = '#00D651';
 
 const TasckLogo = ({ size = 92, className = '' }) => (
   <div
-    className={`inline-flex flex-col items-center justify-center rounded-full text-white ${className}`}
-    style={{ width: size, height: size, backgroundColor: TASCK_BLUE, lineHeight: 1.05, fontFamily: "'Arial', 'Helvetica Neue', sans-serif" }}
+    className={`inline-flex flex-col justify-center rounded-full text-white ${className}`}
+    style={{ width: size, height: size, backgroundColor: TASCK_BLUE, lineHeight: 1.05, fontFamily: "'Arial', 'Helvetica Neue', sans-serif", textAlign: 'left', paddingLeft: size * 0.12, paddingRight: size * 0.12, alignItems: 'flex-start' }}
     aria-label="THE TASCK AGENCY"
   >
-    <span style={{ fontSize: size * 0.17, fontWeight: 700, letterSpacing: 1 }}>THE</span>
-    <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0.5 }}>
-      <span style={{ color: TASCK_GREEN }}>T</span>A<span style={{ color: TASCK_GREEN }}>S</span>CK
+    <span style={{ fontSize: size * 0.17, fontWeight: 700, letterSpacing: 1, display: 'block' }}>THE</span>
+    <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0.5, display: 'block' }}>
+      <span style={{ color: TASCK_GREEN }}>T</span>ASCK
     </span>
-    <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0.5 }}>
+    <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0.5, display: 'block' }}>
       <span style={{ color: TASCK_GREEN }}>A</span>GENCY<span style={{ color: TASCK_GREEN }}>.</span>
     </span>
   </div>
