@@ -6986,7 +6986,9 @@ def make_v3_router(db):
         all share the exact same client-approved template."""
         # Template banner: full 6.5" content width, aspect ratio derived from
         # the source PNG (2048 × 286 → 5943600 × 825500 EMU in the reference).
-        logo_bytes = _read_template_asset("tasck_logo.png")
+        # Use the inlined logo bytes (deploy-proof) — falls back to the file
+        # asset internally if decoding ever fails.
+        logo_bytes = _tasck_logo_bytes()
         logo_cx = _emu_inch(6.5)
         logo_cy = int(logo_cx * 286 / 2048)
         # Footer contact-strip: same 6.5" width as the reference template so
