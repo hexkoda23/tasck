@@ -18,14 +18,12 @@ const TasckLogo = ({ size = 92, className = '' }) => (
     style={{ width: size, height: size, backgroundColor: TASCK_BLUE, lineHeight: 1.05, fontFamily: "'Arial', 'Helvetica Neue', sans-serif" }}
     aria-label="THE TASCK AGENCY"
   >
-    <span style={{ fontSize: size * 0.17, fontWeight: 700, letterSpacing: 1 }}>
-      <span style={{ color: TASCK_GREEN }}>T</span>HE
-    </span>
+    <span style={{ fontSize: size * 0.17, fontWeight: 700, letterSpacing: 1 }}>THE</span>
     <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0.5 }}>
       <span style={{ color: TASCK_GREEN }}>T</span>ASCK
     </span>
     <span style={{ fontSize: size * 0.2, fontWeight: 700, letterSpacing: 0.5 }}>
-      <span style={{ color: TASCK_GREEN }}>A</span>GENCY.
+      <span style={{ color: TASCK_GREEN }}>A</span>GENCY<span style={{ color: TASCK_GREEN }}>.</span>
     </span>
   </div>
 );
