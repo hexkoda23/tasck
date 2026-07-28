@@ -339,6 +339,17 @@ body{
 .cv-sub{font-size:clamp(10px,2.6cqw,15px); color:#c9d4f5; margin-top:14px; max-width:92%; z-index:1;}
 .cv-foot{margin-top:20px; font-size:clamp(8px,2cqw,12px); color:#8fa4e8; letter-spacing:.05em; z-index:1;}
 .cv-foot .g{color:var(--green);}
+/* "What's inside" block fills the empty upper-right of the cover: a short
+   tagline + three key pillars. Clean, rectangular, on-brand (white text,
+   green tick accents). Sits in the negative space between the logo and the
+   bottom title block. Copy is placeholder — admin/edits swap it freely. */
+.cv-highlights{margin-top:clamp(14px,4cqw,30px); max-width:74%; z-index:1;}
+.cv-tag{font-size:clamp(9px,2.3cqw,13px); color:#dbe3fb; line-height:1.5; max-width:46cqw; z-index:1;}
+.cv-pillars{margin-top:clamp(10px,2.4cqw,16px); display:flex; flex-direction:column; gap:clamp(5px,1.4cqw,9px); z-index:1;}
+.cv-pillar{display:flex; align-items:flex-start; gap:8px; z-index:1;}
+.cv-pillar .tick{color:var(--green); font-weight:700; font-size:clamp(10px,2.4cqw,14px); line-height:1.4; flex:0 0 auto;}
+.cv-pillar .pt{font-size:clamp(9px,2.3cqw,13px); color:#eaf0ff; line-height:1.35; z-index:1;}
+.cv-pillar .pt b{color:#fff; font-weight:700;}
 
 /* ---- Controls (reference style: side chevrons + corner jumps) ---- */
 .side{position:absolute; top:50%; transform:translateY(-50%); z-index:30;
@@ -441,6 +452,14 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
 
     cover = (
         '<div class="cover">' + badge +
+        '<div class="cv-highlights">'
+        '<p class="cv-tag">A complete creator campaign, planned and produced by TASCK &mdash; from strategy to signed creators and measurable delivery.</p>'
+        '<div class="cv-pillars">'
+        '<div class="cv-pillar"><span class="tick">&#10003;</span><span class="pt"><b>Strategy &amp; positioning</b> &mdash; a campaign built around your brand and audience.</span></div>'
+        '<div class="cv-pillar"><span class="tick">&#10003;</span><span class="pt"><b>Matched creators</b> &mdash; vetted talent, briefed and ready to produce.</span></div>'
+        '<div class="cv-pillar"><span class="tick">&#10003;</span><span class="pt"><b>Delivered &amp; measured</b> &mdash; content shipped with clear results.</span></div>'
+        '</div>'
+        '</div>'
         '<p class="kicker">Creator Campaign Pitch</p>'
         '<div class="rule"></div>'
         f'<h1 class="cv-title">{_esc(brand_name or deck_title)}</h1>'
