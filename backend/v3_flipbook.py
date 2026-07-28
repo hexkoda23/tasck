@@ -327,10 +327,9 @@ body{
   border:1px solid rgba(70,224,138,.25); border-radius:50%;}
 /* The real TASCK logo (blue disc) on a white coin so it stays crisp and
    visible on the blue covers. On the white content pages it reads clean too. */
-.badge{width:clamp(54px,15cqw,92px); height:clamp(54px,15cqw,92px); border-radius:50%; background:#fff;
-  display:flex; align-items:center; justify-content:center; padding:9%;
-  box-shadow:0 10px 30px rgba(4,14,60,.5); z-index:1;}
-.badge img{width:100%; height:100%; object-fit:contain; display:block;}
+.badge{position:relative; width:clamp(54px,15cqw,92px); height:clamp(54px,15cqw,92px); border-radius:50%; background:#fff;
+  overflow:hidden; box-shadow:0 10px 30px rgba(4,14,60,.5); z-index:1;}
+.badge img{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; display:block;}
 .kicker{margin-top:auto; font-size:clamp(8px,2.1cqw,12px); letter-spacing:.3em;
   text-transform:uppercase; color:#9db6ff; z-index:1;}
 .rule{width:56px; height:3px; background:var(--green); margin:14px 0 0; z-index:1;}
