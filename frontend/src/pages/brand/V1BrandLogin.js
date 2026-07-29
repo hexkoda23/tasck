@@ -48,7 +48,13 @@ const V1BrandLogin = () => {
       setBrandPortalSession(session.account);
       navigate('/brand');
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message || 'The email or password is incorrect.');
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail || '';
+      if (status === 401 || /invalid brand login details/i.test(detail)) {
+        setError('This email or password is not recognised. Ask your TASCK admin to resend your brand credentials, or contact TASCK support.');
+      } else {
+        setError(detail || e.message || 'The email or password is incorrect.');
+      }
     } finally {
       setBusy(false);
     }
