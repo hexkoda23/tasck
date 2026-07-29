@@ -831,3 +831,19 @@ User resolved a GitHub merge conflict using `git checkout --theirs` on `backend/
 ### Files touched
 - `/app/backend/v3_routes.py` — `MeetingCreate.send_invite_email: bool = False`; gated `queue_email` branch + suppress-logging.
 - `/app/backend/tests/test_create_meeting_no_auto_email.py` — NEW (4 cases).
+
+## Update — Jun 2026 (P0: Brand portal login 401 "Invalid brand login details" — FIXED)
+
+### Root cause
+One contact email can own MULTIPLE brand portal accounts (one per brand, e.g. kehindeadeleke92@gmail.com had 6, chioma@tasck.com had 3), each with its own generated password. `POST /api/v3/auth/brand-login` used `find_one({username})`, so it only ever checked ONE arbitrary account's password. Credentials from the latest welcome/alignment email belonged to a different account → 401.
+
+### Fix (`/app/backend/v3_routes.py`)
+- `login_brand_account`: fetches ALL accounts for the email (plus brand-email fallback via `$in`), checks the submitted password against every active account (newest first), and logs into whichever account/brand the password belongs to. Also skips accounts orphaned by deleted brands in favour of a matched account with a live brand.
+- `change_brand_password`: same multi-account matching for `current_password`.
+
+### Verified (curl, preview)
+- Newest + oldest emailed passwords for a 6-account email both log in, each routing to the correct brand (Twenty3 vs 23).
+- Single-account brand login unaffected; wrong password still 401; change-password round-trip OK.
+- Orphaned accounts (brand deleted from CRM) return clear 404 "not linked to a CRM brand" instead of shadowing valid logins.
+
+### NOTE: Production (thcodemo.space) needs a REDEPLOY to pick up this fix.

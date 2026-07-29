@@ -3723,11 +3723,14 @@ def make_v3_router(db):
 
     @router.post("/brand-accounts/change-password")
     async def change_brand_password(payload: BrandPasswordChange):
-        account = await db.v3_brand_accounts.find_one({"username": payload.username.lower()}, {"_id": 0})
-        if not account:
+        accounts = await db.v3_brand_accounts.find({"username": payload.username.lower()}, {"_id": 0}).to_list(200)
+        if not accounts:
             raise HTTPException(404, "Brand account not found")
-        accepted = {account.get("password"), account.get("temporary_password")}
-        if payload.current_password not in accepted:
+        account = next(
+            (a for a in accounts if payload.current_password in {a.get("password"), a.get("temporary_password")}),
+            None,
+        )
+        if not account:
             raise HTTPException(400, "Current password is incorrect")
         await db.v3_brand_accounts.update_one(
             {"id": account["id"]},
@@ -3833,27 +3836,33 @@ def make_v3_router(db):
         for bad in ("​", "‌", "‍", "﻿"):
             username = username.replace(bad, "")
         email_regex = {"$regex": f"^{re.escape(username)}$", "$options": "i"}
-        account = await db.v3_brand_accounts.find_one(
+        # One email can own SEVERAL brand accounts (one per brand), each with
+        # its own password. Fetch every candidate account and match the
+        # submitted password against all of them, instead of only checking
+        # whichever document Mongo happens to return first.
+        accounts = await db.v3_brand_accounts.find(
             {"$or": [{"username": username}, {"username": email_regex}]},
             {"_id": 0},
-        )
-        if not account:
-            brand_match = await db.v3_brands.find_one(
+        ).to_list(200)
+        if not accounts:
+            brand_matches = await db.v3_brands.find(
                 {"$or": [
                     {"email": email_regex},
                     {"contact_email": email_regex},
                     {"primary_contact_email": email_regex},
                     {"brand_contact_snapshot.email": email_regex},
                 ]},
-                {"_id": 0},
-            )
-            if brand_match:
-                account = await db.v3_brand_accounts.find_one({"brand_id": brand_match.get("id")}, {"_id": 0})
-        if not account:
+                {"_id": 0, "id": 1},
+            ).to_list(200)
+            brand_ids = [b.get("id") for b in brand_matches if b.get("id")]
+            if brand_ids:
+                accounts = await db.v3_brand_accounts.find({"brand_id": {"$in": brand_ids}}, {"_id": 0}).to_list(200)
+        if not accounts:
             logger.warning("brand-login: no account for username=%s", username[:80])
             raise HTTPException(401, "Invalid brand login details")
-        if account.get("status") not in {None, "active"}:
-            logger.warning("brand-login: account %s is not active (status=%s)", account.get("id"), account.get("status"))
+        active_accounts = [a for a in accounts if a.get("status") in {None, "active"}]
+        if not active_accounts:
+            logger.warning("brand-login: %d account(s) for username=%s but none active", len(accounts), username[:80])
             raise HTTPException(401, "Invalid brand login details")
 
         # Build candidate inbound passwords:
@@ -3869,28 +3878,41 @@ def make_v3_router(db):
         collapsed_pw = re.sub(r"\s+", "", cleaned_pw)
         submitted_variants = {raw_pw, trimmed_pw, cleaned_pw, collapsed_pw}
 
-        # Build stored variants too: the database password, plus the same with
-        # internal whitespace collapsed (defensive against legacy inserts).
-        stored_pws = [account.get("password"), account.get("temporary_password")]
-        accepted_passwords: set = set()
-        for p in stored_pws:
-            if not p:
-                continue
-            accepted_passwords.add(p)
-            accepted_passwords.add(p.strip())
-            accepted_passwords.add(re.sub(r"\s+", "", p))
+        # Find the account whose stored password (current or temporary)
+        # matches the submitted password. Newest accounts first so if the
+        # brand pastes credentials from their latest email they land on the
+        # matching account immediately.
+        active_accounts.sort(key=lambda a: a.get("created_at") or "", reverse=True)
+        matched_accounts = []
+        for candidate in active_accounts:
+            accepted_passwords: set = set()
+            for p in (candidate.get("password"), candidate.get("temporary_password")):
+                if not p:
+                    continue
+                accepted_passwords.add(p)
+                accepted_passwords.add(p.strip())
+                accepted_passwords.add(re.sub(r"\s+", "", p))
+            if submitted_variants & accepted_passwords:
+                matched_accounts.append(candidate)
 
-        if not (submitted_variants & accepted_passwords):
+        if not matched_accounts:
             logger.warning(
-                "brand-login: password mismatch for account %s (username=%s, has_password=%s, has_temp=%s, submitted_len=%d)",
-                account.get("id"),
-                account.get("username"),
-                bool(account.get("password")),
-                bool(account.get("temporary_password")),
+                "brand-login: password mismatch across %d account(s) for username=%s (submitted_len=%d)",
+                len(active_accounts),
+                username[:80],
                 len(trimmed_pw),
             )
             raise HTTPException(401, "Invalid brand login details")
-        brand = await db.v3_brands.find_one({"id": account.get("brand_id")}, {"_id": 0})
+        # Prefer a matched account whose brand still exists in the CRM;
+        # skip accounts orphaned by a deleted brand.
+        account = None
+        brand = None
+        for candidate in matched_accounts:
+            candidate_brand = await db.v3_brands.find_one({"id": candidate.get("brand_id")}, {"_id": 0})
+            if candidate_brand:
+                account = candidate
+                brand = candidate_brand
+                break
         if not brand:
             raise HTTPException(404, "Brand account is not linked to a CRM brand")
         now = _now_iso()
