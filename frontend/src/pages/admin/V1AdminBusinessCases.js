@@ -46,12 +46,12 @@ const BC_STAGE_METRICS = [
 
 const healthBadge = (h) => {
   const map = {
-    'on-track': { bg: '#DDE7E2', fg: '#1F4A3A', label: 'On track' },
-    'near-closure': { bg: '#F2EAD8', fg: '#7A5F23', label: 'Near closure' },
+    'on_track': { bg: '#DDE7E2', fg: '#1F4A3A', label: 'On track' },
+    'near_closure': { bg: '#F2EAD8', fg: '#7A5F23', label: 'Near closure' },
     new: { bg: '#EEEAE0', fg: '#6E6657', label: 'New' },
-    'at-risk': { bg: '#F5D9D2', fg: '#B54A37', label: 'At risk' },
+    'at_risk': { bg: '#F5D9D2', fg: '#B54A37', label: 'At risk' },
   };
-  const key = (h || 'new').replace(/_/g, '-');
+  const key = (h || 'new').replace(/_/g, ' ');
   return map[key] || map.new;
 };
 
