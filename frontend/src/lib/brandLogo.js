@@ -49,6 +49,51 @@ export { overrideCandidatesFor };
 export const WEYAN_LOGO_URL = 'https://www.weyan.app/favicon.png';
 export const isWeYanBrand = (name) => normaliseBrandKey(name).includes('weyan');
 
+const CACHE_KEY = 'tasck_brand_logo_cache';
+const CACHE_VERSION = 1;
+
+const readCache = () => {
+  try {
+    if (typeof window === 'undefined') return {};
+    const raw = window.localStorage.getItem(CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== CACHE_VERSION) return {};
+    return parsed.entries || {};
+  } catch (_) {
+    return {};
+  }
+};
+
+const writeCache = (entries) => {
+  try {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify({ version: CACHE_VERSION, entries }));
+  } catch (_) {
+    // Storage full or unavailable; ignore and keep rendering.
+  }
+};
+
+const brandCacheKey = (name) => normaliseBrandKey(name);
+
+export const getCachedBrandLogo = (name) => {
+  if (!name) return '';
+  return readCache()[brandCacheKey(name)] || '';
+};
+
+export const setCachedBrandLogo = (name, url) => {
+  if (!name || !url) return;
+  const entries = readCache();
+  entries[brandCacheKey(name)] = url;
+  writeCache(entries);
+};
+
+export const truncate = (url, max = 512) => {
+  if (typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  return trimmed.length > max;
+};
+
 const deriveInitials = (name = '') => {
   const clean = String(name).trim();
   if (!clean) return 'BR';
@@ -110,17 +155,19 @@ export const BrandLogo = ({
 }) => {
   const overrides = overrideCandidatesFor(name);
   const userCandidates = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
-  // Overrides first (priority), then caller's candidates, then dedupe.
-  const resolved = Array.from(new Set([...overrides, ...userCandidates]));
-  const candidateKey = resolved.join('|');
+  const overriddenCandidateKey = [...overrides, ...userCandidates].join('|');
+  const resolved = [...overrides, ...userCandidates];
+  const cached = getCachedBrandLogo(name);
+  const initialResolved = [cached, ...resolved.filter((candidate) => candidate !== cached)];
+  const initialKey = initialResolved.join('|') || overriddenCandidateKey;
   const [index, setIndex] = useState(0);
   const [dark, setDark] = useState(false);
-  const url = resolved[index] || '';
+  const url = initialResolved[index] || '';
 
   useEffect(() => {
     setIndex(0);
     setDark(false);
-  }, [candidateKey]);
+  }, [initialKey, name]);
 
   useEffect(() => {
     if (!url) return undefined;
@@ -141,6 +188,7 @@ export const BrandLogo = ({
           src={url}
           alt={`${name || 'Brand'} logo`}
           className={imgClassName}
+          onLoad={() => setCachedBrandLogo(name, url)}
           onError={() => setIndex((current) => current + 1)}
         />
       ) : (

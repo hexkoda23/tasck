@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { overrideCandidatesFor } from '../../lib/brandLogo';
+import { overrideCandidatesFor, getCachedBrandLogo, setCachedBrandLogo, truncate as truncateBrandLogo } from '../../lib/brandLogo';
 
 /**
  * Robust brand logo renderer.
@@ -96,12 +96,17 @@ const brandInitials = (brand) => {
 const BrandLogo = ({ brand, size = 'md', className = '', testId = 'brand-logo' }) => {
   const pixelSize = typeof size === 'number' ? size : (SIZE_PRESETS[size] || SIZE_PRESETS.md);
   const candidates = buildCandidates(brand);
+  const name = brand?.company || brand?.name || brand?.brand_name || '';
+  const cached = getCachedBrandLogo(name);
+  const initialCandidates = [cached, ...candidates.filter((c) => c && c !== cached && !truncateBrandLogo(c))];
   const [index, setIndex] = useState(0);
 
   // Reset when the brand changes.
-  useEffect(() => { setIndex(0); }, [brand?.id, candidates.join('|')]);
+  useEffect(() => {
+    setIndex(0);
+  }, [brand?.id, initialCandidates.join('|')]);
 
-  const currentSrc = candidates[index];
+  const currentSrc = initialCandidates[index] || '';
   const initials = brandInitials(brand);
   const fontSize = Math.max(11, Math.round(pixelSize / 2.6));
 
@@ -110,8 +115,9 @@ const BrandLogo = ({ brand, size = 'md', className = '', testId = 'brand-logo' }
       <img
         key={currentSrc}
         src={currentSrc}
-        alt={`${brand?.company || 'Brand'} logo`}
+        alt={`${name || 'Brand'} logo`}
         data-testid={testId}
+        onLoad={() => setCachedBrandLogo(name, currentSrc)}
         onError={() => setIndex((i) => i + 1)}
         className={`rounded-[10px] object-contain bg-white border border-[#E8E4DB] ${className}`}
         style={{ width: pixelSize, height: pixelSize }}

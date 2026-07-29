@@ -1441,8 +1441,17 @@ export const V3BusinessCaseConnectSchedule = () => {
         // session they previously added.
         setTranscriptSessions(uniqueMeetings.map((meeting, idx) => transcriptSessionFromMeeting(meeting, idx)));
       } else {
-        // No saved transcripts yet — start the user with one empty editor row.
-        setTranscriptSessions([createTranscriptSession(0)]);
+        // No saved transcripts yet.
+        setTranscriptSessions((current) => {
+          // Preserve the admin's in-progress first card while they are still
+          // typing the session label. Only reset after the page is freshly
+          // mounted for a different business case.
+          const hasActiveDraft = current.some(
+            (session) => String(session.id || '').startsWith('transcript-') && String(session.content || '').trim() === '' && String(session.session || '').trim() !== ''
+          );
+          if (hasActiveDraft) return current;
+          return [createTranscriptSession(0)];
+        });
       }
     } catch (e) {
       setSaveNotice(e?.response?.data?.detail || e?.message || 'Could not load Connect meetings.');

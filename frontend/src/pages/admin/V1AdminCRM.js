@@ -482,7 +482,7 @@ const V1AdminCRM = () => {
           }
         }}
         title={isV1Admin ? 'Add Brand to CRM' : 'Add Brand for Qualification'}
-        subtitle={isV1Admin ? 'Create the real CRM brand, review its full details, then move it to the Connect / Business Call page.' : 'Capture the lead and create its Brand Qualification Call before it enters CRM.'}
+        subtitle={isV1Admin ? '' : 'Capture the lead and create its Brand Qualification Call before it enters CRM.'}
         testid="add-brand-modal"
         footer={
           <>
