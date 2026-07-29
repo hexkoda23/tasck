@@ -1489,7 +1489,7 @@ export const V3BusinessCaseConnectSchedule = () => {
       setLastAddedTranscriptId(next.id);
       return [...current, next];
     });
-    setSaveNotice('New transcript card added below — no email was sent.');
+    setSaveNotice('New transcript card added below - no email was sent.');
   };
 
   const removeTranscriptSession = (sessionId) => {
@@ -1562,7 +1562,7 @@ export const V3BusinessCaseConnectSchedule = () => {
           if (fallbackRec) setAnalysisResult(fallbackRec);
           await reload();
           const errorMsg = job.error || job.message || 'unknown error';
-          setSaveNotice(`Claude analysis failed — showing safe fallback. (${errorMsg})`);
+          setSaveNotice(`Claude analysis failed - showing safe fallback. (${errorMsg})`);
           setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: errorMsg, message: 'Analysis failed. A safe fallback is shown below.' }));
           return;
         }
@@ -1576,8 +1576,8 @@ export const V3BusinessCaseConnectSchedule = () => {
       }
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
     }
-    setSaveNotice('Analysis is taking longer than expected. It will keep running on the server — refresh the page later to see results.');
-    setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: 'Timed out waiting for the server.', message: 'Analysis is taking longer than expected. It is still running on the server — refresh the page later to see results.' }));
+    setSaveNotice('Analysis is taking longer than expected. It will keep running on the server - refresh the page later to see results.');
+    setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: 'Timed out waiting for the server.', message: 'Analysis is taking longer than expected. It will keep running on the server - refresh the page later to see results.' }));
   };
 
   const runCombinedAnalysis = async () => {
@@ -3644,7 +3644,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
         <InfoCard title={`From your Creator Selector (${namedMatches.length} matched)`}>
           <p className="text-[12px] text-[#6E6657] mb-3">
             Creators you named in the Creator Selector "Creator Matches" field, found in the TASCK database and
-            auto-selected below — untick any you no longer want before continuing.
+            auto-selected below - untick any you no longer want before continuing.
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {namedMatches.map((match) => {
@@ -4022,7 +4022,7 @@ export const V3BusinessCasePlanBrief = () => {
         )}
         {!templateBrief && !generatingBrief && (
           <p className="text-[12px] text-[#6E6657]">
-            Generates the brand-tailored Creative Brief in TASCK's approved 4-page template — same structure and design as
+            Generates the brand-tailored Creative Brief in TASCKs approved 4-page template - same structure and design as
             the agency sample, every word written for this brand from the Alignment Snapshot and Creator Selector.
           </p>
         )}
@@ -4407,9 +4407,9 @@ export const V3BusinessCasePitchDeck = () => {
       >
         {!deck && !generating && (
           <p className="text-[12px] text-[#6E6657]">
-            Generates the ten-section Pitch Deck — About The Organisation, Context & Core Focus, The Problem, The
+            Generates the ten-section Pitch Deck - About The Organisation, Context & Core Focus, The Problem, The
             Objective, The Market / Core Audience, The Solution / Creator Strategy, Go To Market / Campaign, Campaign
-            Projections, Risk & Mitigation Analysis, and Budget Assumptions — each written by the AI from everything
+            Projections, Risk & Mitigation Analysis, and Budget Assumptions - each written by the AI from everything
             captured so far. You can edit every section before it goes to the brand.
           </p>
         )}

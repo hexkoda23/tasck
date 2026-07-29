@@ -111,7 +111,7 @@ export const ConnectSourcesPanel = ({ businessCaseId, onChanged }) => {
       <div className="mb-3">
         <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Conversation sources</h2>
         <p className="text-[12px] text-[#6E6657] mt-1">
-          Add every conversation you have with this brand — a call transcript today, the WhatsApp thread next week, the
+          Add every conversation you have with this brand - a call transcript today, the WhatsApp thread next week, the
           email chain after that. Everything saved here is read by the AI when you generate the Alignment Snapshots.
         </p>
       </div>
@@ -142,7 +142,7 @@ export const ConnectSourcesPanel = ({ businessCaseId, onChanged }) => {
       <input
         value={label}
         onChange={(e) => setLabel(e.target.value)}
-        placeholder={`Label (optional) — e.g. "${kind === 'whatsapp' ? 'Chat with Funke' : kind === 'email' ? 'Budget thread' : 'Discovery call'}"`}
+        placeholder={`Label (optional) - e.g. "${kind === 'whatsapp' ? 'Chat with Funke' : kind === 'email' ? 'Budget thread' : 'Discovery call'}"`}
         className="w-full mb-2 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"
         data-testid="connect-source-label"
       />
@@ -583,7 +583,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
     const next = createConversationRow(rows.length);
     setLastAddedId(next.id);
     setRows((current) => [...current, next]);
-    setSaveNotice('New conversation added below — click "Save all" to keep it.');
+    setSaveNotice('New conversation added below - click "Save all" to keep it.');
   };
 
   // After a row is added, scroll it into view and focus its textarea. Mirrors
@@ -714,7 +714,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
       <div className="mb-3 flex flex-col gap-1">
         <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Conversations &amp; transcripts</h2>
         <p className="text-[12px] text-[#6E6657] max-w-3xl">
-          Add every conversation you have with this brand — a call transcript today, the WhatsApp thread next week,
+          Add every conversation you have with this brand - a call transcript today, the WhatsApp thread next week,
           the email chain after that. Pick a type, paste or upload the content, then <strong>Save all</strong>.
           Everything you save here stays put across logout and login, and is read by the AI when you analyze.
         </p>
@@ -802,7 +802,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
                     type="text"
                     value={row.label}
                     onChange={(e) => updateRow(row.id, { label: e.target.value })}
-                    placeholder={`Label (optional) — e.g. "${row.kind === 'whatsapp' ? 'Chat with Funke' : row.kind === 'email' ? 'Budget thread' : 'Discovery call'}"`}
+                    placeholder={`Label (optional) - e.g. "${row.kind === 'whatsapp' ? 'Chat with Funke' : row.kind === 'email' ? 'Budget thread' : 'Discovery call'}"`}
                     className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#1F4A3A]"
                     data-testid={`conversation-label-${row.id}`}
                   />
@@ -1027,7 +1027,7 @@ export const V1BusinessCaseOpportunities = () => {
         <ol className="space-y-2 text-[12px] text-[#4F3E2F]">
           <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">1.</span> Review the campaigns the AI found below.</li>
           <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">2.</span> Tick two or more and <strong>merge</strong> when they are really the same campaign.</li>
-          <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">3.</span> <strong>Generate Alignment Snapshots</strong> — one per surviving campaign — which moves the case into Frame.</li>
+          <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">3.</span> <strong>Generate Alignment Snapshots</strong> - one per surviving campaign - which moves the case into Frame.</li>
           <li className="flex items-start gap-2"><span className="font-semibold text-[#1F4A3A]">4.</span> On the Frame page, open each snapshot and <strong>send it to the brand</strong>. The brand ranks them by priority in their portal.</li>
         </ol>
         <div className="mt-3 flex flex-wrap gap-2">
