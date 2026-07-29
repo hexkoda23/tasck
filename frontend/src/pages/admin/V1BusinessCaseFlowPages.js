@@ -980,7 +980,7 @@ const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
     '',
     '7. Fee Indication Request',
     `Fee for engagement: ${planningValue('Budget planning', 'Creator to propose a fee range or fixed fee for the engagement signal above.')}`,
-    'Fee basis: Project-based / Time-based / Retainer-style',
+    'Fee basis: Project based / Time based / Retainer style',
     'What fee covers: Please state what your indication includes, including content, appearances, concept contribution, usage, exclusivity, production support, or management fees where relevant.',
     '',
     '8. Availability & Conditions',
@@ -3446,7 +3446,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
       {round.transcript && (
         <InfoCard title="Session transcript">
-          <p className="text-[11px] text-[#8A8A8A] mb-2">The conversation these fields were filled from. Re-upload on the previous page to re-analyse.</p>
+          <p className="text-[11px] text-[#8A8A8A] mb-2">The conversation these fields were filled from. Reupload on the previous page to reanalyse.</p>
           <div className="max-h-48 overflow-y-auto rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3 text-[12px] text-[#4F3E2F] whitespace-pre-wrap">{round.transcript}</div>
         </InfoCard>
       )}

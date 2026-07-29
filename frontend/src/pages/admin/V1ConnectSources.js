@@ -340,7 +340,7 @@ export const OpportunitiesPanel = ({ businessCaseId, onGenerated }) => {
           data-testid="opportunities-detect-btn"
         >
           {detecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-          {detecting ? 'Analysing…' : opportunities.length ? 'Re-analyse conversations' : 'Analyse conversations'}
+          {detecting ? 'Analysing…' : opportunities.length ? 'Reanalyse conversations' : 'Analyse conversations'}
         </button>
       </div>
 
