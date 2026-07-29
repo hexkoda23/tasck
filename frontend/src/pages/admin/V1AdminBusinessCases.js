@@ -668,7 +668,7 @@ const V1AdminBusinessCases = () => {
             type="text"
             value={form.title}
             onChange={(e) => setForm({ ...form, title: e.target.value })}
-            placeholder="e.g. Star Originals — A Lagos After-Dark Anthology"
+            placeholder="e.g. Star Originals - A Lagos After-Dark Anthology"
             className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
             data-testid="new-bc-title"
           />
@@ -702,7 +702,7 @@ const V1AdminBusinessCases = () => {
             className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
             data-testid="new-bc-creator"
           >
-            <option value="">— Pick later during Plan —</option>
+            <option value="">- Pick later during Plan -</option>
             {creators.map((c) => (
               <option key={c.id} value={c.id}>{c.name} ({c.tier})</option>
             ))}
