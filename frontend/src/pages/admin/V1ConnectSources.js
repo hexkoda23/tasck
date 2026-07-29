@@ -507,6 +507,16 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
   const [dirty, setDirty] = useState(false);
   const lastAddedIdRef = useRef(null);
   const [lastAddedId, setLastAddedId] = useState(null);
+  const onChangedRef = useRef(onChanged);
+  const onContentChangeRef = useRef(onContentChange);
+
+  useEffect(() => {
+    onChangedRef.current = onChanged;
+  }, [onChanged]);
+
+  useEffect(() => {
+    onContentChangeRef.current = onContentChange;
+  }, [onContentChange]);
 
   const bc = bundle?.business_case || {};
   const brand = bundle?.brand || {};
@@ -550,14 +560,14 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
       const merged = [...meetingRows, ...sourceRows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
       setRows(merged.length ? merged : [createConversationRow(0)]);
       setDirty(false);
-      if (typeof onChanged === 'function') onChanged({ count: merged.length });
+      if (typeof onChangedRef.current === 'function') onChangedRef.current({ count: merged.length });
     } catch (e) {
       // Non-fatal: show an empty editor rather than blocking the page.
       setRows([createConversationRow(0)]);
     } finally {
       setLoading(false);
     }
-  }, [businessCaseId, onChanged]);
+  }, [businessCaseId]);
 
   useEffect(() => { reload(); }, [reload]);
 
@@ -879,6 +889,8 @@ export const V1BusinessCaseConnectSchedulePage = () => {
   const [hasContent, setHasContent] = useState(false);
   const [conversationCount, setConversationCount] = useState(0);
   const inFlightRef = useRef(false);
+  const stableSetConversationCount = useCallback(setConversationCount, []);
+  const stableSetHasContent = useCallback(setHasContent, []);
 
   const go = (path) => navigate(adminRoute(path));
 
@@ -918,8 +930,8 @@ export const V1BusinessCaseConnectSchedulePage = () => {
       <ConversationsPanel
         businessCaseId={id}
         bundle={bundle}
-        onChanged={({ count }) => setConversationCount(count)}
-        onContentChange={setHasContent}
+        onChanged={stableSetConversationCount}
+        onContentChange={stableSetHasContent}
       />
 
       <div className="v3-card p-5 mt-5" data-testid="connect-analyze-card">
