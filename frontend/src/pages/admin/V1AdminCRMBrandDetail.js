@@ -187,8 +187,8 @@ const BrandLogo = ({ brand }) => (
     initialsClassName="text-[18px] font-semibold text-[#1F4A3A]"
   />
 );
-const InfoCard = ({ title, children, action }) => (
-  <div className="v3-card p-5">
+const InfoCard = ({ title, children, action, className = '' }) => (
+  <div className={`v3-card p-5 ${className}`}>
     <div className="mb-3 flex items-center justify-between gap-3">
       <h2 className="text-[12px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{title}</h2>
       {action}
@@ -1096,7 +1096,7 @@ const V1AdminCRMBrandDetail = () => {
           </InfoCard>
         )}
 
-        <InfoCard title="Active business cases">
+        <InfoCard title="Active business cases" className={alignmentProjects.length > 0 ? 'xl:col-span-2' : ''}>
           {businessCases.length ? (
             <div className="grid gap-2">
               {businessCases.map((businessCase) => (
