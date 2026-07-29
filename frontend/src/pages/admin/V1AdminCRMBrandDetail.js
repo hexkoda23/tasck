@@ -1061,13 +1061,13 @@ const V1AdminCRMBrandDetail = () => {
               {alignmentProjects.map((project) => (
                 <div
                   key={project.snapshot_id}
-                  className={`rounded-[8px] border p-3 ${project.is_active ? 'border-[#1F4A3A] bg-[#EAF4EE]' : 'border-[#E8E4DB] bg-white'}`}
+                  className={`min-w-0 rounded-[8px] border p-3 ${project.is_active ? 'border-[#1F4A3A] bg-[#EAF4EE]' : 'border-[#E8E4DB] bg-white'}`}
                   data-testid={`brand-campaign-${project.snapshot_id}`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[13px] font-semibold text-[#1A1A1A] truncate">{cleanV1Text(project.title)}</p>
+                        <p className="text-[13px] font-semibold text-[#1A1A1A] break-words min-w-0">{cleanV1Text(project.title)}</p>
                         <RelationshipPriorityTag priority={project.priority} />
                         {project.is_active ? (
                           <span className="rounded-full bg-[#1F4A3A] px-2 py-0.5 text-[10px] font-semibold text-white">In progress</span>
