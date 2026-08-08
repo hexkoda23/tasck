@@ -341,6 +341,7 @@ export const v3GenerateCreativeBrief = async (bcId, onProgress, snapshotId) => {
   throw new Error('Brief generation timed out. Please retry.');
 };
 export const v3TemplateBriefDocxUrl = (bcId, snapshotId) => `${V3}/business-cases/${bcId}/creative-brief/docx${snapshotId ? `?alignment_snapshot_id=${encodeURIComponent(snapshotId)}` : ''}`;
+export const v3TemplateBriefPreviewUrl = (bcId, snapshotId) => `${V3}/business-cases/${bcId}/creative-brief/preview${snapshotId ? `?alignment_snapshot_id=${encodeURIComponent(snapshotId)}` : ''}`;
 
 // --- Pitch Deck: ten AI-written sections, brand-facing -------------------
 export const v3GetPitchDeck = (bcId, snapshotId) => v3.get(`/business-cases/${bcId}/pitch-deck`, {

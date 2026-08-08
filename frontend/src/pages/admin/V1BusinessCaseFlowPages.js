@@ -93,6 +93,7 @@ import {
   Clock,
   Hash,
   CircleDot,
+  ExternalLink,
 } from 'lucide-react';
 import {
   v3AcceptCreatorBriefing,
@@ -113,6 +114,7 @@ import {
   v3AlignmentDocxUrl,
   v3CreativeBriefDocxUrl,
   v3TemplateBriefDocxUrl,
+  v3TemplateBriefPreviewUrl,
   v3GeneratePitchDeck,
   v3UpdatePitchDeck,
   v3ApprovePitchDeckAs,
@@ -4010,9 +4012,21 @@ export const V3BusinessCasePlanBrief = () => {
               {generatingBrief ? 'Writing…' : (templateBrief ? 'Regenerate brief' : 'Generate brief')}
             </button>
             {templateBrief && (
-              <a href={v3TemplateBriefDocxUrl(id, snapshotId)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brief-download-docx">
-                <Download className="w-3.5 h-3.5" /> Download (.docx)
-              </a>
+              <>
+                <a
+                  href={v3TemplateBriefPreviewUrl(id, snapshotId)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="v3-btn-secondary text-[12px]"
+                  title="Open a printable, shareable browser preview of this brief — no Google account needed."
+                  data-testid="brief-open-preview"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> Open in browser preview
+                </a>
+                <a href={v3TemplateBriefDocxUrl(id, snapshotId)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brief-download-docx">
+                  <Download className="w-3.5 h-3.5" /> Download (.docx)
+                </a>
+              </>
             )}
           </div>
         )}

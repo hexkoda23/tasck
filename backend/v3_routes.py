@@ -11,7 +11,7 @@ Stage advancement rules:
   deliver -> closed : Closure checklist complete (final report + feedback)
 """
 from fastapi import APIRouter, HTTPException, Header, Depends, Body
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone, timedelta as _td
@@ -7499,6 +7499,153 @@ def make_v3_router(db):
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f'attachment; filename="{filename}.docx"'},
         )
+
+    def creative_brief_html(brief: Dict[str, Any]) -> str:
+        """Render the Creative Alignment Brief as a standalone printable HTML
+        page. Same content model as ``creative_brief_docx_bytes`` — the two
+        rendering paths stay in sync so brand reviewers see the same wording
+        online that they'd get in the downloaded .docx.
+
+        Anyone with the URL can open this in a browser — no Google, no
+        install. A print button hooks into ``window.print()`` so the page
+        also works as a lightweight PDF export.
+        """
+        CHECKBOX = "\u2610"
+
+        def esc(value: Any) -> str:
+            return html.escape("" if value is None else str(value))
+
+        parts: List[str] = []
+        title = str(brief.get("title") or "TTA – Creative Alignment Brief (Creator Version)")
+        subtitle = str(brief.get("subtitle") or "(Internal name: Creator Brief for Fee Confirmation)")
+        parts.append(f'<h1 class="cb-title">{esc(title)}</h1>')
+        parts.append(f'<p class="cb-subtitle">{esc(subtitle)}</p>')
+
+        for section in brief.get("sections", []) or []:
+            heading = str(section.get("heading") or "").strip()
+            parts.append('<section class="cb-section">')
+            if heading:
+                parts.append(f'<h2 class="cb-heading">{esc(heading)}</h2>')
+
+            for line in section.get("lines", []) or []:
+                label = str(line.get("label") or "").strip()
+                value = str(line.get("value") or "").strip()
+                if label and value:
+                    parts.append(f'<p class="cb-line"><span class="cb-label">{esc(label)}:</span> {esc(value)}</p>')
+                elif label:
+                    parts.append(f'<p class="cb-line"><span class="cb-label">{esc(label)}:</span></p>')
+                elif value:
+                    parts.append(f'<p class="cb-line">{esc(value)}</p>')
+
+            intro = str(section.get("intro") or "").strip()
+            checkboxes = section.get("checkboxes") or []
+            if intro or checkboxes:
+                joined = esc(intro)
+                if checkboxes:
+                    boxes = "&nbsp;&nbsp;".join(f'<span class="cb-box">{CHECKBOX} {esc(opt)}</span>' for opt in checkboxes)
+                    joined = (joined + " " + boxes).strip() if intro else boxes
+                parts.append(f'<p class="cb-checkboxes">{joined}</p>')
+
+            if section.get("availability_label"):
+                q = esc(section["availability_label"])
+                opts = section.get("availability_options") or []
+                boxes = "&nbsp;&nbsp;".join(f'<span class="cb-box">{CHECKBOX} {esc(o)}</span>' for o in opts)
+                parts.append(f'<p class="cb-checkboxes">{q} {boxes}</p>')
+            if section.get("conditions_label"):
+                parts.append(f'<p class="cb-line">{esc(section["conditions_label"])}</p>')
+                if section.get("conditions_hint"):
+                    parts.append(f'<p class="cb-hint">{esc(section["conditions_hint"])}</p>')
+
+            if section.get("primary_label"):
+                parts.append(f'<p class="cb-line"><strong>{esc(section["primary_label"])}</strong></p>')
+            if section.get("primary_value"):
+                parts.append(f'<p class="cb-line">{esc(section["primary_value"])}</p>')
+
+            for bullet in section.get("scope_signal", []) or []:
+                parts.append(f'<p class="cb-bullet">{esc(bullet)}</p>')
+
+            for item in section.get("assumptions", []) or []:
+                parts.append(f'<p class="cb-bullet">{esc(item)}</p>')
+
+            for item in section.get("confirmations", []) or []:
+                parts.append(f'<p class="cb-bullet"><span class="cb-box">{CHECKBOX}</span> {esc(item)}</p>')
+
+            if section.get("note"):
+                parts.append(f'<p class="cb-hint">{esc(section["note"])}</p>')
+            parts.append('</section>')
+
+        sig = brief.get("signature") or {}
+        parts.append('<section class="cb-signature">')
+        parts.append(f'<p class="cb-line">{esc(sig.get("name_label") or "Name:")}</p>')
+        parts.append(f'<p class="cb-line">{esc(sig.get("date_label") or "Date:")}</p>')
+        parts.append('</section>')
+
+        body = "\n".join(parts)
+        return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+  <title>{esc(title)}</title>
+  <link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">
+  <link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>
+  <link href=\"https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap\" rel=\"stylesheet\">
+  <style>
+    :root {{ color-scheme: light; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: #EEE; font-family: 'Century Gothic', 'CenturyGothic', AppleGothic, sans-serif; color: #1A1A1A; }}
+    .cb-toolbar {{ position: sticky; top: 0; z-index: 5; background: #1F4A3A; color: #FFF; padding: 10px 24px; display: flex; align-items: center; justify-content: space-between; }}
+    .cb-toolbar .cb-brand {{ font-family: 'Bebas Neue', sans-serif; letter-spacing: .12em; font-size: 20px; }}
+    .cb-toolbar button {{ background: #FFF; color: #1F4A3A; border: 0; padding: 8px 16px; border-radius: 999px; font-weight: 600; cursor: pointer; letter-spacing: .04em; }}
+    .cb-toolbar button:hover {{ background: #EEE7D6; }}
+    .cb-paper {{ background: #FFF; max-width: 820px; margin: 24px auto; padding: 56px 64px; box-shadow: 0 2px 24px rgba(0,0,0,.08); border-radius: 6px; }}
+    .cb-title {{ font-family: 'Bebas Neue', sans-serif; color: #4A90E2; font-weight: 400; font-size: 32px; letter-spacing: .04em; margin: 0 0 6px; }}
+    .cb-subtitle {{ font-weight: 700; font-style: italic; margin: 0 0 32px; font-size: 13px; color: #4F3E2F; }}
+    .cb-section {{ margin: 0 0 24px; }}
+    .cb-heading {{ font-family: 'Bebas Neue', sans-serif; color: #4A90E2; font-weight: 400; font-size: 22px; letter-spacing: .06em; margin: 24px 0 12px; }}
+    .cb-line, .cb-checkboxes, .cb-bullet, .cb-hint {{ font-size: 14px; line-height: 1.65; margin: 0 0 6px; }}
+    .cb-label {{ font-weight: 700; color: #1A1A1A; }}
+    .cb-hint {{ font-style: italic; color: #6B5A4C; }}
+    .cb-bullet {{ padding-left: 8px; }}
+    .cb-box {{ white-space: nowrap; }}
+    .cb-signature {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid #E8E4DB; }}
+    @media print {{
+      body {{ background: #FFF; }}
+      .cb-toolbar {{ display: none; }}
+      .cb-paper {{ box-shadow: none; margin: 0; padding: 24px; max-width: none; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class=\"cb-toolbar\">
+    <span class=\"cb-brand\">TASCK · Creative Brief Preview</span>
+    <button type=\"button\" onclick=\"window.print()\">Print / Save as PDF</button>
+  </div>
+  <article class=\"cb-paper\">{body}</article>
+</body>
+</html>"""
+
+    @router.get("/business-cases/{bc_id}/creative-brief/preview")
+    async def preview_creative_brief_html(bc_id: str, alignment_snapshot_id: Optional[str] = None):
+        """Public browser preview of the Creative Brief. Same content as the
+        .docx download, rendered as a printable HTML page. Brand reviewers can
+        open the URL directly in any browser — no Google, no install."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        brief = None
+        snap_id = alignment_snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
+        if snap_id:
+            snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0}) or {}
+            brief = snap.get("generated_brief")
+        if not brief:
+            brief = (case.get("plan") or {}).get("generated_brief")
+        if not brief:
+            raise HTTPException(404, "No generated Creative Brief on this Business Case yet.")
+        # Serve inline (Content-Type text/html) so the browser opens the page
+        # in the current tab instead of downloading it.
+        return HTMLResponse(content=creative_brief_html(brief))
+
 
     # ------------------------------------------------------------------
     # PITCH DECK
