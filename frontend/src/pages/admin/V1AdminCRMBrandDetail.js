@@ -152,27 +152,48 @@ const brandIndustry = (brand) => cleanV1Text(firstValue(brand, ['industry', 'cat
 const domainFromWebsite = (website = '') => {
   const raw = String(website || '').trim();
   if (!raw) return '';
+  const stripped = raw.split(/[\s,;]/)[0];
   try {
-    return new URL(raw.startsWith('http') ? raw : 'https://' + raw).hostname.replace(/^www\./, '');
+    return new URL(stripped.startsWith('http') ? stripped : 'https://' + stripped)
+      .hostname.replace(/^www\./, '');
   } catch (_) {
-    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+    return stripped.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
   }
+};
+
+const GENERIC_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'live.com',
+  'icloud.com', 'me.com', 'aol.com', 'protonmail.com', 'proton.me',
+  'msn.com', 'ymail.com', 'googlemail.com',
+]);
+
+const domainFromEmail = (email = '') => {
+  const raw = String(email || '').trim().toLowerCase();
+  if (!raw || !raw.includes('@')) return '';
+  const domain = raw.split('@').pop().replace(/^www\./, '');
+  if (!domain || GENERIC_EMAIL_DOMAINS.has(domain)) return '';
+  return domain;
 };
 
 const logoCandidatesForBrand = (brand) => {
   const direct = logoUrlForBrand(brand);
-  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
-  return [
-    direct,
-    domain ? 'https://' + domain + '/favicon.png' : '',
-    domain ? 'https://' + domain + '/favicon.ico' : '',
-    domain ? 'https://' + domain + '/logo.svg' : '',
-    domain ? 'https://' + domain + '/logo.png' : '',
-    domain ? 'https://' + domain + '/assets/logo.svg' : '',
-    domain ? 'https://' + domain + '/assets/logo.png' : '',
-    domain ? 'https://www.google.com/s2/favicons?sz=256&domain=' + domain : '',
-    domain ? 'https://icons.duckduckgo.com/ip3/' + domain + '.ico' : '',
-  ]
+  const websiteDomain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
+  const emailDomain = domainFromEmail(firstValue(brand, ['email', 'contact_email', 'primary_contact_email', 'primaryContactEmail']));
+  const domains = [websiteDomain, emailDomain]
+    .filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index);
+  const domainCandidates = domains.flatMap((domain) => [
+    'https://logo.clearbit.com/' + domain,
+    'https://www.google.com/s2/favicons?sz=256&domain=' + domain,
+    'https://icons.duckduckgo.com/ip3/' + domain + '.ico',
+    'https://' + domain + '/favicon.png',
+    'https://' + domain + '/favicon.ico',
+    'https://' + domain + '/logo.svg',
+    'https://' + domain + '/logo.png',
+    'https://' + domain + '/assets/logo.svg',
+    'https://' + domain + '/assets/logo.png',
+  ]);
+  return [direct, ...domainCandidates]
     .filter(Boolean)
     .filter((value) => !/(vite\.svg|react\.svg|placeholder|blank|sprite)/i.test(value))
     .filter((value, index, array) => array.indexOf(value) === index);

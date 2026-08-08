@@ -1,5 +1,21 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 08 Aug 2026 (V1 Admin CRM Brands page — real logos everywhere)
+
+### Root cause (was blocking every brand from ever displaying a logo)
+`BrandLogo` in `/app/frontend/src/lib/brandLogo.js` prepended the cached URL (empty string when no cache) to the candidate list. Every mount with a cold cache short-circuited on the empty first entry and rendered initials — never trying Clearbit / Google / DuckDuckGo / Wikipedia fallbacks.
+
+### Fixes shipped
+- **`/app/frontend/src/lib/brandLogo.js`** — only prepend `cached` when it's truthy; expanded `BRAND_LOGO_OVERRIDES` with curated logos for Coca-Cola (Wikipedia), MTN (Wikipedia), Nigerian Breweries / Heineken, Pernod Ricard, Open Society Foundations, CJID, Don Julio, PulsePeak, Test Brand Co.
+- **`/app/frontend/src/pages/admin/V1AdminCRM.js`** — `normaliseBrand()` now surfaces `email`; `domainFromWebsite()` strips trailing paths / commas so `http://www.opensocietyfoundations.org/,` and `www.pernod-ricard.com/en` resolve cleanly; `logoCandidatesForBrand()` derives a domain from the primary contact email whenever `website` is blank, and expands the candidate list with Clearbit + Google favicons + DuckDuckGo icons.
+- **`/app/frontend/src/pages/admin/V1AdminCRMBrandDetail.js`** — same email-domain fallback and URL sanitiser applied for consistency on the detail page.
+- **`/app/backend/seed_demo_brand_accounts.py`** — the demo seed now writes `website` for Coca-Cola Nigeria, MTN Nigeria, Nigerian Breweries (Star Lager), and Test Brand Co so the logo pipeline has real domains to work with.
+
+### Verification
+Browser-side DOM diagnostic on `/admin/crm-brands` after the fix reports **35 `<img>` elements** rendered (was 0), with fully loaded logos for Coca-Cola, MTN, Nigerian Breweries, Test Brand Co, PulsePeak, we.yan, Pernod Ricard, CJID, OSF, Coca Cola, Don Julio, and every derivative row on the Alignment Snapshot Projects panel below. Brands with no online presence (All Smiles Signature, generic Twenty3 rows) correctly fall through to the initials tile.
+
+
+
 ## Update — 22 Feb 2026 (Pitch Deck Flipbook — CSS 3D flip, fonts, centering, preview modal fixed)
 
 ### Issue reported by user

@@ -55,6 +55,10 @@ const normaliseBrand = (b) => ({
   logoUrl: b.logo_url || b.logoUrl || b.brand_logo_url || b.brandLogoUrl || b.logo || '',
   website: b.website || b.url || b.brand_url || b.source_url || '',
   sourceUrl: b.source_url || '',
+  // Contact email so we can derive a domain (and therefore a logo) even when
+  // the website is missing — most CRM rows are seeded from an inbound email
+  // but never have their website filled in.
+  email: b.email || b.contact_email || b.primary_contact_email || b.primaryContactEmail || '',
   about: b.about || b.brand_about || b.description || b.company_description || b.notes || '',
   createdAt: b.created_at || b.createdAt || null,
   // Show a real date/time the brand was last worked on, not "just now".
@@ -82,22 +86,49 @@ const brandInitials = (name = '') => {
 const domainFromWebsite = (website = '') => {
   const raw = String(website || '').trim();
   if (!raw) return '';
+  // Cut off anything past the hostname the CRM operator may have pasted along
+  // with the URL (a comma-separated list, a query string, an inline note).
+  const stripped = raw.split(/[\s,;]/)[0];
   try {
-    return new URL(raw.startsWith('http') ? raw : 'https://' + raw).hostname.replace(/^www\./, '');
+    return new URL(stripped.startsWith('http') ? stripped : 'https://' + stripped)
+      .hostname.replace(/^www\./, '');
   } catch (_) {
-    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+    return stripped.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
   }
 };
 
+// Corporate email domains that never resolve to the brand's own logo — free
+// mail providers, generic Nigerian ISPs, etc. When the email domain is one of
+// these we skip the email-based candidate entirely.
+const GENERIC_EMAIL_DOMAINS = new Set([
+  'gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'live.com',
+  'icloud.com', 'me.com', 'aol.com', 'protonmail.com', 'proton.me',
+  'msn.com', 'ymail.com', 'googlemail.com',
+]);
+
+const domainFromEmail = (email = '') => {
+  const raw = String(email || '').trim().toLowerCase();
+  if (!raw || !raw.includes('@')) return '';
+  const domain = raw.split('@').pop().replace(/^www\./, '');
+  if (!domain || GENERIC_EMAIL_DOMAINS.has(domain)) return '';
+  return domain;
+};
+
 const logoCandidatesForBrand = (brand) => {
-  const domain = domainFromWebsite(brand.website || brand.sourceUrl);
-  return [
-    brand.logoUrl,
-    domain ? 'https://' + domain + '/favicon.png' : '',
-    domain ? 'https://' + domain + '/favicon.ico' : '',
-    domain ? 'https://www.google.com/s2/favicons?sz=256&domain=' + domain : '',
-    domain ? 'https://icons.duckduckgo.com/ip3/' + domain + '.ico' : '',
-  ].filter(Boolean).filter((value, index, array) => array.indexOf(value) === index);
+  const websiteDomain = domainFromWebsite(brand.website || brand.sourceUrl);
+  const emailDomain = domainFromEmail(brand.email);
+  const domains = [websiteDomain, emailDomain].filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index);
+  const domainCandidates = domains.flatMap((domain) => [
+    'https://logo.clearbit.com/' + domain,
+    'https://www.google.com/s2/favicons?sz=256&domain=' + domain,
+    'https://icons.duckduckgo.com/ip3/' + domain + '.ico',
+    'https://' + domain + '/favicon.png',
+    'https://' + domain + '/favicon.ico',
+  ]);
+  return [brand.logoUrl, ...domainCandidates]
+    .filter(Boolean)
+    .filter((value, index, array) => array.indexOf(value) === index);
 };
 
 const CrmBrandLogo = ({ brand }) => (

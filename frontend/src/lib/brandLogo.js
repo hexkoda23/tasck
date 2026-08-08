@@ -16,11 +16,97 @@ const BRAND_LOGO_OVERRIDES = [
     ],
   },
   {
+    // Both "Coca-Cola Nigeria Limited" (seed) and "Coca Cola" (workbook).
     match: 'cocacola',
     candidates: [
       'https://upload.wikimedia.org/wikipedia/commons/c/ce/Coca-Cola_logo.svg',
+      'https://logo.clearbit.com/coca-cola.com',
       'https://www.google.com/s2/favicons?sz=256&domain=coca-cola.com',
       'https://icons.duckduckgo.com/ip3/coca-cola.com.ico',
+    ],
+  },
+  {
+    match: 'mtn',
+    candidates: [
+      'https://upload.wikimedia.org/wikipedia/commons/9/93/New-mtn-logo.jpg',
+      'https://logo.clearbit.com/mtn.com',
+      'https://logo.clearbit.com/mtnonline.com',
+      'https://www.google.com/s2/favicons?sz=256&domain=mtn.com',
+    ],
+  },
+  {
+    // "Nigerian Breweries PLC (Star Lager)" — parent brand Heineken.
+    match: 'nigerianbreweries',
+    candidates: [
+      'https://logo.clearbit.com/nbplc.com',
+      'https://logo.clearbit.com/heineken.com',
+      'https://www.google.com/s2/favicons?sz=256&domain=nbplc.com',
+    ],
+  },
+  {
+    match: 'starlager',
+    candidates: [
+      'https://logo.clearbit.com/nbplc.com',
+      'https://logo.clearbit.com/heineken.com',
+    ],
+  },
+  {
+    match: 'heineken',
+    candidates: [
+      'https://logo.clearbit.com/heineken.com',
+      'https://upload.wikimedia.org/wikipedia/commons/e/ea/Heineken_logo.svg',
+    ],
+  },
+  {
+    match: 'pernodricard',
+    candidates: [
+      'https://logo.clearbit.com/pernod-ricard.com',
+      'https://www.google.com/s2/favicons?sz=256&domain=pernod-ricard.com',
+    ],
+  },
+  {
+    // "OSF", "Open Society Foundation(s)", "Open Society Initiatives for West Africa"
+    match: 'opensociet',
+    candidates: [
+      'https://logo.clearbit.com/opensocietyfoundations.org',
+      'https://www.google.com/s2/favicons?sz=256&domain=opensocietyfoundations.org',
+      'https://icons.duckduckgo.com/ip3/opensocietyfoundations.org.ico',
+    ],
+  },
+  {
+    match: 'osiwa',
+    candidates: [
+      'https://logo.clearbit.com/osiwa.org',
+      'https://www.google.com/s2/favicons?sz=256&domain=osiwa.org',
+    ],
+  },
+  {
+    match: 'cjid',
+    candidates: [
+      'https://thecjid.org/wp-content/uploads/2021/08/dark-cr-logo-dsk.svg',
+      'https://logo.clearbit.com/thecjid.org',
+      'https://www.google.com/s2/favicons?sz=256&domain=thecjid.org',
+    ],
+  },
+  {
+    match: 'donjulio',
+    candidates: [
+      'https://logo.clearbit.com/donjulio.com',
+      'https://www.google.com/s2/favicons?sz=256&domain=donjulio.com',
+    ],
+  },
+  {
+    match: 'pulsepeak',
+    candidates: [
+      'https://logo.clearbit.com/pulsepeak.co',
+      'https://www.google.com/s2/favicons?sz=256&domain=pulsepeak.co',
+    ],
+  },
+  {
+    match: 'testbrand',
+    candidates: [
+      'https://logo.clearbit.com/thcohq.com',
+      'https://www.google.com/s2/favicons?sz=256&domain=thcohq.com',
     ],
   },
   {
@@ -158,7 +244,12 @@ export const BrandLogo = ({
   const overriddenCandidateKey = [...overrides, ...userCandidates].join('|');
   const resolved = [...overrides, ...userCandidates];
   const cached = getCachedBrandLogo(name);
-  const initialResolved = [cached, ...resolved.filter((candidate) => candidate !== cached)];
+  // When there's a cached URL, try it first (fast path). When cache is empty
+  // we must NOT prepend '' — an empty first entry short-circuits the <img>
+  // render below and the whole fallback chain never fires.
+  const initialResolved = cached
+    ? [cached, ...resolved.filter((candidate) => candidate !== cached)]
+    : resolved;
   const initialKey = initialResolved.join('|') || overriddenCandidateKey;
   const [index, setIndex] = useState(0);
   const [dark, setDark] = useState(false);
