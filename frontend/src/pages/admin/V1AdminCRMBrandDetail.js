@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -16,6 +16,7 @@ import {
   PackageCheck,
   CheckCircle2,
   AlertTriangle,
+  Upload,
 } from 'lucide-react';
 import {
   v3GetBrand,
@@ -514,6 +515,43 @@ const V1AdminCRMBrandDetail = () => {
     }
   };
 
+  const logoFileInputRef = useRef(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const handleLogoFileUpload = async (event) => {
+    const file = event.target.files && event.target.files[0];
+    // Reset the input so re-selecting the same file re-triggers the change event.
+    event.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file (PNG, JPG, SVG, WebP).');
+      return;
+    }
+    // 500KB is plenty for a logo — anything bigger is a design/marketing asset
+    // and shouldn't be inlined as a data URL on the brand document.
+    if (file.size > 500 * 1024) {
+      toast.error('Logo file is too large (max 500KB).');
+      return;
+    }
+    setUploadingLogo(true);
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+        reader.readAsDataURL(file);
+      });
+      setLogoDraft(dataUrl);
+      await v3UpdateBrandDetails(id, { logo_url: dataUrl, brand_logo_url: dataUrl });
+      toast.success('Logo uploaded successfully.');
+      setEditingLogo(false);
+      await reloadData();
+    } catch (e) {
+      toast.error(e?.message || 'Failed to upload logo.');
+    } finally {
+      setUploadingLogo(false);
+    }
+  };
+
   const handleSaveMarketingBudget = async () => {
     try {
       await v3UpdateBrandDetails(id, { marketing_budget: marketingBudgetDraft });
@@ -903,6 +941,24 @@ const V1AdminCRMBrandDetail = () => {
                     placeholder="https://example.com/logo.png"
                     data-testid="crm-logo-input"
                   />
+                  <input
+                    ref={logoFileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif"
+                    className="hidden"
+                    onChange={handleLogoFileUpload}
+                    data-testid="crm-logo-file-input"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => logoFileInputRef.current && logoFileInputRef.current.click()}
+                    disabled={uploadingLogo}
+                    className="w-full text-[11px] border border-dashed border-[#D7CBB8] rounded p-1.5 text-[#4F3E2F] hover:bg-[#F4F2EC] disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    data-testid="crm-logo-upload-btn"
+                  >
+                    <Upload className="w-3 h-3" />
+                    {uploadingLogo ? 'Uploading…' : 'Or upload from your computer (max 500KB)'}
+                  </button>
                   {logoDraft && (
                     <div className="flex justify-center p-2 bg-[#FBFAF7] border border-[#E8E4DB] rounded">
                       <img src={logoDraft} alt="Preview" className="h-10 object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
@@ -925,7 +981,16 @@ const V1AdminCRMBrandDetail = () => {
                   </div>
                 </div>
               ) : (
-                <p className="mt-1 whitespace-pre-wrap break-all text-[13px] leading-5 text-[#1A1A1A]">{textValue(logoUrlForBrand(brand))}</p>
+                <p className="mt-1 whitespace-pre-wrap break-all text-[13px] leading-5 text-[#1A1A1A]">
+                  {(() => {
+                    const val = logoUrlForBrand(brand);
+                    if (!val) return EMPTY_VALUE;
+                    // Data URLs uploaded via the file picker can be huge — show a
+                    // friendly summary instead of a wall of base64 text.
+                    if (val.startsWith('data:')) return 'Uploaded image (stored inline)';
+                    return val;
+                  })()}
+                </p>
               )}
             </div>
             <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">

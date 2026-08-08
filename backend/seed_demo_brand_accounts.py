@@ -168,5 +168,20 @@ async def main():
     print("\nDone.")
 
 
+async def seed_demo_brand_accounts(db) -> int:
+    """Idempotent seed used by server startup hook.
+
+    Accepts an already-connected Mongo db handle (so server.py does not have
+    to open a second client) and returns the number of accounts touched.
+    Safe to call on every boot: existing rows are updated in place.
+    """
+    count = 0
+    for spec in DEMO_ACCOUNTS:
+        brand_id = await ensure_brand(db, spec)
+        await ensure_brand_account(db, brand_id, spec)
+        count += 1
+    return count
+
+
 if __name__ == "__main__":
     asyncio.run(main())

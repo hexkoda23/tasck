@@ -99,6 +99,16 @@ async def startup_event():
             logger.info("Workbook import completed.")
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Workbook import skipped or failed: {exc}")
+        try:
+            # Restore the four demo Brand Portal accounts (Coca-Cola, MTN,
+            # Nigerian Breweries, Test Brand) on every boot. Idempotent — if
+            # they already exist we just refresh identity + website so the
+            # CRM logo pipeline never regresses after `clear-v3-demo-data`.
+            from seed_demo_brand_accounts import seed_demo_brand_accounts
+            count = await seed_demo_brand_accounts(db)
+            logger.info(f"Seeded {count} demo brand portal accounts.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Demo brand account seed skipped or failed: {exc}")
         logger.info("Background hydration completed.")
 
     asyncio.create_task(_hydrate())
