@@ -110,6 +110,7 @@ import {
   v3ListBrainstorms,
   v3BrainstormSuggestedQuestions,
   v3AnalyzeBrainstormTranscript,
+  v3SkipBrainstormTranscript,
   v3ContractPdfUrl,
   v3AlignmentDocxUrl,
   v3CreativeBriefDocxUrl,
@@ -2475,13 +2476,19 @@ export const V3BusinessCaseFrameSnapshot = () => {
       if (status === 'sent') {
         setSendPopup({
           title: 'Sent',
-          message: `Alignment Snapshot sent to ${deliveredRecipient}. The editable Google Docs-compatible file is attached.`,
+          message: `Alignment Snapshot sent to ${deliveredRecipient}. The editable Google Docs-compatible file is attached. If the brand can't find it, ask them to check the Spam / Promotions folder and mark it as safe so future TASCK emails land in their inbox.`,
           tone: 'success',
+        });
+      } else if (status === 'delivery_failed') {
+        setSendPopup({
+          title: 'Email not delivered',
+          message: deliveryError || 'The SMTP server rejected the message. Check the SMTP credentials on the backend and retry.',
+          tone: 'warning',
         });
       } else {
         setSendPopup({
-          title: status === 'delivery_failed' ? 'Email not delivered' : 'Email queued',
-          message: deliveryError || `Alignment Snapshot queued for ${deliveredRecipient}. SMTP delivery is not configured yet.`,
+          title: 'Email queued',
+          message: deliveryError || `Alignment Snapshot queued for ${deliveredRecipient}. SMTP delivery is not configured yet on this environment.`,
           tone: 'warning',
         });
       }
@@ -3219,6 +3226,23 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
     }
   };
 
+  const skipTranscriptForExistingBrand = async () => {
+    if (!window.confirm('Skip transcript entirely? Only do this when this brand is already past the Creator Selection stage in their CRM. The Framing flow will jump straight to the Creator Match Scanner.')) return;
+    setNotice('');
+    setAnalyzing(true);
+    setPopup({ status: 'running', message: 'Marking this brand past the transcript stage…' });
+    try {
+      await v3SkipBrainstormTranscript(id);
+      setPopup({ status: 'complete', message: 'Transcript step skipped. Jumping to the Creator Match Scanner.' });
+      setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/creator-scan`)), 700);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e?.message || 'Could not skip the transcript step.';
+      setPopup({ status: 'failed', message: msg });
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   return (
     <FlowShell
       title="Creator Selector & Transcript Analysis"
@@ -3275,7 +3299,17 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
           >
             <ArrowRight className="w-3.5 h-3.5" /> Skip and fill creator selection manually
           </button>
-          <p className="text-[11px] text-[#8A8A8A]">No transcript? Open the Creator Selector and fill each field yourself.</p>
+          <button
+            type="button"
+            onClick={skipTranscriptForExistingBrand}
+            disabled={analyzing}
+            className="v3-btn-secondary text-[12px] disabled:opacity-60"
+            title="Use only when this brand is already past the Creator Selection stage on their CRM"
+            data-testid="brainstorm-skip-transcript-existing"
+          >
+            <ArrowRight className="w-3.5 h-3.5" /> Skip transcript — brand already past this stage
+          </button>
+          <p className="text-[11px] text-[#8A8A8A]">No transcript? Open the Creator Selector and fill each field yourself, or skip entirely if this brand is a returning one.</p>
         </div>
       </InfoCard>
 

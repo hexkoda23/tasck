@@ -38,7 +38,6 @@ const portalConfig = {
       { path: '/brand', label: 'Overview', icon: LayoutDashboard, exact: true },
       { path: '/brand/projects', label: 'Projects', icon: FolderOpen },
       { path: '/brand/alignment-snapshot', label: 'Alignment Snapshot', icon: FileCheck },
-      { path: '/brand/strategy-snapshot', label: 'Strategy Snapshot', icon: Briefcase },
       { path: '/brand/pitch-deck', label: 'Pitch Deck', icon: Presentation },
       { path: '/brand/contracts', label: 'Contracts', icon: FileCheck },
       { path: '/brand/reports-feedback', label: 'Reports & Feedback', icon: Upload },

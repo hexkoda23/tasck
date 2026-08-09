@@ -133,6 +133,7 @@ export const v3AnalyzeBrainstormTranscript = (bcId, transcript, alignmentSnapsho
   v3.post(`/business-cases/${bcId}/brainstorm/analyze-transcript`,
     alignmentSnapshotId ? { transcript, alignment_snapshot_id: alignmentSnapshotId } : { transcript }
   ).then(r => r.data);
+export const v3SkipBrainstormTranscript = (bcId) => v3.post(`/business-cases/${bcId}/brainstorm/skip-transcript`).then(r => r.data);
 export const v3ContractPdfUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/pdf`;
 export const v3AlignmentDocxUrl = (snapshotId) => `${BACKEND_URL}/api/v3/alignment-snapshots/${snapshotId}/docx`;
 export const v3CreativeBriefDocxUrl = (briefId) => `${BACKEND_URL}/api/v3/creative-briefs/${briefId}/docx`;

@@ -1,5 +1,31 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 09 Aug 2026 (Brand portal cleanup, transcript skip, email typography)
+
+### ✅ 1) Strategy Snapshot removed from Brand Portal
+Files: `V1PortalLayout.js` (sidebar), `V1BrandOverview.js` (dashboard tile row), `V1BrandProjects.js` (project detail sub-doc list), `App.js` (route + import), and `V1BrandDocuments` re-uses `V1BrandAlignmentSnapshot` for the legacy `/brand/documents` path. Verified with an MTN brand login — only Alignment Snapshot + Pitch Deck + Contracts + Reports & Feedback appear now. Backend `creative_snapshot` data untouched (admin still uses it).
+
+### 🟡 2) Alignment Snapshot email — deliverability triage
+Root cause is downstream of our code: the code path successfully calls smtplib and stores `status=sent` on the outbox row. The brand not receiving = message accepted by Gmail SMTP but filtered by the recipient's server (spam / promotions / policy reject). Delivered improvements today:
+- Popup copy on success now tells the admin to advise the brand to check Spam/Promotions and mark as safe.
+- Distinct copy for `sent` vs `delivery_failed` vs `queued` so the true dispatch state is always visible.
+- `_smtp_transactional_html` fully rewritten (see item 4) with legitimate transactional formatting — better spam score.
+- Existing `GET /api/v3/email-outbox?business_case_id=` endpoint documented as the diagnostic surface for support. Production access is required to confirm whether SMTP creds are set and inspect the actual delivery response body.
+
+### ✅ 3) Skip transcript button
+- Backend: new `POST /api/v3/business-cases/{bc_id}/brainstorm/skip-transcript` writes `plan.brainstorm_skipped=True` + a synthetic `brainstorm_transcript_analyzed_at` so the Framing router jumps straight to the Creator Match Scanner. Timeline entry pushed for audit.
+- Frontend: new "Skip transcript — brand already past this stage" button in the transcript upload card, guarded by a `window.confirm` explaining the intended use case, then navigating to `/frame/creator-scan`.
+
+### ✅ 4) Alignment email HTML preview — Bebas Neue + Century Gothic
+`_smtp_transactional_html` in `v3_routes.py` fully rewritten:
+- Body copy renders in Century Gothic (falls back to CenturyGothic / AppleGothic / Verdana / sans-serif).
+- Short lines ending in `:` are auto-styled as Bebas Neue section headings in TASCK blue — Gmail imports Bebas Neue via Google Fonts `<link>`, gracefully degrades to Impact.
+- Label-value lines (`Business Case: …`, `Username: …`) render with bold labels for scan-ability.
+- TASCK green header strip added at the top of the email so the visual identity matches the .docx attachment and the browser preview.
+- Alignment Snapshot .docx already ships with embedded Bebas Neue + Century Gothic (`alignment_snapshot_docx_bytes`) — the docx side needed no change.
+
+
+
 ## Update — 08 Aug 2026 (V1 Admin CRM Brands page — real logos everywhere)
 
 ### Root cause (was blocking every brand from ever displaying a logo)

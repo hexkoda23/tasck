@@ -2378,7 +2378,48 @@ def make_v3_router(db):
         return configured_from or username, from_name, reply_to
 
     def _smtp_transactional_html(plain_body: str, from_email: str) -> str:
-        escaped_body = html.escape(plain_body).replace("\n", "<br />")
+        """Render the plain-text email body as HTML with TASCK typography.
+
+        Gmail and most webmail readers respect ``font-family`` when it names
+        a widely-installed face. We lead with **Century Gothic** for body
+        copy — installed with Office on ~95% of desktops — and fall back to
+        AppleGothic / Verdana / sans-serif. Every line whose first character
+        is a word AND ends with a colon after fewer than 60 chars is
+        treated as a section label and rendered in **Bebas Neue** display
+        style with our brand blue so the email preview matches the printed
+        brief and the .docx attachment.
+        """
+        display_stack = "'Bebas Neue', 'BebasNeue', Impact, 'Arial Narrow', sans-serif"
+        body_stack = "'Century Gothic', 'CenturyGothic', AppleGothic, Verdana, sans-serif"
+
+        def render_line(raw_line: str) -> str:
+            stripped = raw_line.strip()
+            if not stripped:
+                return '<br />'
+            escaped = html.escape(stripped)
+            # Section title? Short line ending with ':' — render as Bebas display heading.
+            if len(stripped) <= 60 and stripped.endswith(':') and ' ' in stripped:
+                return (
+                    f'<div style="font-family:{display_stack};color:#4A90E2;'
+                    'font-size:20px;letter-spacing:.06em;margin:18px 0 6px;">'
+                    f'{escaped}</div>'
+                )
+            # Bullet dash → styled bullet paragraph.
+            if stripped.startswith('- '):
+                return (
+                    f'<div style="margin:0 0 4px;padding-left:14px;'
+                    f'text-indent:-10px;">• {html.escape(stripped[2:])}</div>'
+                )
+            # "Label: value" inline → bold the label so scanning is quick.
+            if ':' in stripped and stripped.index(':') <= 32:
+                label, _, value = stripped.partition(':')
+                return (
+                    f'<div style="margin:0 0 4px;"><strong>{html.escape(label)}:</strong> '
+                    f'{html.escape(value.strip())}</div>'
+                )
+            return f'<div style="margin:0 0 6px;">{escaped}</div>'
+
+        body_html = ''.join(render_line(line) for line in plain_body.splitlines())
         footer = html.escape(
             os.getenv(
                 "SMTP_EMAIL_FOOTER",
@@ -2386,10 +2427,23 @@ def make_v3_router(db):
             )
         )
         return (
-            '<!doctype html><html><body style="margin:0;padding:24px;font-family:Arial,sans-serif;color:#1a1a1a;line-height:1.5;">'
-            f'<div style="max-width:680px;margin:0 auto;font-size:14px;">{escaped_body}'
-            f'<hr style="border:none;border-top:1px solid #e7dfd2;margin:24px 0;" />'
-            f'<p style="font-size:12px;color:#6b6258;">{footer}</p></div></body></html>'
+            '<!doctype html><html><head><meta charset="utf-8">'
+            # Google Fonts import — Gmail will pull Bebas Neue for desktop
+            # clients that allow it; the CSS stack falls back cleanly.
+            '<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">'
+            '</head><body style="margin:0;padding:24px;background:#F5F1E8;">'
+            f'<div style="max-width:680px;margin:0 auto;background:#FFFFFF;'
+            'border:1px solid #E7DFD2;border-radius:6px;overflow:hidden;">'
+            # TASCK brand strip
+            f'<div style="background:#1F4A3A;color:#FFFFFF;padding:14px 24px;'
+            f'font-family:{display_stack};letter-spacing:.12em;font-size:20px;">'
+            'TASCK'
+            '</div>'
+            f'<div style="padding:24px;font-family:{body_stack};color:#1A1A1A;'
+            f'font-size:14px;line-height:1.6;">{body_html}'
+            '<hr style="border:none;border-top:1px solid #E7DFD2;margin:24px 0;" />'
+            f'<p style="font-size:12px;color:#6B6258;font-family:{body_stack};margin:0;">{footer}</p></div>'
+            '</div></body></html>'
         )
 
     def _add_transactional_headers(message: EmailMessage, email: Dict[str, Any], from_email: str, reply_to: str) -> None:
@@ -8974,6 +9028,51 @@ def make_v3_router(db):
         )
         result = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0})
         return {"ok": True, "analysis_source": analysis_source, "brainstorm_round": result}
+
+    @router.post("/business-cases/{bc_id}/brainstorm/skip-transcript")
+    async def skip_brainstorm_transcript(bc_id: str):
+        """Skip the Creator Selector transcript step entirely.
+
+        Used when the admin knows this brand is already past the Creator
+        Selection stage on their CRM (recurring brand, previous roster,
+        pre-agreed shortlist etc.). We mark ``plan.brainstorm_skipped=True``
+        with a synthetic ``brainstorm_transcript_analyzed_at`` so the router
+        (see V1BusinessCaseFlowPages ``routeToNextFrameStep``) jumps straight
+        into the Creator Match Scanner without demanding a transcript.
+
+        No brainstorm round is created — the admin still fills the Creator
+        Selector by hand or uses the shortlist they already had.
+        """
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        skipped_at = _now_iso()
+        # A short marker round captures "why" for the timeline without polluting
+        # the analyzer stack — future analyze calls will still work if the admin
+        # changes their mind later.
+        round_id = f"bs-skip-{uuid.uuid4().hex[:8]}"
+        await db.v3_brainstorm_rounds.insert_one({
+            "id": round_id,
+            "business_case_id": bc_id,
+            "created_at": skipped_at,
+            "status": "skipped",
+            "transcript_analysis_source": "admin_skip",
+            "notes": "Admin skipped transcript — brand already past this stage.",
+        })
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {
+                    "plan.brainstorm_round_id": round_id,
+                    "plan.brainstorm_transcript_analyzed_at": skipped_at,
+                    "plan.brainstorm_skipped": True,
+                    "plan.brainstorm_skipped_at": skipped_at,
+                    "updated_at": skipped_at,
+                },
+                "$push": {"timeline": {"at": skipped_at, "event": "brainstorm_transcript_skipped", "reason": "admin_marked_brand_past_stage"}},
+            },
+        )
+        return {"ok": True, "skipped_at": skipped_at, "brainstorm_round_id": round_id}
 
     # ------------------------------------------------------------------------
     # FINAL REPORT + CLOSURE

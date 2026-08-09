@@ -132,7 +132,6 @@ import V1BrandOverview from './pages/brand/V1BrandOverview';
 import V1BrandProjects, { V1BrandProjectDetail } from './pages/brand/V1BrandProjects';
 import {
   V1BrandAlignmentSnapshot,
-  V1BrandStrategySnapshot,
   V1BrandContracts,
   V1BrandReportsFeedback,
   V1BrandPitchDeck,
@@ -319,12 +318,11 @@ function AppRoutes() {
         <Route path="projects" element={<V1BrandProjects />} />
         <Route path="projects/:id" element={<V1BrandProjectDetail />} />
         <Route path="alignment-snapshot" element={<V1BrandAlignmentSnapshot />} />
-        <Route path="strategy-snapshot" element={<V1BrandStrategySnapshot />} />
         <Route path="contracts" element={<V1BrandContracts />} />
         <Route path="pitch-deck" element={<V1BrandPitchDeck />} />
         <Route path="reports-feedback" element={<V1BrandReportsFeedback />} />
         <Route path="approvals" element={<V1BrandAlignmentSnapshot />} />
-        <Route path="documents" element={<V1BrandStrategySnapshot />} />
+        <Route path="documents" element={<V1BrandAlignmentSnapshot />} />
         <Route path="invoices" element={<V1BrandContracts />} />
         <Route path="messages" element={<V1BrandMessages />} />
         <Route path="settings" element={<V3BrandSettings />} />
