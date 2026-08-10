@@ -7856,6 +7856,7 @@ def make_v3_router(db):
     class PitchDeckUpdate(BaseModel):
         title: Optional[str] = None
         sections: Optional[List[Dict[str, Any]]] = None
+        cover_option: Optional[str] = None
         reviewer: str = "admin"
 
     @router.patch("/pitch-decks/{deck_id}")
@@ -7868,6 +7869,11 @@ def make_v3_router(db):
             updates["title"] = payload.title
         if payload.sections is not None:
             updates["sections"] = payload.sections
+        if payload.cover_option is not None:
+            allowed = {"photo_studio", "minimal_navy", "green_wash", "sunset"}
+            if payload.cover_option not in allowed:
+                raise HTTPException(400, f"cover_option must be one of {sorted(allowed)}")
+            updates["cover_option"] = payload.cover_option
         await db.v3_pitch_decks.update_one({"id": deck_id}, {"$set": updates})
         updated = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
         return {"ok": True, "pitch_deck": updated}

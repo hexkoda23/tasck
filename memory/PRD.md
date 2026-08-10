@@ -1,5 +1,36 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (Pitch Deck: PDF export + 4 cover styles + mobile polish)
+
+### ✅ PDF Download (P1, client-side print-to-PDF)
+- New "Download PDF" floating button inside the flipbook HTML (top-right, uses Bebas Neue pill styling). Fires `window.print()`.
+- New "Download PDF" button in the admin Pitch Deck toolbar (data-testid `pitch-download-pdf-btn`). Opens the flipbook with `?print=1` which auto-triggers the browser print dialog — user picks "Save as PDF" and gets a full multi-page deck.
+- Print CSS (`@media print` in `v3_flipbook.py`): every `.sheet` is cloned into a hidden `#print-book` container BEFORE StPageFlip mutates the DOM. On print, the 3D book is hidden and each print-page renders as one A4 page with `-webkit-print-color-adjust: exact` so navy backgrounds + green accents survive the export. Font sizes bumped for the print scale (title 38px, body 12pt).
+
+### ✅ Cover Photo Options (4 styles per deck)
+- `v3_pitch_decks.cover_option` field added (enum: `photo_studio` (default) / `minimal_navy` / `green_wash` / `sunset`).
+- `PATCH /api/v3/pitch-decks/{deck_id}` now accepts `cover_option`; validated server-side (rejects unknown values with 400).
+- `v3_flipbook.py` reads `deck.cover_option` and applies a CSS variant class on `.pcov`. `minimal_navy` skips the raster photo entirely (pure gradient); `green_wash` and `sunset` overlay green/orange washes on the same photo.
+- Admin picker (in `V1BusinessCaseFlowPages.js`, `data-testid="pitch-cover-picker"`) — 2×2 grid of swatches with live PATCH; active option shows a green ring. Optimistic UI with rollback on failure.
+
+### ✅ Mobile Polish
+- StPageFlip config updated: `mobileScrollSupport: true` + `useMouseEvents: true` so pinch/swipe works on phones.
+- Media query `@media (max-width:720px)`: viewport uses full width, book scales to `min(430px, 95vw)`, side-shift transforms disabled (cover/back sit centered on narrow screens), Download PDF pill shrinks, side chevrons stay tappable.
+- Verified: portrait 390×780 renders the cover cleanly with the Download PDF button visible and touch-swipe active.
+
+### Files touched
+- `/app/backend/v3_flipbook.py` — print stylesheet, `#print-book` cloning, mobile CSS, cover variants (`v-minimal-navy` / `v-green-wash` / `v-sunset`), `cover_option` param support, `?print=1` auto-print.
+- `/app/backend/v3_routes.py` — `PitchDeckUpdate.cover_option` (with enum validation).
+- `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js` — `downloadPdf` handler, `setCoverOption` handler, "Download PDF" button, cover picker UI (4 swatches with active ring), `persist()` now saves `cover_option`.
+
+### Verified
+- Backend: 4 covers PATCH+render cycle passes; invalid cover returns 400.
+- Flipbook HTML (`GET /api/v3/pitch-decks/{id}/flipbook`) contains the Download PDF button, print-book with 10 populated pages, and touch support.
+- Admin UI at `/admin/business-cases/bc-5e08b38a/frame/pitch-deck` shows the picker with 4 swatches and the Download PDF button in the toolbar.
+- Mobile viewport (390×780) renders cover + button correctly with the Sunset variant.
+
+
+
 ## Update — 09 Aug 2026 (Brand portal cleanup, transcript skip, email typography)
 
 ### ✅ 1) Strategy Snapshot removed from Brand Portal

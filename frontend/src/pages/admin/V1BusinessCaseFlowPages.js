@@ -4357,7 +4357,12 @@ export const V3BusinessCasePitchDeck = () => {
 
   const persist = async () => {
     if (!deck?.id) return null;
-    const saved = await v3UpdatePitchDeck(deck.id, { title: deck.title || '', sections: deck.sections || [], reviewer: 'admin' });
+    const saved = await v3UpdatePitchDeck(deck.id, {
+      title: deck.title || '',
+      sections: deck.sections || [],
+      cover_option: deck.cover_option || 'photo_studio',
+      reviewer: 'admin',
+    });
     setDeck(saved?.pitch_deck || deck);
     await reload();
     return saved;
@@ -4424,6 +4429,30 @@ export const V3BusinessCasePitchDeck = () => {
     toast.success('Flip book downloading - a single HTML file you can send to the client.');
   };
 
+  // Client-side print-to-PDF: opens the flipbook with ?print=1 so it auto-
+  // triggers the browser's Print dialog. Users choose "Save as PDF" to
+  // download a proper multi-page PDF of the deck.
+  const downloadPdf = () => {
+    if (!deck?.id) return;
+    const url = `${v3PitchDeckFlipbookUrl(deck.id)}?print=1`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+    toast.success('Preparing PDF - choose "Save as PDF" in the print dialog.');
+  };
+
+  const setCoverOption = async (option) => {
+    if (!deck?.id) return;
+    const previous = deck.cover_option || 'photo_studio';
+    if (previous === option) return;
+    setDeck((current) => ({ ...(current || {}), cover_option: option }));
+    try {
+      await v3UpdatePitchDeck(deck.id, { cover_option: option, reviewer: 'admin' });
+      toast.success('Cover updated.');
+    } catch (e) {
+      setDeck((current) => ({ ...(current || {}), cover_option: previous }));
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not update the cover.');
+    }
+  };
+
   const deckComments = Array.isArray(deck?.brand_comments) ? deck.brand_comments : [];
 
   return (
@@ -4446,6 +4475,7 @@ export const V3BusinessCasePitchDeck = () => {
                 <button onClick={openPreview} className="v3-btn-secondary text-[12px]" data-testid="pitch-preview-btn"><Presentation className="w-3.5 h-3.5" /> Preview flipbook</button>
                 <a href={v3PitchDeckDocxUrl(deck.id)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="pitch-download-btn"><Download className="w-3.5 h-3.5" /> Download (.docx)</a>
                 <button onClick={downloadFlipbook} className="v3-btn-secondary text-[12px]" data-testid="pitch-download-flipbook-btn"><BookOpen className="w-3.5 h-3.5" /> Download flipbook (.html)</button>
+                <button onClick={downloadPdf} className="v3-btn-secondary text-[12px]" data-testid="pitch-download-pdf-btn"><Download className="w-3.5 h-3.5" /> Download PDF</button>
                 <button onClick={approve} className="v3-btn-secondary text-[12px]" data-testid="pitch-approve-btn"><CheckCircle2 className="w-3.5 h-3.5" /> Admin approve</button>
               </>
             )}
@@ -4474,6 +4504,31 @@ export const V3BusinessCasePitchDeck = () => {
               className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[14px] font-semibold focus:outline-none focus:border-[#1F4A3A]"
               data-testid="pitch-title-input"
             />
+            <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF6] p-3" data-testid="pitch-cover-picker">
+              <p className="text-[11px] font-semibold tracking-widest text-[#6E6657] uppercase mb-2">Cover style</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { id: 'photo_studio', label: 'Creator Studio', swatch: 'linear-gradient(160deg,#0C1626 0%,#101E33 55%,#070E1B 100%)' },
+                  { id: 'minimal_navy', label: 'Minimal Navy', swatch: 'radial-gradient(60% 40% at 20% 15%,rgba(61,240,140,.35) 0%,rgba(61,240,140,0) 60%),linear-gradient(160deg,#0F1E33,#050B15)' },
+                  { id: 'green_wash', label: 'Neon Green', swatch: 'linear-gradient(140deg,rgba(61,240,140,.55) 0%,rgba(6,11,22,.9) 60%)' },
+                  { id: 'sunset', label: 'Sunset', swatch: 'linear-gradient(140deg,rgba(255,122,69,.55) 0%,rgba(6,11,22,.9) 60%)' },
+                ].map((opt) => {
+                  const active = (deck.cover_option || 'photo_studio') === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setCoverOption(opt.id)}
+                      className={`flex flex-col items-stretch gap-1 rounded-md border p-1.5 text-left transition ${active ? 'border-[#1F4A3A] ring-2 ring-[#3DF08C]' : 'border-[#E8E4DB] hover:border-[#B5AF9F]'}`}
+                      data-testid={`pitch-cover-option-${opt.id}`}
+                    >
+                      <span className="block h-14 rounded" style={{ background: opt.swatch }} />
+                      <span className="text-[11px] font-medium text-[#1A1A1A]">{opt.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             {(deck.sections || []).map((section, index) => (
               <div key={index} className="v3-card p-4" data-testid={`pitch-section-${index}`}>
                 <p className="text-[12px] font-semibold text-[#1A1A1A] mb-2">{index + 1}. {section.heading}</p>

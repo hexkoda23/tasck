@@ -428,10 +428,73 @@ body{
 .corner:disabled{opacity:.15; cursor:default;}
 .corner.first{left:8px;} .corner.last{right:8px;}
 .indicator{font-size:12.5px; color:#bdbdc6; letter-spacing:.05em; user-select:none;}
-@media print{ body{background:#fff} .side,.corner,.indicator{display:none} }
+
+/* ---- Utility bar (Download PDF) ---- */
+.util{position:fixed; top:16px; right:16px; z-index:60; display:flex; gap:8px;}
+.util .btn{background:rgba(12,22,38,.85); backdrop-filter:blur(8px); color:#EAF0F9;
+  border:1px solid rgba(61,240,140,.35); border-radius:999px; padding:9px 16px;
+  font-family:'Bebas Neue FB','Bebas Neue',sans-serif; letter-spacing:.14em;
+  font-size:13px; text-transform:uppercase; cursor:pointer; transition:all .2s;}
+.util .btn:hover{background:rgba(61,240,140,.15); border-color:var(--green); color:#fff;}
+.util .btn:active{transform:translateY(1px);}
+
+/* ---- Cover variants (no photo) ---- */
+.pcov.v-minimal-navy .pcov-bg{background:
+  radial-gradient(60% 40% at 20% 15%, rgba(61,240,140,.14) 0%, rgba(61,240,140,0) 60%),
+  radial-gradient(70% 50% at 90% 90%, rgba(58,219,200,.12) 0%, rgba(58,219,200,0) 65%),
+  linear-gradient(160deg,#0F1E33 0%, #0A1424 55%, #050B15 100%);}
+.pcov.v-minimal-navy .pcov-shade{background:none;}
+.pcov.v-green-wash .pcov-shade{background:
+  linear-gradient(180deg, rgba(7,13,25,.30) 0%, rgba(7,13,25,.45) 45%, rgba(6,11,22,.90) 100%),
+  linear-gradient(140deg, rgba(61,240,140,.22) 0%, rgba(61,240,140,0) 55%);}
+.pcov.v-sunset .pcov-shade{background:
+  linear-gradient(180deg, rgba(7,13,25,.30) 0%, rgba(7,13,25,.45) 45%, rgba(6,11,22,.90) 100%),
+  linear-gradient(140deg, rgba(255,122,69,.28) 0%, rgba(255,122,69,0) 55%);}
+.pcov.v-sunset .kicker,.pcov.v-sunset .cv-title .acc,.pcov.v-sunset .cv-rule{color:var(--orange); background:var(--orange);}
+.pcov.v-sunset .cv-rule{background:var(--orange);}
+.pcov.v-sunset .cv-foot .g{color:var(--orange);}
+
+/* ---- Mobile polish ---- */
+@media (max-width:720px){
+  body{padding:8px 4px; gap:6px;}
+  .util{top:8px; right:8px;}
+  .util .btn{padding:7px 12px; font-size:11px;}
+  .viewport{width:100vw;}
+  .book-wrap{width:min(430px,95vw);}
+  .viewport.at-start .book-wrap,
+  .viewport.at-end .book-wrap{transform:none;}
+  .side{font-size:38px; padding:4px 6px;}
+  .indicator{font-size:11px;}
+}
+
+/* ---- Print / PDF export ---- */
+#print-book{display:none;}
+@media print{
+  @page{size:A4; margin:0;}
+  html,body{background:#fff !important; min-height:0; padding:0; margin:0;}
+  .util,.side,.corner,.indicator,.viewport,#book,.stf__parent{display:none !important;}
+  #print-book{display:block !important;}
+  .print-page{
+    width:210mm; height:297mm; page-break-after:always; break-after:page;
+    position:relative; overflow:hidden;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact;
+    color-adjust:exact;
+  }
+  .print-page:last-child{page-break-after:auto;}
+  .print-page .dpage,.print-page .pcov,.print-page .pend{
+    position:absolute; inset:0; width:100%; height:100%; container-type:inline-size;
+  }
+  /* Bump text so A4 print reads at full size instead of tiny sheet-scale */
+  .print-page .dsec-h,.print-page .cv-title,.print-page .thanks{font-size:38px !important;}
+  .print-page .dsec p,.print-page .dsec li,.print-page .cv-sub{font-size:12pt !important; line-height:1.7 !important;}
+  .print-page .kicker,.print-page .pcov-agency{font-size:11pt !important;}
+}
 </style>
 </head>
 <body>
+<div class="util no-print">
+  <button class="btn" id="print-pdf" data-testid="flipbook-download-pdf">Download PDF</button>
+</div>
 <div class="viewport at-start" id="viewport">
   <button class="side prev" id="prev" aria-label="Previous page">&#8249;</button>
   <div class="book-wrap"><div id="book">__SHEETS__</div></div>
@@ -440,6 +503,7 @@ body{
   <button class="corner last" id="last" aria-label="Last page">&#187;</button>
 </div>
 <div class="indicator" id="indicator">Cover</div>
+<div id="print-book" aria-hidden="true"></div>
 <script>__PAGEFLIP_JS__</script>
 <script>
 var pf = new St.PageFlip(document.getElementById('book'), {
@@ -450,10 +514,23 @@ var pf = new St.PageFlip(document.getElementById('book'), {
   showCover: true,
   maxShadowOpacity: 0.45,
   flippingTime: 750,
-  mobileScrollSupport: false,
+  mobileScrollSupport: true,
+  useMouseEvents: true,
   disableFlipByClick: true
 });
-pf.loadFromHTML(document.querySelectorAll('.sheet'));
+// Snapshot every sheet's inner HTML BEFORE StPageFlip mutates the DOM, so the
+// print/PDF path can render every page flat (one per physical A4 sheet).
+(function(){
+  var container = document.getElementById('print-book');
+  var sheets = document.querySelectorAll('#book .sheet');
+  sheets.forEach(function(sheet){
+    var page = document.createElement('div');
+    page.className = 'print-page';
+    page.innerHTML = sheet.innerHTML;
+    container.appendChild(page);
+  });
+})();
+pf.loadFromHTML(document.querySelectorAll('#book .sheet'));
 var total = pf.getPageCount();
 
 function sync(idx){
@@ -492,6 +569,13 @@ vp.addEventListener('click', function(e){
   if (e.clientX > r.left + r.width / 2) pf.flipNext(); else pf.flipPrev();
 });
 sync(0);
+// Download PDF: fires the browser's native print flow. Print CSS flattens
+// every sheet to A4 pages so "Save as PDF" produces a real, multi-page deck.
+document.getElementById('print-pdf').onclick = function(){ window.print(); };
+// Auto-print when the flipbook is opened with ?print=1 (admin "Download PDF").
+if (/[?&]print=1(?:&|$)/.test(window.location.search)) {
+  setTimeout(function(){ window.print(); }, 400);
+}
 </script>
 </body>
 </html>
@@ -508,6 +592,21 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
     contact = "hitusup@thetasck.com"
     site = "tasck.org"
 
+    # Cover style variant. Admin picks one of four:
+    #   photo_studio   - the baked-in dark creator/studio photo (default)
+    #   minimal_navy   - navy gradient, no photo (fastest / cleanest)
+    #   green_wash     - photo + green neon overlay
+    #   sunset         - photo + orange overlay, orange accents
+    cover_option = str(deck.get("cover_option") or "photo_studio").strip().lower()
+    if cover_option not in ("photo_studio", "minimal_navy", "green_wash", "sunset"):
+        cover_option = "photo_studio"
+    cover_variant_class = {
+        "photo_studio": "",
+        "minimal_navy": "v-minimal-navy",
+        "green_wash": "v-green-wash",
+        "sunset": "v-sunset",
+    }[cover_option]
+
     logo_uri = _logo_data_uri()
     badge = (
         f'<div class="badge"><img src="{logo_uri}" alt="The TASCK Agency" /></div>'
@@ -518,14 +617,17 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
         f'<span class="dp-badge"><img src="{logo_uri}" alt="" /></span>'
         if logo_uri else ''
     )
+    # The photo background is inlined for photo variants; minimal_navy skips
+    # the raster entirely so the CSS gradient becomes the whole cover.
+    include_photo = cover_option != "minimal_navy" and bool(COVER_JPG_B64)
     cover_bg = (
         f'<div class="pcov-bg" style="background-image:url(data:image/jpeg;base64,{COVER_JPG_B64})"></div>'
-        if COVER_JPG_B64 else ''
+        if include_photo else '<div class="pcov-bg"></div>'
     )
     top_row = f'<div class="pcov-top"><span class="pcov-agency">The TASCK Agency.</span>{badge}</div>'
 
     cover = (
-        '<div class="pcov">' + cover_bg + '<div class="pcov-shade"></div>'
+        f'<div class="pcov {cover_variant_class}">' + cover_bg + '<div class="pcov-shade"></div>'
         '<div class="pcov-inner">' + top_row +
         '<div class="pcov-bottom">'
         '<p class="kicker">Creator Campaign Pitch</p>'
