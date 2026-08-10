@@ -5,7 +5,7 @@ import { overrideCandidatesFor, getCachedBrandLogo, setCachedBrandLogo, truncate
  * Robust brand logo renderer.
  *
  * Reads from any of the legacy fields the backend may have stored the URL
- * under, then falls through a candidate list (incl. clearbit, /logo.svg, etc.)
+ * under, then falls through a candidate list (favicons, /logo.svg, etc.)
  * before finally rendering the brand initials.
  *
  * Usage:

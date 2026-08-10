@@ -1,5 +1,28 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (Bug fix: Clearbit is dead — logo probes were `ERR_NAME_NOT_RESOLVED`)
+
+### User-reported (production, `thcodemo.space`)
+CRM Brands page console flooded with `GET https://logo.clearbit.com/... net::ERR_NAME_NOT_RESOLVED` — every Coca-Cola, MTN, Heineken, Pernod Ricard, PulsePeak, Don Julio, OSF, OSIWA, CJID, testbrand tile was still hitting Clearbit even though the service is now offline.
+
+### Root cause
+Clearbit shut down `logo.clearbit.com` (their free logo API). The DNS record no longer resolves. Our `BRAND_LOGO_OVERRIDES` and the two per-brand-detail candidate builders (`V1AdminCRM.js`, `V1AdminCRMBrandDetail.js`) still listed Clearbit URLs — usually as the FIRST fallback — so every cold visit spent ~5–10 s per tile timing out on DNS before moving to Google/DuckDuckGo. `SEED_LOGO_CACHE` pre-populated localStorage with Clearbit URLs too, so warm caches were poisoned as well.
+
+### Fix (frontend only — backend already had no Clearbit runtime paths)
+- **`brandLogo.js`** — Every `logo.clearbit.com/...` URL removed from all 16 override entries. Fallback order is now Wikipedia SVG (where a brand has a stable canonical logo) → Google `s2/favicons` → DuckDuckGo `icons.duckduckgo.com`. Added a docstring note so nobody re-adds Clearbit.
+- **`V1AdminCRM.js`** and **`V1AdminCRMBrandDetail.js`** — Same treatment for the generic per-domain candidate builder: Clearbit dropped, Google → DuckDuckGo → own `/favicon.png` → own `/favicon.ico` → own `/logo.svg` / `/logo.png`.
+- **Bumped `CACHE_VERSION` 2 → 3** — Existing users' localStorage caches (from earlier deploys) contained the dead Clearbit URLs. Bumping the version discards them on next load.
+- Stale comment in `components/v3/BrandLogo.jsx` also cleaned up.
+
+### Verified (cold cache + poisoned v2 cache both simulated)
+- Preloaded a fake v2 cache with `cocacola → logo.clearbit.com/coca-cola.com` + `mtn → logo.clearbit.com/mtn.com` before load.
+- After navigating to `/admin/crm-brands`: 36/38 logos loaded at t+795 ms, 38/38 at t+1.3 s, **0 Clearbit URLs remained in the DOM**, cache upgraded to v3 with 30 clean entries. Screenshot confirmed Coca-Cola, MTN, PulsePeak, NB all render with their real logos.
+
+### Other issue in the same report — HTTP 520 on `/api/v3/admin/notifications` and `/api/v3/metrics/admin-overview`
+This is **production-only** (Cloudflare 520 = the deployed backend on `thcodemo.space` is unreachable). Preview returns 200 for both endpoints. Not a code fix — most likely a redeploy hiccup or an Emergent Support issue. User was told to check the deployment / contact support.
+
+
+
 ## Update — 10 Aug 2026 (Bug fix: "Pitch Deck generation timed out" at 100%)
 
 ### User-reported bug

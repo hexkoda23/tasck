@@ -6,6 +6,11 @@ import React, { useEffect, useState } from 'react';
 // stripping non-alphanumerics). The first override hit produces candidates that are
 // PREPENDED to whatever the caller passes — so if every override 404s we still fall
 // through to the caller's website-derived candidates and finally to the initials.
+//
+// NOTE (Feb 2026): Clearbit shut down `logo.clearbit.com` — the domain no
+// longer resolves (`ERR_NAME_NOT_RESOLVED`). Every Clearbit URL has been
+// removed. Preferred order is now: brand's own site → Wikipedia SVG →
+// Google favicons (s2/favicons) → DuckDuckGo (icons.duckduckgo.com).
 const BRAND_LOGO_OVERRIDES = [
   {
     match: 'weyan',
@@ -20,7 +25,6 @@ const BRAND_LOGO_OVERRIDES = [
     match: 'cocacola',
     candidates: [
       'https://upload.wikimedia.org/wikipedia/commons/c/ce/Coca-Cola_logo.svg',
-      'https://logo.clearbit.com/coca-cola.com',
       'https://www.google.com/s2/favicons?sz=256&domain=coca-cola.com',
       'https://icons.duckduckgo.com/ip3/coca-cola.com.ico',
     ],
@@ -29,46 +33,45 @@ const BRAND_LOGO_OVERRIDES = [
     match: 'mtn',
     candidates: [
       'https://upload.wikimedia.org/wikipedia/commons/9/93/New-mtn-logo.jpg',
-      'https://logo.clearbit.com/mtn.com',
-      'https://logo.clearbit.com/mtnonline.com',
       'https://www.google.com/s2/favicons?sz=256&domain=mtn.com',
+      'https://icons.duckduckgo.com/ip3/mtn.com.ico',
     ],
   },
   {
     // "Nigerian Breweries PLC (Star Lager)" — parent brand Heineken.
     match: 'nigerianbreweries',
     candidates: [
-      'https://logo.clearbit.com/nbplc.com',
-      'https://logo.clearbit.com/heineken.com',
       'https://www.google.com/s2/favicons?sz=256&domain=nbplc.com',
+      'https://icons.duckduckgo.com/ip3/nbplc.com.ico',
+      'https://www.google.com/s2/favicons?sz=256&domain=heineken.com',
     ],
   },
   {
     match: 'starlager',
     candidates: [
-      'https://logo.clearbit.com/nbplc.com',
-      'https://logo.clearbit.com/heineken.com',
+      'https://www.google.com/s2/favicons?sz=256&domain=nbplc.com',
+      'https://icons.duckduckgo.com/ip3/nbplc.com.ico',
     ],
   },
   {
     match: 'heineken',
     candidates: [
-      'https://logo.clearbit.com/heineken.com',
       'https://upload.wikimedia.org/wikipedia/commons/e/ea/Heineken_logo.svg',
+      'https://www.google.com/s2/favicons?sz=256&domain=heineken.com',
+      'https://icons.duckduckgo.com/ip3/heineken.com.ico',
     ],
   },
   {
     match: 'pernodricard',
     candidates: [
-      'https://logo.clearbit.com/pernod-ricard.com',
       'https://www.google.com/s2/favicons?sz=256&domain=pernod-ricard.com',
+      'https://icons.duckduckgo.com/ip3/pernod-ricard.com.ico',
     ],
   },
   {
     // "OSF", "Open Society Foundation(s)", "Open Society Initiatives for West Africa"
     match: 'opensociet',
     candidates: [
-      'https://logo.clearbit.com/opensocietyfoundations.org',
       'https://www.google.com/s2/favicons?sz=256&domain=opensocietyfoundations.org',
       'https://icons.duckduckgo.com/ip3/opensocietyfoundations.org.ico',
     ],
@@ -76,37 +79,37 @@ const BRAND_LOGO_OVERRIDES = [
   {
     match: 'osiwa',
     candidates: [
-      'https://logo.clearbit.com/osiwa.org',
       'https://www.google.com/s2/favicons?sz=256&domain=osiwa.org',
+      'https://icons.duckduckgo.com/ip3/osiwa.org.ico',
     ],
   },
   {
     match: 'cjid',
     candidates: [
       'https://thecjid.org/wp-content/uploads/2021/08/dark-cr-logo-dsk.svg',
-      'https://logo.clearbit.com/thecjid.org',
       'https://www.google.com/s2/favicons?sz=256&domain=thecjid.org',
+      'https://icons.duckduckgo.com/ip3/thecjid.org.ico',
     ],
   },
   {
     match: 'donjulio',
     candidates: [
-      'https://logo.clearbit.com/donjulio.com',
       'https://www.google.com/s2/favicons?sz=256&domain=donjulio.com',
+      'https://icons.duckduckgo.com/ip3/donjulio.com.ico',
     ],
   },
   {
     match: 'pulsepeak',
     candidates: [
-      'https://logo.clearbit.com/pulsepeak.co',
       'https://www.google.com/s2/favicons?sz=256&domain=pulsepeak.co',
+      'https://icons.duckduckgo.com/ip3/pulsepeak.co.ico',
     ],
   },
   {
     match: 'testbrand',
     candidates: [
-      'https://logo.clearbit.com/thcohq.com',
       'https://www.google.com/s2/favicons?sz=256&domain=thcohq.com',
+      'https://icons.duckduckgo.com/ip3/thcohq.com.ico',
     ],
   },
   {
@@ -123,8 +126,8 @@ const BRAND_LOGO_OVERRIDES = [
     // pattern above. Place this last so longer patterns still win.
     match: 'osf',
     candidates: [
-      'https://logo.clearbit.com/opensocietyfoundations.org',
       'https://www.google.com/s2/favicons?sz=256&domain=opensocietyfoundations.org',
+      'https://icons.duckduckgo.com/ip3/opensocietyfoundations.org.ico',
     ],
   },
   {
@@ -152,7 +155,7 @@ export const WEYAN_LOGO_URL = 'https://www.weyan.app/favicon.png';
 export const isWeYanBrand = (name) => normaliseBrandKey(name).includes('weyan');
 
 const CACHE_KEY = 'tasck_brand_logo_cache';
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3; // bumped: v2 caches held dead logo.clearbit.com URLs
 
 // Preseeded cache. On module load we merge this into localStorage so cold
 // visits render every known brand's logo instantly — no sequential HEAD

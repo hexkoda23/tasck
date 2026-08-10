@@ -184,7 +184,8 @@ const logoCandidatesForBrand = (brand) => {
     .filter(Boolean)
     .filter((value, index, array) => array.indexOf(value) === index);
   const domainCandidates = domains.flatMap((domain) => [
-    'https://logo.clearbit.com/' + domain,
+    // Clearbit (`logo.clearbit.com`) removed — the service shut down and the
+    // domain no longer resolves.
     'https://www.google.com/s2/favicons?sz=256&domain=' + domain,
     'https://icons.duckduckgo.com/ip3/' + domain + '.ico',
     'https://' + domain + '/favicon.png',
