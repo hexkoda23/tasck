@@ -21,7 +21,7 @@ export const PitchDeckFlipbookEmbed = ({ deckId }) => {
         title="TASCK Pitch Deck"
         src={url}
         loading="lazy"
-        style={{ width: '100%', height: '80vh', minHeight: 560, border: 'none', display: 'block', background: '#3b3b40' }}
+        style={{ width: '100%', height: '80vh', minHeight: 560, border: 'none', display: 'block', background: '#101319' }}
       />
       <div className="flex justify-end gap-2 border-t border-[#EEE7D6] bg-[#FBFAF7] px-4 py-2.5">
         <a href={url} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]">Open full screen</a>

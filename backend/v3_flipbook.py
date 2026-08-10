@@ -266,6 +266,47 @@ def _paginate(sections: List[Dict[str, Any]], budget: int = 1600) -> List[List[D
         pages.append(current)
     return pages or [[]]
 
+try:
+    from flipbook_assets import COVER_JPG_B64
+except Exception:  # pragma: no cover - deploy may skip new asset modules
+    COVER_JPG_B64 = ""
+
+
+def _content_blocks(content: Any) -> List[tuple]:
+    """Split section content into ('p', text) and ('ul', [items]) blocks so
+    bullet lines render with the template's green square markers."""
+    text = str(content or "").strip()
+    if not text:
+        return []
+    blocks: List[tuple] = []
+    bullets: List[str] = []
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        m = re.match(r"^[-\u2022\*\u00b7]\s*(.+)$", line)
+        if m:
+            bullets.append(m.group(1).strip())
+            continue
+        if bullets:
+            blocks.append(("ul", bullets))
+            bullets = []
+        for par in _paragraphs(line):
+            blocks.append(("p", par))
+    if bullets:
+        blocks.append(("ul", bullets))
+    return blocks
+
+
+def _accent_heading(text: Any) -> str:
+    """Nike-deck style title: last word in the accent colour."""
+    words = str(text or "").strip().split()
+    if not words:
+        return ""
+    if len(words) == 1:
+        return _esc(words[0]) + '<span class="acc">.</span>'
+    return _esc(" ".join(words[:-1])) + ' <span class="acc">' + _esc(words[-1]) + "</span>"
+
 
 _TEMPLATE = r"""<!doctype html>
 <html lang="en">
@@ -276,13 +317,14 @@ _TEMPLATE = r"""<!doctype html>
 <style>
 __FONTS__
 :root{
-  --blue:#1246E6; --blue-deep:#0A1E7A; --blue-ink:#0E1E66; --accent:#2F55FF;
-  --green:#46E08A; --ink:#23252b; --muted:#9aa0ab; --paper:#ffffff;
+  --navy:#0C1626; --navy-2:#101E33;
+  --green:#3DF08C; --teal:#3ADBC8; --orange:#FF7A45;
+  --ink:#EAF0F9; --body:#C4CFDE; --muted:#7E8CA3; --line:rgba(255,255,255,.10);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
 body{
-  background:#3b3b40; font-family:'Century Gothic FB','Century Gothic',Questrial,Arial,sans-serif;
+  background:#101319; font-family:'Century Gothic FB','Century Gothic',Questrial,Arial,sans-serif;
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   gap:12px; padding:22px 12px; min-height:100vh; overflow-x:hidden;
 }
@@ -295,61 +337,82 @@ body{
 .viewport.at-end .book-wrap{transform:translateX(25%);}
 
 /* Pages handed to StPageFlip */
-.sheet{width:100%; height:100%; background:var(--paper); overflow:hidden;
+.sheet{width:100%; height:100%; background:var(--navy); overflow:hidden;
   container-type:inline-size; position:relative;}
-.stf__parent{filter:drop-shadow(0 26px 45px rgba(0,0,0,.4));}
+.stf__parent{filter:drop-shadow(0 26px 45px rgba(0,0,0,.55));}
 
-/* ---- Paper page (cqw = single page width) ---- */
-.page{position:absolute; inset:0; display:flex; flex-direction:column; padding:5.4% 7% 4.2%;}
-.page-head{display:flex; justify-content:space-between; gap:8px;
-  font-size:clamp(7px,1.9cqw,11px); letter-spacing:.06em; text-transform:uppercase;
-  color:var(--muted); border-bottom:1px solid #ececf0; padding-bottom:7px;}
-.page-body{flex:1; overflow:hidden; padding-top:16px;}
-.sec{margin-bottom:20px;}
-.sec h2{font-family:'Century Gothic FB','Century Gothic',sans-serif; font-weight:700;
-  font-size:clamp(12px,3.2cqw,19px); color:#101528; letter-spacing:.01em;}
-.sec h2::after{content:""; display:block; height:2px; margin-top:5px;
-  background:linear-gradient(90deg,var(--accent) 0 38%, #e8ebf5 38% 100%);}
-.sec p{font-size:clamp(9px,2.36cqw,13.5px); line-height:1.75; color:var(--ink);
-  margin-top:9px;}
-.sec p + p{margin-top:11px;}
-.page-foot{display:flex; justify-content:space-between; gap:8px; font-size:clamp(7px,1.84cqw,10.5px);
-  color:#b6bac2; border-top:1px solid #ececf0; padding-top:7px; margin-top:8px;}
-.page-foot .dot{color:var(--accent);}
+/* ---- Dark content page (cqw = single page width) ---- */
+.dpage{position:absolute; inset:0; display:flex; flex-direction:column; padding:5.2% 7% 4.4%;
+  color:var(--ink);
+  background:
+    radial-gradient(95% 60% at 112% -12%, rgba(61,240,140,.08) 0%, rgba(61,240,140,0) 62%),
+    linear-gradient(160deg, var(--navy-2) 0%, var(--navy) 55%, #0A1220 100%);}
+.dp-head{display:flex; justify-content:space-between; align-items:center; gap:8px;
+  font-size:clamp(7px,1.9cqw,11px); letter-spacing:.24em; text-transform:uppercase;
+  color:var(--muted); border-bottom:1px solid var(--line); padding-bottom:9px;}
+.dp-badge{display:inline-block; width:clamp(18px,4.6cqw,28px); height:clamp(18px,4.6cqw,28px);
+  border-radius:50%; background:#fff; overflow:hidden; flex:0 0 auto;}
+.dp-badge img{width:100%; height:100%; object-fit:contain; display:block;}
+.dp-body{flex:1; overflow:hidden; padding-top:clamp(12px,3.2cqw,22px);}
+.dsec{margin-bottom:clamp(14px,3.8cqw,26px);}
+.dsec-h{font-family:'Bebas Neue FB','Bebas Neue',sans-serif; font-weight:400; text-transform:uppercase;
+  font-size:clamp(17px,5.4cqw,32px); line-height:1.02; letter-spacing:.035em; color:#fff;}
+.dsec-h .acc{color:var(--green);}
+.dsec-rule{width:clamp(26px,7cqw,44px); height:3px; background:var(--green);
+  margin:clamp(5px,1.4cqw,9px) 0 clamp(6px,1.6cqw,10px); border-radius:2px;}
+.dsec.alt-teal .dsec-rule{background:var(--teal);}
+.dsec.alt-teal .dsec-h .acc{color:var(--teal);}
+.dsec.alt-orange .dsec-rule{background:var(--orange);}
+.dsec.alt-orange .dsec-h .acc{color:var(--orange);}
+.dsec p{font-size:clamp(9px,2.36cqw,13.5px); line-height:1.78; color:var(--body); margin-top:8px;}
+.dsec ul{list-style:none; margin-top:9px; display:flex; flex-direction:column; gap:clamp(4px,1.2cqw,7px);}
+.dsec li{position:relative; padding-left:clamp(12px,3cqw,18px);
+  font-size:clamp(9px,2.36cqw,13.5px); line-height:1.62; color:var(--body);}
+.dsec li::before{content:""; position:absolute; left:0; top:.6em;
+  width:clamp(5px,1.3cqw,7px); height:clamp(5px,1.3cqw,7px); border-radius:2px; background:var(--green);}
+.dp-foot{display:flex; justify-content:space-between; gap:8px;
+  font-size:clamp(7px,1.84cqw,10.5px); letter-spacing:.12em; text-transform:uppercase;
+  color:var(--muted); border-top:1px solid var(--line); padding-top:8px; margin-top:8px;}
+.dp-foot .dot{color:var(--green);}
+.dp-foot .num{color:var(--green); font-weight:700;}
 
-/* ---- Cover / closing ---- */
-.cover{position:absolute; inset:0; display:flex; flex-direction:column; overflow:hidden;
-  color:#f2f5ff; padding:9% 9%;
-  background:radial-gradient(130% 95% at 80% 6%, #2b63ff 0%, var(--blue) 34%, var(--blue-deep) 72%, #071246 100%);}
-.cover::after{content:""; position:absolute; right:-16%; top:-24%; width:60%; height:60%;
-  border:1px solid rgba(255,255,255,.14); border-radius:50%;}
-.cover::before{content:""; position:absolute; left:-12%; bottom:-30%; width:58%; height:64%;
-  border:1px solid rgba(70,224,138,.25); border-radius:50%;}
-/* The real TASCK logo (blue disc) on a white coin so it stays crisp and
-   visible on the blue covers. On the white content pages it reads clean too. */
-.badge{position:relative; width:clamp(54px,15cqw,92px); height:clamp(54px,15cqw,92px); border-radius:50%; background:#fff;
-  overflow:hidden; box-shadow:0 10px 30px rgba(4,14,60,.5); z-index:1;}
-.badge img{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; display:block;}
-.kicker{margin-top:auto; font-size:clamp(8px,2.1cqw,12px); letter-spacing:.3em;
-  text-transform:uppercase; color:#9db6ff; z-index:1;}
-.rule{width:56px; height:3px; background:var(--green); margin:14px 0 0; z-index:1;}
-.cv-title{font-family:'Bebas Neue FB','Bebas Neue',sans-serif; font-weight:400;
-  font-size:clamp(26px,9.2cqw,52px); line-height:1.02; color:#fff; margin-top:10px;
-  overflow-wrap:anywhere; z-index:1;}
-.cv-sub{font-size:clamp(10px,2.6cqw,15px); color:#c9d4f5; margin-top:14px; max-width:92%; z-index:1;}
-.cv-foot{margin-top:20px; font-size:clamp(8px,2cqw,12px); color:#8fa4e8; letter-spacing:.05em; z-index:1;}
+/* ---- Photo cover ---- */
+.pcov{position:absolute; inset:0; overflow:hidden; color:#fff;
+  background:linear-gradient(165deg,#16253E 0%, #0C1626 60%, #070E1B 100%);}
+.pcov-bg{position:absolute; inset:0; background-size:cover; background-position:center;}
+.pcov-shade{position:absolute; inset:0;
+  background:linear-gradient(180deg, rgba(7,13,25,.40) 0%, rgba(7,13,25,.52) 45%, rgba(6,11,22,.93) 100%);}
+.pcov-inner{position:relative; z-index:2; height:100%; display:flex; flex-direction:column; padding:7% 8%;}
+.pcov-top{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+.pcov-agency{font-size:clamp(7px,2cqw,11px); letter-spacing:.34em; text-transform:uppercase; color:rgba(255,255,255,.86);}
+.badge{width:clamp(40px,11cqw,68px); height:clamp(40px,11cqw,68px); border-radius:50%; background:#fff;
+  overflow:hidden; box-shadow:0 10px 28px rgba(0,0,0,.5); flex:0 0 auto;}
+.badge img{width:100%; height:100%; object-fit:contain; display:block;}
+.pcov-bottom{margin-top:auto;}
+.kicker{font-size:clamp(8px,2.2cqw,12px); letter-spacing:.34em; text-transform:uppercase; color:var(--green);}
+.cv-rule{width:clamp(30px,8cqw,52px); height:3px; background:var(--green);
+  margin:clamp(8px,2cqw,14px) 0; border-radius:2px;}
+.cv-title{font-family:'Bebas Neue FB','Bebas Neue',sans-serif; font-weight:400; text-transform:uppercase;
+  font-size:clamp(30px,11.5cqw,62px); line-height:.98; letter-spacing:.02em; color:#fff; overflow-wrap:anywhere;}
+.cv-title .acc{color:var(--green);}
+.cv-sub{font-size:clamp(9px,2.5cqw,14px); line-height:1.6; color:#CBD6E6;
+  margin-top:clamp(8px,2.4cqw,14px); max-width:88%;}
+.cv-foot{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  font-size:clamp(7px,1.9cqw,11px); letter-spacing:.14em; text-transform:uppercase;
+  color:#8FA0BC; margin-top:clamp(10px,3cqw,18px);}
 .cv-foot .g{color:var(--green);}
-/* "What's inside" block fills the empty upper-right of the cover: a short
-   tagline + three key pillars. Clean, rectangular, on-brand (white text,
-   green tick accents). Sits in the negative space between the logo and the
-   bottom title block. Copy is placeholder — admin/edits swap it freely. */
-.cv-highlights{margin-top:clamp(14px,4cqw,30px); max-width:74%; z-index:1;}
-.cv-tag{font-size:clamp(9px,2.3cqw,13px); color:#dbe3fb; line-height:1.5; max-width:46cqw; z-index:1;}
-.cv-pillars{margin-top:clamp(10px,2.4cqw,16px); display:flex; flex-direction:column; gap:clamp(5px,1.4cqw,9px); z-index:1;}
-.cv-pillar{display:flex; align-items:flex-start; gap:8px; z-index:1;}
-.cv-pillar .tick{color:var(--green); font-weight:700; font-size:clamp(10px,2.4cqw,14px); line-height:1.4; flex:0 0 auto;}
-.cv-pillar .pt{font-size:clamp(9px,2.3cqw,13px); color:#eaf0ff; line-height:1.35; z-index:1;}
-.cv-pillar .pt b{color:#fff; font-weight:700;}
+
+/* ---- Endpaper / closing (dark navy with the deck's subtle arcs) ---- */
+.pend{position:absolute; inset:0; overflow:hidden; color:#fff; display:flex; flex-direction:column; padding:7% 8%;
+  background:linear-gradient(160deg,#101E33 0%, #0C1626 55%, #070E1B 100%);}
+.pend::before{content:""; position:absolute; right:-24%; top:-30%; width:78%; height:78%;
+  border:1px solid rgba(61,240,140,.18); border-radius:50%;}
+.pend::after{content:""; position:absolute; left:-18%; bottom:-34%; width:72%; height:72%;
+  border:1px solid rgba(58,219,200,.16); border-radius:50%;}
+.pend > *{position:relative; z-index:2;}
+.thanks{font-family:'Bebas Neue FB','Bebas Neue',sans-serif; font-weight:400; text-transform:uppercase;
+  font-size:clamp(34px,13cqw,72px); line-height:.96; letter-spacing:.02em; color:var(--green);}
+.thanks .w{color:#fff;}
 
 /* ---- Controls (reference style: side chevrons + corner jumps) ---- */
 .side{position:absolute; top:50%; transform:translateY(-50%); z-index:30;
@@ -436,7 +499,9 @@ sync(0);
 
 
 def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = None) -> str:
-    """Render the deck as the standalone TASCK-blue flip book."""
+    """Render the deck as the dark navy Nike-template flip book: photo cover
+    with dark overlay, uppercase Bebas titles with accent-coloured last words,
+    green/teal/orange rules, and a green Thank You closing page."""
     brand = brand or {}
     brand_name = str(brand.get("company") or brand.get("name") or "").strip()
     deck_title = str(deck.get("title") or "Creator Campaign Pitch").strip()
@@ -449,71 +514,85 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
         if logo_uri else
         '<div class="badge"></div>'
     )
+    small_badge = (
+        f'<span class="dp-badge"><img src="{logo_uri}" alt="" /></span>'
+        if logo_uri else ''
+    )
+    cover_bg = (
+        f'<div class="pcov-bg" style="background-image:url(data:image/jpeg;base64,{COVER_JPG_B64})"></div>'
+        if COVER_JPG_B64 else ''
+    )
+    top_row = f'<div class="pcov-top"><span class="pcov-agency">The TASCK Agency.</span>{badge}</div>'
 
     cover = (
-        '<div class="cover">' + badge +
-        '<div class="cv-highlights">'
-        '<p class="cv-tag">A complete creator campaign, planned and produced by TASCK &mdash; from strategy to signed creators and measurable delivery.</p>'
-        '<div class="cv-pillars">'
-        '<div class="cv-pillar"><span class="tick">&#10003;</span><span class="pt"><b>Strategy &amp; positioning</b> &mdash; a campaign built around your brand and audience.</span></div>'
-        '<div class="cv-pillar"><span class="tick">&#10003;</span><span class="pt"><b>Matched creators</b> &mdash; vetted talent, briefed and ready to produce.</span></div>'
-        '<div class="cv-pillar"><span class="tick">&#10003;</span><span class="pt"><b>Delivered &amp; measured</b> &mdash; content shipped with clear results.</span></div>'
-        '</div>'
-        '</div>'
+        '<div class="pcov">' + cover_bg + '<div class="pcov-shade"></div>'
+        '<div class="pcov-inner">' + top_row +
+        '<div class="pcov-bottom">'
         '<p class="kicker">Creator Campaign Pitch</p>'
-        '<div class="rule"></div>'
-        f'<h1 class="cv-title">{_esc(brand_name or deck_title)}</h1>'
+        '<div class="cv-rule"></div>'
+        f'<h1 class="cv-title">{_accent_heading(brand_name or deck_title)}</h1>'
         f'<p class="cv-sub">A creator-led campaign strategy prepared by TASCK'
         + (f' for {_esc(brand_name)}' if brand_name else '') + '.</p>'
-        f'<p class="cv-foot">Prepared for {_esc(brand_name or "your brand")}'
-        f' &nbsp;<span class="g">&bull;</span>&nbsp; {site}'
-        f' &nbsp;<span class="g">&bull;</span>&nbsp; {contact}</p>'
-        '</div>'
+        f'<p class="cv-foot"><span>Prepared for {_esc(brand_name or "your brand")}</span>'
+        f'<span class="g">&bull;</span><span>{site}</span>'
+        f'<span class="g">&bull;</span><span>{contact}</span></p>'
+        '</div></div></div>'
     )
 
     closing = (
-        '<div class="cover" style="background:radial-gradient(130% 95% at 18% 92%, #2b63ff 0%, '
-        '#1246E6 34%, #0A1E7A 72%, #071246 100%)">' + badge +
-        '<div class="rule" style="margin-top:auto"></div>'
-        '<h1 class="cv-title" style="font-size:clamp(20px,6.8cqw,38px)">Let&#39;s build this together.</h1>'
+        '<div class="pend">' + top_row +
+        '<div style="margin-top:auto">'
+        '<h1 class="thanks">Thank You<span class="w">.</span></h1>'
+        '<div class="cv-rule"></div>'
         '<p class="cv-sub">Review the campaign, share your comments, and approve when you&#39;re ready. '
         'TASCK will take it from there.</p>'
-        f'<p class="cv-foot">{contact} &nbsp;<span class="g">&bull;</span>&nbsp; {site}'
-        + (f' &nbsp;<span class="g">&bull;</span>&nbsp; {_esc(brand_name)}' if brand_name else '') + '</p>'
-        '</div>'
+        f'<p class="cv-foot"><span>{contact}</span><span class="g">&bull;</span><span>{site}</span>'
+        + (f'<span class="g">&bull;</span><span>{_esc(brand_name)}</span>' if brand_name else '') + '</p>'
+        '</div></div>'
     )
 
-    # A clean blue "title" endpaper (inside front cover). Only inserted when
+    # A dark navy "title" endpaper (inside front cover). Only inserted when
     # parity needs it — with showCover, the front and back covers each display
     # alone, so the inner page count must be EVEN for spreads to line up.
     endpaper = (
-        '<div class="cover" style="background:linear-gradient(155deg,#0A1E7A 0%,#1246E6 60%,#2b63ff 100%)">'
-        + badge +
-        '<p class="kicker" style="margin-top:auto">The TASCK Agency</p>'
-        '<div class="rule"></div>'
-        '<h1 class="cv-title" style="font-size:clamp(20px,6.8cqw,38px)">Creator Campaign Pitch</h1>'
+        '<div class="pend">' + top_row +
+        '<div style="margin-top:auto">'
+        '<p class="kicker">The TASCK Agency</p>'
+        '<div class="cv-rule"></div>'
+        '<h1 class="cv-title" style="font-size:clamp(22px,7.4cqw,42px)">Creator Campaign <span class="acc">Pitch</span></h1>'
         f'<p class="cv-sub">Prepared for {_esc(brand_name or "your brand")} by TASCK.</p>'
-        f'<p class="cv-foot">{site} &nbsp;<span class="g">&bull;</span>&nbsp; {contact}</p>'
-        '</div>'
+        f'<p class="cv-foot"><span>{site}</span><span class="g">&bull;</span><span>{contact}</span></p>'
+        '</div></div>'
     )
 
+    accents = ["", "alt-teal", "alt-orange"]
     content_pages = _paginate(deck.get("sections") or [])
     content_total = len(content_pages)
     pages_html: List[str] = [cover]
+    sec_counter = 0
     for idx, sections in enumerate(content_pages):
-        body = "".join(
-            '<div class="sec"><h2>' + _esc(s.get("heading")) + '</h2>'
-            + "".join(f'<p>{_esc(par)}</p>' for par in _paragraphs(s.get("content")))
-            + '</div>'
-            for s in sections
-        )
+        body = ""
+        for s in sections:
+            cls = accents[sec_counter % len(accents)]
+            sec_counter += 1
+            blocks_html = ""
+            for kind, val in _content_blocks(s.get("content")):
+                if kind == "ul":
+                    blocks_html += "<ul>" + "".join(f"<li>{_esc(item)}</li>" for item in val) + "</ul>"
+                else:
+                    blocks_html += f"<p>{_esc(val)}</p>"
+            body += (
+                f'<div class="dsec {cls}">'
+                f'<h2 class="dsec-h">{_accent_heading(s.get("heading"))}</h2>'
+                '<div class="dsec-rule"></div>'
+                f'{blocks_html}</div>'
+            )
         pages_html.append(
-            '<div class="page">'
-            f'<div class="page-head"><span>TASCK &mdash; Creator Campaign Pitch</span>'
-            f'<span>{_esc(brand_name)}</span></div>'
-            f'<div class="page-body">{body}</div>'
-            f'<div class="page-foot"><span>{site} <span class="dot">&bull;</span> {contact}</span>'
-            f'<span>{idx + 1} / {content_total}</span></div>'
+            '<div class="dpage">'
+            f'<div class="dp-head"><span>{_esc(brand_name or "Creator Campaign")} &times; TASCK</span>{small_badge}</div>'
+            f'<div class="dp-body">{body}</div>'
+            f'<div class="dp-foot"><span>{site} <span class="dot">&bull;</span> {contact}</span>'
+            f'<span><span class="num">{idx + 1:02d}</span> / {content_total:02d}</span></div>'
             '</div>'
         )
     pages_html.append(closing)

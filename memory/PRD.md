@@ -889,3 +889,10 @@ One contact email can own MULTIPLE brand portal accounts (one per brand, e.g. ke
 - Orphaned accounts (brand deleted from CRM) return clear 404 "not linked to a CRM brand" instead of shadowing valid logins.
 
 ### NOTE: Production (thcodemo.space) needs a REDEPLOY to pick up this fix.
+
+## Update — 10 Jun 2026 (Pitch Deck Flipbook redesigned to Nike deck template)
+- User supplied "Nike Running Nig Deck" PDF as the design template. Choices: only brand name/content varies per brand; photo cover baked in; keep Bebas Neue + Century Gothic.
+- Rewrote `/app/backend/v3_flipbook.py` template: dark navy pages (#0C1626), neon green (#3DF08C) / teal / orange accent cycle, uppercase Bebas headings with accent-coloured last word + accent rule, green square bullet markers (auto-detected from -/• lines via `_content_blocks`), uppercase micro header/footer with page numbers, "The TASCK Agency." + logo coin top row.
+- Cover: AI-generated dark creator/production photo (base64-inlined in new `/app/backend/flipbook_assets.py`, gradient fallback) with dark overlay, green kicker + big Bebas brand title. Back cover: green "THANK YOU." with subtle arc rings. Endpaper matches dark theme.
+- Admin "Preview Flipbook" modal now loads the server endpoint (`v3PitchDeckFlipbookUrl`) instead of the client-side `buildFlipbookHtml` srcDoc — single renderer everywhere (admin preview, download, brand portal embed).
+- Verified live on preview: cover, two spreads, back cover screenshots at /api/v3/pitch-decks/{id}/flipbook; frontend compiles; page-flip engine untouched.

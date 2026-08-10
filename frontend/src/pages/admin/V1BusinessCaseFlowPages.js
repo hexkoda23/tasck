@@ -7,7 +7,6 @@ import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PrioritySelect } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
-import { buildFlipbookHtml } from '../../components/v1/PitchDeckFlipbook';
 import { TtaLetterhead } from '../../components/v1/TtaLetterhead';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
 
@@ -4628,7 +4627,7 @@ export const V3BusinessCasePitchDeck = () => {
             </div>
             <iframe
               title="Pitch Deck Flipbook Preview"
-              srcDoc={buildFlipbookHtml(deck, bundle?.brand?.company || bundle?.brand?.name || '')}
+              src={v3PitchDeckFlipbookUrl(deck.id)}
               className="flex-1 w-full border-0 bg-transparent"
               data-testid="pitch-flipbook-iframe"
               sandbox="allow-scripts allow-same-origin"
