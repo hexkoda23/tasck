@@ -848,7 +848,7 @@ async def _call_brand_about_tool(
         try:
             from emergentintegrations.llm.chat import LlmChat, UserMessage
             provider = os.getenv("BRAND_ABOUT_EMERGENT_PROVIDER") or "gemini"
-            model = os.getenv("BRAND_ABOUT_EMERGENT_MODEL") or "gemini-2.0-flash"
+            model = os.getenv("BRAND_ABOUT_EMERGENT_MODEL") or "gemini-2.5-flash"
             chat = LlmChat(
                 api_key=emergent_key,
                 session_id=f"brand-about-{uuid.uuid4()}",
@@ -1076,7 +1076,7 @@ async def _call_alignment_analysis_tool(
             return None
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
-        model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.0-flash"
+        model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.5-flash"
         chat = LlmChat(
             api_key=emergent_key,
             session_id=f"alignment-analyzer-{uuid.uuid4()}",
@@ -1286,7 +1286,7 @@ async def _call_creator_match_tool(
             return None
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("CREATOR_MATCH_EMERGENT_PROVIDER") or "gemini"
-        model = os.getenv("CREATOR_MATCH_EMERGENT_MODEL") or "gemini-2.0-flash"
+        model = os.getenv("CREATOR_MATCH_EMERGENT_MODEL") or "gemini-2.5-flash"
         chat = LlmChat(
             api_key=emergent_key,
             session_id=f"creator-match-{uuid.uuid4()}",
@@ -1307,7 +1307,7 @@ async def _call_creator_match_tool(
 
         def _call_http_model() -> Optional[Dict[str, Any]]:
             if anthropic_key:
-                model = os.getenv("CREATOR_MATCH_LLM_MODEL") or "claude-sonnet-4-20250514"
+                model = os.getenv("CREATOR_MATCH_LLM_MODEL") or "claude-sonnet-4-5"
                 response = requests.post(
                     "https://api.anthropic.com/v1/messages",
                     headers={
@@ -1633,7 +1633,7 @@ async def _call_opportunity_detection_tool(
             return None
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("OPPORTUNITY_EMERGENT_PROVIDER") or "gemini"
-        model = os.getenv("OPPORTUNITY_EMERGENT_MODEL") or "gemini-2.0-flash"
+        model = os.getenv("OPPORTUNITY_EMERGENT_MODEL") or "gemini-2.5-flash"
         chat = LlmChat(
             api_key=emergent_key,
             session_id=f"opportunities-{uuid.uuid4()}",
@@ -1649,7 +1649,7 @@ async def _call_opportunity_detection_tool(
     def _call_http_model() -> Optional[Dict[str, Any]]:
         if not anthropic_key:
             return None
-        model = os.getenv("OPPORTUNITY_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-20250514"
+        model = os.getenv("OPPORTUNITY_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
@@ -1853,7 +1853,7 @@ async def _call_creative_brief_tool(brand: Dict[str, Any], case: Dict[str, Any],
             return None
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("CREATIVE_BRIEF_EMERGENT_PROVIDER") or "gemini"
-        model = os.getenv("CREATIVE_BRIEF_EMERGENT_MODEL") or "gemini-2.0-flash"
+        model = os.getenv("CREATIVE_BRIEF_EMERGENT_MODEL") or "gemini-2.5-flash"
         chat = LlmChat(api_key=emergent_key, session_id=f"brief-{uuid.uuid4()}",
                        system_message=system_prompt).with_model(provider, model)
         response = await chat.send_message(UserMessage(text=user_message))
@@ -1866,7 +1866,7 @@ async def _call_creative_brief_tool(brand: Dict[str, Any], case: Dict[str, Any],
     def _call_http_model() -> Optional[Dict[str, Any]]:
         if not anthropic_key:
             return None
-        model = os.getenv("CREATIVE_BRIEF_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-20250514"
+        model = os.getenv("CREATIVE_BRIEF_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
@@ -2001,7 +2001,7 @@ async def _call_pitch_deck_tool(brand: Dict[str, Any], case: Dict[str, Any], sna
             return None
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("PITCH_DECK_EMERGENT_PROVIDER") or "gemini"
-        model = os.getenv("PITCH_DECK_EMERGENT_MODEL") or "gemini-2.0-flash"
+        model = os.getenv("PITCH_DECK_EMERGENT_MODEL") or "gemini-2.5-flash"
         chat = LlmChat(api_key=emergent_key, session_id=f"pitch-{uuid.uuid4()}",
                        system_message=system_prompt).with_model(provider, model)
         response = await chat.send_message(UserMessage(text=user_message))
@@ -2014,7 +2014,7 @@ async def _call_pitch_deck_tool(brand: Dict[str, Any], case: Dict[str, Any], sna
     def _call_http_model() -> Optional[Dict[str, Any]]:
         if not anthropic_key:
             return None
-        model = os.getenv("PITCH_DECK_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-20250514"
+        model = os.getenv("PITCH_DECK_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
@@ -2064,7 +2064,7 @@ async def _call_brainstorm_analysis_tool(
             return None
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("BRAINSTORM_EMERGENT_PROVIDER") or "gemini"
-        model = os.getenv("BRAINSTORM_EMERGENT_MODEL") or "gemini-2.0-flash"
+        model = os.getenv("BRAINSTORM_EMERGENT_MODEL") or "gemini-2.5-flash"
         chat = LlmChat(
             api_key=emergent_key,
             session_id=f"brainstorm-{uuid.uuid4()}",
@@ -2079,7 +2079,7 @@ async def _call_brainstorm_analysis_tool(
 
     def _call_http_model() -> Optional[Dict[str, Any]]:
         if anthropic_key:
-            model = os.getenv("BRAINSTORM_LLM_MODEL") or "claude-sonnet-4-20250514"
+            model = os.getenv("BRAINSTORM_LLM_MODEL") or "claude-sonnet-4-5"
             response = requests.post(
                 "https://api.anthropic.com/v1/messages",
                 headers={
@@ -11538,9 +11538,9 @@ def make_v3_router(db):
         "rfp", "signed", "unveils", "announces", "partnered with",
     ]
     NOT_FOUND = "Not found - recommend manual search."
-    DEFAULT_LLM_MODEL = "claude-sonnet-4-20250514"
+    DEFAULT_LLM_MODEL = "claude-sonnet-4-5"
     DEFAULT_EMERGENT_PROVIDER = "gemini"
-    DEFAULT_EMERGENT_MODEL = "gemini-2.0-flash"
+    DEFAULT_EMERGENT_MODEL = "gemini-2.5-flash"
 
     class OpportunityQueryTemplate(BaseModel):
         keywords: str = "brand ambassador program celebrity partnership endorsement deal influencer campaign Nigeria"

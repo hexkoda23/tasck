@@ -1,5 +1,29 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (Bug fix: "Analyze conversations" → Alignment Snapshot 95% failure)
+
+### Bug (user-reported)
+Clicking **Analyze conversations** on the Connect Schedule & Transcripts page popped up "Analysis failed. You can retry from this page." at 95% progress. Same failure surfaced on the Alignment Snapshot / analyze-all path.
+
+### Root cause
+Backend logs showed both the Anthropic and Gemini fallbacks were dying every call:
+- `Opportunity detection via _call_http_model failed: 401 Unauthorized` (Anthropic key issue).
+- `Opportunity detection via _call_emergent failed: … "This model models/gemini-2.0-flash is no longer available"` (404 from Google — the flash 2.0 model is deprecated).
+Both LLM providers were failing simultaneously, so `_call_opportunity_detection_tool` returned `None` and the job wrote a "failed" state to `v3_analysis_jobs`.
+
+### Fix (`/app/backend/v3_routes.py`)
+- Replaced **all 8 defaults** of the deprecated `"gemini-2.0-flash"` with `"gemini-2.5-flash"` — the correct current identifier per the emergentintegrations playbook. Covered: BRAND_ABOUT, ALIGNMENT_ANALYZER, CREATOR_MATCH, OPPORTUNITY_EMERGENT, CREATIVE_BRIEF, PITCH_DECK, BRAINSTORM, and the fallback `DEFAULT_EMERGENT_MODEL`.
+- Fixed **6 remaining defaults** of the phantom Anthropic model `"claude-sonnet-4-20250514"` (this string never existed) → `"claude-sonnet-4-5"`. The 25 Feb hardening pass had missed these routes.
+
+### Verified
+- `POST /api/v3/business-cases/{id}/connect/detect-opportunities` → job completes with `analysis_source=emergent:gemini/gemini-2.5-flash`, returns 1 opportunity.
+- `POST /api/v3/business-cases/{id}/connect/analyze-all` → job completes at 100%, no error.
+
+### Follow-up
+The Anthropic 401 is orthogonal (key needs rotating on the account); Gemini 2.5 Flash now serves as a reliable fallback so the user-facing flow works even while Anthropic is unreachable.
+
+
+
 ## Update — 10 Aug 2026 (CRM Brands: instant logo load via seed cache + preload)
 
 ### Issue
