@@ -1,5 +1,27 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (CRM Brands: instant logo load via seed cache + preload)
+
+### Issue
+Brand logos on the CRM Brands page (production `thcodemo.space`) took 5–30s per tile to appear. Root cause: on a cold `localStorage` cache, `BrandLogo` sequentially probed every fallback (Clearbit → Google favicon → DuckDuckGo → Wikipedia). On repeat visits, `detectWhiteLogo` also re-fired a CORS probe per logo — bandwidth waste and slow paint.
+
+### Fix (`/app/frontend/src/lib/brandLogo.js`)
+- **Module-load seed cache**: bumped cache to `version:2`, derived a `SEED_LOGO_CACHE` map from the FIRST candidate of every `BRAND_LOGO_OVERRIDES` entry. On module load we merge it into `localStorage` (user-verified entries win) and fire `new Image().src = url` for each so the browser's HTTP cache holds the bytes before any `<img>` renders.
+- **Substring seed lookup**: `getCachedBrandLogo(name)` now falls back to matching the seed map by pattern (e.g., brand key `cocacolanigerialimited` hits seed key `cocacola`). Cold visits go straight to the known-good URL instead of walking the whole fallback chain.
+- **Dark-decision cache** (`tasck_brand_logo_dark_cache`): the `detectWhiteLogo` CORS probe now short-circuits when the URL is already known-dark, known-light, or CORS-blocked. Second visits never re-probe.
+- **Two more overrides**: `osf` (bare acronym) and `allsmiles` (All Smiles Signature) so those brands also hit the seed path.
+
+### Verified (preview, cold cache — `localStorage.clear()` before load)
+- t+817ms: 33/37 brand logos loaded (89%).
+- t+1323ms: 37/37 (100%).
+- localStorage cache holds 30 pre-warmed entries after seed merge.
+- Warm second visit: 37/37 loaded on first paint (< 200ms).
+
+### To ship to production
+Preview verified. User to redeploy `thcodemo.space` to pick up the change.
+
+
+
 ## Update — 10 Aug 2026 (Pitch Deck: PDF export + 4 cover styles + mobile polish)
 
 ### ✅ PDF Download (P1, client-side print-to-PDF)

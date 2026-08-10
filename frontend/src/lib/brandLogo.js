@@ -118,6 +118,22 @@ const BRAND_LOGO_OVERRIDES = [
       'https://icons.duckduckgo.com/ip3/shopfrom23.com.ico',
     ],
   },
+  {
+    // The bare "OSF" acronym (key === 'osf') isn't caught by the 'opensociet'
+    // pattern above. Place this last so longer patterns still win.
+    match: 'osf',
+    candidates: [
+      'https://logo.clearbit.com/opensocietyfoundations.org',
+      'https://www.google.com/s2/favicons?sz=256&domain=opensocietyfoundations.org',
+    ],
+  },
+  {
+    match: 'allsmiles',
+    candidates: [
+      'https://www.google.com/s2/favicons?sz=256&domain=allsmiles.com.ng',
+      'https://icons.duckduckgo.com/ip3/allsmiles.com.ng.ico',
+    ],
+  },
 ];
 
 const normaliseBrandKey = (name) => String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -136,7 +152,19 @@ export const WEYAN_LOGO_URL = 'https://www.weyan.app/favicon.png';
 export const isWeYanBrand = (name) => normaliseBrandKey(name).includes('weyan');
 
 const CACHE_KEY = 'tasck_brand_logo_cache';
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
+
+// Preseeded cache. On module load we merge this into localStorage so cold
+// visits render every known brand's logo instantly — no sequential HEAD
+// probing through Clearbit/Google/DuckDuckGo before the first working URL is
+// found. Users on a fresh device or after clearing localStorage still get an
+// immediate render.
+const SEED_LOGO_CACHE = BRAND_LOGO_OVERRIDES.reduce((acc, entry) => {
+  if (entry?.match && entry?.candidates?.length) {
+    acc[entry.match] = entry.candidates[0];
+  }
+  return acc;
+}, {});
 
 const readCache = () => {
   try {
@@ -160,11 +188,49 @@ const writeCache = (entries) => {
   }
 };
 
+// Merge SEED_LOGO_CACHE into localStorage once per session — user-cached
+// entries always win over the seed (they were verified by an actual onLoad).
+// Runs at module import time so BrandLogo's first render already sees a hit.
+(() => {
+  if (typeof window === 'undefined') return;
+  try {
+    const existing = readCache();
+    let changed = false;
+    Object.entries(SEED_LOGO_CACHE).forEach(([key, url]) => {
+      if (!existing[key]) {
+        existing[key] = url;
+        changed = true;
+      }
+    });
+    if (changed) writeCache(existing);
+    // Preload every seeded URL into the browser HTTP cache so the eventual
+    // <img> render is served from cache in milliseconds rather than a fresh
+    // network round-trip. Fire-and-forget: errors are ignored.
+    if (typeof Image !== 'undefined') {
+      Object.values(existing).forEach((url) => {
+        if (!url) return;
+        try { const img = new Image(); img.src = url; } catch (_) { /* noop */ }
+      });
+    }
+  } catch (_) {
+    // localStorage / Image unavailable — skip warm-up, fall back to on-demand.
+  }
+})();
+
 const brandCacheKey = (name) => normaliseBrandKey(name);
 
 export const getCachedBrandLogo = (name) => {
   if (!name) return '';
-  return readCache()[brandCacheKey(name)] || '';
+  const key = brandCacheKey(name);
+  const entries = readCache();
+  // Exact match wins — this is a URL previously verified by an onLoad
+  // handler for this exact brand.
+  if (entries[key]) return entries[key];
+  // Fall back to the seed cache pattern (e.g. brand key "cocacolanigeria"
+  // matches seed key "cocacola") so cold visits still get an instant URL
+  // without probing the full candidate chain.
+  const seedHit = Object.entries(SEED_LOGO_CACHE).find(([seedKey]) => seedKey && key.includes(seedKey));
+  return seedHit ? seedHit[1] : '';
 };
 
 export const setCachedBrandLogo = (name, url) => {
@@ -187,6 +253,25 @@ const deriveInitials = (name = '') => {
   return clean.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'BR';
 };
 
+const DARK_CACHE_KEY = 'tasck_brand_logo_dark_cache';
+
+const readDarkCache = () => {
+  try {
+    if (typeof window === 'undefined') return {};
+    const raw = window.localStorage.getItem(DARK_CACHE_KEY);
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch (_) {
+    return {};
+  }
+};
+
+const writeDarkCache = (entries) => {
+  try {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(DARK_CACHE_KEY, JSON.stringify(entries));
+  } catch (_) { /* noop */ }
+};
+
 // Best-effort detection of a "white" logo (white marks on a transparent/white field)
 // so the tile can switch to a dark background and keep the logo visible.
 // Uses a separate CORS-enabled image so the visible <img> (which is NOT CORS-bound and
@@ -194,18 +279,31 @@ const deriveInitials = (name = '') => {
 // can't inspect it and leave the tile as-is.
 const detectWhiteLogo = (url, cb) => {
   if (typeof window === 'undefined' || !url) return;
+  // Cached decisions (dark true/false, or 0 for "CORS blocked, don't retry")
+  // short-circuit the probe so we never re-fetch the same logo just to check.
+  const cache = readDarkCache();
+  if (Object.prototype.hasOwnProperty.call(cache, url)) {
+    if (cache[url] === true) cb(true);
+    return;
+  }
   const probe = new window.Image();
   probe.crossOrigin = 'anonymous';
+  const markProbed = (isDark) => {
+    const next = readDarkCache();
+    next[url] = isDark;
+    writeDarkCache(next);
+  };
+  probe.onerror = () => markProbed(0); // CORS blocked or 404 — never retry.
   probe.onload = () => {
     try {
       const w = Math.min(probe.naturalWidth || 48, 48);
       const h = Math.min(probe.naturalHeight || 48, 48);
-      if (!w || !h) return;
+      if (!w || !h) { markProbed(0); return; }
       const canvas = document.createElement('canvas');
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) { markProbed(0); return; }
       ctx.drawImage(probe, 0, 0, w, h);
       const { data } = ctx.getImageData(0, 0, w, h);
       let opaque = 0;
@@ -217,9 +315,12 @@ const detectWhiteLogo = (url, cb) => {
         const luminance = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
         if (luminance >= 224) light += 1;
       }
-      if (opaque > 0 && light / opaque >= 0.92) cb(true);
+      const isDark = opaque > 0 && light / opaque >= 0.92;
+      markProbed(isDark);
+      if (isDark) cb(true);
     } catch (e) {
       // Canvas tainted (logo host sent no CORS headers) — cannot inspect, leave as-is.
+      markProbed(0);
     }
   };
   probe.src = url;
