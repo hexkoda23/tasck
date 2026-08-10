@@ -1395,6 +1395,10 @@ export const V3BusinessCaseConnectSchedule = () => {
   // inline "Starting transcript analysis..." was too quiet and confusing).
   // Shape: { open, progress (0-100), message, status: 'running'|'complete'|'failed', error }
   const [analysisPopup, setAnalysisPopup] = useState({ open: false, progress: 0, message: '', status: 'running' });
+  // Bumped every time analyze-all completes so the OpportunitiesPanel below
+  // re-fetches its list. The panel doesn't know that analyze-all now also
+  // populates opportunities server-side, so we ping it explicitly.
+  const [opportunitiesRefreshToken, setOpportunitiesRefreshToken] = useState(0);
   // Tick simulator for sync mode (no job_id) so the progress bar never sits
   // at 0% while the request is in flight. Cleared on completion / failure.
   const progressTickRef = useRef(null);
@@ -1554,6 +1558,10 @@ export const V3BusinessCaseConnectSchedule = () => {
         if (job.status === 'completed') {
           if (job.recommendation) setAnalysisResult(job.recommendation);
           await reload();
+          // analyze-all now also populates opportunities on the case; ping
+          // the OpportunitiesPanel to refetch so users don't stare at the
+          // "No opportunities yet" empty state after a successful run.
+          setOpportunitiesRefreshToken((prev) => prev + 1);
           const base = 'AI analysis complete from the saved Connect transcripts.';
           setSaveNotice(partialFailure ? `${base} (Warning: ${partialFailure})` : base);
           setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: 'Analysis complete. Check below for the analysed transcript.' }));
@@ -1627,6 +1635,7 @@ export const V3BusinessCaseConnectSchedule = () => {
         return savedSessions.partialFailure ? `${base} (Warning: ${savedSessions.partialFailure})` : base;
       });
       setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: 'Analysis complete. Check below for the analysed transcript.' }));
+      setOpportunitiesRefreshToken((prev) => prev + 1);
       await reload();
     } catch (e) {
       const msg = e?.response?.data?.detail || e?.message || 'AI analysis failed.';
@@ -1693,6 +1702,7 @@ export const V3BusinessCaseConnectSchedule = () => {
       {/* What the AI found across every source, plus merge + generate. */}
       <OpportunitiesPanel
         businessCaseId={id}
+        refreshToken={opportunitiesRefreshToken}
         onGenerated={() => navigate(adminRoute(`/business-cases/${id}/frame/snapshot`))}
       />
 

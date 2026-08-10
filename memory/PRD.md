@@ -1,5 +1,35 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (Bug fix: "Analyze conversations" now populates the opportunities panel)
+
+### User-reported bug
+After clicking **Analyze conversations** (the big Combined AI Transcript Analysis button), the "Campaigns found" panel above kept saying "No opportunities yet. Save at least one conversation above, then run the analysis." — even though opportunities were clearly present in the transcripts.
+
+### Root cause
+The two AI flows were plumbed to different endpoints and never called each other:
+- Combined **Analyze conversations** button → `POST /connect/analyze-all` (writes `connect.recommendation`, nothing else).
+- Small **Analyse conversations** button inside the "Campaigns found" panel → `POST /connect/detect-opportunities` (writes `connect.opportunities`).
+
+Users clicked the big obvious button and reasonably expected campaigns to appear below. The panel only reloaded on mount, so even if opportunities were detected another way, it kept showing the empty state.
+
+### Fix
+1. **Backend** (`/app/backend/v3_routes.py`, analyze-all runner):
+   - After `_run_alignment_analysis` stores the recommendation, the same job now calls `_call_opportunity_detection_tool` with the same corpus, normalises the results, and writes `connect.opportunities` + `connect.opportunities_detected_at` + `connect.opportunities_source` on the case.
+   - Progress goes 25% → 80% ("Splitting conversations into distinct campaign opportunities…") → 100% ("Analysis complete — found N opportunities.").
+   - Opportunity detection is wrapped in its own try/except so a failure there NEVER fails the whole analyze-all job — the alignment recommendation still lands and the panel just stays empty.
+   - Completed job now carries `opportunities` + `opportunities_source` in its payload for admin diagnostics.
+
+2. **Frontend**:
+   - `OpportunitiesPanel` (V1ConnectSources.js) gained a `refreshToken` prop. Its `useEffect` now depends on `[reload, refreshToken]`, so bumping the token forces a re-fetch of `/connect/opportunities`.
+   - `V1BusinessCaseFlowPages.js` owns an `opportunitiesRefreshToken` counter (starts at 0), passes it to the panel, and bumps it whenever `pollAnalysisJob` completes successfully OR the sync-mode analyze-all returns. Users no longer stare at the empty state after a successful run.
+
+### Verified
+- Cleared `connect.opportunities` on `bc-0ae422a0dc` → confirmed empty.
+- Ran `POST /connect/analyze-all` → job polls: running@80% "Splitting… opportunities" → completed@100% "found 2 opportunities."
+- `GET /connect/opportunities` now returns those 2 opportunities immediately (titles: "Chivas 18 Premium Awareness & Cultural Relevance Drive", "Creator Engagement Strategy Development").
+
+
+
 ## Update — 10 Aug 2026 (Brand portal Pitch Deck: PDF button + iframe render bug fix)
 
 ### Shipped

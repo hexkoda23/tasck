@@ -10664,14 +10664,78 @@ def make_v3_router(db):
                     {"$set": {"status": "running", "progress": 25, "message": "Running Claude alignment analysis…", "updated_at": _now_iso()}},
                 )
                 result = await _run_alignment_analysis(bc_id, meetings, case, brand, combined_text, meeting_dates)
+                # Alignment recommendation is stored — now split the same
+                # conversation corpus into distinct campaign opportunities so
+                # the "Campaigns found" panel populates in the same click.
+                # Users were running Analyze Conversations and still seeing
+                # "No opportunities yet" because detection lived on a separate
+                # endpoint that was never called.
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"progress": 80, "message": "Splitting conversations into distinct campaign opportunities…", "updated_at": _now_iso()}},
+                )
+                opportunities_payload: List[Dict[str, Any]] = []
+                opp_source: Optional[str] = None
+                try:
+                    corpus_text = await _all_connect_evidence(bc_id)
+                    if corpus_text:
+                        # Reload the case so any updates from _run_alignment_analysis are visible.
+                        fresh_case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or case
+                        opp_result = await _call_opportunity_detection_tool(brand, fresh_case, corpus_text)
+                        if opp_result:
+                            now_opp = _now_iso()
+                            for raw in (opp_result.get("opportunities") or []):
+                                if not isinstance(raw, dict):
+                                    continue
+                                title = str(raw.get("title") or "").strip()
+                                if not title:
+                                    continue
+                                opportunities_payload.append({
+                                    "id": f"opp-{uuid.uuid4().hex[:8]}",
+                                    "title": title,
+                                    "summary": str(raw.get("summary") or "").strip(),
+                                    "focus": str(raw.get("focus") or "").strip(),
+                                    "campaign_type": str(raw.get("campaign_type") or "").strip(),
+                                    "audience": str(raw.get("audience") or "").strip(),
+                                    "audience_behaviour": str(raw.get("audience_behaviour") or "").strip(),
+                                    "goals": str(raw.get("goals") or "").strip(),
+                                    "success_looks_like": str(raw.get("success_looks_like") or "").strip(),
+                                    "timeline": str(raw.get("timeline") or "").strip(),
+                                    "evidence": str(raw.get("evidence") or "").strip(),
+                                    "confidence": str(raw.get("confidence") or "medium").strip().lower(),
+                                    "merged_from": [],
+                                    "snapshot_id": None,
+                                })
+                            opp_source = opp_result.get("analysis_source") or "llm"
+                            await db.v3_business_cases.update_one(
+                                {"id": bc_id},
+                                {"$set": {
+                                    "connect.opportunities": opportunities_payload,
+                                    "connect.opportunities_detected_at": now_opp,
+                                    "connect.opportunities_source": opp_source,
+                                    "updated_at": now_opp,
+                                }},
+                            )
+                except Exception as opp_exc:  # noqa: BLE001
+                    # Opportunity detection is a bonus — never fail the whole
+                    # analyze-all job if it goes sideways. The alignment
+                    # recommendation is still valid.
+                    logger.exception("Bundled opportunity detection failed for %s: %s", bc_id, opp_exc)
+
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {
                         "status": "completed",
                         "progress": 100,
-                        "message": "Analysis complete.",
+                        "message": (
+                            f"Analysis complete — found {len(opportunities_payload)} opportunit{'y' if len(opportunities_payload) == 1 else 'ies'}."
+                            if opportunities_payload
+                            else "Analysis complete."
+                        ),
                         "recommendation": result.get("recommendation"),
                         "business_case": result.get("business_case"),
+                        "opportunities": opportunities_payload,
+                        "opportunities_source": opp_source,
                         "updated_at": _now_iso(),
                     }},
                 )

@@ -231,7 +231,7 @@ const confidenceTone = (confidence) => ({
  * ticks two or more and merges them when they are really the same job, then
  * generates one Alignment Snapshot per surviving opportunity.
  */
-export const OpportunitiesPanel = ({ businessCaseId, onGenerated }) => {
+export const OpportunitiesPanel = ({ businessCaseId, onGenerated, refreshToken }) => {
   const [opportunities, setOpportunities] = useState([]);
   const [selected, setSelected] = useState([]);
   const [detecting, setDetecting] = useState(false);
@@ -251,7 +251,10 @@ export const OpportunitiesPanel = ({ businessCaseId, onGenerated }) => {
     }
   }, [businessCaseId]);
 
-  useEffect(() => { reload(); }, [reload]);
+  // Reload on mount, on case change, and whenever the parent bumps the
+  // refresh token (e.g. after "Analyze conversations" completes and the
+  // backend has just populated new opportunities on this case).
+  useEffect(() => { reload(); }, [reload, refreshToken]);
 
   const detect = async () => {
     setDetecting(true);
