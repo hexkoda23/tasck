@@ -2226,6 +2226,55 @@ def make_v3_router(db):
     """Factory - receives the motor DB handle and returns a FastAPI router."""
     router = APIRouter(prefix="/api/v3", tags=["v3"])
 
+    async def _reap_stale_job(job: Dict[str, Any]) -> Dict[str, Any]:
+        """Auto-fail analysis jobs whose background runner was killed mid-flight.
+
+        Root cause: a runner task started via ``asyncio.create_task`` is bound
+        to the event loop. When the backend hot-reloads (dev), OOM-crashes, or
+        gets an unhandled cancellation, the runner dies without writing a
+        terminal status onto the job doc. Every subsequent poll then sees
+        ``status: running`` and the frontend spends its 5-minute budget
+        looping before it finally shows "generation timed out".
+
+        Fix: any job that is still ``pending`` / ``running`` more than
+        `STALE_AFTER` seconds after its last update is considered orphaned and
+        marked ``failed`` here. The next poll returns the terminal state and
+        the frontend surfaces a proper error immediately.
+        """
+        if not job or job.get("status") not in ("pending", "running"):
+            return job
+        STALE_AFTER_SECONDS = 210  # 3m30s - leaves margin under the frontend's 5-min poll budget.
+        updated_iso = job.get("updated_at") or job.get("created_at")
+        if not updated_iso:
+            return job
+        try:
+            last_touch = datetime.fromisoformat(str(updated_iso).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return job
+        if last_touch.tzinfo is None:
+            last_touch = last_touch.replace(tzinfo=timezone.utc)
+        age = (datetime.now(timezone.utc) - last_touch).total_seconds()
+        if age < STALE_AFTER_SECONDS:
+            return job
+        # Craft a message the frontend can show as-is.
+        kind = str(job.get("kind") or "analysis").replace("_", " ").title()
+        friendly = f"{kind} was interrupted before it could finish. Please retry."
+        await db.v3_analysis_jobs.update_one(
+            {"id": job["id"]},
+            {"$set": {
+                "status": "failed",
+                "progress": 100,
+                "message": friendly,
+                "error": f"Stale job auto-reaped after {int(age)}s idle.",
+                "updated_at": _now_iso(),
+            }},
+        )
+        job["status"] = "failed"
+        job["progress"] = 100
+        job["message"] = friendly
+        job["error"] = f"Stale job auto-reaped after {int(age)}s idle."
+        return job
+
     async def _relationship_manager(rm_id: Optional[str] = None) -> Dict[str, Any]:
         """Return an RM from workbook-imported v3_rms. No hardcoded demo RM fallback."""
         if rm_id:
@@ -7597,6 +7646,7 @@ def make_v3_router(db):
         job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
         if not job:
             raise HTTPException(404, "Brief job not found")
+        job = await _reap_stale_job(job)
         return {"ok": True, "job": job}
 
     @router.get("/business-cases/{bc_id}/creative-brief/docx")
@@ -7918,6 +7968,7 @@ def make_v3_router(db):
         job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
         if not job:
             raise HTTPException(404, "Pitch Deck job not found")
+        job = await _reap_stale_job(job)
         return {"ok": True, "job": job}
 
     class PitchDeckUpdate(BaseModel):
@@ -10279,6 +10330,7 @@ def make_v3_router(db):
         job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
         if not job:
             raise HTTPException(404, "Detection job not found")
+        job = await _reap_stale_job(job)
         return {"ok": True, "job": job}
 
     class MergeOpportunitiesPayload(BaseModel):
@@ -10848,6 +10900,7 @@ def make_v3_router(db):
         job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
         if not job:
             raise HTTPException(404, "Analysis job not found")
+        job = await _reap_stale_job(job)
         return {"ok": True, "job": job}
 
     @router.post("/business-cases/{bc_id}/connect/promote")

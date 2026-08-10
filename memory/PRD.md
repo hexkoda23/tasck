@@ -1,5 +1,24 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (Bug fix: "Pitch Deck generation timed out" at 100%)
+
+### User-reported bug
+Pitch Deck page popup: "Generation failed / 100% / Pitch Deck generation timed out. Please retry." — but the backend job was actually done (or never made it out of "running").
+
+### Root cause
+Background analysis jobs (`kind: pitch_deck`, `analysis`, `opportunity_detection`, `creative_brief`) run via `asyncio.create_task(_runner())`. When the backend hot-reloads (dev), OOMs, or the runner gets cancelled unexpectedly, the runner dies BEFORE writing a terminal `status: completed|failed` to `v3_analysis_jobs`. The job document stays in `running/30` (or similar) forever. Every future poll sees that same "running" state and the frontend burns its 5-minute × 2.5s polling budget (120 polls) before finally throwing "Pitch Deck generation timed out. Please retry.". MongoDB inspection confirmed: `pitch-job-8a0c8e2ac4 running/30` + 5 other stale jobs across all analysis kinds.
+
+### Fix (`/app/backend/v3_routes.py`)
+- New helper `_reap_stale_job(job)` defined at the top of `make_v3_router`. Any job still `pending` / `running` more than **210 s** (3m30s) since `updated_at` is auto-transitioned to `failed` with a friendly message like `"Pitch Deck was interrupted before it could finish. Please retry."` and an `error` field pointing to the stale-reap for diagnostics. 210s is deliberately below the frontend's 300s poll budget so users see a clean error instead of a timeout, but comfortably above any legitimate LLM path (which currently maxes out around 150s with Anthropic + Gemini fallback).
+- Wired into all four analysis job GET endpoints: creative-brief, pitch-deck, detect-opportunities, analyze-all.
+- One-shot MongoDB cleanup: `db.v3_analysis_jobs.updateMany({status: {$in:["pending","running"]}}, {$set: {status:"failed", ...}})` — reaped 6 legacy stuck jobs on preview.
+
+### Verified
+- Injected a synthetic 6-min-old `running` pitch-deck job → next poll returned `status: failed, progress: 100, message: "Pitch Deck was interrupted before it could finish. Please retry.", error: "Stale job auto-reaped after 360s idle."`.
+- Fresh `POST /ai/pitch-deck/generate` → job polled: `running/30` → `completed/100` "Pitch Deck ready." in ~10 s.
+
+
+
 ## Update — 10 Aug 2026 (Alignment Snapshot: human-friendly Google-Docs filenames)
 
 ### User request
