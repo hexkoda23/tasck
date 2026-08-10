@@ -1,5 +1,31 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (UX bug fix: Scrape modal contradicting itself on failure)
+
+### User-reported
+When brand scrape failed, the popup showed all of these at once:
+```
+Scrape did not complete
+Scraping failed. Please try again.
+All details captured.        100%
+```
+"All details captured" contradicted "Scraping failed" — bad UX, made it look like a bug in the reporting.
+
+### Root cause
+`scrapeStageLabel(progress)` in `V1AdminCRMBrandDetail.js` was driven purely by the progress percentage. When the modal flipped to the error state, `scrapeProgress` was set to 100 (to show the error banner immediately), which made the stage label return the "All details captured." string regardless of success/failure.
+
+### Fix
+- `scrapeStageLabel` now takes an `errored` flag; at ≥100 % with `errored=true` it returns "Scrape stopped before finishing." instead of "All details captured.".
+- Caller passes `Boolean(scrapeError)` so success paths still show the celebratory line and failure paths show the honest one.
+
+### Verified
+Simulated a scrape failure by intercepting `POST /api/v3/brands/*/scrape` and forcing an abort. The popup now reads consistently: title "Scrape did not complete", body "Scraping failed. Please try again.", stage "Scrape stopped before finishing.", 100 % on a red bar. Screenshot captured.
+
+### Note on the underlying failure
+The scrape endpoint itself is fine on preview (returns 200 with data). If the user is still seeing failures on production, it's the same production-only Cloudflare 520 issue reported earlier — a redeploy or Emergent Support ticket is the fix, not more code.
+
+
+
 ## Update — 10 Aug 2026 (Bug fix: Clearbit is dead — logo probes were `ERR_NAME_NOT_RESOLVED`)
 
 ### User-reported (production, `thcodemo.space`)

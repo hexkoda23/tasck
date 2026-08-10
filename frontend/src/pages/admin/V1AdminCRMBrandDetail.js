@@ -37,9 +37,13 @@ import { toast } from 'sonner';
 
 const EMPTY_VALUE = 'Not captured yet';
 
-// Friendly stage label shown under the scrape progress bar, driven purely by
-// the current percentage so it reads like real work is happening.
-const scrapeStageLabel = (p) => {
+// Friendly stage label shown under the scrape progress bar, driven by the
+// current percentage. When the scrape has just failed we still hit 100% (the
+// modal flips to the error state), so the label takes an `errored` flag and
+// swaps to a failure-appropriate line — otherwise the popup contradicts
+// itself with "Scrape did not complete" above "All details captured."
+const scrapeStageLabel = (p, errored = false) => {
+  if (errored && p >= 100) return 'Scrape stopped before finishing.';
   if (p < 20) return 'Locating the brand’s website…';
   if (p < 45) return 'Fetching the brand logo…';
   if (p < 65) return 'Reading the About information…';
@@ -1369,7 +1373,7 @@ const V1AdminCRMBrandDetail = () => {
             {/* Progress bar */}
             <div className="mb-1 flex items-center justify-between">
               <span className="text-[11px] font-medium text-[#4F3E2F]" data-testid="brand-scrape-stage">
-                {scrapeStageLabel(scrapeProgress)}
+                {scrapeStageLabel(scrapeProgress, Boolean(scrapeError))}
               </span>
               <span className="text-[11px] font-semibold text-[#1F4A3A]" data-testid="brand-scrape-percent">
                 {Math.round(scrapeProgress)}%
