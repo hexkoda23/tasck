@@ -20,12 +20,12 @@ export const PitchDeckFlipbookEmbed = ({ deckId }) => {
       <iframe
         title="TASCK Pitch Deck"
         src={url}
-        loading="lazy"
         style={{ width: '100%', height: '80vh', minHeight: 560, border: 'none', display: 'block', background: '#101319' }}
       />
       <div className="flex justify-end gap-2 border-t border-[#EEE7D6] bg-[#FBFAF7] px-4 py-2.5">
-        <a href={url} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]">Open full screen</a>
-        <a href={v3PitchDeckFlipbookUrl(deckId, true)} target="_blank" rel="noreferrer" className="v3-btn-primary text-[12px]">Download</a>
+        <a href={url} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brand-pitch-open-fullscreen">Open full screen</a>
+        <a href={`${url}?print=1`} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brand-pitch-download-pdf">Download PDF</a>
+        <a href={v3PitchDeckFlipbookUrl(deckId, true)} target="_blank" rel="noreferrer" className="v3-btn-primary text-[12px]" data-testid="brand-pitch-download-html">Download</a>
       </div>
     </div>
   );

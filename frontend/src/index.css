@@ -776,10 +776,10 @@ h1, h2, h3, h4, h5, h6 {
 /* ===== END V2 ===== */
 
 [data-testid="emergent-badge"],
-a[href*="emergent"],
-div[class*="emergent"],
+a[href*="utm_source=emergent"],
 .emergent-badge,
-iframe[src*="emergent"],
+iframe[src*="emergent.sh"],
+iframe[src*="badge.emergent"],
 div:has(> a[href*="utm_source=emergent"]) {
   display: none !important;
   visibility: hidden !important;

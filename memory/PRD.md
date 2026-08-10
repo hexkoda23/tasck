@@ -1,5 +1,26 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (Brand portal Pitch Deck: PDF button + iframe render bug fix)
+
+### Shipped
+- **Download PDF button in the brand portal viewer** (`/app/frontend/src/components/v1/PitchDeckFlipbook.jsx`) — added between "Open full screen" and "Download (.html)". Opens the flipbook with `?print=1` so the browser's Print dialog fires automatically and the brand can "Save as PDF" without an admin download. `data-testid="brand-pitch-download-pdf"`.
+- Renamed existing brand-portal buttons with testids (`brand-pitch-open-fullscreen`, `brand-pitch-download-html`) for reliable test targeting.
+
+### Bug fix (discovered while verifying above)
+Brand portal pitch deck was rendering an EMPTY 23px card — the whole flipbook was invisible in preview even though admin previews worked fine. Root cause: `/app/frontend/src/index.css` line 782 hid every `iframe[src*="emergent"]` to strip the Emergent badge, but the preview backend URL is `tasck-live-demo-1.preview.emergentagent.com` — so it matched and hid our own legitimate flipbook iframe too. In production (`thcodemo.space`) the src wouldn't contain "emergent", which is why the bug never surfaced there.
+
+Tightened the rule to `iframe[src*="emergent.sh"]` + `iframe[src*="badge.emergent"]` (the actual badge targets) and removed the overly-broad `a[href*="emergent"]` / `div[class*="emergent"]` patterns. The badge is still hidden via `.emergent-badge`, `[data-testid="emergent-badge"]`, and `utm_source=emergent` link selectors.
+
+### Verified
+- `iframeH: 720px`, `iframeDisplay: block`, `pdfBtnVisible: true`.
+- Screenshot confirmed: Test Brand Co flipbook cover renders full-size, with the Nike-style dark theme and the three toolbar buttons (Open full screen / Download PDF / Download) sitting cleanly below the deck.
+
+### Files touched
+- `/app/frontend/src/components/v1/PitchDeckFlipbook.jsx` — Download PDF button + testids + removed `loading="lazy"` (which alone didn't fix it but is cleaner).
+- `/app/frontend/src/index.css` — tightened the Emergent-badge-hider CSS to stop matching legitimate app iframes/links.
+
+
+
 ## Update — 10 Aug 2026 (Bug fix: "Analyze conversations" → Alignment Snapshot 95% failure)
 
 ### Bug (user-reported)
