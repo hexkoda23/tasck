@@ -1,5 +1,31 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 10 Aug 2026 (Alignment Snapshot: human-friendly Google-Docs filenames)
+
+### User request
+Rename every Alignment Snapshot download from the opaque `as-bc0e644f-alignment-snapshot.docx` pattern to something like `MTN Alignment Snapshot for So-So Project.docx` — brand + project name, human-readable, unique per snapshot.
+
+### Fix (`/app/backend/v3_routes.py`)
+- New helper `alignment_snapshot_filename(case, brand, snap)` builds the name in the format `<Brand> Alignment Snapshot for <Project> (<xxxx>).docx`.
+  - Prefers `case.project_title` → `case.title` → `snap.title` for the project part.
+  - Strips decorative trailing suffixes like " - Project Alignment Snapshot" and drops a leading brand-name repeat inside the project so we get `Pernod Ricard - Chivas Alignment Snapshot for Relationship Opportunity` instead of `... for Pernod Ricard - Chivas — Relationship Opportunity - Project Alignment Snapshot`.
+  - Appends a 4-char slice of the snapshot id (e.g. `(b255)`) so multiple snapshots for the same brand+project stay uniquely named.
+  - Sanitises `\ / : * ? " < > |` and control chars, collapses whitespace, and caps at 180 chars for filesystem / email attachment safety.
+- Wired into both filename touchpoints:
+  - `GET /api/v3/alignment-snapshots/{id}/docx` — uses RFC 6266 dual `filename=` (ASCII fallback) + `filename*=UTF-8''…` (percent-encoded) so brand names with em-dashes and accents survive HTTP header transport (previously threw 500 on `\u2014`).
+  - `POST /business-cases/{bc_id}/ai/alignment/send` — the Google-Docs-compatible email attachment now uses the same friendly name.
+
+### Verified
+Four live snapshots renamed on preview:
+- `as-b25585cf` → `Pernod Ricard - Chivas Alignment Snapshot for Relationship Opportunity (b255).docx`
+- `as-dbfc94eb` → `All Smiles Signature Alignment Snapshot for Social Media Growth Plan (dbfc).docx`
+- `as-d44c4234` → `Coca Cola Alignment Snapshot for Northern Nigeria Growth Strategy (d44c).docx`
+- `as-1b0b8b80` (orphaned case, brand_id null) → `Brand Alignment Snapshot for NASCO Cornflakes Influencer Sales Campaign (1b0b).docx` (fallback works)
+
+Fixed a side bug found in the process: the previous endpoint attempted to put a UTF-8 filename directly in the `Content-Disposition` header and threw a 500 (`latin-1 codec can't encode character '\u2014'`) whenever a project title contained an em-dash. The RFC 6266 dual-parameter form fixes that permanently.
+
+
+
 ## Update — 10 Aug 2026 (Bug fix: "Analyze conversations" now populates the opportunities panel)
 
 ### User-reported bug

@@ -6107,6 +6107,64 @@ def make_v3_router(db):
             return [text]
         return parts[:3]
 
+    def alignment_snapshot_filename(case: Dict[str, Any], brand: Dict[str, Any], snap: Dict[str, Any]) -> str:
+        """Build a human-friendly, unique filename for the Alignment Snapshot
+        docx / Google-Docs-compatible attachment.
+
+        Format: "<Brand> Alignment Snapshot for <Project>.docx"
+        e.g. "MTN Alignment Snapshot for Naija Cup 2026.docx"
+
+        Falls back gracefully when brand or project title is missing, and
+        appends the short snapshot id when a brand has multiple snapshots
+        with the same project title so filenames stay unique per snapshot.
+        """
+        brand_name = str(brand.get("company") or brand.get("name") or "Brand").strip() or "Brand"
+        # Prefer the case's project_title (raw project name) over snap.title
+        # because the snapshot title is usually decorated with "{Brand} —
+        # {Project} - Project Alignment Snapshot", which duplicates the brand
+        # AND the "Alignment Snapshot" phrase in our final filename.
+        project_raw = (
+            str(case.get("project_title") or "").strip()
+            or str(case.get("title") or "").strip()
+            or str(snap.get("title") or "").strip()
+        )
+        # Trim decorative suffixes that snapshots sometimes carry so the
+        # filename reads "MTN Alignment Snapshot for Naija Cup" instead of
+        # "MTN Alignment Snapshot for MTN — Naija Cup - Project Alignment Snapshot".
+        project = project_raw
+        for suffix in (
+            " - Project Alignment Snapshot",
+            " - Alignment Snapshot",
+            " Project Alignment Snapshot",
+            " Alignment Snapshot",
+        ):
+            if project.lower().endswith(suffix.lower()):
+                project = project[: -len(suffix)].rstrip(" -–—")
+        # Drop the brand-name prefix from the project so "MTN — Naija Cup"
+        # becomes just "Naija Cup" when concatenated with the brand.
+        low_brand = brand_name.lower()
+        low_proj = project.lower()
+        if brand_name and low_proj.startswith(low_brand):
+            project = project[len(brand_name):].lstrip(" -–—:").strip()
+        snap_id = str(snap.get("id") or "").strip()
+        suffix_id = snap_id.replace("as-", "")[:4] if snap_id else ""
+        base = (
+            f"{brand_name} Alignment Snapshot for {project}"
+            if project else f"{brand_name} Alignment Snapshot"
+        )
+        if suffix_id:
+            base = f"{base} ({suffix_id})"
+        # Strip characters that break file downloads or Content-Disposition
+        # (forward/back slashes, colons, control chars, quote characters) but
+        # keep spaces, dashes, and standard punctuation so the name reads
+        # naturally in Gmail / Google Drive.
+        safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", base)
+        safe = re.sub(r"\s+", " ", safe).strip()
+        # Belt-and-braces cap so the whole filename stays under common
+        # filesystem / email attachment limits.
+        safe = safe[:180] or (snap_id or "alignment-snapshot")
+        return f"{safe}.docx"
+
     def alignment_snapshot_docx_bytes(case: Dict[str, Any], brand: Dict[str, Any], snap: Dict[str, Any]) -> bytes:
         brand_name = brand.get("company") or brand.get("name") or "Brand"
 
@@ -6510,10 +6568,19 @@ def make_v3_router(db):
         case = await db.v3_business_cases.find_one({"id": snap.get("business_case_id")}, {"_id": 0}) or {}
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
         docx_bytes = alignment_snapshot_docx_bytes(case, brand, snap)
+        filename = alignment_snapshot_filename(case, brand, snap)
+        # RFC 6266: HTTP headers are latin-1 only, so the plain `filename=`
+        # parameter has to be ASCII. We strip non-ASCII characters (em-dash,
+        # accented letters, etc.) for the fallback and provide `filename*`
+        # UTF-8 percent-encoded for browsers that understand the extension —
+        # which is every modern browser.
+        from urllib.parse import quote
+        ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "alignment-snapshot.docx"
+        filename_star = quote(filename, safe='')
         return StreamingResponse(
             BytesIO(docx_bytes),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f'attachment; filename="{snapshot_id}-alignment-snapshot.docx"'},
+            headers={"Content-Disposition": f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{filename_star}"},
         )
 
     @router.post("/business-cases/{bc_id}/ai/alignment/send")
@@ -6674,7 +6741,7 @@ def make_v3_router(db):
                 "type": "google_docs_compatible_alignment_snapshot",
                 "id": snap["id"],
                 "title": snap.get("title"),
-                "filename": f"{snap['id']}-alignment-snapshot.docx",
+                "filename": alignment_snapshot_filename(case, brand, snap),
                 "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "content": document_docx,
                 "review_link": review_link,
