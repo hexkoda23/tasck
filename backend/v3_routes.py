@@ -4937,6 +4937,18 @@ def make_v3_router(db):
         target_audience: str = ""
         channels: List[str] = Field(default_factory=list)
         source_document_name: Optional[str] = None
+        # Brand contact: needed so the imported project has a real email to
+        # send documents and login credentials to. Optional so the admin can
+        # import first and add contact details later from CRM.
+        contact_name: Optional[str] = None
+        contact_email: Optional[str] = None
+        contact_phone: Optional[str] = None
+        contact_role: Optional[str] = None
+        # When True and a contact email is provided, the endpoint queues the
+        # standard brand welcome email (login link + temp password) so the
+        # brand can immediately sign in and see the imported alignment
+        # snapshot. Defaults to True per product decision (admin can uncheck).
+        send_welcome_email: bool = True
 
     @router.post("/business-cases/import-existing")
     async def import_existing_project(payload: ImportExistingProject):
@@ -4944,6 +4956,11 @@ def make_v3_router(db):
         if not title:
             raise HTTPException(422, "Project title is required.")
         now = _now_iso()
+
+        contact_name = (payload.contact_name or "").strip()
+        contact_email = (payload.contact_email or "").strip().lower()
+        contact_phone = (payload.contact_phone or "").strip()
+        contact_role = (payload.contact_role or "").strip()
 
         # Resolve the brand: existing CRM brand OR create a new one by name.
         brand = None
@@ -4974,10 +4991,10 @@ def make_v3_router(db):
                     "logo_url": "",
                     "brand_logo_url": "",
                     "hq": "",
-                    "primary_contact": "",
-                    "role": "",
-                    "email": "",
-                    "phone": "",
+                    "primary_contact": contact_name,
+                    "role": contact_role,
+                    "email": contact_email,
+                    "phone": contact_phone,
                     "status": "crm_accepted",
                     "crm_accepted_at": now,
                     "next_action": "Review imported project.",
@@ -4997,6 +5014,46 @@ def make_v3_router(db):
                 }
                 await db.v3_brands.insert_one({**brand})
 
+        # Backfill missing contact fields onto an existing brand and (for new
+        # or existing) create a v3_contacts row so the CRM shows the contact.
+        brand_field_updates: Dict[str, Any] = {}
+        if contact_name and not (brand.get("primary_contact") or "").strip():
+            brand_field_updates["primary_contact"] = contact_name
+        if contact_email and not (brand.get("email") or "").strip():
+            brand_field_updates["email"] = contact_email
+        if contact_phone and not (brand.get("phone") or "").strip():
+            brand_field_updates["phone"] = contact_phone
+        if contact_role and not (brand.get("role") or "").strip():
+            brand_field_updates["role"] = contact_role
+        if brand_field_updates:
+            brand_field_updates["updated_at"] = now
+            await db.v3_brands.update_one({"id": brand["id"]}, {"$set": brand_field_updates})
+            brand.update(brand_field_updates)
+
+        if contact_name or contact_email:
+            existing_contact = None
+            if contact_email:
+                existing_contact = await db.v3_contacts.find_one(
+                    {"brand_id": brand["id"], "email": contact_email}, {"_id": 0}
+                )
+            if not existing_contact and contact_name:
+                existing_contact = await db.v3_contacts.find_one(
+                    {"brand_id": brand["id"], "name": contact_name}, {"_id": 0}
+                )
+            if not existing_contact:
+                await db.v3_contacts.insert_one({
+                    "id": f"ct-{uuid.uuid4().hex[:8]}",
+                    "brand_id": brand["id"],
+                    "name": contact_name or brand.get("primary_contact") or "",
+                    "role": contact_role or "",
+                    "email": contact_email or "",
+                    "phone": contact_phone or "",
+                    "is_primary": not bool(brand.get("primary_contact")),
+                    "decision_seniority": "lead",
+                    "source": "imported_project",
+                    "created_at": now,
+                })
+
         bc_id = f"bc-{uuid.uuid4().hex[:8]}"
         # Skip-marker brainstorm round: same shape the skip-transcript endpoint
         # writes so the frame router jumps straight to the Creator Selector.
@@ -5011,6 +5068,83 @@ def make_v3_router(db):
         })
 
         description = (payload.description or "").strip()
+        # Snapshot the brand contact onto the case so downstream document-send
+        # endpoints (alignment/brief/report) find the right recipient without
+        # reloading the brand doc.
+        brand_contact_snapshot = {
+            "primary_contact": contact_name or brand.get("primary_contact") or "",
+            "role": contact_role or brand.get("role") or "",
+            "email": contact_email or (brand.get("email") or ""),
+            "phone": contact_phone or brand.get("phone") or "",
+            "captured_at": now,
+            "source": "imported_project",
+        }
+
+        # Build a READ-ONLY "imported" alignment snapshot so the brand portal
+        # /brand/alignment-snapshot page has something to display, even though
+        # the alignment stage has already been passed. Marking imported=True
+        # lets the frontend hide the Approve + comment controls.
+        as_id = f"as-import-{uuid.uuid4().hex[:8]}"
+        brand_company = brand.get("company") or brand.get("name") or "Brand"
+        currency_label = (payload.currency or "").strip() or "NGN"
+        try:
+            budget_amount = float(payload.estimated_value or 0)
+        except (TypeError, ValueError):
+            budget_amount = 0.0
+        budget_line = f"{currency_label} {budget_amount:,.0f}" if budget_amount > 0 else "Not disclosed in imported document"
+        channels_list = [str(c).strip() for c in (payload.channels or []) if str(c).strip()]
+        source_doc_line = f"Imported document: {payload.source_document_name}" if payload.source_document_name else "Imported without a source document (form entry)."
+        imported_sections = [
+            {"heading": "1. WHY THIS SNAPSHOT IS READ-ONLY", "type": "prose", "content": (
+                f"This project was imported into TASCK after the alignment stage had already been completed outside the platform. "
+                f"The snapshot below is provided so {brand_company} has a single source of truth for the project details on record. "
+                "It is read-only — approvals were captured outside TASCK, so no further approval is required from this screen."
+            )},
+            {"heading": "2. PROJECT SUMMARY", "type": "prose", "content": (description or f"{brand_company} imported project — details captured at import.")},
+            {"heading": "3. OBJECTIVES", "type": "prose", "content": (payload.objectives.strip() if payload.objectives else "Objectives were not captured at import time.")},
+            {"heading": "4. TARGET AUDIENCE", "type": "prose", "content": (payload.target_audience.strip() if payload.target_audience else "Target audience not captured at import time.")},
+            {"heading": "5. CHANNELS", "type": "bullets", "content": "Channels selected for this project.", "items": channels_list or ["Not captured at import time."]},
+            {"heading": "6. COMMERCIAL CONTEXT", "type": "bullets", "content": "Working commercial context for the imported project.", "items": [
+                f"Engagement track: {'Paid Strategy' if payload.engagement_track == 'paid' else 'Grant'}",
+                f"Budget: {budget_line}",
+                source_doc_line,
+            ]},
+            {"heading": "7. NEXT STEPS ON TASCK", "type": "prose", "content": (
+                "TASCK will drive the remaining phases (Creator Selection, Delivery, Reporting) from the Plan stage onwards. "
+                "Any commercial or scope changes will be raised on this workspace and shared with you via the documents tab."
+            )},
+        ]
+        alignment_snapshot_doc = {
+            "id": as_id,
+            "business_case_id": bc_id,
+            "status": "imported",
+            "imported": True,
+            "generated_at": now,
+            "last_edited_at": None,
+            "last_edited_by": None,
+            "sent_to_brand_at": now,
+            "approved_at": now,
+            "approved_by": "imported_project",
+            "approved_by_party": "external",
+            "brand_approved": False,
+            "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
+            "title": f"{title} — Imported Alignment Snapshot",
+            "opportunity_title": title,
+            "meta": "Read-only snapshot for an imported project. Alignment happened outside TASCK.",
+            "sections": imported_sections,
+            "scope_flags": [],
+            "brand_comments": [],
+            "marketing_intelligence": {
+                "key_marketing_focus": payload.objectives or description or title,
+                "primary_target_audience": payload.target_audience or "",
+                "key_marketing_channels": channels_list,
+                "marketing_kpis": [],
+                "generated_at": now,
+                "source": "imported_project",
+            },
+        }
+        await db.v3_alignment_snapshots.insert_one({**alignment_snapshot_doc})
+
         doc = {
             "id": bc_id,
             "brand_id": brand["id"],
@@ -5028,6 +5162,7 @@ def make_v3_router(db):
             "imported": True,
             "imported_at": now,
             "import_source_document": payload.source_document_name or "",
+            "brand_contact_snapshot": brand_contact_snapshot,
             "connect": {
                 "source": "imported_project",
                 "connect_status": "qualified_to_frame",
@@ -5035,17 +5170,21 @@ def make_v3_router(db):
                 "marketing_intelligence": {
                     "key_marketing_focus": payload.objectives or description or title,
                     "primary_target_audience": payload.target_audience or "",
-                    "key_marketing_channels": [c for c in (payload.channels or []) if c],
+                    "key_marketing_channels": channels_list,
                     "marketing_kpis": [],
                     "generated_at": now,
                     "source": "imported_project",
                 },
             },
             "frame": {
-                "alignment_snapshot_status": "approved",
+                "alignment_snapshot_id": as_id,
+                "alignment_snapshot_status": "imported",
+                "alignment_snapshot_generated_at": now,
                 "alignment_bypassed": True,
                 "alignment_bypass_reason": "imported_existing_project",
                 "approved_at": now,
+                "scope_flags_total": 0,
+                "scope_flags_resolved": 0,
             },
             "plan": {
                 "brainstorm_round_id": round_id,
@@ -5059,6 +5198,7 @@ def make_v3_router(db):
                 "at": now,
                 "event": "project_imported",
                 "note": "Imported existing project — alignment stage bypassed, sent to Creator Selector.",
+                "snapshot_id": as_id,
             }],
             "updated_at": now,
         }
@@ -5069,12 +5209,57 @@ def make_v3_router(db):
             {"id": brand["id"]},
             {"$set": {"updated_at": now}, "$addToSet": {"business_case_ids": bc_id}},
         )
+
+        # Optionally: create brand login account + send the standard welcome
+        # email with sign-in link and temp password. Same template as the CRM
+        # brand-creation welcome so brands see a consistent flow.
+        welcome_result: Dict[str, Any] = {"sent": False, "reason": "not_requested"}
+        if payload.send_welcome_email:
+            welcome_target_email = contact_email or (brand.get("email") or "").strip().lower()
+            if not welcome_target_email:
+                welcome_result = {"sent": False, "reason": "no_contact_email"}
+            else:
+                account = await ensure_brand_account({**brand, "email": welcome_target_email})
+                brand_login_link = brand_login_url()
+                welcome_contact = contact_name or brand.get("primary_contact") or "there"
+                welcome_body = (
+                    f"Hello {welcome_contact},\n\n"
+                    "Welcome to TASCK.\n\n"
+                    f"We have prepared brand portal access for {brand_company} so your team can review the imported project workspace, "
+                    "see the read-only alignment snapshot on file, respond to future approval requests, and keep communication with TASCK in one place.\n\n"
+                    f"Click here to sign in: {brand_login_link}\n"
+                    f"Email: {account['username']}\n"
+                    f"Password: {account['temporary_password']}\n\n"
+                    f"Once you sign in you can open '{title}' from the Projects tab and view the alignment snapshot on file.\n\n"
+                    "For security, please sign in and change this password before sharing the account with anyone else on your team.\n\n"
+                    "Regards,\n"
+                    "TASCK"
+                )
+                welcome_email = await queue_email(
+                    to=account["username"],
+                    subject="Your TASCK brand access",
+                    body=welcome_body,
+                    kind="brand_welcome",
+                    brand_id=brand["id"],
+                    business_case_id=bc_id,
+                )
+                welcome_result = {
+                    "sent": True,
+                    "email_id": welcome_email["id"],
+                    "recipient": account["username"],
+                    "temporary_password": account["temporary_password"],
+                    "must_change_password": account.get("must_change_password", True),
+                    "login_link": brand_login_link,
+                }
+
         return {
             "ok": True,
             "business_case": doc,
             "business_case_id": bc_id,
             "brand_id": brand["id"],
             "brand_company": brand.get("company") or "",
+            "alignment_snapshot_id": as_id,
+            "welcome_email": welcome_result,
             "next_path": f"/admin/business-cases/{bc_id}/frame/creator-scan",
         }
 

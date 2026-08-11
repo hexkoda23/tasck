@@ -1,5 +1,42 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 11 Feb 2026 (Feature: Imported Projects — brand contact + welcome email + read-only alignment snapshot)
+
+### User request
+For projects imported via `/admin/import-project`, admin needs to capture the brand contact so future documents + login credentials can be sent, and the brand contact should be able to see a read-only alignment snapshot when they log in (no approve/comment, since the stage has already been passed).
+
+### Shipped
+- **Backend** (`v3_routes.py` — `import_existing_project`):
+  - `ImportExistingProject` payload extended with `contact_name`, `contact_email`, `contact_phone`, `contact_role`, `send_welcome_email` (default `True`).
+  - New brand creation now stores contact info; existing brand backfills missing contact fields only (never overwrites existing values).
+  - `v3_contacts` row auto-inserted when a name/email is supplied.
+  - `brand_contact_snapshot` stored on the business case so downstream document-send flows resolve the recipient.
+  - A read-only `v3_alignment_snapshots` doc is created with `imported: True`, `status: "imported"`, populated 7-section snapshot from the form inputs. Doc-generator + DOCX download reuse existing pipeline.
+  - When `send_welcome_email=True` AND a contact email exists, calls `ensure_brand_account` and queues the standard `brand_welcome` email (same template as CRM brand-create; login link via `brand_login_url()` + temp password). Response includes `welcome_email` block with recipient, temp password, and login link.
+- **Frontend — admin import page** (`V1ImportExistingProject.js`):
+  - New "Brand contact" section with name/email/phone/role fields (`import-contact-name-input`, `-email-input`, `-phone-input`, `-role-input`).
+  - "Send welcome email with login credentials now" checkbox (`import-welcome-checkbox`), defaulted ON.
+  - Picking an existing brand from the dropdown pre-fills empty contact fields from the CRM record.
+  - Success toast switches copy based on whether the welcome email was sent, skipped (no email), or unchecked.
+- **Frontend — brand portal alignment page** (`V1BrandDocuments.js`):
+  - When `selected.snapshot.imported === true`, shows amber "IMPORTED PROJECT · Read-only" banner (`alignment-imported-banner`), hides priority selector, hides the entire Send-back-to-admin card (`alignment-imported-notice` replaces it), and hides the Approve button. Download DOCX still works.
+
+### When welcome/login credentials go out to brand (imported projects)
+1. **On import** — when admin ticks "Send welcome email now" (default) AND a contact email is present.
+2. **On demand** — CRM → Resend credentials (`POST /brand-accounts/resend-credentials`) — pre-existing.
+3. **On first document send** (alignment/brief/pitch/report send buttons) — pre-existing; these auto-attach a sign-in link.
+
+### Verified (backend curl smoke — 11 Feb 2026)
+- `POST /business-cases/import-existing` with contact + `send_welcome_email:true` → BC created, alignment snapshot `as-import-*` with `imported:true`/`status:imported`/7 sections, `brand_contact_snapshot` present on case, `v3_email_outbox` contains `brand_welcome` email with login link + temp password.
+- `GET /alignment-snapshots/{id}/docx` for imported snapshot → valid DOCX (459KB, PK header).
+- Frontend selectors `import-project-page` + `import-contact-email-input` present in DOM.
+
+### Files touched
+- `/app/backend/v3_routes.py` (import endpoint + payload)
+- `/app/frontend/src/pages/admin/V1ImportExistingProject.js`
+- `/app/frontend/src/pages/brand/V1BrandDocuments.js`
+
+
 ## Update — 11 Aug 2026 (Feature: Import Existing Project — alignment bypass)
 
 ### User request

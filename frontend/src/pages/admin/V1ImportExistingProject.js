@@ -19,6 +19,11 @@ const EMPTY_FORM = {
   objectives: '',
   target_audience: '',
   channels: '',
+  contact_name: '',
+  contact_email: '',
+  contact_phone: '',
+  contact_role: '',
+  send_welcome_email: true,
 };
 
 const fieldClass = 'w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] focus:outline-none focus:border-[#1F4A3A]';
@@ -41,6 +46,22 @@ export default function V1ImportExistingProject() {
   }, []);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  // When admin picks an existing brand, pre-fill any missing contact fields
+  // from that brand's CRM record so the welcome email + snapshot recipient
+  // resolve without extra typing. Admin can still edit them before importing.
+  const onSelectExistingBrand = (e) => {
+    const brandId = e.target.value;
+    const match = brands.find((b) => b.id === brandId);
+    setForm((f) => ({
+      ...f,
+      brand_id: brandId,
+      contact_name: f.contact_name || match?.primary_contact || match?.contact_name || '',
+      contact_email: f.contact_email || match?.email || '',
+      contact_phone: f.contact_phone || match?.phone || '',
+      contact_role: f.contact_role || match?.role || '',
+    }));
+  };
 
   const applyExtracted = (fields) => {
     setForm((f) => ({
@@ -99,6 +120,8 @@ export default function V1ImportExistingProject() {
     setBusy(true);
     setError('');
     try {
+      const contactEmail = form.contact_email.trim();
+      const wantsWelcome = form.send_welcome_email && Boolean(contactEmail);
       const payload = {
         brand_id: brandMode === 'existing' ? form.brand_id : null,
         new_brand_name: brandMode === 'new' ? form.new_brand_name.trim() : null,
@@ -111,9 +134,25 @@ export default function V1ImportExistingProject() {
         target_audience: form.target_audience.trim(),
         channels: form.channels.split(',').map((c) => c.trim()).filter(Boolean),
         source_document_name: file?.name || null,
+        contact_name: form.contact_name.trim() || null,
+        contact_email: contactEmail || null,
+        contact_phone: form.contact_phone.trim() || null,
+        contact_role: form.contact_role.trim() || null,
+        send_welcome_email: wantsWelcome,
       };
       const res = await v3ImportExistingProject(payload);
-      toast.success('Project imported', { description: 'Alignment stage bypassed — opening the Creator Selector.' });
+      const welcome = res?.welcome_email;
+      if (welcome?.sent) {
+        toast.success('Project imported & welcome email sent', {
+          description: `Login link + temporary password emailed to ${welcome.recipient}.`,
+        });
+      } else if (form.send_welcome_email && !contactEmail) {
+        toast.success('Project imported', {
+          description: 'Add a contact email later, then use CRM → Resend credentials to email the brand.',
+        });
+      } else {
+        toast.success('Project imported', { description: 'Alignment stage bypassed — opening the Creator Selector.' });
+      }
       navigate(adminRoute(`/business-cases/${res.business_case_id}/frame/creator-scan`));
     } catch (e) {
       setError(e?.response?.data?.detail || e?.message || 'Import failed. Please try again.');
@@ -189,7 +228,7 @@ export default function V1ImportExistingProject() {
             ))}
           </div>
           {brandMode === 'existing' ? (
-            <select value={form.brand_id} onChange={set('brand_id')} className={fieldClass} data-testid="import-brand-select">
+            <select value={form.brand_id} onChange={onSelectExistingBrand} className={fieldClass} data-testid="import-brand-select">
               <option value="">Select a brand…</option>
               {brands.map((b) => (
                 <option key={b.id} value={b.id}>{b.company || b.name}</option>
@@ -244,6 +283,50 @@ export default function V1ImportExistingProject() {
           </div>
         </div>
 
+        {/* Brand contact — needed so we can send the welcome/login email and
+            future document approvals to the right person. */}
+        <div className="pt-2 border-t border-[#F1ECDF]">
+          <p className="text-[13px] font-semibold text-[#1A1A1A]">3. Brand contact <span className="font-normal text-[#8A8A8A]">(so we can email them the login + future documents)</span></p>
+          <p className="text-[12px] text-[#8A8A8A] mt-0.5 mb-3">
+            The email here receives the welcome message with sign-in details and any future documents TASCK sends for this project.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Contact name</label>
+              <input value={form.contact_name} onChange={set('contact_name')} placeholder="e.g. Amaka Okafor" className={fieldClass} data-testid="import-contact-name-input" />
+            </div>
+            <div>
+              <label className={labelClass}>Contact email</label>
+              <input type="email" value={form.contact_email} onChange={set('contact_email')} placeholder="amaka@brand.com" className={fieldClass} data-testid="import-contact-email-input" />
+            </div>
+            <div>
+              <label className={labelClass}>Role / title</label>
+              <input value={form.contact_role} onChange={set('contact_role')} placeholder="Head of Marketing" className={fieldClass} data-testid="import-contact-role-input" />
+            </div>
+            <div>
+              <label className={labelClass}>Phone <span className="normal-case">(optional)</span></label>
+              <input value={form.contact_phone} onChange={set('contact_phone')} placeholder="+234…" className={fieldClass} data-testid="import-contact-phone-input" />
+            </div>
+          </div>
+
+          <label className="mt-4 flex items-start gap-2 text-[12px] text-[#1A1A1A] cursor-pointer" data-testid="import-welcome-checkbox-label">
+            <input
+              type="checkbox"
+              checked={form.send_welcome_email}
+              onChange={(e) => setForm((f) => ({ ...f, send_welcome_email: e.target.checked }))}
+              className="mt-0.5 accent-[#1F4A3A]"
+              data-testid="import-welcome-checkbox"
+            />
+            <span>
+              <span className="font-semibold">Send welcome email with login credentials now</span>
+              <span className="block text-[11px] text-[#8A8A8A] mt-0.5">
+                Emails the contact above a sign-in link and a temporary password. Uncheck if you'll share credentials manually later
+                (you can always trigger it from CRM &rarr; Resend credentials). Requires a contact email.
+              </span>
+            </span>
+          </label>
+        </div>
+
         {error && <p className="text-[12px] text-[#B54A37]" data-testid="import-error">{error}</p>}
 
         <div className="flex items-center gap-3 pt-1">
@@ -251,7 +334,10 @@ export default function V1ImportExistingProject() {
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderInput className="w-3.5 h-3.5" />}
             {busy ? 'Importing…' : 'Import & open Creator Selector'}
           </button>
-          <p className="text-[11px] text-[#8A8A8A]">Creates the project in the Plan stage with an “Imported” tag.</p>
+          <p className="text-[11px] text-[#8A8A8A]">
+            Creates the project in the Plan stage with an "Imported" tag.
+            {form.send_welcome_email && form.contact_email.trim() ? ' Welcome email queues on import.' : ''}
+          </p>
         </div>
       </div>
     </div>
