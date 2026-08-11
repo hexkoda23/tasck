@@ -9982,6 +9982,66 @@ def make_v3_router(db):
                 "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/brief",
             })
 
+        # 5. Brand report feedback submitted from the Reports & Feedback page
+        # in the brand portal. Stored on the case doc, so we scan cases whose
+        # closure.brand_feedback_received_at falls in the lookback window.
+        feedback_cases = await db.v3_business_cases.find(
+            {"closure.brand_feedback_received": True},
+            {"_id": 0, "id": 1, "title": 1, "brand_id": 1, "closure": 1},
+        ).to_list(200)
+        for row in feedback_cases:
+            fb = ((row.get("closure") or {}).get("brand_feedback") or {})
+            when = fb.get("received_at") or (row.get("closure") or {}).get("brand_feedback_received_at")
+            if not when or not _within_window(when):
+                continue
+            resolved = await _resolve(row.get("id"))
+            if not resolved:
+                continue
+            comment = str(fb.get("comment") or "").strip()
+            preview = (comment[:180] + "…") if len(comment) > 180 else (comment or "Feedback submitted.")
+            notifications.append({
+                "id": f"brand_feedback:{row.get('id')}:{when}",
+                "kind": "brand_feedback",
+                "actor": "brand",
+                "when": when,
+                "brand_id": resolved["brand_id"],
+                "brand_name": resolved["brand_name"],
+                "business_case_id": row.get("id"),
+                "business_case_title": resolved["case_title"],
+                "title": f"{resolved['brand_name']} sent Report feedback",
+                "message": f"{resolved['brand_name']} on {resolved['case_title']}: {preview}",
+                "link": f"/admin/business-cases/{row.get('id')}/reporting/final-report",
+            })
+
+        # 6. Creator feedback submitted for the final report (symmetry with #5).
+        creator_feedback_cases = await db.v3_business_cases.find(
+            {"closure.creator_feedback_received": True},
+            {"_id": 0, "id": 1, "title": 1, "brand_id": 1, "closure": 1},
+        ).to_list(200)
+        for row in creator_feedback_cases:
+            fb = ((row.get("closure") or {}).get("creator_feedback") or {})
+            when = fb.get("received_at") or (row.get("closure") or {}).get("creator_feedback_received_at")
+            if not when or not _within_window(when):
+                continue
+            resolved = await _resolve(row.get("id"))
+            if not resolved:
+                continue
+            comment = str(fb.get("comment") or "").strip()
+            preview = (comment[:180] + "…") if len(comment) > 180 else (comment or "Feedback submitted.")
+            notifications.append({
+                "id": f"creator_feedback:{row.get('id')}:{when}",
+                "kind": "creator_feedback",
+                "actor": "creator",
+                "when": when,
+                "brand_id": resolved["brand_id"],
+                "brand_name": resolved["brand_name"],
+                "business_case_id": row.get("id"),
+                "business_case_title": resolved["case_title"],
+                "title": f"Creator sent Report feedback ({resolved['case_title']})",
+                "message": f"Creator on {resolved['case_title']}: {preview}",
+                "link": f"/admin/business-cases/{row.get('id')}/reporting/final-report",
+            })
+
         # Sort newest first and cap.
         def _ts(item: Dict[str, Any]) -> str:
             return str(item.get("when") or "")
@@ -10402,10 +10462,11 @@ def make_v3_router(db):
     @router.post("/business-cases/{bc_id}/feedback/brand")
     async def brand_feedback(bc_id: str, payload: FeedbackPayload):
         avg = round(sum(payload.scores.values()) / max(len(payload.scores), 1), 1) if payload.scores else 0
+        received_at = _now_iso()
         await db.v3_business_cases.update_one(
             {"id": bc_id},
-            {"$set": {"closure.brand_feedback_received": True, "closure.brand_feedback": {"rater": payload.rater, "scores": payload.scores, "average": avg, "comment": payload.comment}, "updated_at": _now_iso()},
-             "$push": {"timeline": {"at": _now_iso(), "event": "brand_feedback_received", "average": avg}}},
+            {"$set": {"closure.brand_feedback_received": True, "closure.brand_feedback_received_at": received_at, "closure.brand_feedback": {"rater": payload.rater, "scores": payload.scores, "average": avg, "comment": payload.comment, "received_at": received_at}, "updated_at": received_at},
+             "$push": {"timeline": {"at": received_at, "event": "brand_feedback_received", "average": avg}}},
         )
         await _recompute_closure(bc_id)
         return {"ok": True, "average": avg}
@@ -10413,10 +10474,11 @@ def make_v3_router(db):
     @router.post("/business-cases/{bc_id}/feedback/creator")
     async def creator_feedback(bc_id: str, payload: FeedbackPayload):
         avg = round(sum(payload.scores.values()) / max(len(payload.scores), 1), 1) if payload.scores else 0
+        received_at = _now_iso()
         await db.v3_business_cases.update_one(
             {"id": bc_id},
-            {"$set": {"closure.creator_feedback_received": True, "closure.creator_feedback": {"rater": payload.rater, "scores": payload.scores, "average": avg, "comment": payload.comment}, "updated_at": _now_iso()},
-             "$push": {"timeline": {"at": _now_iso(), "event": "creator_feedback_received", "average": avg}}},
+            {"$set": {"closure.creator_feedback_received": True, "closure.creator_feedback_received_at": received_at, "closure.creator_feedback": {"rater": payload.rater, "scores": payload.scores, "average": avg, "comment": payload.comment, "received_at": received_at}, "updated_at": received_at},
+             "$push": {"timeline": {"at": received_at, "event": "creator_feedback_received", "average": avg}}},
         )
         await _recompute_closure(bc_id)
         return {"ok": True, "average": avg}
