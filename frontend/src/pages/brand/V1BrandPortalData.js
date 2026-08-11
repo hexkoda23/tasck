@@ -126,3 +126,157 @@ export const SnapshotSections = ({ sections, sectionDrafts, onSectionChange }) =
 export const LoadingState = ({ label = 'Loading brand portal data...' }) => <div className="v3-card p-6 text-[13px] text-[#6B6258] flex items-center gap-2"><Clock3 className="w-4 h-4" />{label}</div>;
 export const ErrorState = ({ error }) => <div className="v3-card p-6 text-[13px] text-[#B54A37]">{error}</div>;
 export const DocumentIcon = ({ kind }) => { const Icon = kind === 'alignment' ? ShieldCheck : kind === 'strategy' ? FileText : kind === 'report' ? MessageSquare : Send; return <Icon className="w-4 h-4" />; };
+
+// ---------------------------------------------------------------------------
+// Brand → Admin communication history
+// ---------------------------------------------------------------------------
+// Aggregates every message the brand has sent to TASCK (per-section comments
+// on alignment / strategy / pitch snapshots + the free-text feedback sent
+// from the Reports & Feedback page). Each row carries a status: "Fixed" once
+// TASCK has resolved the comment or once TASCK has sent a newer revision of
+// the same document (implicit fix); otherwise "Awaiting TASCK".
+// Used by the Reports & Feedback page so the brand can see a single history
+// of what they've raised and whether admin has acted on it.
+export const collectBrandSentHistory = (bundles) => {
+  const rows = [];
+  (bundles || []).forEach((bundle) => {
+    const businessCase = bundleCase(bundle);
+    const caseTitle = cleanPortalText(businessCase?.title || 'Untitled project');
+
+    const alignmentDocs = Array.isArray(bundle.alignment_snapshots) && bundle.alignment_snapshots.length
+      ? bundle.alignment_snapshots
+      : (bundle.alignment_snapshot ? [bundle.alignment_snapshot] : []);
+    alignmentDocs.forEach((snap) => {
+      const currentRev = Number(snap?.revision_number) || 1;
+      (snap?.brand_comments || []).forEach((c) => {
+        if (String(c.author || '').toLowerCase() === 'admin') return;
+        const isResolved = String(c.status || '').toLowerCase() === 'resolved';
+        // Implicit fix: TASCK sent a newer revision after this comment was raised.
+        const olderThanRev = Number(c.revision) && Number(c.revision) < currentRev;
+        rows.push({
+          id: `alignment:${snap.id}:${c.id || c.created_at}`,
+          kind: 'alignment',
+          docLabel: snap.opportunity_title ? 'Alignment Snapshot — ' + snap.opportunity_title : 'Alignment Snapshot',
+          projectTitle: caseTitle,
+          section: cleanPortalText(c.quoted_text || 'Brand review'),
+          comment: cleanPortalText(c.comment || ''),
+          sentAt: c.created_at || null,
+          resolved: isResolved || olderThanRev,
+          resolvedAt: c.resolved_at || null,
+          resolvedNote: olderThanRev && !isResolved ? `Addressed in revised document (Rev ${currentRev}).` : null,
+        });
+      });
+    });
+
+    if (bundle.creative_snapshot) {
+      (bundle.creative_snapshot.brand_comments || []).forEach((c) => {
+        if (String(c.author || '').toLowerCase() === 'admin') return;
+        rows.push({
+          id: `strategy:${bundle.creative_snapshot.id}:${c.id || c.created_at}`,
+          kind: 'strategy',
+          docLabel: 'Strategy Snapshot',
+          projectTitle: caseTitle,
+          section: cleanPortalText(c.quoted_text || 'Brand review'),
+          comment: cleanPortalText(c.comment || ''),
+          sentAt: c.created_at || null,
+          resolved: String(c.status || '').toLowerCase() === 'resolved',
+          resolvedAt: c.resolved_at || null,
+          resolvedNote: null,
+        });
+      });
+    }
+
+    if (bundle.pitch_deck) {
+      (bundle.pitch_deck.brand_comments || []).forEach((c) => {
+        if (String(c.author || '').toLowerCase() === 'admin') return;
+        rows.push({
+          id: `pitch:${bundle.pitch_deck.id}:${c.id || c.created_at}`,
+          kind: 'pitch',
+          docLabel: 'Pitch Deck',
+          projectTitle: caseTitle,
+          section: cleanPortalText(c.quoted_text || 'Brand review'),
+          comment: cleanPortalText(c.comment || ''),
+          sentAt: c.created_at || null,
+          resolved: String(c.status || '').toLowerCase() === 'resolved',
+          resolvedAt: c.resolved_at || null,
+          resolvedNote: null,
+        });
+      });
+    }
+
+    // Report feedback (submitted via the Reports & Feedback page).
+    const reportFb = (businessCase?.closure || {}).brand_feedback;
+    if (reportFb?.comment) {
+      const reportSent = Boolean(bundle?.final_report?.report_sent_at);
+      rows.push({
+        id: `feedback:${businessCase.id}:${reportFb.received_at || 'x'}`,
+        kind: 'feedback',
+        docLabel: 'Report Feedback',
+        projectTitle: caseTitle,
+        section: 'Final report response',
+        comment: cleanPortalText(reportFb.comment),
+        sentAt: reportFb.received_at || null,
+        // Report feedback is one-way to admin. Mark as "delivered" once the
+        // final report on this case shows the admin has already sent theirs
+        // (i.e. the loop closed).
+        resolved: reportSent,
+        resolvedAt: bundle?.final_report?.report_sent_at || null,
+        resolvedNote: reportSent ? 'Received by TASCK.' : null,
+      });
+    }
+  });
+
+  rows.sort((a, b) => (String(b.sentAt || '')).localeCompare(String(a.sentAt || '')));
+  return rows;
+};
+
+// Renders the aggregated history above (or an empty state).
+export const BrandSentHistory = ({ bundles }) => {
+  const rows = useMemo(() => collectBrandSentHistory(bundles), [bundles]);
+  if (!rows.length) {
+    return (
+      <div className="v3-card p-5" data-testid="brand-sent-history-empty">
+        <div className="flex items-center gap-2 mb-1"><MessageSquare className="w-4 h-4 text-[#1F4A3A]" /><h3 className="font-semibold">Comments you&apos;ve sent to TASCK</h3></div>
+        <p className="text-[12px] text-[#6B6258]">Nothing yet. Comments you send from the Alignment Snapshot, Strategy Snapshot, Pitch Deck, or Reports &amp; Feedback pages will show here so you can track what TASCK has actioned.</p>
+      </div>
+    );
+  }
+  const openCount = rows.filter((r) => !r.resolved).length;
+  const fixedCount = rows.length - openCount;
+  return (
+    <div className="v3-card p-5" data-testid="brand-sent-history">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="w-4 h-4 text-[#1F4A3A]" />
+          <h3 className="font-semibold">Comments you&apos;ve sent to TASCK</h3>
+        </div>
+        <div className="flex items-center gap-1.5 text-[11px]">
+          <span className="rounded-full border border-[#E5C99A] bg-[#FBF4E4] text-[#7A5A1E] px-2 py-0.5">Awaiting TASCK: {openCount}</span>
+          <span className="rounded-full border border-[#A4D4B0] bg-[#DDF0E1] text-[#1F6B3A] px-2 py-0.5">Fixed / received: {fixedCount}</span>
+        </div>
+      </div>
+      <p className="text-[12px] text-[#6B6258] mb-3">Every comment or feedback you&apos;ve sent from your brand portal. Rows tagged <strong>Fixed</strong> mean TASCK has addressed the point (either by resolving the comment or by sending a revised document).</p>
+      <div className="space-y-2">
+        {rows.map((row) => (
+          <div key={row.id} className={'rounded-lg border p-3 ' + (row.resolved ? 'border-[#A4D4B0] bg-[#F1F7F3]' : 'border-[#E5C99A] bg-[#FBF4E4]')} data-testid={`brand-sent-history-row-${row.id}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-[12px] font-semibold text-[#1A1A1A]">
+                {row.docLabel} · <span className="font-normal text-[#6B6258]">{row.projectTitle}</span>
+              </p>
+              <span className={'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ' + (row.resolved ? 'border-[#A4D4B0] bg-[#DDF0E1] text-[#1F6B3A]' : 'border-[#E5C99A] bg-white text-[#7A5A1E]')}>
+                {row.resolved ? (<><CheckCircle2 className="w-3 h-3" /> Fixed</>) : (<><Clock3 className="w-3 h-3" /> Awaiting TASCK</>)}
+              </span>
+            </div>
+            <p className="text-[11px] text-[#8A8A8A] mt-0.5">
+              Section: <span className="text-[#5C5C5C]">{row.section}</span>
+              {row.sentAt && <> · sent {formatDate(row.sentAt)}</>}
+              {row.resolved && row.resolvedAt && <> · fixed {formatDate(row.resolvedAt)}</>}
+            </p>
+            {row.comment && <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-[#1A1A1A] bg-white border border-[#E8E4DB] rounded-md px-3 py-2">{row.comment}</p>}
+            {row.resolvedNote && <p className="mt-1 text-[11px] text-[#1F6B3A]">{row.resolvedNote}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};

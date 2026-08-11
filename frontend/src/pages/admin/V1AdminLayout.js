@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useThemeMode } from '../../lib/useThemeMode';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, FolderInput, Home, LogIn, LogOut, Moon, PanelLeftClose, Search, Settings, Sun } from 'lucide-react';
+import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, FolderInput, Home, LogIn, LogOut, Moon, PanelLeftClose, Search, Settings, Sun, Trash2 } from 'lucide-react';
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 import { useAdminNotifications } from '../../hooks/useAdminNotifications';
@@ -88,7 +88,7 @@ const V1AdminLayout = () => {
     });
   }, [navigate]);
 
-  const { items: notifications, unseen, markSeen, markAllSeen } = useAdminNotifications({ onNewItem: handleNewNotification });
+  const { items: notifications, unseen, markSeen, markAllSeen, dismiss } = useAdminNotifications({ onNewItem: handleNewNotification });
 
   // Close the notifications dropdown when clicking elsewhere.
   useEffect(() => {
@@ -204,17 +204,32 @@ const V1AdminLayout = () => {
                     notifications.slice(0, 12).map((item) => {
                       const isUnseen = unseen.some((u) => u.id === item.id);
                       return (
-                        <button
+                        <div
                           key={item.id}
-                          type="button"
-                          onClick={() => { markSeen(item.id); setNotificationsOpen(false); if (item.link) navigate(item.link); }}
-                          className={`w-full text-left px-3 py-2 border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] ${isUnseen ? 'bg-[#FBF4E4]/60' : ''}`}
+                          className={`w-full flex items-stretch border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] ${isUnseen ? 'bg-[#FBF4E4]/60' : ''}`}
                           data-testid={`v1-admin-notification-${item.id}`}
                         >
-                          <p className="text-[12px] font-medium text-[#1A1A1A] truncate">{item.title}</p>
-                          <p className="text-[11px] text-[#6E6657] truncate">{item.message}</p>
-                          <p className="text-[10px] text-[#8A8A8A] mt-0.5">{formatNotificationWhen(item.when)}{isUnseen && ' · NEW'}</p>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => { markSeen(item.id); setNotificationsOpen(false); if (item.link) navigate(item.link); }}
+                            className="flex-1 text-left px-3 py-2 min-w-0"
+                            data-testid={`v1-admin-notification-open-${item.id}`}
+                          >
+                            <p className="text-[12px] font-medium text-[#1A1A1A] truncate">{item.title}</p>
+                            <p className="text-[11px] text-[#6E6657] truncate">{item.message}</p>
+                            <p className="text-[10px] text-[#8A8A8A] mt-0.5">{formatNotificationWhen(item.when)}{isUnseen && ' · NEW'}</p>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); dismiss(item.id); }}
+                            className="px-2 flex items-center text-[#8A8A8A] hover:text-[#B54A37] hover:bg-[#FBEDEA] border-l border-[#F4F2EC]"
+                            title="Dismiss this notification"
+                            aria-label="Dismiss notification"
+                            data-testid={`v1-admin-notification-dismiss-${item.id}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       );
                     })
                   )}
