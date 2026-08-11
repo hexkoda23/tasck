@@ -6733,6 +6733,21 @@ export const V3BusinessCaseFinalReport = () => {
   const brand = getBrand(bundle);
   const brandEmail = bundle?.brand_contact_snapshot?.email || brand?.email || '';
   const creatorEmail = bundle?.creator?.email || '';
+  // Brand / creator feedback submitted from the portal Reports & Feedback
+  // page. These land in case.closure.* and are surfaced up top so the admin
+  // can immediately see what was said and act on it (that's also what the
+  // /admin/notifications item links to via #brand-feedback).
+  const brandPortalFeedback = bc?.closure?.brand_feedback || null;
+  const creatorPortalFeedback = bc?.closure?.creator_feedback || null;
+  useEffect(() => {
+    // If the admin arrived from a notification click, scroll the feedback
+    // card into view once it's rendered.
+    if (typeof window === 'undefined') return;
+    if (window.location.hash === '#brand-feedback' && (brandPortalFeedback || creatorPortalFeedback)) {
+      const el = document.getElementById('brand-feedback');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [brandPortalFeedback, creatorPortalFeedback]);
   const [notice, setNotice] = useState('');
   const [editingReport, setEditingReport] = useState(false);
   const [draftReportTitle, setDraftReportTitle] = useState('');
@@ -6905,6 +6920,84 @@ export const V3BusinessCaseFinalReport = () => {
       <PreviewModal open={previewType === 'report'} onClose={() => setPreviewType(null)} title={report?.title || 'Final Report preview'} pdfUrl={report ? v3FinalReportPdfUrl(report.id) : ''} sections={report?.sections} testId="final-report-preview" />
       <PreviewModal open={previewType === 'feedback'} onClose={() => setPreviewType(null)} title="Feedback preview" pdfUrl={report ? v3FeedbackPdfUrl(report.id) : ''} sections={buildFeedbackPreviewSections(report?.feedback)} testId="feedback-preview" />
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="final-report-notice">{notice}</div>}
+
+      {(brandPortalFeedback || creatorPortalFeedback) && (
+        <div id="brand-feedback" className="rounded-xl border-2 border-[#1F4A3A] bg-[#F1F7F3] px-5 py-4 shadow-sm" data-testid="portal-feedback-panel">
+          <div className="flex items-start gap-3">
+            <MessageSquare className="w-5 h-5 text-[#1F4A3A] mt-0.5 flex-shrink-0" />
+            <div className="min-w-0 flex-1 space-y-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-[#1F4A3A] font-semibold">Feedback received from portal</p>
+                <p className="text-[12px] text-[#3F4E45] mt-0.5">This is the exact feedback the brand and/or creator sent back from the Reports &amp; Feedback page in their portal — the notification bell links straight here so you can respond.</p>
+              </div>
+
+              {brandPortalFeedback && (
+                <div className="rounded-lg bg-white border border-[#C7D7CF] p-4" data-testid="portal-feedback-brand">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] uppercase tracking-wide text-[#1F4A3A] font-semibold">From brand · {cleanV1Text(brandPortalFeedback.rater || brandDisplayName(brand) || 'Brand contact')}</p>
+                      <p className="text-[10px] text-[#8A8A8A] mt-0.5">Received {String(brandPortalFeedback.received_at || '').slice(0, 19).replace('T', ' ') || '—'}</p>
+                    </div>
+                    {Number.isFinite(Number(brandPortalFeedback.average)) && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[#DDF0E1] border border-[#A4D4B0] text-[#1F6B3A] text-[11px] font-semibold px-2.5 py-1">
+                        Avg {Number(brandPortalFeedback.average).toFixed(1)} / 10
+                      </span>
+                    )}
+                  </div>
+                  {brandPortalFeedback.comment && (
+                    <p className="mt-3 whitespace-pre-wrap text-[13px] leading-relaxed text-[#1A1A1A] bg-[#FBFAF7] border border-[#E8E4DB] rounded-md px-3 py-2" data-testid="portal-feedback-brand-comment">
+                      {cleanV1Text(brandPortalFeedback.comment)}
+                    </p>
+                  )}
+                  {brandPortalFeedback.scores && Object.keys(brandPortalFeedback.scores).length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {Object.entries(brandPortalFeedback.scores).map(([k, v]) => (
+                        <span key={k} className="inline-flex items-center gap-1 rounded-md border border-[#E8E4DB] bg-white text-[11px] text-[#5C5C5C] px-2 py-0.5">
+                          <span className="font-medium capitalize text-[#1A1A1A]">{k}</span>
+                          <span>·</span>
+                          <span>{v}/10</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {creatorPortalFeedback && (
+                <div className="rounded-lg bg-white border border-[#C7D7CF] p-4" data-testid="portal-feedback-creator">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] uppercase tracking-wide text-[#1F4A3A] font-semibold">From creator · {cleanV1Text(creatorPortalFeedback.rater || creatorName(bundle?.creator) || 'Creator')}</p>
+                      <p className="text-[10px] text-[#8A8A8A] mt-0.5">Received {String(creatorPortalFeedback.received_at || '').slice(0, 19).replace('T', ' ') || '—'}</p>
+                    </div>
+                    {Number.isFinite(Number(creatorPortalFeedback.average)) && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-[#DDF0E1] border border-[#A4D4B0] text-[#1F6B3A] text-[11px] font-semibold px-2.5 py-1">
+                        Avg {Number(creatorPortalFeedback.average).toFixed(1)} / 10
+                      </span>
+                    )}
+                  </div>
+                  {creatorPortalFeedback.comment && (
+                    <p className="mt-3 whitespace-pre-wrap text-[13px] leading-relaxed text-[#1A1A1A] bg-[#FBFAF7] border border-[#E8E4DB] rounded-md px-3 py-2" data-testid="portal-feedback-creator-comment">
+                      {cleanV1Text(creatorPortalFeedback.comment)}
+                    </p>
+                  )}
+                  {creatorPortalFeedback.scores && Object.keys(creatorPortalFeedback.scores).length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {Object.entries(creatorPortalFeedback.scores).map(([k, v]) => (
+                        <span key={k} className="inline-flex items-center gap-1 rounded-md border border-[#E8E4DB] bg-white text-[11px] text-[#5C5C5C] px-2 py-0.5">
+                          <span className="font-medium capitalize text-[#1A1A1A]">{k}</span>
+                          <span>·</span>
+                          <span>{v}/10</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="rounded-xl border border-[#E8E4DB] bg-white px-5 py-4 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>

@@ -10010,7 +10010,7 @@ def make_v3_router(db):
                 "business_case_title": resolved["case_title"],
                 "title": f"{resolved['brand_name']} sent Report feedback",
                 "message": f"{resolved['brand_name']} on {resolved['case_title']}: {preview}",
-                "link": f"/admin/business-cases/{row.get('id')}/reporting/final-report",
+                "link": f"/admin/business-cases/{row.get('id')}/reporting/final-report#brand-feedback",
             })
 
         # 6. Creator feedback submitted for the final report (symmetry with #5).
@@ -10039,7 +10039,7 @@ def make_v3_router(db):
                 "business_case_title": resolved["case_title"],
                 "title": f"Creator sent Report feedback ({resolved['case_title']})",
                 "message": f"Creator on {resolved['case_title']}: {preview}",
-                "link": f"/admin/business-cases/{row.get('id')}/reporting/final-report",
+                "link": f"/admin/business-cases/{row.get('id')}/reporting/final-report#brand-feedback",
             })
 
         # Sort newest first and cap.
