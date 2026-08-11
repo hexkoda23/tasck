@@ -10,7 +10,7 @@ Stage advancement rules:
   plan    -> deliver: Strategy Snapshot approved AND contract signed
   deliver -> closed : Closure checklist complete (final report + feedback)
 """
-from fastapi import APIRouter, HTTPException, Header, Depends, Body
+from fastapi import APIRouter, HTTPException, Header, Depends, Body, UploadFile, File
 from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Tuple
@@ -4917,6 +4917,255 @@ def make_v3_router(db):
         }
         await db.v3_business_cases.insert_one({**doc})
         return doc
+
+    # ------------------------------------------------------------------------
+    # IMPORT EXISTING PROJECT
+    # For projects built outside the system that already passed the alignment
+    # stage. Bypasses Connect + Alignment Snapshot entirely and lands the case
+    # on the Creator Selector page (stage=plan with the brainstorm transcript
+    # marked skipped — same routing trick as the skip-transcript endpoint).
+    # ------------------------------------------------------------------------
+    class ImportExistingProject(BaseModel):
+        brand_id: Optional[str] = None
+        new_brand_name: Optional[str] = None
+        title: str
+        description: str = ""
+        engagement_track: str = Field("paid", pattern="^(paid|grant)$")
+        estimated_value: float = 0
+        currency: Optional[str] = None
+        objectives: str = ""
+        target_audience: str = ""
+        channels: List[str] = Field(default_factory=list)
+        source_document_name: Optional[str] = None
+
+    @router.post("/business-cases/import-existing")
+    async def import_existing_project(payload: ImportExistingProject):
+        title = (payload.title or "").strip()
+        if not title:
+            raise HTTPException(422, "Project title is required.")
+        now = _now_iso()
+
+        # Resolve the brand: existing CRM brand OR create a new one by name.
+        brand = None
+        if payload.brand_id:
+            brand = await db.v3_brands.find_one({"id": payload.brand_id}, {"_id": 0})
+            if not brand:
+                raise HTTPException(404, "Brand not found")
+        else:
+            new_name = (payload.new_brand_name or "").strip()
+            if not new_name:
+                raise HTTPException(422, "Pick an existing brand or provide a new brand name.")
+            # Reuse an existing brand when the name already exists (case-insensitive)
+            brand = await db.v3_brands.find_one(
+                {"company": {"$regex": f"^{re.escape(new_name)}$", "$options": "i"}}, {"_id": 0}
+            )
+            if not brand:
+                rm = await _relationship_manager(None)
+                brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+                brand = {
+                    "id": brand_id,
+                    "company": new_name,
+                    "industry": "Imported",
+                    "website": "",
+                    "source_url": "",
+                    "source": "imported_project",
+                    "about": "",
+                    "brand_about": "",
+                    "logo_url": "",
+                    "brand_logo_url": "",
+                    "hq": "",
+                    "primary_contact": "",
+                    "role": "",
+                    "email": "",
+                    "phone": "",
+                    "status": "crm_accepted",
+                    "crm_accepted_at": now,
+                    "next_action": "Review imported project.",
+                    "relationship_stage": DEFAULT_RELATIONSHIP_STAGE,
+                    "relationship_stage_set_at": now,
+                    "relationship_stage_source": "auto",
+                    "lead_score": 60,
+                    "last_interaction": "just now",
+                    "engagement_track_default": payload.engagement_track,
+                    "created_at": now,
+                    "updated_at": now,
+                    "rm_id": rm.get("id", ""),
+                    "relationship_manager": rm,
+                    "relationshipManager": rm,
+                    "relationship_manager_name": rm.get("name", ""),
+                    "relationship_manager_email": rm.get("email", ""),
+                }
+                await db.v3_brands.insert_one({**brand})
+
+        bc_id = f"bc-{uuid.uuid4().hex[:8]}"
+        # Skip-marker brainstorm round: same shape the skip-transcript endpoint
+        # writes so the frame router jumps straight to the Creator Selector.
+        round_id = f"bs-import-{uuid.uuid4().hex[:8]}"
+        await db.v3_brainstorm_rounds.insert_one({
+            "id": round_id,
+            "business_case_id": bc_id,
+            "created_at": now,
+            "status": "skipped",
+            "transcript_analysis_source": "imported_project",
+            "notes": "Imported existing project — alignment and transcript stages bypassed.",
+        })
+
+        description = (payload.description or "").strip()
+        doc = {
+            "id": bc_id,
+            "brand_id": brand["id"],
+            "creator_id": None,
+            "title": title,
+            "stage": "plan",
+            "engagement_track": payload.engagement_track,
+            "estimated_value": payload.estimated_value or 0,
+            "rm_id": brand.get("rm_id") or "admin",
+            "created_at": now,
+            "days_in_stage": 0,
+            "next_action": "Select creators for this imported project.",
+            "health": "new",
+            "scope_creep_locked": False,
+            "imported": True,
+            "imported_at": now,
+            "import_source_document": payload.source_document_name or "",
+            "connect": {
+                "source": "imported_project",
+                "connect_status": "qualified_to_frame",
+                "stated_intent": description,
+                "marketing_intelligence": {
+                    "key_marketing_focus": payload.objectives or description or title,
+                    "primary_target_audience": payload.target_audience or "",
+                    "key_marketing_channels": [c for c in (payload.channels or []) if c],
+                    "marketing_kpis": [],
+                    "generated_at": now,
+                    "source": "imported_project",
+                },
+            },
+            "frame": {
+                "alignment_snapshot_status": "approved",
+                "alignment_bypassed": True,
+                "alignment_bypass_reason": "imported_existing_project",
+                "approved_at": now,
+            },
+            "plan": {
+                "brainstorm_round_id": round_id,
+                "brainstorm_transcript_analyzed_at": now,
+                "brainstorm_skipped": True,
+                "brainstorm_skipped_at": now,
+            },
+            "deliver": {},
+            "closure": {"final_report_checklist": DEFAULT_FINAL_REPORT_CHECKLIST},
+            "timeline": [{
+                "at": now,
+                "event": "project_imported",
+                "note": "Imported existing project — alignment stage bypassed, sent to Creator Selector.",
+            }],
+            "updated_at": now,
+        }
+        if payload.currency:
+            doc["currency"] = payload.currency
+        await db.v3_business_cases.insert_one({**doc})
+        await db.v3_brands.update_one(
+            {"id": brand["id"]},
+            {"$set": {"updated_at": now}, "$addToSet": {"business_case_ids": bc_id}},
+        )
+        return {
+            "ok": True,
+            "business_case": doc,
+            "business_case_id": bc_id,
+            "brand_id": brand["id"],
+            "brand_company": brand.get("company") or "",
+            "next_path": f"/admin/business-cases/{bc_id}/frame/creator-scan",
+        }
+
+    _IMPORT_EXTRACT_SYSTEM = (
+        "You extract structured project data from an uploaded project document "
+        "(brief, proposal, campaign plan, alignment doc). Reply with ONE JSON object only, "
+        "no markdown fences, using exactly these keys: "
+        '{"brand_name": str, "project_title": str, "description": str (2-4 sentence summary), '
+        '"budget_amount": number (0 if unknown), "currency": str ("NGN"/"USD"/"" if unknown), '
+        '"engagement_track": "paid" or "grant", "objectives": str, "target_audience": str, '
+        '"channels": [str, ...]}. Use empty strings / empty lists when a field is not in the document. '
+        "Never invent a budget."
+    )
+
+    @router.post("/business-cases/import-existing/extract")
+    async def import_existing_extract(file: UploadFile = File(...)):
+        raw = await file.read()
+        if len(raw) > 15 * 1024 * 1024:
+            raise HTTPException(413, "File is too large (max 15 MB).")
+        name = (file.filename or "").lower()
+        text = ""
+        try:
+            if name.endswith(".pdf"):
+                from pypdf import PdfReader
+                reader = PdfReader(BytesIO(raw))
+                text = "\n".join((page.extract_text() or "") for page in reader.pages)
+            elif name.endswith(".docx"):
+                from docx import Document as _DocxDocument
+                d = _DocxDocument(BytesIO(raw))
+                parts = [p.text for p in d.paragraphs]
+                for table in d.tables:
+                    for row in table.rows:
+                        parts.append(" | ".join(cell.text for cell in row.cells))
+                text = "\n".join(parts)
+            else:
+                text = raw.decode("utf-8", errors="ignore")
+        except Exception:
+            raise HTTPException(422, "Could not read this file. Upload a PDF, DOCX, or plain-text document.")
+        text = (text or "").strip()
+        if not text:
+            raise HTTPException(422, "No readable text found in the document. If it's a scanned PDF, paste the details into the form manually.")
+
+        excerpt = text[:12000]
+        fields: Dict[str, Any] = {}
+        analysis_source = "none"
+        emergent_key = os.getenv("EMERGENT_LLM_KEY")
+        if emergent_key:
+            try:
+                from emergentintegrations.llm.chat import LlmChat, UserMessage
+                model = os.getenv("IMPORT_EXTRACT_EMERGENT_MODEL") or "gemini-2.5-flash"
+                chat = LlmChat(
+                    api_key=emergent_key,
+                    session_id=f"import-extract-{uuid.uuid4()}",
+                    system_message=_IMPORT_EXTRACT_SYSTEM,
+                ).with_model("gemini", model)
+                response = await asyncio.wait_for(
+                    chat.send_message(UserMessage(text=f"Document filename: {file.filename}\n\nDocument text:\n{excerpt}")),
+                    timeout=60,
+                )
+                fields = _parse_json_object(_response_to_text(response)) or {}
+                analysis_source = f"emergent:gemini/{model}"
+            except Exception as exc:
+                logging.warning("Import extract LLM failed: %s", exc)
+
+        def _s(key: str) -> str:
+            val = fields.get(key)
+            return str(val).strip() if isinstance(val, (str, int, float)) and str(val).strip() not in ("None", "null") else ""
+
+        try:
+            budget = float(fields.get("budget_amount") or 0)
+        except (TypeError, ValueError):
+            budget = 0
+        channels = fields.get("channels")
+        channels = [str(c).strip() for c in channels if str(c).strip()] if isinstance(channels, list) else []
+        track = _s("engagement_track").lower()
+        return {
+            "ok": True,
+            "analysis_source": analysis_source,
+            "extracted_chars": len(text),
+            "fields": {
+                "brand_name": _s("brand_name"),
+                "project_title": _s("project_title"),
+                "description": _s("description"),
+                "budget_amount": budget,
+                "currency": _s("currency"),
+                "engagement_track": track if track in ("paid", "grant") else "paid",
+                "objectives": _s("objectives"),
+                "target_audience": _s("target_audience"),
+                "channels": channels,
+            },
+        }
 
     class BrandProjectStartPayload(BaseModel):
         force_new: bool = False

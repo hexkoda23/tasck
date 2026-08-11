@@ -1,0 +1,25 @@
+{
+  "summary": "Frontend-only E2E verification of the new 'Import Existing Project' admin feature. All 7 acceptance criteria pass: page renders behind auth, sidebar link visible, submit button correctly disabled when title/brand missing, TXT upload + AI extract (Gemini via Emergent LLM key, ~4-6s) pre-fills title/description/budget/currency/objectives/audience/channels and sets brand mode 'new' with extracted brand name, new-brand submit creates BC and navigates to /admin/business-cases/{id}/frame/creator-scan, existing-brand submit (Zenith Foods from CRM dropdown) also navigates to creator-scan, imported BC shows 'Imported' purple tag on /admin/business-cases, and stage-home redirect (/admin/business-cases/{id}) routes to /frame/creator-scan (NOT connect/schedule or brainstorm-transcript).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "V1ImportExistingProject brand <select>", "issues": ["React hydration warning in console: <span> cannot be a child of <select>/<option>. Caused by dev-only visual-editor wrapper injecting data-ve-dynamic <span> nodes around <option> elements. Non-blocking (dropdown functions correctly) but should be excluded from the visual-editor wrapper for native form elements."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "V1ImportExistingProject.js (line 45-68) applyExtracted uses two sequential setForm calls with a brands-list lookup in between; safe here because brands is fetched on mount, but if extraction runs before brands load the extracted brand always falls to 'new' mode even when it exists in CRM. Consider awaiting/using latest brands snapshot.",
+    "Visual-editor wrapper is injecting <span> children into native <select>/<option> across the app (also seen on RelationshipStageSelect in Creator Scan). Producing hydration errors. Not caused by this feature but worth a follow-up on the wrapper library."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (backend not retested per request)", "frontend": "100% (7/7 acceptance criteria)"},
+  "test_credentials": "POST /api/auth/demo-login {role:'admin'} then seed localStorage tasck_user + tasck_token (per /app/memory/test_credentials.md).",
+  "seed_data_creation": "Created 2 imported business cases during testing: bc-0071e53a (new brand 'Zenith Foods' — auto-created a Zenith Foods brand in CRM if it didn't exist) and bc-fa019e2a (existing brand 'Zenith Foods'). Both are Plan-stage with imported:true. Not deleted per instruction.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Import Project feature is fully working end-to-end. Two imported BCs remain in the CRM (bc-0071e53a, bc-fa019e2a). Console hydration warnings about <span> inside <select>/<option> come from a visual-editor wrapper (data-ve-dynamic) and are unrelated to this feature — they also appear on other pages (e.g., RelationshipStageSelect).",
+  "rca of the issue": "No functional issues found."
+}

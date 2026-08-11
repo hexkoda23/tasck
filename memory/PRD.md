@@ -1,5 +1,25 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 11 Aug 2026 (Feature: Import Existing Project — alignment bypass)
+
+### User request
+Projects previously required an Alignment Snapshot transcript to be created/counted. Users needed a way to bring in pre-existing projects built outside the system that already passed the alignment stage. Instead of a Skip button on Connect Schedule & Transcripts, we built a dedicated **Import Existing Project** page that jumps straight to the Creator Selector.
+
+### Shipped
+- **Backend** (`v3_routes.py`):
+  - `POST /api/v3/business-cases/import-existing` — creates a BC at `stage=plan` with `imported:true`, `frame.alignment_snapshot_status=approved` (bypass), and a skip-marker brainstorm round + `plan.brainstorm_transcript_analyzed_at` so `businessCasePhasePath` routes straight to `/frame/creator-scan`. Accepts existing `brand_id` OR `new_brand_name` (auto-creates/reuses a CRM brand, case-insensitive match). Populates `connect.marketing_intelligence` (objectives/audience/channels) so the AI creator scan has context.
+  - `POST /api/v3/business-cases/import-existing/extract` — multipart upload of PDF (pypdf) / DOCX (python-docx) / TXT; extracts text and runs Gemini 2.5 Flash (Emergent key, env override `IMPORT_EXTRACT_EMERGENT_MODEL`) to return structured fields (brand_name, project_title, description, budget_amount, currency, engagement_track, objectives, target_audience, channels). Graceful fallback when LLM unavailable.
+  - New deps installed: `pypdf`, `python-docx` (requirements.txt refreshed).
+- **Frontend**:
+  - New page `/admin/import-project` (`V1ImportExistingProject.js`) — optional file upload + "Extract details with AI" pre-fill, brand mode toggle (existing dropdown / new brand), full project form, submit → toast → navigate to `/admin/business-cases/{id}/frame/creator-scan`.
+  - Sidebar link "Import Project" (FolderInput icon) in `V1AdminLayout.js`; route added in `App.js`.
+  - `V1AdminBusinessCases.js` — purple "Imported" tag (`bc-imported-tag-{id}`) on imported cases; they count in Plan-stage metrics like normal projects.
+  - `v3api.js` — `v3ImportExistingProject`, `v3ExtractImportProjectDoc` (120s timeout multipart).
+
+### Verified (testing agent iteration_33 — 7/7 PASS)
+Sidebar link + page render, AI extraction pre-fill from TXT (~5s via Gemini), new-brand submit, existing-brand submit, creator-scan landing, stage-home redirect to creator-scan (not connect/brainstorm), Imported tag, submit-disabled validation. Known pre-existing non-blocker: dev-only visual-editor wrapper injects <span> into <select>/<option> causing hydration warnings app-wide (unrelated to this feature).
+
+
 ## Update — 10 Aug 2026 (UX bug fix: Scrape modal contradicting itself on failure)
 
 ### User-reported

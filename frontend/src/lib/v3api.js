@@ -74,6 +74,17 @@ export const v3TouchBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}/to
 
 export const v3CreateBusinessCase = (payload) => v3.post('/business-cases', payload).then(r => r.data);
 
+export const v3ImportExistingProject = (payload) => v3.post('/business-cases/import-existing', payload).then(r => r.data);
+
+export const v3ExtractImportProjectDoc = (file) => {
+  const form = new FormData();
+  form.append('file', file);
+  return v3.post('/business-cases/import-existing/extract', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  }).then(r => r.data);
+};
+
 export const v3AdvanceBusinessCase = (bcId, payload = { actor: 'rm' }) => v3.post(`/business-cases/${bcId}/advance`, payload).then(r => r.data);
 
 export const v3ContinueBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}/continue`).then(r => r.data);

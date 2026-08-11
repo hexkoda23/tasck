@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useThemeMode } from '../../lib/useThemeMode';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, Home, LogIn, LogOut, Moon, PanelLeftClose, Search, Settings, Sun } from 'lucide-react';
+import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, FolderInput, Home, LogIn, LogOut, Moon, PanelLeftClose, Search, Settings, Sun } from 'lucide-react';
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 import { useAdminNotifications } from '../../hooks/useAdminNotifications';
@@ -41,6 +41,7 @@ const navItems = [
     // don't accidentally light this tab up.
     suppressDefaultStartsWith: true,
   },
+  { path: '/admin/import-project', label: 'Import Project', icon: FolderInput },
   { path: '/admin/settings', label: 'Settings', icon: Settings },
 ];
 

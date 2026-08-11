@@ -50,6 +50,7 @@ import V3AdminScopeChange from './pages/v3/admin/V3AdminScopeChange';
 import V3AdminContractPreview from './pages/v3/admin/V3AdminContractPreview';
 import V3AdminBusinessCases from './pages/v3/admin/V3AdminBusinessCases';
 import V1AdminBusinessCases from './pages/admin/V1AdminBusinessCases';
+import V1ImportExistingProject from './pages/admin/V1ImportExistingProject';
 import {
   V3AdminMeetingsOverview,
   V3AdminQualificationCalls,
@@ -423,6 +424,7 @@ function AppRoutes() {
         <Route path="meetings/creator-briefing" element={<V3AdminCreatorBriefingCalls />} />
         <Route path="meetings/creator-briefing/:meetingId" element={<V3AdminCreatorBriefingCallDetail />} />
         <Route path="business-cases" element={<V1AdminBusinessCases />} />
+        <Route path="import-project" element={<V1ImportExistingProject />} />
         <Route path="business-cases/:id" element={<V1BusinessCaseStageHome />} />
         <Route path="business-cases/:id/connect" element={<V1BusinessCaseConnect />} />
         <Route path="business-cases/:id/connect/schedule" element={<V1BusinessCaseConnectSchedule />} />

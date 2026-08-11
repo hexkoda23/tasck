@@ -585,6 +585,11 @@ const V1AdminBusinessCases = () => {
                     >
                       {c.engagement_track === 'grant' ? 'Grant' : 'Paid Strategy'}
                     </span>
+                    {c.imported && (
+                      <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: '#E9E4F2', color: '#5B4A85' }} data-testid={`bc-imported-tag-${c.id}`}>
+                        Imported
+                      </span>
+                    )}
                     {c.stage === 'connect' ? (
                       <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: '#EEEAE0', color: '#6E6657' }}>
                         New
