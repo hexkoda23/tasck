@@ -9982,7 +9982,108 @@ def make_v3_router(db):
                 "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/brief",
             })
 
-        # 5. Brand report feedback submitted from the Reports & Feedback page
+        # 5. Brand comments on alignment snapshots — the actual pain point.
+        # A brand can comment on the Alignment Snapshot from the brand portal
+        # while the case is already in Plan; without a notification, admin
+        # never sees the comment because they land on the Plan page. Link
+        # deep-links to the exact snapshot with a #brand-comments hash so the
+        # admin page scrolls straight to the comments card.
+        aligned_with_comments = await db.v3_alignment_snapshots.find(
+            {"brand_comments.0": {"$exists": True}},
+            {"_id": 0, "id": 1, "business_case_id": 1, "opportunity_title": 1, "title": 1, "brand_comments": 1},
+        ).to_list(200)
+        for snap in aligned_with_comments:
+            for c in snap.get("brand_comments", []) or []:
+                if str(c.get("author", "")).strip().lower() == "admin":
+                    continue  # skip admin-side replies stored in the same list
+                when = c.get("created_at")
+                if not when or not _within_window(when):
+                    continue
+                resolved = await _resolve(snap.get("business_case_id"))
+                if not resolved:
+                    continue
+                text = str(c.get("comment") or "").strip()
+                preview = (text[:180] + "…") if len(text) > 180 else (text or "Comment left on the snapshot.")
+                section_ref = c.get("quoted_text") or f"section {int(c.get('section_index') or 0) + 1}"
+                notifications.append({
+                    "id": f"alignment_comment:{snap.get('id')}:{c.get('id')}",
+                    "kind": "alignment_comment",
+                    "actor": "brand",
+                    "when": when,
+                    "brand_id": resolved["brand_id"],
+                    "brand_name": resolved["brand_name"],
+                    "business_case_id": snap.get("business_case_id"),
+                    "business_case_title": resolved["case_title"],
+                    "title": f"{resolved['brand_name']} commented on the Alignment Snapshot",
+                    "message": f"[{section_ref}] {preview}",
+                    "link": f"/admin/business-cases/{snap.get('business_case_id')}/frame/snapshot?snapshot={snap.get('id')}#brand-comments",
+                })
+
+        # 6. Brand comments on strategy snapshots.
+        strategy_with_comments = await db.v3_creative_snapshots.find(
+            {"brand_comments.0": {"$exists": True}},
+            {"_id": 0, "id": 1, "business_case_id": 1, "title": 1, "brand_comments": 1},
+        ).to_list(200)
+        for snap in strategy_with_comments:
+            for c in snap.get("brand_comments", []) or []:
+                if str(c.get("author", "")).strip().lower() == "admin":
+                    continue
+                when = c.get("created_at")
+                if not when or not _within_window(when):
+                    continue
+                resolved = await _resolve(snap.get("business_case_id"))
+                if not resolved:
+                    continue
+                text = str(c.get("comment") or "").strip()
+                preview = (text[:180] + "…") if len(text) > 180 else (text or "Comment left on the snapshot.")
+                section_ref = c.get("quoted_text") or f"section {int(c.get('section_index') or 0) + 1}"
+                notifications.append({
+                    "id": f"strategy_comment:{snap.get('id')}:{c.get('id')}",
+                    "kind": "strategy_comment",
+                    "actor": "brand",
+                    "when": when,
+                    "brand_id": resolved["brand_id"],
+                    "brand_name": resolved["brand_name"],
+                    "business_case_id": snap.get("business_case_id"),
+                    "business_case_title": resolved["case_title"],
+                    "title": f"{resolved['brand_name']} commented on the Strategy Snapshot",
+                    "message": f"[{section_ref}] {preview}",
+                    "link": f"/admin/business-cases/{snap.get('business_case_id')}/frame/strategy-snapshot#brand-comments",
+                })
+
+        # 7. Brand comments on pitch decks.
+        pitch_with_comments = await db.v3_pitch_decks.find(
+            {"brand_comments.0": {"$exists": True}},
+            {"_id": 0, "id": 1, "business_case_id": 1, "title": 1, "brand_comments": 1},
+        ).to_list(200)
+        for deck in pitch_with_comments:
+            for c in deck.get("brand_comments", []) or []:
+                if str(c.get("author", "")).strip().lower() == "admin":
+                    continue
+                when = c.get("created_at")
+                if not when or not _within_window(when):
+                    continue
+                resolved = await _resolve(deck.get("business_case_id"))
+                if not resolved:
+                    continue
+                text = str(c.get("comment") or "").strip()
+                preview = (text[:180] + "…") if len(text) > 180 else (text or "Comment left on the deck.")
+                section_ref = c.get("quoted_text") or f"section {int(c.get('section_index') or 0) + 1}"
+                notifications.append({
+                    "id": f"pitch_comment:{deck.get('id')}:{c.get('id')}",
+                    "kind": "pitch_comment",
+                    "actor": "brand",
+                    "when": when,
+                    "brand_id": resolved["brand_id"],
+                    "brand_name": resolved["brand_name"],
+                    "business_case_id": deck.get("business_case_id"),
+                    "business_case_title": resolved["case_title"],
+                    "title": f"{resolved['brand_name']} commented on the Pitch Deck",
+                    "message": f"[{section_ref}] {preview}",
+                    "link": f"/admin/business-cases/{deck.get('business_case_id')}/frame/pitch-deck#brand-comments",
+                })
+
+        # 8. Brand report feedback submitted from the Reports & Feedback page
         # in the brand portal. Stored on the case doc, so we scan cases whose
         # closure.brand_feedback_received_at falls in the lookback window.
         feedback_cases = await db.v3_business_cases.find(

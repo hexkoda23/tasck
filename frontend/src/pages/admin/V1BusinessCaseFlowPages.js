@@ -2340,6 +2340,16 @@ export const V3BusinessCaseFrameSnapshot = () => {
   // admin sees and works on them without hunting for the admin-review page.
   const alignmentComments = Array.isArray(snapshot?.brand_comments) ? snapshot.brand_comments : [];
 
+  // If admin arrived from a notification click (#brand-comments), scroll the
+  // Brand Comments card into view once the snapshot is loaded.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (window.location.hash !== '#brand-comments') return;
+    if (!alignmentComments.length) return;
+    const el = document.querySelector('[data-testid="alignment-snapshot-brand-comments"]');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [alignmentComments.length, snapshot?.id]);
+
   useEffect(() => {
     // Defensive: only adopt the persisted snapshot when it actually has content.
     // Never overwrite a populated local draft with a null/empty bundle value -
