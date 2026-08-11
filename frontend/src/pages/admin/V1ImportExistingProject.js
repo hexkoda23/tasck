@@ -112,6 +112,9 @@ export default function V1ImportExistingProject() {
   const canSubmit = Boolean(
     form.title.trim()
     && (brandMode === 'existing' ? form.brand_id : form.new_brand_name.trim())
+    && form.contact_name.trim()
+    && form.contact_email.trim()
+    && form.contact_role.trim()
     && !busy,
   );
 
@@ -283,24 +286,24 @@ export default function V1ImportExistingProject() {
           </div>
         </div>
 
-        {/* Brand contact — needed so we can send the welcome/login email and
-            future document approvals to the right person. */}
+        {/* Brand contact — REQUIRED so we can send login + future docs to
+            the right person. Only phone is optional. */}
         <div className="pt-2 border-t border-[#F1ECDF]">
-          <p className="text-[13px] font-semibold text-[#1A1A1A]">3. Brand contact <span className="font-normal text-[#8A8A8A]">(so we can email them the login + future documents)</span></p>
+          <p className="text-[13px] font-semibold text-[#1A1A1A]">3. Brand contact <span className="text-[#B54A37]">*</span> <span className="font-normal text-[#8A8A8A]">(so we can email them the login + future documents)</span></p>
           <p className="text-[12px] text-[#8A8A8A] mt-0.5 mb-3">
-            The email here receives the welcome message with sign-in details and any future documents TASCK sends for this project.
+            The email here receives the welcome message with sign-in details and any future documents TASCK sends for this project. Phone is optional.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className={labelClass}>Contact name</label>
+              <label className={labelClass}>Contact name *</label>
               <input value={form.contact_name} onChange={set('contact_name')} placeholder="e.g. Amaka Okafor" className={fieldClass} data-testid="import-contact-name-input" />
             </div>
             <div>
-              <label className={labelClass}>Contact email</label>
+              <label className={labelClass}>Contact email *</label>
               <input type="email" value={form.contact_email} onChange={set('contact_email')} placeholder="amaka@brand.com" className={fieldClass} data-testid="import-contact-email-input" />
             </div>
             <div>
-              <label className={labelClass}>Role / title</label>
+              <label className={labelClass}>Role / title *</label>
               <input value={form.contact_role} onChange={set('contact_role')} placeholder="Head of Marketing" className={fieldClass} data-testid="import-contact-role-input" />
             </div>
             <div>

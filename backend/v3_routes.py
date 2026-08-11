@@ -4962,6 +4962,18 @@ def make_v3_router(db):
         contact_phone = (payload.contact_phone or "").strip()
         contact_role = (payload.contact_role or "").strip()
 
+        # Brand contact is compulsory — the imported project must have a real
+        # person to email login credentials and future documents to. Phone is
+        # optional.
+        if not contact_name:
+            raise HTTPException(422, "Brand contact name is required.")
+        if not contact_email:
+            raise HTTPException(422, "Brand contact email is required.")
+        if "@" not in contact_email or "." not in contact_email.split("@")[-1]:
+            raise HTTPException(422, "Brand contact email looks invalid.")
+        if not contact_role:
+            raise HTTPException(422, "Brand contact role / title is required.")
+
         # Resolve the brand: existing CRM brand OR create a new one by name.
         brand = None
         if payload.brand_id:
