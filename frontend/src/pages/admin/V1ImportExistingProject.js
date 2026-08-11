@@ -8,6 +8,18 @@ import { FileUp, FolderInput, Loader2, Sparkles, X } from 'lucide-react';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { v3GetBrands, v3ImportExistingProject, v3ExtractImportProjectDoc } from '../../lib/v3api';
 
+const CURRENCY_OPTIONS = [
+  { code: 'NGN', label: 'NGN — Nigerian Naira' },
+  { code: 'USD', label: 'USD — US Dollar' },
+  { code: 'GBP', label: 'GBP — British Pound' },
+  { code: 'EUR', label: 'EUR — Euro' },
+  { code: 'GHS', label: 'GHS — Ghanaian Cedi' },
+  { code: 'KES', label: 'KES — Kenyan Shilling' },
+  { code: 'ZAR', label: 'ZAR — South African Rand' },
+  { code: 'CAD', label: 'CAD — Canadian Dollar' },
+  { code: 'AUD', label: 'AUD — Australian Dollar' },
+];
+
 const EMPTY_FORM = {
   brand_id: '',
   new_brand_name: '',
@@ -34,6 +46,7 @@ export default function V1ImportExistingProject() {
   const fileInputRef = useRef(null);
   const [brands, setBrands] = useState([]);
   const [brandMode, setBrandMode] = useState('existing');
+  const [currencyMode, setCurrencyMode] = useState('preset');
   const [form, setForm] = useState(EMPTY_FORM);
   const [file, setFile] = useState(null);
   const [extracting, setExtracting] = useState(false);
@@ -64,12 +77,16 @@ export default function V1ImportExistingProject() {
   };
 
   const applyExtracted = (fields) => {
+    const extractedCurrency = (fields.currency || '').toUpperCase().trim();
+    if (extractedCurrency && !CURRENCY_OPTIONS.some((c) => c.code === extractedCurrency)) {
+      setCurrencyMode('other');
+    }
     setForm((f) => ({
       ...f,
       title: fields.project_title || f.title,
       description: fields.description || f.description,
       estimated_value: fields.budget_amount ? String(fields.budget_amount) : f.estimated_value,
-      currency: fields.currency || f.currency,
+      currency: extractedCurrency || f.currency,
       engagement_track: fields.engagement_track || f.engagement_track,
       objectives: fields.objectives || f.objectives,
       target_audience: fields.target_audience || f.target_audience,
@@ -259,7 +276,47 @@ export default function V1ImportExistingProject() {
           </div>
           <div>
             <label className={labelClass}>Currency</label>
-            <input value={form.currency} onChange={set('currency')} placeholder="NGN / USD" className={fieldClass} data-testid="import-currency-input" />
+            {currencyMode === 'preset' ? (
+              <select
+                value={form.currency}
+                onChange={(e) => {
+                  if (e.target.value === '__other__') {
+                    setCurrencyMode('other');
+                    setForm((f) => ({ ...f, currency: '' }));
+                  } else {
+                    setForm((f) => ({ ...f, currency: e.target.value }));
+                  }
+                }}
+                className={fieldClass}
+                data-testid="import-currency-select"
+              >
+                <option value="">Select currency…</option>
+                {CURRENCY_OPTIONS.map((c) => (
+                  <option key={c.code} value={c.code}>{c.label}</option>
+                ))}
+                <option value="__other__">Other (type manually)</option>
+              </select>
+            ) : (
+              <div className="flex gap-2">
+                <input
+                  value={form.currency}
+                  onChange={set('currency')}
+                  placeholder="e.g. XOF, INR"
+                  maxLength={6}
+                  className={fieldClass}
+                  data-testid="import-currency-input"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => { setCurrencyMode('preset'); setForm((f) => ({ ...f, currency: '' })); }}
+                  className="v3-btn-secondary text-[11px] whitespace-nowrap"
+                  data-testid="import-currency-back-btn"
+                >
+                  Back to list
+                </button>
+              </div>
+            )}
           </div>
           <div>
             <label className={labelClass}>Engagement track</label>
@@ -323,7 +380,7 @@ export default function V1ImportExistingProject() {
             <span>
               <span className="font-semibold">Send welcome email with login credentials now</span>
               <span className="block text-[11px] text-[#8A8A8A] mt-0.5">
-                Emails the contact above a sign-in link and a temporary password. Uncheck if you'll share credentials manually later
+                Emails the contact above a sign-in link and a temporary password. Uncheck if you&apos;ll share credentials manually later
                 (you can always trigger it from CRM &rarr; Resend credentials). Requires a contact email.
               </span>
             </span>
@@ -338,7 +395,7 @@ export default function V1ImportExistingProject() {
             {busy ? 'Importing…' : 'Import & open Creator Selector'}
           </button>
           <p className="text-[11px] text-[#8A8A8A]">
-            Creates the project in the Plan stage with an "Imported" tag.
+            Creates the project in the Plan stage with an &ldquo;Imported&rdquo; tag.
             {form.send_welcome_email && form.contact_email.trim() ? ' Welcome email queues on import.' : ''}
           </p>
         </div>
