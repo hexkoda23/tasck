@@ -2426,6 +2426,51 @@ def make_v3_router(db):
         reply_to = os.getenv("SMTP_REPLY_TO", configured_from or username).strip()
         return configured_from or username, from_name, reply_to
 
+    _email_logo_cache: Dict[str, str] = {}
+
+    def _email_logo_data_uri() -> str:
+        """Return a small, email-optimised TASCK logo as a base64 data URI.
+
+        The full logo PNG is ~150 KB — far too heavy to inline in every
+        transactional email. We resize once (max 240 px wide, RGBA→RGB on a
+        brand-green background so the mark reads on dark headers) and cache
+        the base64 result on first use.
+        """
+        cached = _email_logo_cache.get("uri")
+        if cached is not None:
+            return cached
+        try:
+            raw = _tasck_logo_bytes()
+            if not raw:
+                _email_logo_cache["uri"] = ""
+                return ""
+            from PIL import Image as _PILImage
+            img = _PILImage.open(BytesIO(raw))
+            img.load()
+            # Composite RGBA onto the brand-green header colour so the mark
+            # stays readable when it lands on the dark strip.
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                bg = _PILImage.new("RGB", img.size, (31, 74, 58))
+                bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
+                img = bg
+            else:
+                img = img.convert("RGB")
+            max_w = 180
+            if img.width > max_w:
+                ratio = max_w / float(img.width)
+                new_h = max(1, int(round(img.height * ratio)))
+                img = img.resize((max_w, new_h), _PILImage.LANCZOS)
+            out = BytesIO()
+            img.save(out, format="JPEG", quality=82, optimize=True)
+            import base64 as _b64
+            uri = "data:image/jpeg;base64," + _b64.b64encode(out.getvalue()).decode("ascii")
+            _email_logo_cache["uri"] = uri
+            return uri
+        except Exception as exc:
+            logger.warning("Failed to build email logo data URI: %s", exc)
+            _email_logo_cache["uri"] = ""
+            return ""
+
     def _smtp_transactional_html(plain_body: str, from_email: str) -> str:
         """Render the plain-text email body as HTML with TASCK typography.
 
@@ -2469,6 +2514,7 @@ def make_v3_router(db):
             return f'<div style="margin:0 0 6px;">{escaped}</div>'
 
         body_html = ''.join(render_line(line) for line in plain_body.splitlines())
+        logo_uri = _email_logo_data_uri()
         footer = html.escape(
             os.getenv(
                 "SMTP_EMAIL_FOOTER",
@@ -2483,17 +2529,27 @@ def make_v3_router(db):
             '</head><body style="margin:0;padding:24px;background:#F5F1E8;">'
             f'<div style="max-width:680px;margin:0 auto;background:#FFFFFF;'
             'border:1px solid #E7DFD2;border-radius:6px;overflow:hidden;">'
-            # TASCK brand strip
+            # TASCK brand strip — inline logo when available, wordmark fallback
             f'<div style="background:#1F4A3A;color:#FFFFFF;padding:14px 24px;'
-            f'font-family:{display_stack};letter-spacing:.12em;font-size:20px;">'
-            'TASCK'
-            '</div>'
+            f'font-family:{display_stack};letter-spacing:.12em;font-size:20px;'
+            'line-height:0;">'
+            + (
+                f'<img src="{logo_uri}" alt="TASCK" width="120" '
+                'style="display:inline-block;height:auto;max-height:44px;'
+                'width:120px;max-width:120px;vertical-align:middle;border:0;" />'
+                if logo_uri else 'TASCK'
+            )
+            + '</div>'
             f'<div style="padding:24px;font-family:{body_stack};color:#1A1A1A;'
             f'font-size:14px;line-height:1.6;">{body_html}'
             '<hr style="border:none;border-top:1px solid #E7DFD2;margin:24px 0;" />'
             f'<p style="font-size:12px;color:#6B6258;font-family:{body_stack};margin:0;">{footer}</p></div>'
             '</div></body></html>'
         )
+
+    # Expose for tests / verification. Safe: these are internal renderers.
+    router._smtp_transactional_html = _smtp_transactional_html  # type: ignore[attr-defined]
+    router._email_logo_data_uri = _email_logo_data_uri  # type: ignore[attr-defined]
 
     def _add_transactional_headers(message: EmailMessage, email: Dict[str, Any], from_email: str, reply_to: str) -> None:
         domain = _email_domain(from_email)

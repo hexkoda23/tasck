@@ -1185,3 +1185,12 @@ One contact email can own MULTIPLE brand portal accounts (one per brand, e.g. ke
 - Backend `v3_flipbook.py` `LOGO_MARK_B64`: regenerated (256px PNG) → brand-facing flipbook badge serves new logo (verified via /api/v3/pitch-decks/{id}/flipbook).
 - Backend `v3_routes.py` `_TASCK_LOGO_PNG_B64` + `static/alignment_template/tasck_logo.png`: regenerated (512px PNG) → all generated .docx files (Alignment Snapshot, Creative Brief, Strategy, Contracts) embed the new logo (verified inside generated docx zip).
 - NOTE: thcodemo.space favicon/logo requires a REDEPLOY to go live.
+
+## Update — 13 Jun 2026 (Email Branding: TASCK logo now at top of every welcome and snapshot email)
+- User asked for the new logo to appear at the top of every welcome and snapshot email brands receive.
+- Every transactional email (brand welcome, resend credentials, alignment/strategy snapshot send, plus every other queued kind) already routes its HTML alternative through `_smtp_transactional_html` in `v3_routes.py`. That wrapper's "TASCK brand strip" now renders an `<img>` of the new logo instead of the plain wordmark.
+- Added `_email_logo_data_uri()` inside `make_v3_router`: on first call it decodes `_TASCK_LOGO_PNG_B64`, composites the transparent PNG onto the brand-green header colour (#1F4A3A), resizes to 180 px wide, JPEG-encodes (quality 82) and base64-inlines it — total data URI ~7 KB per email. Cached on the router closure so subsequent emails don't re-encode.
+- Fallback: if PIL fails or the logo bytes are empty, the strip cleanly reverts to the "TASCK" wordmark (no broken image icon in Gmail).
+- Exposed `_smtp_transactional_html` + `_email_logo_data_uri` on the router for tests. New regression suite: `/app/backend/tests/test_email_logo_branding.py` (3 tests — all pass: `<img>` present, cached, size <15 KB, header colour preserved, wrapper reused across welcome & snapshot bodies).
+- Verified visually: rendered a live sample HTML wrapper against the welcome body and confirmed the new "THE TASCK AGENCY" mark sits on the brand-green strip above the message.
+
