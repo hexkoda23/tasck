@@ -66,7 +66,7 @@ const paginateSections = (sections) => {
 const TasckHeader = ({ compact }) => (
   <div className={`pf-header ${compact ? 'pf-header-compact' : ''}`}>
     <div className="pf-logo">
-      <span className="pf-logo-mark" aria-hidden="true">T</span>
+      <img className="pf-logo-mark" src="/tta-logo.png" alt="" aria-hidden="true" />
       <span className="pf-logo-word">TASCK</span>
     </div>
     <span className="pf-header-tag">Creator Campaign Pitch</span>
@@ -259,10 +259,11 @@ export const buildFlipbookHtml = (deck, brandName) => {
   const totalLeaves = Math.ceil((pageCount + (pageCount % 2)) / 2);
 
   const pageEls = [];
-  pageEls.push(`<div class="pf-cover pf-paper"><div class="pf-cover-spine-edge"></div><div class="pf-header"><div class="pf-logo"><span class="pf-logo-mark">T</span><span class="pf-logo-word">TASCK</span></div><span class="pf-header-tag">Creator Campaign Pitch</span></div><div class="pf-cover-body"><p class="pf-cover-kicker">Creator Campaign Pitch</p><div class="pf-cover-rule"></div><h1 class="pf-cover-title">${esc(bName || title)}</h1><p class="pf-cover-sub">A creator-led campaign strategy prepared by TASCK${bName ? ` for ${esc(bName)}` : ''}.</p></div><div class="pf-footer"><span>tasck.org</span><span>${esc(bName || 'Your brand')}</span></div></div>`);
+  const logoImg = `<img class="pf-logo-mark" src="${window.location.origin}/tta-logo.png" alt="" />`;
+  pageEls.push(`<div class="pf-cover pf-paper"><div class="pf-cover-spine-edge"></div><div class="pf-header"><div class="pf-logo">${logoImg}<span class="pf-logo-word">TASCK</span></div><span class="pf-header-tag">Creator Campaign Pitch</span></div><div class="pf-cover-body"><p class="pf-cover-kicker">Creator Campaign Pitch</p><div class="pf-cover-rule"></div><h1 class="pf-cover-title">${esc(bName || title)}</h1><p class="pf-cover-sub">A creator-led campaign strategy prepared by TASCK${bName ? ` for ${esc(bName)}` : ''}.</p></div><div class="pf-footer"><span>tasck.org</span><span>${esc(bName || 'Your brand')}</span></div></div>`);
   contentPages.forEach((secs, i) => {
     const secsHtml = secs.map((s) => `<div class="pf-sec"><h3 class="pf-sec-h">${esc(s.heading)}</h3><p class="pf-sec-p">${esc(s.content)}</p></div>`).join('');
-    pageEls.push(`<div class="pf-page pf-paper"><div class="pf-header pf-header-compact"><div class="pf-logo"><span class="pf-logo-mark">T</span><span class="pf-logo-word">TASCK</span></div><span class="pf-header-tag">Creator Campaign Pitch</span></div><div class="pf-page-body">${secsHtml}</div><div class="pf-footer"><span>tasck.org</span><span>${esc(bName || 'Your brand')}</span><span>${i + 2} / ${pageCount}</span></div></div>`);
+    pageEls.push(`<div class="pf-page pf-paper"><div class="pf-header pf-header-compact"><div class="pf-logo">${logoImg}<span class="pf-logo-word">TASCK</span></div><span class="pf-header-tag">Creator Campaign Pitch</span></div><div class="pf-page-body">${secsHtml}</div><div class="pf-footer"><span>tasck.org</span><span>${esc(bName || 'Your brand')}</span><span>${i + 2} / ${pageCount}</span></div></div>`);
   });
   pageEls.push(`<div class="pf-cover pf-cover-closing pf-paper" style="background:radial-gradient(120% 90% at 20% 90%, ${TASCK_GREEN} 0%, #12352a 46%, ${TASCK_GREEN_DARK} 100%)"><div class="pf-cover-spine-edge"></div><div class="pf-cover-body"><div class="pf-cover-rule" style="margin-top:auto"></div><h1 class="pf-cover-title" style="font-size:30px">Let&#39;s build this together.</h1><p class="pf-cover-sub">Review the campaign, add your comments to any section, and approve when you&#39;re ready. TASCK will take it from there.</p></div><div class="pf-footer pf-footer-min"><span>tasck.org</span></div></div>`);
   while (pageEls.length % 2 !== 0) pageEls.push('<div class="pf-page"></div>');
@@ -508,7 +509,7 @@ html, body {
 .pf-header-compact { padding: 12px 18px; }
 
 .pf-logo { display: flex; align-items: center; gap: 10px; font-family: inherit; }
-.pf-logo-mark { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 6px; background: #1F4A3A; color: #fff; font-weight: 700; font-size: 15px; }
+.pf-logo-mark { display: inline-block; width: 28px; height: 28px; border-radius: 50%; object-fit: contain; }
 .pf-logo-word { font-weight: 700; letter-spacing: .16em; color: #1F4A3A; font-size: 15px; }
 .pf-header-tag { font-size: 14px; letter-spacing: .2em; text-transform: uppercase; color: #5C4B35; }
 

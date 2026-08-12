@@ -1175,3 +1175,13 @@ One contact email can own MULTIPLE brand portal accounts (one per brand, e.g. ke
 - Cover: AI-generated dark creator/production photo (base64-inlined in new `/app/backend/flipbook_assets.py`, gradient fallback) with dark overlay, green kicker + big Bebas brand title. Back cover: green "THANK YOU." with subtle arc rings. Endpaper matches dark theme.
 - Admin "Preview Flipbook" modal now loads the server endpoint (`v3PitchDeckFlipbookUrl`) instead of the client-side `buildFlipbookHtml` srcDoc — single renderer everywhere (admin preview, download, brand portal embed).
 - Verified live on preview: cover, two spreads, back cover screenshots at /api/v3/pitch-decks/{id}/flipbook; frontend compiles; page-flip engine untouched.
+
+## Update — 12 Jun 2026 (New official logo rolled out platform-wide)
+- User supplied new circular "THE TASCK AGENCY." logo (blue circle, green accent letters) as webp asset.
+- Assets: saved to `/app/frontend/public/` as `tta-logo.webp`, `tta-logo.png`, `logo192.png`, `logo512.png`, `favicon.ico`, `favicon-64.png`. Favicon links added to `public/index.html`.
+- `components/shared/Logo.js`: CSS-drawn circle replaced with `<img src="/tta-logo.png">` (same variant/size/showText API) → covers landing page, version/role selectors, admin sidebar, brand portal, creator login, V3 layouts.
+- `components/v1/TtaLetterhead.jsx`: `TasckLogo` now renders the image → alignment snapshot on-screen letterhead.
+- `components/v1/PitchDeckFlipbook.jsx`: pf-logo mark (JSX + both HTML string templates + CSS) now uses the image.
+- Backend `v3_flipbook.py` `LOGO_MARK_B64`: regenerated (256px PNG) → brand-facing flipbook badge serves new logo (verified via /api/v3/pitch-decks/{id}/flipbook).
+- Backend `v3_routes.py` `_TASCK_LOGO_PNG_B64` + `static/alignment_template/tasck_logo.png`: regenerated (512px PNG) → all generated .docx files (Alignment Snapshot, Creative Brief, Strategy, Contracts) embed the new logo (verified inside generated docx zip).
+- NOTE: thcodemo.space favicon/logo requires a REDEPLOY to go live.
