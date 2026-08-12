@@ -25,6 +25,7 @@ const navItems = [
     // Framing sub-pages still live under /admin/business-cases/:id/(connect|frame)/...
     matchesPath: (pathname) => CRM_BC_SUBPATH_RE.test(pathname),
   },
+  { path: '/admin/import-project', label: 'Import Project', icon: FolderInput },
   {
     path: '/admin/business-cases',
     label: 'Business Cases',
@@ -41,7 +42,6 @@ const navItems = [
     // don't accidentally light this tab up.
     suppressDefaultStartsWith: true,
   },
-  { path: '/admin/import-project', label: 'Import Project', icon: FolderInput },
   {
     path: '/admin/brand-communications',
     label: 'Messages',
