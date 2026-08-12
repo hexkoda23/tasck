@@ -1,20 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageSquare, RefreshCcw, Send } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { v3CreateInteraction, v3GetBrands, v3GetBusinessCase, v3ListBusinessCases, v3ListInteractions } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { brandName, cleanPortalText, formatDate, sentenceCaseStatus } from '../brand/V1BrandPortalData';
 
 const V1AdminBrandCommunications = () => {
+  const location = useLocation();
+  // Deep-link support: /admin/brand-communications?brand=<id> preselects that
+  // brand so admins landing here from a "New message from …" notification see
+  // the sender's thread immediately without hunting through the list.
+  const queryBrandId = new URLSearchParams(location.search || '').get('brand') || '';
   const [loading, setLoading] = useState(true);
   const [brands, setBrands] = useState([]);
   const [bundles, setBundles] = useState([]);
   const [interactions, setInteractions] = useState([]);
-  const [selectedBrand, setSelectedBrand] = useState('');
+  const [selectedBrand, setSelectedBrand] = useState(queryBrandId);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const reload = useCallback(async () => { setLoading(true); try { const [brandList, caseList, interactionList] = await Promise.all([v3GetBrands({ crm_only: true }), v3ListBusinessCases(), v3ListInteractions()]); const cases = Array.isArray(caseList) ? caseList : []; const hydrated = await Promise.all(cases.slice(0, 80).map(async (businessCase) => { try { return await v3GetBusinessCase(businessCase.id); } catch (e) { return { business_case: businessCase }; } })); const nextBrands = Array.isArray(brandList) ? brandList : []; setBrands(nextBrands); setBundles(hydrated); setInteractions(Array.isArray(interactionList) ? interactionList : []); setSelectedBrand((current) => current || nextBrands[0]?.id || ''); } catch (e) { toast.error(e.message || 'Could not load brand communications.'); } finally { setLoading(false); } }, []);
+  const reload = useCallback(async () => { setLoading(true); try { const [brandList, caseList, interactionList] = await Promise.all([v3GetBrands(), v3ListBusinessCases(), v3ListInteractions()]); const cases = Array.isArray(caseList) ? caseList : []; const hydrated = await Promise.all(cases.slice(0, 80).map(async (businessCase) => { try { return await v3GetBusinessCase(businessCase.id); } catch (e) { return { business_case: businessCase }; } })); const nextBrands = Array.isArray(brandList) ? brandList : []; setBrands(nextBrands); setBundles(hydrated); setInteractions(Array.isArray(interactionList) ? interactionList : []); setSelectedBrand((current) => current || queryBrandId || nextBrands[0]?.id || ''); } catch (e) { toast.error(e.message || 'Could not load brand communications.'); } finally { setLoading(false); } }, [queryBrandId]);
   useEffect(() => { reload(); }, [reload]);
+  // When the URL brand param changes (admin clicked a different notification),
+  // sync the selection so the panel jumps to that sender's thread.
+  useEffect(() => { if (queryBrandId) setSelectedBrand(queryBrandId); }, [queryBrandId]);
   const reviewItems = useMemo(() => { const items = []; bundles.forEach((bundle) => { const businessCase = bundle.business_case || {}; const brand = bundle.brand || brands.find((item) => item.id === businessCase.brand_id) || {}; (bundle.alignment_snapshot?.brand_comments || []).forEach((comment) => items.push({ id: comment.id || 'alignment-' + businessCase.id, kind: 'Alignment Snapshot', brand, businessCase, comment: comment.comment || comment.content, date: comment.created_at })); (bundle.creative_snapshot?.brand_comments || []).forEach((comment) => items.push({ id: comment.id || 'strategy-' + businessCase.id, kind: 'Strategy Snapshot', brand, businessCase, comment: comment.comment || comment.content, date: comment.created_at })); }); interactions.filter((item) => ['brand_contract_comment', 'brand_report_feedback', 'brand_document_comment', 'brand_message'].includes(item.type)).forEach((item) => { const brand = brands.find((b) => b.id === item.brand_id) || {}; items.push({ id: item.id, kind: sentenceCaseStatus(item.type), brand, businessCase: { id: item.business_case_id, title: item.title }, comment: item.content, date: item.date_iso }); }); return items.sort((a, b) => Date.parse(b.date || '') - Date.parse(a.date || '')); }, [brands, bundles, interactions]);
   const selectedMessages = interactions.filter((item) => item.brand_id === selectedBrand && (String(item.type || '').includes('message') || ['brand_contract_comment', 'brand_report_feedback'].includes(item.type)));
   const currentBrand = brands.find((brand) => brand.id === selectedBrand) || brands[0] || {};

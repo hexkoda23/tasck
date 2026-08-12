@@ -10143,6 +10143,42 @@ def make_v3_router(db):
                 "link": f"/admin/business-cases/{row.get('id')}/reporting/final-report#brand-feedback",
             })
 
+        # 7. Direct chat messages from the brand portal Messages page. These
+        # are stored in v3_interactions with type="brand_message" and are
+        # scoped to a brand (not tied to a case). This is what the "Chat with
+        # TASCK admin" send button posts — without this notification the admin
+        # never sees them because the Messages page isn't the default landing.
+        chat_msgs = await db.v3_interactions.find(
+            {"type": "brand_message"},
+            {"_id": 0, "id": 1, "brand_id": 1, "business_case_id": 1, "content": 1, "author": 1, "date_iso": 1},
+        ).sort("date_iso", -1).to_list(200)
+        for row in chat_msgs:
+            when = row.get("date_iso")
+            if not when or not _within_window(when):
+                continue
+            brand = await _brand(row.get("brand_id"))
+            brand_name = _real_brand_name(brand)
+            if not brand_name:
+                continue
+            text = str(row.get("content") or "").strip()
+            if not text:
+                continue
+            preview = (text[:180] + "…") if len(text) > 180 else text
+            author = str(row.get("author") or brand_name).strip() or brand_name
+            notifications.append({
+                "id": f"brand_message:{row.get('id')}",
+                "kind": "brand_message",
+                "actor": "brand",
+                "when": when,
+                "brand_id": row.get("brand_id"),
+                "brand_name": brand_name,
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": None,
+                "title": f"New message from {brand_name}",
+                "message": f"{author}: {preview}",
+                "link": f"/admin/brand-communications?brand={row.get('brand_id')}",
+            })
+
         # Sort newest first and cap.
         def _ts(item: Dict[str, Any]) -> str:
             return str(item.get("when") or "")
