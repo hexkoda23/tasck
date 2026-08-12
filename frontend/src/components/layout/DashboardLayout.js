@@ -262,7 +262,7 @@ export const DashboardLayout = ({ role }) => {
           <div className="space-y-4">
             <div className="copilot-insight bg-[#F8FAFC] rounded-lg py-3 pr-3">
               <p className="text-[#1E293B] text-sm mb-1">3 deals need attention today</p>
-              <p className="text-[#94A3B8] text-xs">Pipeline velocity up 15% — you're closing faster this quarter.</p>
+              <p className="text-[#94A3B8] text-xs">Pipeline velocity up 15% - you're closing faster this quarter.</p>
             </div>
             <div className="copilot-insight bg-[#F8FAFC] rounded-lg py-3 pr-3">
               <p className="text-[#1E293B] text-sm mb-1">MTN counter-offer expiring</p>

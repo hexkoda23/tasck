@@ -6,7 +6,7 @@ import { Star, MapPin, Music, Globe, ExternalLink, Edit, Camera, Users, Trending
 const projects = [
   { id: 1, title: 'Don Jazzy x Cadbury Brand Campaign', type: 'Brand Activation', year: '2026' },
   { id: 2, title: 'Mavin Concert Tour 2025', type: 'Live Events', year: '2025' },
-  { id: 3, title: 'Johnnie Walker — Walk With Giants', type: 'Brand Ambassador', year: '2025' },
+  { id: 3, title: 'Johnnie Walker - Walk With Giants', type: 'Brand Ambassador', year: '2025' },
   { id: 4, title: 'UBA Foundation Charity Series', type: 'Content Production', year: '2025' },
   { id: 5, title: 'Beat FM New Year Concert', type: 'Live Events', year: '2025' },
   { id: 6, title: 'Pepsi Refresh Your World', type: 'Brand Campaign', year: '2024' }

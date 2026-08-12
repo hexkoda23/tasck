@@ -33,7 +33,7 @@ const V3CommandK = () => {
       const brand = getBrand(p.brandId);
       const creator = getCreator(p.creatorId);
       if (p.title.toLowerCase().includes(q) || brand?.company?.toLowerCase().includes(q) || creator?.name?.toLowerCase().includes(q)) {
-        results.push({ type: 'project', icon: FolderOpen, label: `${brand?.company?.split(' ')[0]} — ${p.title}`, sub: `${v3Stages.find(s => s.key === p.stage)?.label} · ${formatNairaV3(p.estimatedValue)}`, path: `/v3/admin/projects/${p.id}` });
+        results.push({ type: 'project', icon: FolderOpen, label: `${brand?.company?.split(' ')[0]} - ${p.title}`, sub: `${v3Stages.find(s => s.key === p.stage)?.label} · ${formatNairaV3(p.estimatedValue)}`, path: `/v3/admin/projects/${p.id}` });
       }
     });
     v3Brands.forEach(b => {

@@ -676,7 +676,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
 
     for (const row of sourceRows) {
       try {
-        // connect sources have no "update" — re-save as a new entry only if
+        // connect sources have no "update" - re-save as a new entry only if
         // the row is new or has been edited since it was loaded.
         if (!row.backendId || row.dirty) {
           await v3AddConnectSource(businessCaseId, {

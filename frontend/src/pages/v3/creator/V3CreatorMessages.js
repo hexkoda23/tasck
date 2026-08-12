@@ -18,13 +18,13 @@ const V3CreatorMessages = () => {
       time: '3 hours ago',
       unread: 1,
       messages: [
-        { id: 'cm1', sender: 'Adaeze Obi', senderType: 'rm', time: '5 days ago', text: 'Hi Rema — thanks for the brief response. Your concept direction is exactly what we were hoping for. The Nigerian subject being a woman in climate/food systems is a smart creative choice — it opens the gender door without telegraphing it.' },
-        { id: 'cm2', sender: 'Rema', senderType: 'creator', time: '5 days ago', text: 'Good. That was the intent. I also want to talk about the Obongjayar collaboration for film 3. I\'ve reached out to his team — they\'re interested but need the timeline locked.' },
+        { id: 'cm1', sender: 'Adaeze Obi', senderType: 'rm', time: '5 days ago', text: 'Hi Rema - thanks for the brief response. Your concept direction is exactly what we were hoping for. The Nigerian subject being a woman in climate/food systems is a smart creative choice - it opens the gender door without telegraphing it.' },
+        { id: 'cm2', sender: 'Rema', senderType: 'creator', time: '5 days ago', text: 'Good. That was the intent. I also want to talk about the Obongjayar collaboration for film 3. I\'ve reached out to his team - they\'re interested but need the timeline locked.' },
         { id: 'cm3', sender: 'Adaeze Obi', senderType: 'rm', time: '4 days ago', text: 'Noted. I\'ve built the Obongjayar conversation into the Strategy Snapshot timeline. His team would need confirmation by end of April if we\'re shooting in October. Is that workable?' },
         { id: 'cm4', sender: 'Rema', senderType: 'creator', time: '4 days ago', text: 'Yes. He\'s clear Oct-Nov. But I need to know about the DOP budget. I want Kagho Idhebor. His day rate is higher than standard but the visual quality is non-negotiable for this project.' },
         { id: 'cm5', sender: 'Adaeze Obi', senderType: 'rm', time: '3 days ago', text: 'Budget-wise, the ₦48M production line can accommodate Kagho. I\'ve factored in his rate at ₦2.5M/day for 15 shoot days across 3 countries. We\'re within range.' },
-        { id: 'cm6', sender: 'Rema', senderType: 'creator', time: '3 days ago', text: 'Perfect. One more thing — I want final edit. That was in my brief response but I want it confirmed in the contract, not just the Strategy Snapshot.' },
-        { id: 'cm7', sender: 'Adaeze Obi', senderType: 'rm', time: '3 hours ago', text: 'Understood — I\'ve flagged this for the contracts team. It\'ll be a clause with a brand safety carve-out (standard TASCK practice). The Strategy Snapshot v1 is drafted and under internal review. I\'ll share it with you before it goes to Tunde\'s team.' },
+        { id: 'cm6', sender: 'Rema', senderType: 'creator', time: '3 days ago', text: 'Perfect. One more thing - I want final edit. That was in my brief response but I want it confirmed in the contract, not just the Strategy Snapshot.' },
+        { id: 'cm7', sender: 'Adaeze Obi', senderType: 'rm', time: '3 hours ago', text: 'Understood - I\'ve flagged this for the contracts team. It\'ll be a clause with a brand safety carve-out (standard TASCK practice). The Strategy Snapshot v1 is drafted and under internal review. I\'ll share it with you before it goes to Tunde\'s team.' },
       ],
     },
     {
@@ -36,10 +36,10 @@ const V3CreatorMessages = () => {
       time: '2 months ago',
       unread: 0,
       messages: [
-        { id: 'pm1', sender: 'Temi Bakare', senderType: 'rm', time: '4 months ago', text: 'Rema — Puma\'s team approved the final master. They\'re thrilled with the visual direction. Payments are being processed now.' },
+        { id: 'pm1', sender: 'Temi Bakare', senderType: 'rm', time: '4 months ago', text: 'Rema - Puma\'s team approved the final master. They\'re thrilled with the visual direction. Payments are being processed now.' },
         { id: 'pm2', sender: 'Rema', senderType: 'creator', time: '4 months ago', text: 'Good. When do the social assets go live?' },
         { id: 'pm3', sender: 'Temi Bakare', senderType: 'rm', time: '4 months ago', text: 'Social launch is set for November 20. Your team will get the final posting schedule 48 hours before. Puma will coordinate from their side.' },
-        { id: 'pm4', sender: 'Temi Bakare', senderType: 'rm', time: '2 months ago', text: 'Campaign wrapped cleanly. All deliverables approved, all payments released to your account. Your updated reliability score is 8.4/10. Puma\'s satisfaction rating: 8.6/10. Great work — they\'ve already asked about future collaborations.' },
+        { id: 'pm4', sender: 'Temi Bakare', senderType: 'rm', time: '2 months ago', text: 'Campaign wrapped cleanly. All deliverables approved, all payments released to your account. Your updated reliability score is 8.4/10. Puma\'s satisfaction rating: 8.6/10. Great work - they\'ve already asked about future collaborations.' },
       ],
     },
     {
@@ -54,7 +54,7 @@ const V3CreatorMessages = () => {
         { id: 'bm1', sender: 'Temi Bakare', senderType: 'rm', time: '2 months ago', text: 'Browns wants a 15-minute documentary connecting your Lagos roots to the London fashion scene. They\'re giving you full creative control on the narrative structure.' },
         { id: 'bm2', sender: 'Rema', senderType: 'creator', time: '2 months ago', text: 'I have an idea. We start in Benin City, not Lagos. That\'s where the real story is. Then to Lagos, then London. Three cities, one arc.' },
         { id: 'bm3', sender: 'Temi Bakare', senderType: 'rm', time: '2 months ago', text: 'I love that. Let me run it by their team. The Benin angle adds authenticity that a Lagos-only framing wouldn\'t.' },
-        { id: 'bm4', sender: 'Temi Bakare', senderType: 'rm', time: '6 weeks ago', text: 'Browns approved the final documentary. The team specifically called out the Lagos market sequence — "exactly the kind of cultural texture we wanted." Payments processing now.' },
+        { id: 'bm4', sender: 'Temi Bakare', senderType: 'rm', time: '6 weeks ago', text: 'Browns approved the final documentary. The team specifically called out the Lagos market sequence - "exactly the kind of cultural texture we wanted." Payments processing now.' },
       ],
     },
   ];
@@ -87,7 +87,7 @@ const V3CreatorMessages = () => {
                       <span className="text-[13px] font-medium text-[#1A1A1A]">{thread.rm?.name}</span>
                       <span className="text-[10px] text-[#8A8A8A] ml-auto flex-shrink-0" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{thread.time}</span>
                     </div>
-                    <p className="text-[10px] text-[#1F4A3A] mb-1">{thread.brand} — {thread.project}</p>
+                    <p className="text-[10px] text-[#1F4A3A] mb-1">{thread.brand} - {thread.project}</p>
                     <p className="text-[11px] text-[#8A8A8A] truncate">{thread.lastMessage}</p>
                   </div>
                   {thread.unread > 0 && (
@@ -114,7 +114,7 @@ const V3CreatorMessages = () => {
                 </div>
                 <div>
                   <p className="text-[13px] font-medium text-[#1A1A1A]">{selected.rm?.name}</p>
-                  <p className="text-[10px] text-[#8A8A8A]">{selected.brand} — {selected.project}</p>
+                  <p className="text-[10px] text-[#8A8A8A]">{selected.brand} - {selected.project}</p>
                 </div>
               </div>
 

@@ -1,4 +1,4 @@
-// Live Business Case detail — tabbed Connect / Frame / Plan / Deliver / Closure
+// Live Business Case detail - tabbed Connect / Frame / Plan / Deliver / Closure
 // surface, all data sourced from /api/v3/business-cases/:id
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -463,20 +463,20 @@ const ContractSummaryCard = ({ bundle }) => {
 
   // Build party list
   const tasckParty = 'TASCK Africa (Agency)';
-  const brandParty = brand.company || brand.name || 'Brand party — pending';
+  const brandParty = brand.company || brand.name || 'Brand party - pending';
   const creatorParty = creator.name || creator.creator_name || (c.recommended_creator_name || null);
   const parties = [tasckParty, brandParty, creatorParty].filter(Boolean);
 
   // AI risk flags (heuristic based on missing CRM context)
   const riskFlags = [];
   if (!contract.value && !c.value_amount && !c.value_label) {
-    riskFlags.push({ level: 'high', text: 'Contract value is not quantified — confirm with brand before signing.' });
+    riskFlags.push({ level: 'high', text: 'Contract value is not quantified - confirm with brand before signing.' });
   }
   if (!creatorParty && c.stage !== 'connect' && c.stage !== 'frame') {
-    riskFlags.push({ level: 'medium', text: 'No creative attached — select creator before drafting creator contract.' });
+    riskFlags.push({ level: 'medium', text: 'No creative attached - select creator before drafting creator contract.' });
   }
   if (!c.frame?.alignment_snapshot_status || c.frame?.alignment_snapshot_status !== 'approved') {
-    riskFlags.push({ level: 'medium', text: 'Alignment Snapshot not yet approved by brand — risk of late scope changes.' });
+    riskFlags.push({ level: 'medium', text: 'Alignment Snapshot not yet approved by brand - risk of late scope changes.' });
   }
   if (isGrant && contract.value && contract.value > 0) {
     riskFlags.push({ level: 'low', text: 'Grant track: confirm funder pays creator directly (not TASCK).' });
@@ -485,7 +485,7 @@ const ContractSummaryCard = ({ bundle }) => {
     riskFlags.push({ level: 'medium', text: 'Contract draft not yet prepared. Generate one via the AI contract studio below.' });
   }
   if (!brand.email && !brand.primary_contact_email) {
-    riskFlags.push({ level: 'low', text: 'No brand signatory email on file — contact details required for e-sign.' });
+    riskFlags.push({ level: 'low', text: 'No brand signatory email on file - contact details required for e-sign.' });
   }
 
   // Next actions
@@ -556,7 +556,7 @@ const ContractSummaryCard = ({ bundle }) => {
             <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">Payment terms</p>
             <p className="text-[12px] text-[#1A1A1A] leading-relaxed">
               {isGrant
-                ? 'Grant track — Strategy Development Fee is waived. Funder pays creator directly via TASCK-approved invoice schedule.'
+                ? 'Grant track - Strategy Development Fee is waived. Funder pays creator directly via TASCK-approved invoice schedule.'
                 : `Strategy Development Fee tracked before Delivery. Project fee billed per milestone (typically 40% on signature / 40% on production / 20% on delivery). Net 15 days.`}
             </p>
             {c.value_raw && (
@@ -1136,7 +1136,7 @@ const V3AdminBusinessCaseDetail = () => {
     return {
       id,
       status: 'draft',
-      title: `${brandLabel} — Alignment Snapshot`,
+      title: `${brandLabel} - Alignment Snapshot`,
       meta: {
         brand: brandLabel,
         relationship_manager: bc?.rm_name || 'Unassigned',
@@ -1863,7 +1863,7 @@ const V3AdminBusinessCaseDetail = () => {
                   color: isGrant ? '#7A5F23' : '#1F4A3A',
                 }}
               >
-                {isGrant ? 'Grant — TTA pays creator directly' : 'Paid Strategy'}
+                {isGrant ? 'Grant - TTA pays creator directly' : 'Paid Strategy'}
               </span>
               <span
                 className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider bg-[#F4F2EC] text-[#6E6657]"
@@ -1917,7 +1917,7 @@ const V3AdminBusinessCaseDetail = () => {
       {/* CONNECT */}
       {tab === 'connect' && (
         <>
-        {/* Brand & contact context — sourced from CRM workbook */}
+        {/* Brand & contact context - sourced from CRM workbook */}
         <Section title="Brand context">
           <dl className="grid grid-cols-2 gap-4 text-[13px]" data-testid="bc-connect-brand-context">
             {[
@@ -1946,7 +1946,7 @@ const V3AdminBusinessCaseDetail = () => {
           </dl>
         </Section>
 
-        {/* Marketing intelligence — from CRM workbook */}
+        {/* Marketing intelligence - from CRM workbook */}
         <Section title="Marketing intelligence">
           <dl className="grid grid-cols-2 gap-4 text-[13px]" data-testid="bc-connect-intelligence">
             {[
@@ -1987,7 +1987,7 @@ const V3AdminBusinessCaseDetail = () => {
         </Section>
 
         {/* Connect actions */}
-        <Section title="Connect — Discovery actions">
+        <Section title="Connect - Discovery actions">
           <div className="flex gap-2 mb-4">
             <button
               onClick={() => navigate(`/v3/admin/meetings?brand_id=${c.brand_id || ''}&business_case_id=${c.id}&mode=new&type=connector`)}
@@ -2143,7 +2143,7 @@ const V3AdminBusinessCaseDetail = () => {
             </Section>
           )}
 
-          {/* Scope flags — RM resolves before advancing */}
+          {/* Scope flags - RM resolves before advancing */}
           {bundle.alignment_snapshot?.brand_comments?.length > 0 && (
             <Section title="Brand line comments">
               <div className="space-y-2">
@@ -2237,7 +2237,7 @@ const V3AdminBusinessCaseDetail = () => {
             <Section title="Strategy Development Fee">
               <p className="text-[12px] text-[#7A5F23]">
                 <ShieldAlert className="inline w-3.5 h-3.5 mr-1" />
-                Grant engagement — no Strategy Development Fee is invoiced. TTA absorbs the strategy cost; OSF will pay the creator directly on approved proposal.
+                Grant engagement - no Strategy Development Fee is invoiced. TTA absorbs the strategy cost; OSF will pay the creator directly on approved proposal.
               </p>
             </Section>
           )}
@@ -2258,8 +2258,8 @@ const V3AdminBusinessCaseDetail = () => {
       {/* PLAN */}
       {tab === 'plan' && (
         <>
-          {/* Strategy Development Fee — always-on explainer card */}
-          <Section title="Strategy Development Fee — what it covers">
+          {/* Strategy Development Fee - always-on explainer card */}
+          <Section title="Strategy Development Fee - what it covers">
             <div className="space-y-2 text-[12px] text-[#1A1A1A] leading-relaxed" data-testid="bc-plan-sdf-explainer">
               <p>This fee covers the planning and strategy work that turns the Alignment Snapshot into a brand-ready Strategy Snapshot.</p>
               <ul className="list-disc pl-5 space-y-1">
@@ -2292,7 +2292,7 @@ const V3AdminBusinessCaseDetail = () => {
             </div>
           </Section>
 
-          {/* Editable Brainstorming — always available */}
+          {/* Editable Brainstorming - always available */}
           <Section title="Brainstorming">
             <div className="space-y-3" data-testid="bc-plan-brainstorm-editable">
               <p className="text-[11px] text-[#8A8A8A]">
@@ -2310,7 +2310,7 @@ const V3AdminBusinessCaseDetail = () => {
             </div>
           </Section>
 
-          {/* Editable Strategy — always available */}
+          {/* Editable Strategy - always available */}
           <Section title="Strategy">
             <StrategyDraftEditor
               businessCaseId={id}
@@ -2321,7 +2321,7 @@ const V3AdminBusinessCaseDetail = () => {
           </Section>
 
           {!isGrant && bundle.invoices?.filter((i) => i.kind === 'strategy_development_fee').length > 0 && (
-            <Section title="Strategy Development Fee — tracked invoice">
+            <Section title="Strategy Development Fee - tracked invoice">
               {bundle.invoices
                 .filter((i) => i.kind === 'strategy_development_fee')
                 .map((inv) => (
@@ -2381,7 +2381,7 @@ const V3AdminBusinessCaseDetail = () => {
                     <span className={sc.eliminated ? 'line-through text-[#B54A37]' : ''}>{sc.creator_id}</span>
                     <span className="text-[10px]">
                       cultural {sc.cultural_fit} • conv {sc.conversion_behavior} • rel {sc.reliability}
-                      {sc.eliminated && ` — ${sc.reason}`}
+                      {sc.eliminated && ` - ${sc.reason}`}
                     </span>
                   </div>
                 ))}
@@ -2551,7 +2551,7 @@ const V3AdminBusinessCaseDetail = () => {
                 <h4 className="text-[12px] font-semibold uppercase tracking-wider mb-2">Deliverables</h4>
                 <ul className="text-[13px] space-y-1 mb-6">
                   {bundle.creative_snapshot.deliverables.map((d) => (
-                    <li key={d.num}>{d.num}. {d.title} — {d.format} {d.duration && `(${d.duration})`}</li>
+                    <li key={d.num}>{d.num}. {d.title} - {d.format} {d.duration && `(${d.duration})`}</li>
                   ))}
                 </ul>
                 <h4 className="text-[12px] font-semibold uppercase tracking-wider mb-2">Budget</h4>
@@ -2592,7 +2592,7 @@ const V3AdminBusinessCaseDetail = () => {
                   <p className="text-[11px] text-[#7A5F23] uppercase tracking-wider mb-2">AI risk flags</p>
                   {bundle.contract.ai_risk_flags.map((f, i) => (
                     <div key={i} className="text-[12px] mb-1">
-                      <strong>{f.clause}</strong> [{f.severity}] — {f.note}
+                      <strong>{f.clause}</strong> [{f.severity}] - {f.note}
                     </div>
                   ))}
                 </div>
@@ -2620,7 +2620,7 @@ const V3AdminBusinessCaseDetail = () => {
             <div className="v3-card p-4 mb-4 bg-[#F5D9D2] border-[#B54A37]" data-testid="bc-scope-paused">
               <p className="text-[12px] text-[#B54A37] font-medium">
                 <ShieldAlert className="inline w-3.5 h-3.5 mr-1" />
-                Delivery paused — scope change pending brand approval.
+                Delivery paused - scope change pending brand approval.
               </p>
             </div>
           )}
@@ -2838,7 +2838,7 @@ const V3AdminBusinessCaseDetail = () => {
 };
 
 // ============================================================================
-// LogInteractionForm — Connect-tab inline form
+// LogInteractionForm - Connect-tab inline form
 // ============================================================================
 const LogInteractionForm = ({ businessCaseId, brandId, busy, wrap }) => {
   const [form, setForm] = useState({
@@ -2880,14 +2880,14 @@ const LogInteractionForm = ({ businessCaseId, brandId, busy, wrap }) => {
         type="text"
         value={form.title}
         onChange={(e) => setForm({ ...form, title: e.target.value })}
-        placeholder="Title — e.g. 'Discovery call with Funke + Kola'"
+        placeholder="Title - e.g. 'Discovery call with Funke + Kola'"
         className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white mb-3"
         data-testid="bc-li-title"
       />
       <textarea
         value={form.content}
         onChange={(e) => setForm({ ...form, content: e.target.value })}
-        placeholder="Content — paste the transcript or notes here."
+        placeholder="Content - paste the transcript or notes here."
         rows={4}
         className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white mb-3"
         data-testid="bc-li-content"
@@ -2913,7 +2913,7 @@ const LogInteractionForm = ({ businessCaseId, brandId, busy, wrap }) => {
 };
 
 // ============================================================================
-// PlanStageActions — surfaces the next contextual action in the Plan stage
+// PlanStageActions - surfaces the next contextual action in the Plan stage
 // ============================================================================
 const PlanStageActions = ({
   bundle,
@@ -3121,7 +3121,7 @@ const PlanStageActions = ({
     return renderBriefComposer(hasBrainstorm);
   }
 
-  // Brainstorm CTA — defaults to scoring the top 4 super-tier creators
+  // Brainstorm CTA - defaults to scoring the top 4 super-tier creators
   if (!hasBrainstorm && !hasBrief && !hasSnapshot && !hasContract) {
     return (
       <div className="v3-card p-6 mb-4 border-[#C49B5F]" data-testid="bc-plan-action-brainstorm">

@@ -1,6 +1,6 @@
-"""TASCK OS Opportunity Tracker v3.3 — Pass 1 filter + Pass 2 LLM enrichment.
+"""TASCK OS Opportunity Tracker v3.3 - Pass 1 filter + Pass 2 LLM enrichment.
 
-Pass 1: deterministic gate — kills creator self-promos, awards listicles,
+Pass 1: deterministic gate - kills creator self-promos, awards listicles,
 think-pieces, and freelancer ads BEFORE any LLM call is made.
 
 Pass 2: single Claude Sonnet 4.5 call per survivor that returns the v3.3 JSON
@@ -142,7 +142,7 @@ def build_query_plans(
 # Top-up plan builder (Quality-Preserving Volume Fix)
 # ---------------------------------------------------------------------------
 
-# Extended Nigerian trade-press allowlist (used in attempt 4 — wider source coverage)
+# Extended Nigerian trade-press allowlist (used in attempt 4 - wider source coverage)
 _TRADE_PRESS_EXTENDED = (
     "(site:marketingedge.com.ng OR site:brandcom.ng OR site:thecable.ng "
     "OR site:businessday.ng OR site:businessday.com.ng "
@@ -181,7 +181,7 @@ def build_topup_plans(
 ) -> List[Dict[str, Any]]:
     """Return a fresh set of plans for top-up attempt N (1..4).
 
-    Each attempt broadens differently — see spec §4:
+    Each attempt broadens differently - see spec §4:
       Attempt 1: same plans (caller increases per_source_limit)
       Attempt 2: broaden recency to past 12 months (qdr:y), all bucketed PIPELINE
       Attempt 3: extra query variants per signal type
@@ -214,7 +214,7 @@ def build_topup_plans(
         })
 
     if attempt == 2:
-        # Broaden recency to past 12 months — all marked PIPELINE per spec §4
+        # Broaden recency to past 12 months - all marked PIPELINE per spec §4
         for source in SOURCES:
             for signal in SIGNAL_QUERIES:
                 _add(source["key"], source["label"], source["site_filter"],
@@ -234,7 +234,7 @@ def build_topup_plans(
         return plans
 
     if attempt >= 4:
-        # Widen trade-press coverage + use extra variants — only for trade_press source
+        # Widen trade-press coverage + use extra variants - only for trade_press source
         for signal in SIGNAL_QUERIES:
             for variant_terms in _EXTRA_VARIANTS.get(signal["key"], [signal["terms"]]):
                 _add("trade_press", "Nigerian Trade",
@@ -247,10 +247,10 @@ def build_topup_plans(
     return []
 
 # ---------------------------------------------------------------------------
-# Pass 1 — deterministic filter
+# Pass 1 - deterministic filter
 # ---------------------------------------------------------------------------
 
-# Patterns that signal "this isn't a brand campaign — drop silently."
+# Patterns that signal "this isn't a brand campaign - drop silently."
 _REJECT_PATTERNS = [
     # Creator handles / self-promos
     re.compile(r"\b(filmmaker|videographer|photographer|drone\s+expert|content\s+creator|freelance|portfolio|services\s*available|hire\s+me|hire\s+us|book\s+me\s+now)\b", re.I),
@@ -272,7 +272,7 @@ _REJECT_PATTERNS = [
     re.compile(r"^@[a-z0-9_.]+", re.I),
 ]
 
-# Verbs / phrases that indicate commercial intent — at least one must appear
+# Verbs / phrases that indicate commercial intent - at least one must appear
 _COMMERCIAL_INTENT = re.compile(
     r"\b(sign(?:s|ed|ing)?|announc(?:e|es|ed|ing)|unveil(?:s|ed|ing)?|launch(?:es|ed|ing)?|"
     r"partner(?:s|ed|ing)?|appoint(?:s|ed|ing)?|endors(?:e|es|ed|ement)|pitch|"
@@ -287,7 +287,7 @@ _GEO_SIGNAL = re.compile(
     re.I,
 )
 
-# Temporal signal — explicit dates/years/quarters/relative-time
+# Temporal signal - explicit dates/years/quarters/relative-time
 _TEMPORAL_SIGNAL = re.compile(
     r"\b(today|yesterday|this\s+(?:week|month|quarter|year)|last\s+(?:week|month)|"
     r"q[1-4]\b|detty\s+december|ramadan|eid|christmas|nye|new\s+year|"
@@ -296,7 +296,7 @@ _TEMPORAL_SIGNAL = re.compile(
     re.I,
 )
 
-# Domain reject list — job boards / academic / ecommerce education sites must
+# Domain reject list - job boards / academic / ecommerce education sites must
 # never reach LLM enrichment regardless of snippet text.
 _REJECT_DOMAINS = (
     "researchgate.net", "academia.edu", "jstor.org",
@@ -313,7 +313,7 @@ def pass1_keep(title: str, snippet: str, source_key: Optional[str] = None, sourc
 
     Source-aware (v3.3 Addendum):
       - linkedin: rejects "open to work", freelance, hire-me posts.
-      - trade_press: allowlisted — skip the reject patterns since these outlets
+      - trade_press: allowlisted - skip the reject patterns since these outlets
         publish legitimate brand news that sometimes triggers our generic
         "industry think-piece" gate (e.g. "Guide to FMCG marketing").
       - google_web / google_news / None: original v3.3 behaviour.
@@ -353,7 +353,7 @@ def pass1_keep(title: str, snippet: str, source_key: Optional[str] = None, sourc
     if not _COMMERCIAL_INTENT.search(text):
         return {"keep": False, "reason": "No commercial intent verb"}
 
-    # Geo signal — relaxed for trade press (every result is Nigerian by domain).
+    # Geo signal - relaxed for trade press (every result is Nigerian by domain).
     if source_key != "trade_press" and not _GEO_SIGNAL.search(text):
         return {"keep": False, "reason": "No Nigeria geo signal"}
 
@@ -369,7 +369,7 @@ _LINKEDIN_REJECT_PATTERNS = [
 
 
 # ---------------------------------------------------------------------------
-# Pass 2 — LLM enrichment via Emergent LLM Key (Claude Sonnet 4.5)
+# Pass 2 - LLM enrichment via Emergent LLM Key (Claude Sonnet 4.5)
 # ---------------------------------------------------------------------------
 
 LLM_SYSTEM_PROMPT = """\
@@ -395,7 +395,7 @@ CRITICAL RULES
    brand_confidence below 40. DO NOT INVENT A BRAND.
 
 2. When a brand is the entity making the announcement (e.g., a Jaiz Bank
-   Facebook post signing @Alhan_islam), the BRAND is the actor — NOT the
+   Facebook post signing @Alhan_islam), the BRAND is the actor - NOT the
    headline phrase. Read the source domain / publisher to identify the brand.
 
 3. signal_type is exactly one:
@@ -411,7 +411,7 @@ CRITICAL RULES
 
 5. outreach_angle is GENERATIVE, not descriptive:
    "TTA could approach [brand] with [specific creator-led concept] anchored on
-    [specific cultural/seasonal moment or audience truth] — the brief would lead
+    [specific cultural/seasonal moment or audience truth] - the brief would lead
     with [specific creative direction]."
 
 6. outreach_draft is exactly 3 sentences in professional Nigerian English:
@@ -427,14 +427,14 @@ CRITICAL RULES
    be a real source/website logo URL only when available; otherwise return null.
 
 8. likelihood_to_work_with_tta:
-   - "Likely"    — clear creator-led intent, named brief, recent activity
-   - "Unclear"   — brand active but signal ambiguous
-   - "Unlikely"  — non-commercial entity or genuinely no fit
-   - "Confirmed" — explicit pitch invitation or RFP open to TTA
+   - "Likely"    - clear creator-led intent, named brief, recent activity
+   - "Unclear"   - brand active but signal ambiguous
+   - "Unlikely"  - non-commercial entity or genuinely no fit
+   - "Confirmed" - explicit pitch invitation or RFP open to TTA
 
 9. Output JSON only. No preamble, no markdown fences.
 
-OUTPUT SCHEMA — return exactly these fields:
+OUTPUT SCHEMA - return exactly these fields:
 
 {
   "partner_name": string or null,
@@ -514,11 +514,11 @@ def _coerce_brand_type(value: Any) -> Optional[str]:
 
 
 def normalise_card(card: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Defensive coercion — guarantees the v3.3 shape regardless of LLM drift."""
+    """Defensive coercion - guarantees the v3.3 shape regardless of LLM drift."""
     if not isinstance(card, dict):
         return None
     return {
-        # Family A — Brand context
+        # Family A - Brand context
         "partner_name": (card.get("partner_name") or None) if card.get("partner_name") != "null" else None,
         "brand_type": _coerce_brand_type(card.get("brand_type")),
         "industry": card.get("industry") or "Other",
@@ -536,7 +536,7 @@ def normalise_card(card: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         "key_marketing_channels": card.get("key_marketing_channels") or None,
         "marketing_kpis": card.get("marketing_kpis") or None,
         "likelihood_to_work_with_tta": _coerce_likelihood(card.get("likelihood_to_work_with_tta")),
-        # Family B — Discovery-only
+        # Family B - Discovery-only
         "signal_type": _coerce_signal_type(card.get("signal_type")),
         "signal_summary": card.get("signal_summary") or "",
         "signal_strength": _coerce_int_0_100(card.get("signal_strength")),
@@ -564,14 +564,14 @@ async def call_llm_enricher(
     """Single Claude Sonnet 4.5 call via Emergent LLM Key. Returns v3.3 card."""
     key = os.getenv("EMERGENT_LLM_KEY")
     if not key:
-        logger.warning("[Tracker v3.3] EMERGENT_LLM_KEY not set — falling back to heuristics")
+        logger.warning("[Tracker v3.3] EMERGENT_LLM_KEY not set - falling back to heuristics")
         return None
 
     freshness_hint = ""
     if freshness_bucket == "hot":
-        freshness_hint = "- Freshness: HOT (past month) — treat this as a fresh, time-sensitive signal.\n"
+        freshness_hint = "- Freshness: HOT (past month) - treat this as a fresh, time-sensitive signal.\n"
     elif freshness_bucket == "pipeline":
-        freshness_hint = "- Freshness: PIPELINE (past 6 months) — treat this as a longer-cycle opportunity worth nurturing, not breaking news.\n"
+        freshness_hint = "- Freshness: PIPELINE (past 6 months) - treat this as a longer-cycle opportunity worth nurturing, not breaking news.\n"
 
     source_hint = f"- Source channel: {source_label}\n" if source_label else ""
 

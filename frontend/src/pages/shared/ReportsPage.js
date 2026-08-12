@@ -6,7 +6,7 @@ import { FileText, Download, BarChart3, Calendar, TrendingUp, CheckCircle } from
 const reports = [
   {
     id: 1,
-    title: 'YBNL x Jumia — "Street to Screen" Campaign Report',
+    title: 'YBNL x Jumia - "Street to Screen" Campaign Report',
     project: 'PRJ-2026-0015',
     completed: '2026-02-28',
     budget: 22000000,

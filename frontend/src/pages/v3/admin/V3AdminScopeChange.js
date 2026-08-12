@@ -8,7 +8,7 @@ const seededScopeChanges = {
     {
       id: 'sc-1', title: 'Additional 3 social cutdowns', requestedBy: 'Kemi Adebayo (MTN)', requestDate: '18 Nov 2025',
       description: 'Brand requested 3 additional 30-second social cutdowns from the concert footage, optimized for Instagram Reels and TikTok. Original scope was 8 cutdowns; this brings total to 11.',
-      impact: { budget: 4000000, timeline: '3 additional working days', scope: 'Additive — no change to existing deliverables' },
+      impact: { budget: 4000000, timeline: '3 additional working days', scope: 'Additive - no change to existing deliverables' },
       status: 'approved', approvedBy: 'Tope Martins', approvedDate: '19 Nov 2025',
       resolution: 'Scope change amendment executed. ₦4M addendum added to project budget. New total: ₦154M.',
     },
@@ -17,7 +17,7 @@ const seededScopeChanges = {
     {
       id: 'sc-2', title: 'Add Ibadan show date', requestedBy: 'Funke Adebiyi (Star Lager)', requestDate: '28 Feb 2026',
       description: 'Brand requesting addition of an Ibadan show to the Star Nights Tour. Original scope was Lagos, Abuja, Port Harcourt (3 cities). This would add a 4th city.',
-      impact: { budget: 15000000, timeline: '+2 weeks to tour schedule', scope: 'Additive — requires new venue booking, logistics, and additional content package' },
+      impact: { budget: 15000000, timeline: '+2 weeks to tour schedule', scope: 'Additive - requires new venue booking, logistics, and additional content package' },
       status: 'under_review', approvedBy: null, approvedDate: null,
       resolution: null,
     },
@@ -43,7 +43,7 @@ const V3AdminScopeChange = () => {
       <div className="flex items-center justify-between mb-6">
         <div>
           <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">SCOPE CHANGES</p>
-          <h1 className="v3-heading text-xl" style={{ fontFamily: "'Fraunces', serif" }}>{brand?.company?.split(' ')[0]} — {project.title}</h1>
+          <h1 className="v3-heading text-xl" style={{ fontFamily: "'Fraunces', serif" }}>{brand?.company?.split(' ')[0]} - {project.title}</h1>
           <p className="text-[#8A8A8A] text-sm">{changes.length} scope change{changes.length !== 1 ? 's' : ''} logged</p>
         </div>
         <button className="v3-btn-primary" data-testid="new-scope-change"><Plus className="w-4 h-4" /> Log Scope Change</button>

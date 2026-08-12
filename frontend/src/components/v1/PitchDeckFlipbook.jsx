@@ -5,7 +5,7 @@ import { v3PitchDeckFlipbookUrl } from '../../lib/v3api';
 // Brand-facing Pitch Deck viewer that embeds the EXACT same server-rendered
 // flip book the admin previews (TASCK-blue cover, real page-curl, embedded
 // fonts + logo). Using the shared endpoint guarantees the brand sees a
-// pixel-identical deck — no separate renderer to drift out of sync.
+// pixel-identical deck - no separate renderer to drift out of sync.
 export const PitchDeckFlipbookEmbed = ({ deckId }) => {
   if (!deckId) {
     return (
@@ -276,7 +276,7 @@ export const buildFlipbookHtml = (deck, brandName) => {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${escAttr(title)} — TASCK Pitch Deck</title>
+<title>${escAttr(title)} - TASCK Pitch Deck</title>
 <style>${PF_CSS}</style>
 </head>
 <body>

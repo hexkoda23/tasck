@@ -21,7 +21,7 @@ const priorities = [
   {
     id: 2,
     title: 'Respond to MTN\'s counter-offer.',
-    detail: 'They dropped from ₦75M to ₦62M on the Tems deal. Your options: accept, counter at ₦68M (recommended — 74% close probability), or hold.',
+    detail: 'They dropped from ₦75M to ₦62M on the Tems deal. Your options: accept, counter at ₦68M (recommended - 74% close probability), or hold.',
     action: 'Open Deal Simulator',
     urgency: 'high',
     deal: 'MTN x Tems',
@@ -51,7 +51,7 @@ const dealMovements = [
   { time: 'Yesterday', event: 'UBA signed ₦18M Fireboy deal', type: 'success', deal: 'UBA x Fireboy' },
   { time: 'Yesterday', event: 'Glo deal for Asake fell through', type: 'error', deal: 'Glo x Asake' },
   { time: '2 days ago', event: 'Access Bank moved to NDA stage', type: 'info', deal: 'Access Bank x Davido' },
-  { time: '2 days ago', event: '₦12M escrow released — Rema x Boomplay', type: 'success', deal: 'Rema x Boomplay' }
+  { time: '2 days ago', event: '₦12M escrow released - Rema x Boomplay', type: 'success', deal: 'Rema x Boomplay' }
 ];
 
 const pipelineStages = [
@@ -68,7 +68,7 @@ const totalPipeline = pipelineStages.reduce((a, s) => a + s.value, 0);
 
 const copilotMessages = [
   { role: 'copilot', text: "I've been monitoring your pipeline overnight. Three things need attention: the Guinness contract is aging (48h with Burna's team), the MTN counter needs a response, and I found a new signal from Star Lager that looks very promising." },
-  { role: 'copilot', text: "Star Lager filed a trademark for 'Star Music Live' — this has 92% confidence as a deal signal. Their social ad spend is up 340% in 30 days and they have a new CMO from Diageo. I'd recommend reaching out today. Want me to draft outreach?" }
+  { role: 'copilot', text: "Star Lager filed a trademark for 'Star Music Live' - this has 92% confidence as a deal signal. Their social ad spend is up 340% in 30 days and they have a new CMO from Diageo. I'd recommend reaching out today. Want me to draft outreach?" }
 ];
 
 const CommandCenter = () => {
@@ -81,7 +81,7 @@ const CommandCenter = () => {
     <div className="space-y-6 animate-fade-in" data-testid="v2-command-center">
       {/* Three-zone layout */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
-        {/* LEFT ZONE — The Briefing (60%) */}
+        {/* LEFT ZONE - The Briefing (60%) */}
         <div className="lg:col-span-3 space-y-5">
           {/* Header */}
           <div>
@@ -97,7 +97,7 @@ const CommandCenter = () => {
               <h2 className="text-white/60 text-xs font-medium uppercase tracking-wider">Revenue Pulse</h2>
             </div>
             <p className="text-white/70 text-sm leading-relaxed mb-4">
-              You're at <span className="text-white font-bold font-mono">₦234.8M</span> YTD against a ₦500M target (<span className="text-white font-medium">47%</span>). At current velocity, you'll hit ₦480M by December — ₦20M short. The <span className="text-[#22C55E] font-medium">Coca-Cola deal (₦150M)</span> would put you well over target. Prioritize it.
+              You're at <span className="text-white font-bold font-mono">₦234.8M</span> YTD against a ₦500M target (<span className="text-white font-medium">47%</span>). At current velocity, you'll hit ₦480M by December - ₦20M short. The <span className="text-[#22C55E] font-medium">Coca-Cola deal (₦150M)</span> would put you well over target. Prioritize it.
             </p>
             <div className="relative h-2 bg-white/[0.06] rounded-full overflow-hidden">
               <div className="absolute inset-y-0 left-0 bg-gradient-to-r from-[#2F55FF] to-[#22C55E] rounded-full" style={{ width: '47%' }} />
@@ -153,7 +153,7 @@ const CommandCenter = () => {
                       <span className="text-[9px] px-1.5 py-0.5 rounded text-white/30 bg-white/[0.04] font-mono">{sig.type}</span>
                       <span className="text-[10px] text-white/20">{sig.time}</span>
                     </div>
-                    <p className="text-white/50 text-xs">{sig.source} — <span className="text-white/80">{sig.title}</span></p>
+                    <p className="text-white/50 text-xs">{sig.source} - <span className="text-white/80">{sig.title}</span></p>
                     <div className="flex items-center gap-3 mt-1.5">
                       <span className="text-[10px] text-white/30">Confidence: <span className="text-white/60 font-mono">{sig.confidence}%</span></span>
                       <span className="text-[10px] text-white/30">Est: <span className="text-[#22C55E] font-mono">{sig.est}</span></span>
@@ -211,7 +211,7 @@ const CommandCenter = () => {
                   onClick={() => setPopup({ type: 'stage', data: s })}
                   className="flex items-center justify-center cursor-pointer hover:opacity-80 transition-opacity relative group"
                   style={{ width: `${(s.value / totalPipeline) * 100}%`, background: `${s.color}20`, borderLeft: `2px solid ${s.color}` }}
-                  title={`${s.stage}: ${s.count} deals — ${formatNaira(s.value, { compact: true })}`}
+                  title={`${s.stage}: ${s.count} deals - ${formatNaira(s.value, { compact: true })}`}
                 >
                   <span className="text-[8px] font-mono text-white/50 group-hover:text-white/80 transition-colors">{s.count}</span>
                 </div>

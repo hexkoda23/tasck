@@ -1,4 +1,4 @@
-// Tiny modal shell — used by V3 admin flows.
+// Tiny modal shell - used by V3 admin flows.
 import React from 'react';
 import { X } from 'lucide-react';
 

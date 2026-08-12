@@ -1,4 +1,4 @@
-// Import Existing Project — for projects built outside the system that have
+// Import Existing Project - for projects built outside the system that have
 // already passed the alignment stage. Creates a Business Case in the Plan
 // stage (alignment bypassed) and lands the admin on the Creator Selector.
 import React, { useEffect, useRef, useState } from 'react';
@@ -9,15 +9,15 @@ import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { v3GetBrands, v3ImportExistingProject, v3ExtractImportProjectDoc } from '../../lib/v3api';
 
 const CURRENCY_OPTIONS = [
-  { code: 'NGN', label: 'NGN — Nigerian Naira' },
-  { code: 'USD', label: 'USD — US Dollar' },
-  { code: 'GBP', label: 'GBP — British Pound' },
-  { code: 'EUR', label: 'EUR — Euro' },
-  { code: 'GHS', label: 'GHS — Ghanaian Cedi' },
-  { code: 'KES', label: 'KES — Kenyan Shilling' },
-  { code: 'ZAR', label: 'ZAR — South African Rand' },
-  { code: 'CAD', label: 'CAD — Canadian Dollar' },
-  { code: 'AUD', label: 'AUD — Australian Dollar' },
+  { code: 'NGN', label: 'NGN - Nigerian Naira' },
+  { code: 'USD', label: 'USD - US Dollar' },
+  { code: 'GBP', label: 'GBP - British Pound' },
+  { code: 'EUR', label: 'EUR - Euro' },
+  { code: 'GHS', label: 'GHS - Ghanaian Cedi' },
+  { code: 'KES', label: 'KES - Kenyan Shilling' },
+  { code: 'ZAR', label: 'ZAR - South African Rand' },
+  { code: 'CAD', label: 'CAD - Canadian Dollar' },
+  { code: 'AUD', label: 'AUD - Australian Dollar' },
 ];
 
 const EMPTY_FORM = {
@@ -114,7 +114,7 @@ export default function V1ImportExistingProject() {
       const data = await v3ExtractImportProjectDoc(file);
       applyExtracted(data?.fields || {});
       if (data?.analysis_source && data.analysis_source !== 'none') {
-        setExtractNote('Details extracted — review the pre-filled form below and adjust anything before importing.');
+        setExtractNote('Details extracted - review the pre-filled form below and adjust anything before importing.');
       } else {
         setExtractNote('The document was read, but AI extraction was unavailable. Fill in the form manually.');
       }
@@ -171,7 +171,7 @@ export default function V1ImportExistingProject() {
           description: 'Add a contact email later, then use CRM → Resend credentials to email the brand.',
         });
       } else {
-        toast.success('Project imported', { description: 'Alignment stage bypassed — opening the Creator Selector.' });
+        toast.success('Project imported', { description: 'Alignment stage bypassed - opening the Creator Selector.' });
       }
       navigate(adminRoute(`/business-cases/${res.business_case_id}/frame/creator-scan`));
     } catch (e) {
@@ -197,7 +197,7 @@ export default function V1ImportExistingProject() {
       {/* Upload + AI extract */}
       <div className="v3-card p-5" data-testid="import-upload-card">
         <p className="text-[13px] font-semibold text-[#1A1A1A]">1. Upload the project document <span className="font-normal text-[#8A8A8A]">(optional)</span></p>
-        <p className="text-[12px] text-[#8A8A8A] mt-0.5 mb-3">PDF, DOCX, or TXT — AI extracts the details and pre-fills the form below.</p>
+        <p className="text-[12px] text-[#8A8A8A] mt-0.5 mb-3">PDF, DOCX, or TXT - AI extracts the details and pre-fills the form below.</p>
         <input
           ref={fileInputRef}
           type="file"
@@ -329,7 +329,7 @@ export default function V1ImportExistingProject() {
 
         <div>
           <label className={labelClass}>Objectives</label>
-          <textarea value={form.objectives} onChange={set('objectives')} rows={2} placeholder="Key marketing objectives — helps the AI creator scan." className={fieldClass} data-testid="import-objectives-input" />
+          <textarea value={form.objectives} onChange={set('objectives')} rows={2} placeholder="Key marketing objectives - helps the AI creator scan." className={fieldClass} data-testid="import-objectives-input" />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -343,7 +343,7 @@ export default function V1ImportExistingProject() {
           </div>
         </div>
 
-        {/* Brand contact — REQUIRED so we can send login + future docs to
+        {/* Brand contact - REQUIRED so we can send login + future docs to
             the right person. Only phone is optional. */}
         <div className="pt-2 border-t border-[#F1ECDF]">
           <p className="text-[13px] font-semibold text-[#1A1A1A]">3. Brand contact <span className="text-[#B54A37]">*</span> <span className="font-normal text-[#8A8A8A]">(so we can email them the login + future documents)</span></p>

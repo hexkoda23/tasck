@@ -112,7 +112,7 @@ export const BrandAnalytics = () => {
               <div key={platform.platform}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[#475569] text-sm">{platform.platform}</span>
-                  <span className="text-[#64748B] text-sm">{platform.percentage}% — {platform.impressions}</span>
+                  <span className="text-[#64748B] text-sm">{platform.percentage}% - {platform.impressions}</span>
                 </div>
                 <div className="h-3 bg-[#F8FAFC] rounded-full overflow-hidden">
                   <div className={`h-full ${platform.color} rounded-full`} style={{ width: `${platform.percentage}%` }}></div>

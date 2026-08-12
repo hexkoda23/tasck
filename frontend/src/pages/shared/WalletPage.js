@@ -28,27 +28,27 @@ const walletDataByRole = {
 
 const transactionsByRole = {
   brand: [
-    { id: 1, type: 'debit', desc: 'Escrow Funding — Burna Boy Campaign Phase 2', amount: 15000000, date: '2026-02-10', balance: 43200000 },
+    { id: 1, type: 'debit', desc: 'Escrow Funding - Burna Boy Campaign Phase 2', amount: 15000000, date: '2026-02-10', balance: 43200000 },
     { id: 2, type: 'debit', desc: 'TASCK Platform Fee (15%)', amount: 2775000, date: '2026-02-15', balance: 58200000 },
-    { id: 3, type: 'debit', desc: 'Kelechi Amadi-Obi — Photography', amount: 350000, date: '2026-03-01', balance: 60975000 },
+    { id: 3, type: 'debit', desc: 'Kelechi Amadi-Obi - Photography', amount: 350000, date: '2026-03-01', balance: 60975000 },
     { id: 4, type: 'credit', desc: 'Wallet Top-up from Zenith Bank', amount: 20000000, date: '2026-02-01', balance: 61325000 }
   ],
   super_creative: [
-    { id: 1, type: 'credit', desc: 'Cadbury Nigeria — Milestone 2 Payment', amount: 8000000, date: '2026-03-01', balance: 12500000 },
-    { id: 2, type: 'debit', desc: 'Escrow — Kelechi Amadi-Obi (Photographer)', amount: 750000, date: '2026-02-28', balance: 4500000 },
-    { id: 3, type: 'credit', desc: 'Diageo Nigeria — Johnnie Walker Final', amount: 6250000, date: '2026-02-20', balance: 5250000 },
+    { id: 1, type: 'credit', desc: 'Cadbury Nigeria - Milestone 2 Payment', amount: 8000000, date: '2026-03-01', balance: 12500000 },
+    { id: 2, type: 'debit', desc: 'Escrow - Kelechi Amadi-Obi (Photographer)', amount: 750000, date: '2026-02-28', balance: 4500000 },
+    { id: 3, type: 'credit', desc: 'Diageo Nigeria - Johnnie Walker Final', amount: 6250000, date: '2026-02-20', balance: 5250000 },
     { id: 4, type: 'debit', desc: 'Withdrawal to First Bank ****4521', amount: 5000000, date: '2026-02-15', balance: -1000000 }
   ],
   creative: [
-    { id: 1, type: 'credit', desc: 'Task Approved — Cadbury Product Set 2', amount: 187500, date: '2026-02-21', balance: 2875000 },
-    { id: 2, type: 'credit', desc: 'Task Approved — UBA Portraits Set 3', amount: 150000, date: '2026-02-26', balance: 2687500 },
-    { id: 3, type: 'credit', desc: 'Task Approved — Cadbury Product Set 1', amount: 187500, date: '2026-02-12', balance: 2537500 },
+    { id: 1, type: 'credit', desc: 'Task Approved - Cadbury Product Set 2', amount: 187500, date: '2026-02-21', balance: 2875000 },
+    { id: 2, type: 'credit', desc: 'Task Approved - UBA Portraits Set 3', amount: 150000, date: '2026-02-26', balance: 2687500 },
+    { id: 3, type: 'credit', desc: 'Task Approved - Cadbury Product Set 1', amount: 187500, date: '2026-02-12', balance: 2537500 },
     { id: 4, type: 'debit', desc: 'Withdrawal to GTBank ****9012', amount: 1500000, date: '2026-02-05', balance: 2350000 }
   ],
   admin: [
-    { id: 1, type: 'credit', desc: 'Commission — Guinness x Burna Boy deal', amount: 6750000, date: '2026-03-01', balance: 892000000 },
-    { id: 2, type: 'credit', desc: 'Commission — Cadbury x Mavin Records', amount: 4800000, date: '2026-02-28', balance: 885250000 },
-    { id: 3, type: 'debit', desc: 'Escrow Release — Kelechi Photography', amount: 187500, date: '2026-02-21', balance: 880450000 }
+    { id: 1, type: 'credit', desc: 'Commission - Guinness x Burna Boy deal', amount: 6750000, date: '2026-03-01', balance: 892000000 },
+    { id: 2, type: 'credit', desc: 'Commission - Cadbury x Mavin Records', amount: 4800000, date: '2026-02-28', balance: 885250000 },
+    { id: 3, type: 'debit', desc: 'Escrow Release - Kelechi Photography', amount: 187500, date: '2026-02-21', balance: 880450000 }
   ]
 };
 

@@ -1,11 +1,11 @@
-"""TASCK OS Opportunity Tracker — Deduplication & Accuracy Layer.
+"""TASCK OS Opportunity Tracker - Deduplication & Accuracy Layer.
 
 Additive layer (does NOT change v3.3 card schema). Three stages:
-  A. Pre-LLM exact URL dedupe — normalise canonical URL.
-  B. Post-LLM semantic dedupe — match on
+  A. Pre-LLM exact URL dedupe - normalise canonical URL.
+  B. Post-LLM semantic dedupe - match on
        normalized_partner_name + signal_type + event_signature
        + country + freshness_bucket.
-  C. Fuzzy dedupe — SequenceMatcher on partner_name (>0.85) + signal_summary
+  C. Fuzzy dedupe - SequenceMatcher on partner_name (>0.85) + signal_summary
        (>0.75) when (B) misses (casing/punctuation variants of the same brand).
 
 Merge rules (spec §4):
@@ -24,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 # ---------------------------------------------------------------------------
-# Stage A — URL normalisation
+# Stage A - URL normalisation
 # ---------------------------------------------------------------------------
 
 # Tracking params we silently strip when computing the canonical URL.
@@ -72,7 +72,7 @@ def normalize_url(url: Optional[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stage B — Brand & event normalisation
+# Stage B - Brand & event normalisation
 # ---------------------------------------------------------------------------
 
 # Suffixes to strip when comparing brand names. Order matters (longest first).
@@ -108,7 +108,7 @@ def normalize_brand_name(name: Optional[str]) -> str:
         if s.startswith(art):
             s = s[len(art):]
             break
-    # Drop suffixes (apply repeatedly — "Nigeria Limited" then "Group")
+    # Drop suffixes (apply repeatedly - "Nigeria Limited" then "Group")
     changed = True
     while changed:
         changed = False
@@ -132,7 +132,7 @@ _STOPWORDS = {
     "signs", "unveils", "unveiled", "announces", "announced", "launches",
     "launched", "partners", "partnered", "deal", "deals", "endorsement",
     "endorsements", "nigeria", "nigerian", "lagos", "abuja",
-    # Channels / platforms / sources — never count as event identifiers
+    # Channels / platforms / sources - never count as event identifiers
     "linkedin", "instagram", "facebook", "twitter", "tiktok", "youtube",
     "google", "news", "press", "newspaper", "magazine", "podcast",
 }
@@ -141,15 +141,15 @@ _NAME_TOKEN = re.compile(r"\b[A-Z][a-zA-Z'-]{2,}(?:\s+[A-Z][a-zA-Z'-]{2,}){0,2}\
 
 
 def extract_event_signature(signal_summary: Optional[str], detected_keywords: Optional[Iterable[str]] = None, brand_name: Optional[str] = None) -> str:
-    """Return a stable signature of the "what happened" — usually a creator/talent
+    """Return a stable signature of the "what happened" - usually a creator/talent
     name or campaign name extracted from the LLM signal_summary.
 
     Strategy:
       1. Pull capitalised name spans (likely talent / campaign names) from the
-         summary — drop generic words AND the brand's own tokens.
+         summary - drop generic words AND the brand's own tokens.
       2. Fall back to LLM `detected_keywords` (excluding brand-like and generic
          tokens) if no capitalised span found.
-      3. Sort + join — order-independent.
+      3. Sort + join - order-independent.
     """
     # Tokens that belong to the brand itself shouldn't anchor the event signature
     brand_tokens: set = set()
@@ -212,7 +212,7 @@ def build_semantic_key(card: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Stage C — Fuzzy duplicate detection
+# Stage C - Fuzzy duplicate detection
 # ---------------------------------------------------------------------------
 
 PARTNER_NAME_THRESHOLD = 0.85
@@ -270,7 +270,7 @@ _NEWS_DOMAINS = {
     "leadership.ng", "dailytrust.com", "channelstv.com", "saharareporters.com",
     "encomium.ng",
 }
-# Gossip / repost / aggregator pages — penalise
+# Gossip / repost / aggregator pages - penalise
 _GOSSIP_DOMAINS = {
     "instablog9ja.com", "instablog9ja",
     "gistlover.com", "linda-ikeji.com", "lindaikejisblog.com",
@@ -279,7 +279,7 @@ _GOSSIP_DOMAINS = {
     "naijabuzz.com", "tundeednut.com", "tooxclusive.com",
     "yabaleftonline.ng", "9jaflaver.com",
 }
-# Brand-owned channels (when verified via account context — best effort by domain)
+# Brand-owned channels (when verified via account context - best effort by domain)
 _BRAND_OWNED_HINTS = {"instagram.com", "facebook.com", "x.com", "twitter.com"}
 
 
@@ -313,7 +313,7 @@ def is_gossip_source(card: Dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 def _field_richness(card: Dict[str, Any]) -> int:
-    """Count populated CRM context fields — favour cards with more LLM data."""
+    """Count populated CRM context fields - favour cards with more LLM data."""
     keys = (
         "key_marketing_focus", "primary_target_audience",
         "key_marketing_channels", "marketing_kpis",
@@ -327,7 +327,7 @@ def _field_richness(card: Dict[str, Any]) -> int:
 def _primary_sort_key(card: Dict[str, Any]) -> Tuple[int, int, int, int, str]:
     """Sort cards so the BEST primary is first.
 
-    Negative numbers because Python sorts ascending — smaller = better.
+    Negative numbers because Python sorts ascending - smaller = better.
     """
     return (
         -int(card.get("brand_confidence") or 0),
@@ -355,7 +355,7 @@ def merge_into_primary(primary: Dict[str, Any], duplicates: List[Dict[str, Any]]
 
     supporting: List[Dict[str, Any]] = list(primary.get("supporting_sources") or [])
 
-    # Field-by-field "keep the strongest" merge — only fill primary if blank
+    # Field-by-field "keep the strongest" merge - only fill primary if blank
     enrich_keys = (
         "key_marketing_focus", "primary_target_audience",
         "key_marketing_channels", "marketing_kpis",
@@ -393,7 +393,7 @@ def merge_into_primary(primary: Dict[str, Any], duplicates: List[Dict[str, Any]]
         if (dup.get("signal_type") or "unknown") == same_action_signals:
             bonus_strength += {3: 3, 2: 2, 1: 1, 0: 0}.get(weight, 0)
 
-    # Gossip penalty if PRIMARY is gossip (and we have no better source) — leave
+    # Gossip penalty if PRIMARY is gossip (and we have no better source) - leave
     # primary alone; caller already picked the most reliable, but apply -5 if
     # the chosen primary itself is gossip.
     if is_gossip_source(primary):
@@ -412,7 +412,7 @@ def merge_into_primary(primary: Dict[str, Any], duplicates: List[Dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
-# Top-level entry point — dedupe a fresh batch
+# Top-level entry point - dedupe a fresh batch
 # ---------------------------------------------------------------------------
 
 def dedupe_batch(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -425,7 +425,7 @@ def dedupe_batch(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not cards:
         return []
 
-    # Stage B — exact bucket by semantic key
+    # Stage B - exact bucket by semantic key
     buckets: Dict[str, List[Dict[str, Any]]] = {}
     for card in cards:
         key = build_semantic_key(card)
@@ -437,7 +437,7 @@ def dedupe_batch(cards: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         others = [c for c in group if c is not primary]
         primaries.append(merge_into_primary(primary, others))
 
-    # Stage C — fuzzy pass across primaries (catches casing variants the
+    # Stage C - fuzzy pass across primaries (catches casing variants the
     # semantic key missed because normalize_brand_name disagreed slightly).
     merged: List[Dict[str, Any]] = []
     for card in sorted(primaries, key=_primary_sort_key):
@@ -469,7 +469,7 @@ def find_db_duplicate(card: Dict[str, Any], existing_rows: List[Dict[str, Any]])
             return row
         if build_semantic_key(row) == target_key and target_key.split("|")[0]:
             return row
-    # Fuzzy fallback (more expensive — only attempt if we still missed)
+    # Fuzzy fallback (more expensive - only attempt if we still missed)
     for row in existing_rows:
         if is_fuzzy_duplicate(row, card):
             return row
@@ -491,7 +491,7 @@ _JUNK_TITLE_PATTERNS = [
 
 
 def passes_visibility_gate(card: Dict[str, Any]) -> tuple:
-    """Spec §1 — strict CRM-readiness check.
+    """Spec §1 - strict CRM-readiness check.
 
     Returns (passes: bool, reason: str). Cards that fail this gate get
     `pipeline_state="dismissed_auto"` and are never rendered to the RM queue.

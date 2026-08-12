@@ -1,4 +1,4 @@
-"""TASCK OS v3 — Backend Seed Data
+"""TASCK OS v3 - Backend Seed Data
 
 All fictional/demo brand records have been removed.
 Real data is imported from the CRM workbook by v3_workbook_import.py.
@@ -38,7 +38,7 @@ V3_INTERACTIONS = []
 
 
 def get_v3_seed_data():
-    """Returns empty collections — all real data comes from the workbook importer."""
+    """Returns empty collections - all real data comes from the workbook importer."""
     return {
         "v3_brands": V3_BRANDS,
         "v3_contacts": V3_CONTACTS,

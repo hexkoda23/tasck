@@ -5,7 +5,7 @@ import { FileText, Send, CheckCircle, Clock, AlertCircle, Download, Eye, Plus, X
 const contracts = [
   {
     id: 'CTR-2026-001',
-    title: 'Guinness x Burna Boy — "Black Shines Brightest" Campaign',
+    title: 'Guinness x Burna Boy - "Black Shines Brightest" Campaign',
     type: 'Brand Campaign Agreement',
     value: 45000000,
     status: 'pending_signature',
@@ -19,7 +19,7 @@ const contracts = [
   },
   {
     id: 'CTR-2026-002',
-    title: 'MTN x Tems — Brand Ambassador Agreement',
+    title: 'MTN x Tems - Brand Ambassador Agreement',
     type: 'Ambassador Agreement',
     value: 68000000,
     status: 'draft',
@@ -33,7 +33,7 @@ const contracts = [
   },
   {
     id: 'CTR-2025-018',
-    title: "Smithwick's x Don Jazzy — Music Series",
+    title: "Smithwick's x Don Jazzy - Music Series",
     type: 'Content Production Agreement',
     value: 25000000,
     status: 'fully_signed',
@@ -47,7 +47,7 @@ const contracts = [
   },
   {
     id: 'CTR-2025-015',
-    title: 'Kelechi Amadi-Obi — Freelance Photographer Contract',
+    title: 'Kelechi Amadi-Obi - Freelance Photographer Contract',
     type: 'Freelance Services Agreement',
     value: 750000,
     status: 'fully_signed',

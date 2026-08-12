@@ -404,7 +404,7 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
           ? 'Creator Briefing Call: Selected creator'
         : mode === 'creator_fit'
           ? 'Creator Fit Call: Selected creator'
-          : 'Business Call — Connect: Brand intake',
+          : 'Business Call - Connect: Brand intake',
     stage: mode === 'creator_fit' || mode === 'creator_briefing' ? 'plan' : mode === 'connector' ? 'connect' : 'before_crm',
     entity_name: '',
     business_case_title: '',
@@ -449,7 +449,7 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
               className="v3-heading text-xl"
               style={{ fontFamily: "'Fraunces', serif" }}
             >
-              {mode === 'qualification' ? 'Qualification Call' : mode === 'creator_briefing' ? 'Creator Briefing Call' : mode === 'creator_fit' ? 'Creator Fit Call' : 'Business Call — Connect'}
+              {mode === 'qualification' ? 'Qualification Call' : mode === 'creator_briefing' ? 'Creator Briefing Call' : mode === 'creator_fit' ? 'Creator Fit Call' : 'Business Call - Connect'}
             </h2>
           </div>
           <button
@@ -550,7 +550,7 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
             />
           </label>
 
-          {/* AI recommended questions — feeds Alignment & Strategy Snapshots */}
+          {/* AI recommended questions - feeds Alignment & Strategy Snapshots */}
           <div className="md:col-span-2 p-4 rounded-lg bg-[#F4F2EC] border border-[#E8E4DB]" data-testid="schedule-ai-questions">
             <div className="flex items-center justify-between mb-2">
               <p className="text-[11px] uppercase tracking-wider text-[#1F4A3A] font-semibold">AI recommended questions</p>
@@ -589,7 +589,7 @@ const ScheduleModal = ({ mode, onClose, onSaved }) => {
             ) : mode === 'creator_fit' ? (
               'Schedule Creator Fit Call'
             ) : (
-              'Schedule Business Call — Connect'
+              'Schedule Business Call - Connect'
             )}
           </button>
         </div>
@@ -659,7 +659,7 @@ export const V3AdminMeetingsOverview = () => {
     <div data-testid="v3-admin-meetings-overview">
       <PageHeader
         title="Meetings"
-        subtitle="Track qualification, Business Call — Connect, Creator Fit, and Creator Briefing calls with clear AI decisions and follow-ups."
+        subtitle="Track qualification, Business Call - Connect, Creator Fit, and Creator Briefing calls with clear AI decisions and follow-ups."
       />
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-5">
         <MeetingOverviewCard
@@ -675,7 +675,7 @@ export const V3AdminMeetingsOverview = () => {
         <MeetingOverviewCard
           icon={Briefcase}
           eyebrow="Connect phase"
-          title="Business Call — Connect"
+          title="Business Call - Connect"
           description="Business calls used to gather the brand details needed for the Alignment Snapshot: objective, audience, channels, KPIs, budget, timeline, approval owner, and constraints."
           count={loading ? '…' : counts.connector}
           button="Open Connect Calls"
@@ -736,23 +736,23 @@ export const V3AdminMeetingsOverview = () => {
 
 const callStatusTone = (status) => {
   const s = String(status || '').toLowerCase().replace(/[\s_-]+/g, '');
-  // High urgency — needs immediate action (red)
+  // High urgency - needs immediate action (red)
   if (['pending', 'needsaction', 'overdue', 'needsscheduling', 'needsbusinesscall', 'awaitingowner'].includes(s)) {
     return 'bg-[#FCE8E6] text-[#B42318] border border-[#F4B7B0]';
   }
-  // Medium urgency — in motion, attention (amber)
+  // Medium urgency - in motion, attention (amber)
   if (['connecting', 'rescheduled', 'inprogress', 'awaitingresponse', 'inreview'].includes(s)) {
     return 'bg-[#FEF3D6] text-[#92580B] border border-[#F5D88A]';
   }
-  // Calm/positive — good state (green)
+  // Calm/positive - good state (green)
   if (['scheduled', 'confirmed', 'completed', 'done', 'accepted', 'approved'].includes(s)) {
     return 'bg-[#DDF0E1] text-[#1F6B3A] border border-[#A4D4B0]';
   }
-  // Neutral — finalised/no action (grey)
+  // Neutral - finalised/no action (grey)
   if (['cancelled', 'declined', 'closed', 'archived', 'deleted'].includes(s)) {
     return 'bg-[#EDEAE2] text-[#6E6657] border border-[#D4CDBF]';
   }
-  // Default — gentle neutral
+  // Default - gentle neutral
   return 'bg-[#EDEAE2] text-[#6E6657] border border-[#D4CDBF]';
 };
 
@@ -966,7 +966,7 @@ export const V3AdminConnectorCalls = () => {
         <ArrowLeft className="w-3.5 h-3.5" /> Back to Meetings
       </button>
       <PageHeader
-        title="Business Call — Connect"
+        title="Business Call - Connect"
         subtitle="The same linked flow as Business Case Connect: brand info, scheduling, email, questions, transcript, AI result, promote, reschedule, or delete."
         action={
           <button onClick={() => setScheduleOpen(true)} className="v3-btn-primary">
@@ -982,7 +982,7 @@ export const V3AdminConnectorCalls = () => {
       ) : calls.length === 0 && cases.length === 0 ? (
         <div className="v3-card p-10 flex flex-col items-center gap-2">
           <Briefcase className="w-8 h-8 text-[#D4CDBF]" strokeWidth={1} />
-          <p className="text-[13px] text-[#8A8A8A]">No Business Call — Connect records yet.</p>
+          <p className="text-[13px] text-[#8A8A8A]">No Business Call - Connect records yet.</p>
           <p className="text-[11px] text-[#8A8A8A]">
             Move an accepted CRM brand into a Business Call to gather Alignment Snapshot context.
           </p>
@@ -1448,7 +1448,7 @@ export const V3AdminQualificationCallDetail = () => {
                   onClick={() => navigate(entityType === 'creator' ? '/v3/admin/creators' : '/v3/admin/meetings/business-calls')}
                   className="v3-btn-secondary text-[11px]"
                 >
-                  {entityType === 'creator' ? 'Open Creator Roster' : 'Open Business Call — Connect'}
+                  {entityType === 'creator' ? 'Open Creator Roster' : 'Open Business Call - Connect'}
                 </button>
               </div>
             )}
@@ -1659,7 +1659,7 @@ export const V3AdminConnectorCallDetail = () => {
         action={
           <div className="flex flex-wrap gap-2">
             <Badge tone={isCreatorFit ? 'bg-[#F5D9D2] text-[#B54A37]' : 'bg-[#DDE7E2] text-[#1F4A3A]'}>
-              {isCreatorBriefing ? 'Creator Briefing Call' : isCreatorFit ? 'Creator Fit Call' : 'Business Call — Connect'}
+              {isCreatorBriefing ? 'Creator Briefing Call' : isCreatorFit ? 'Creator Fit Call' : 'Business Call - Connect'}
             </Badge>
             <Badge tone="bg-[#DDE7E2] text-[#1F4A3A]">{isCreatorFit ? 'Plan phase' : 'Connect phase'}</Badge>
           </div>

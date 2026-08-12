@@ -5,7 +5,7 @@ import { FolderOpen, Search, Plus, Clock, CheckCircle, AlertCircle, ArrowRight }
 const campaigns = [
   {
     id: 'CMP-001',
-    title: 'Guinness x Burna Boy — "Black Shines Brightest"',
+    title: 'Guinness x Burna Boy - "Black Shines Brightest"',
     status: 'active',
     artist: 'Spaceship (Burna Boy)',
     budget: 45000000,
@@ -18,7 +18,7 @@ const campaigns = [
   },
   {
     id: 'CMP-002',
-    title: 'Guinness Foreign Extra — "Made of Black" Q2',
+    title: 'Guinness Foreign Extra - "Made of Black" Q2',
     status: 'active',
     artist: 'DMW (Davido)',
     budget: 38000000,
@@ -31,7 +31,7 @@ const campaigns = [
   },
   {
     id: 'CMP-003',
-    title: 'Smithwick\'s x Don Jazzy — Music Series',
+    title: 'Smithwick\'s x Don Jazzy - Music Series',
     status: 'review',
     artist: 'Mavin Records (Don Jazzy)',
     budget: 25000000,
@@ -44,7 +44,7 @@ const campaigns = [
   },
   {
     id: 'CMP-004',
-    title: 'Harp Lager — Festive Season 2025',
+    title: 'Harp Lager - Festive Season 2025',
     status: 'completed',
     artist: 'YBNL (Olamide)',
     budget: 15000000,
@@ -170,7 +170,7 @@ export const BrandCampaigns = () => {
                   <p className="text-[#94A3B8] text-xs">Pending</p>
                 </div>
                 <div className="bg-[#F8FAFC] rounded-lg p-3 text-center">
-                  <p className="text-[#64748B] text-sm">{campaign.startDate} — {campaign.endDate}</p>
+                  <p className="text-[#64748B] text-sm">{campaign.startDate} - {campaign.endDate}</p>
                   <p className="text-[#94A3B8] text-xs">Timeline</p>
                 </div>
               </div>

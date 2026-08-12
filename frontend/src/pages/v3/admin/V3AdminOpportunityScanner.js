@@ -35,7 +35,7 @@ const defaultTemplate = {
   campaign_types: 'brand ambassador program, celebrity partnership, celebrity endorsement deal, brand partnership opportunity, influencer campaign open application, creator campaign',
   recency: 'past_year',
   result_limit: 10,
-  // v3.3 Addendum — multi-source fan-out controls
+  // v3.3 Addendum - multi-source fan-out controls
   enabled_sources: ['google_web', 'google_news', 'linkedin', 'trade_press'],
   hot_ratio: 0.6,
   per_source_limit: 10,
@@ -86,7 +86,7 @@ const V3AdminOpportunityScanner = () => {
   const [error, setError] = useState('');
   const [demoMode, setDemoMode] = useState(false);
   const [pipelineCounts, setPipelineCounts] = useState({});
-  // v3.3 Addendum — UI filters
+  // v3.3 Addendum - UI filters
   const [sourceFilter, setSourceFilter] = useState('all'); // 'all' | source_key
   const [freshnessFilter, setFreshnessFilter] = useState('all'); // 'all' | 'hot' | 'pipeline'
   // Async scan polling
@@ -151,7 +151,7 @@ const V3AdminOpportunityScanner = () => {
       const data = await r.json();
       setPipelineCounts(data || {});
     } catch (e) {
-      // silent — counters are non-essential
+      // silent - counters are non-essential
     }
   };
 
@@ -213,7 +213,7 @@ const V3AdminOpportunityScanner = () => {
           campaign_types: splitList(template.campaign_types),
           recency: template.recency,
           result_limit: Number(template.result_limit) || 10,
-          // v3.3 Addendum — multi-source fan-out
+          // v3.3 Addendum - multi-source fan-out
           enabled_sources: template.enabled_sources,
           hot_ratio: Number(template.hot_ratio) || 0.6,
           per_source_limit: Number(template.per_source_limit) || 10,
@@ -224,7 +224,7 @@ const V3AdminOpportunityScanner = () => {
       // eslint-disable-next-line no-console
       console.log('[SerpAPI Scan] initial response →', initial);
 
-      // ---- Async (default) — poll for completion ----
+      // ---- Async (default) - poll for completion ----
       if (initial?.async && initial?.scan?.id) {
         const scanId = initial.scan.id;
         setPollingScanId(scanId);
@@ -239,7 +239,7 @@ const V3AdminOpportunityScanner = () => {
           try {
             snap = await v3GetOpportunityScan(scanId);
           } catch (pollErr) {
-            // Transient ingress hiccup — keep polling
+            // Transient ingress hiccup - keep polling
             // eslint-disable-next-line no-console
             console.warn('[Scanner poll] transient error', pollErr);
             continue;
@@ -272,14 +272,14 @@ const V3AdminOpportunityScanner = () => {
             return;
           }
         }
-        // Timed out polling — surface a clear timeout message
+        // Timed out polling - surface a clear timeout message
         setError(`Scan ${scanId} is still ${lastStatus} after ${Math.round(MAX_WAIT_MS / 1000)}s. Open it from the DB or rerun.`);
         setPollingScanId(null);
         setScanProgress('');
         return;
       }
 
-      // ---- Sync (wait=true) fallback — for legacy/tests ----
+      // ---- Sync (wait=true) fallback - for legacy/tests ----
       setScan(initial.scan);
       setCandidates((current) => {
         const next = Array.isArray(initial.candidates) ? initial.candidates : [];
@@ -294,7 +294,7 @@ const V3AdminOpportunityScanner = () => {
       const message = describeError(e);
       setError(message);
       // Only fall back to demo data when the backend is genuinely unreachable
-      // (NOT for 4xx/5xx with a real response — those are diagnosable).
+      // (NOT for 4xx/5xx with a real response - those are diagnosable).
       const noResponse = !e?.response;
       if (noResponse) {
         setCandidates((current) => (current.length ? current : demoOpportunityCandidates));
@@ -469,7 +469,7 @@ const V3AdminOpportunityScanner = () => {
                 </div>
               </div>
 
-              {/* v3.3 Addendum — Source toggles */}
+              {/* v3.3 Addendum - Source toggles */}
               <div>
                 <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block mb-2">Sources to scan</label>
                 <div className="flex flex-wrap gap-2" data-testid="opps-template-sources">
@@ -562,7 +562,7 @@ const V3AdminOpportunityScanner = () => {
         </div>
 
         <div className="min-w-0">
-          {/* v3.3 — Counters bar (replaces 3-tab Pending/Accepted/Archive) */}
+          {/* v3.3 - Counters bar (replaces 3-tab Pending/Accepted/Archive) */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4" data-testid="opps-counters">
             {[
               { key: 'new', label: 'New', testid: 'opps-tab-new' },
@@ -600,7 +600,7 @@ const V3AdminOpportunityScanner = () => {
             </button>
           </div>
 
-          {/* v3.3 Addendum — Source + Freshness filter chips */}
+          {/* v3.3 Addendum - Source + Freshness filter chips */}
           <div className="flex flex-wrap items-center gap-2 mb-3" data-testid="opps-filter-chips">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Source:</span>
             {[{ key: 'all', label: 'All' }, ...ALL_SOURCES].map((source) => (
@@ -668,7 +668,7 @@ const V3AdminOpportunityScanner = () => {
 };
 
 // ============================================================================
-// v3.3 Card — TASCK CRM-aligned, empty fields hidden, two-score badge
+// v3.3 Card - TASCK CRM-aligned, empty fields hidden, two-score badge
 // ============================================================================
 const SIGNAL_PILL = {
   creator_signing: { label: 'Creator signing', bg: '#EFE3F5', fg: '#6B3E92' },
@@ -679,8 +679,8 @@ const SIGNAL_PILL = {
 };
 
 const FRESHNESS_PILL = {
-  hot: { label: 'HOT', bg: '#FBE6DE', fg: '#B54A37' },        // past month — burnt orange
-  pipeline: { label: 'PIPELINE', bg: '#E6EEF3', fg: '#1F4A6E' }, // past 6 months — steel blue
+  hot: { label: 'HOT', bg: '#FBE6DE', fg: '#B54A37' },        // past month - burnt orange
+  pipeline: { label: 'PIPELINE', bg: '#E6EEF3', fg: '#1F4A6E' }, // past 6 months - steel blue
 };
 
 const SOURCE_LABEL = {
@@ -706,7 +706,7 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
   const brandConf = candidate.brand_confidence ?? candidate.confidence_score ?? 0;
   const signalStr = candidate.signal_strength ?? candidate.confidence_score ?? 0;
 
-  // Build the "Brand Context" rows — omit any null/empty value
+  // Build the "Brand Context" rows - omit any null/empty value
   const brandContextRows = [
     ['Key Marketing Focus', candidate.key_marketing_focus],
     ['Primary Target Audience', candidate.primary_target_audience],
@@ -714,7 +714,7 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
     ['Marketing KPIs', candidate.marketing_kpis],
   ].filter(([, v]) => v && String(v).trim());
 
-  // Contact line — appears only if at least one contact field is populated
+  // Contact line - appears only if at least one contact field is populated
   const contactParts = [
     candidate.primary_contact_name,
     candidate.primary_contact_role,
@@ -805,7 +805,7 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
         </div>
       )}
 
-      {/* Brand Context — only render if at least one row has data */}
+      {/* Brand Context - only render if at least one row has data */}
       {brandContextRows.length > 0 && (
         <div className="mb-4 border-t border-[#E8E4DB] pt-3">
           <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-2">Brand Context</p>
@@ -820,7 +820,7 @@ const V33Card = ({ candidate, busy, activeTab, onAccept, onReject, onTransition,
         </div>
       )}
 
-      {/* Contact — only if any contact field is set */}
+      {/* Contact - only if any contact field is set */}
       {contactParts.length > 0 && (
         <div className="mb-4 border-t border-[#E8E4DB] pt-3">
           <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A] mb-1">Contact (if found)</p>

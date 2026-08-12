@@ -315,7 +315,7 @@ const V3AdminCRM = () => {
         <div className="space-y-3">
           {[
             { k: 'company', label: 'Company name', placeholder: 'e.g. Nigerian Breweries PLC' },
-            { k: 'industry', label: 'Industry', placeholder: 'e.g. FMCG — Beverages' },
+            { k: 'industry', label: 'Industry', placeholder: 'e.g. FMCG - Beverages' },
             { k: 'primary_contact', label: 'Primary contact', placeholder: 'e.g. Funke Adebiyi' },
             { k: 'role', label: 'Contact role', placeholder: 'e.g. Brand Manager, Star Lager' },
             { k: 'email', label: 'Contact email (strongly recommended)', placeholder: 'name@brand.com' },

@@ -9,7 +9,7 @@ const threads = [
     name: 'Adenike Ogunlesi',
     role: 'Guinness Nigeria',
     avatar: null,
-    lastMessage: 'Thanks Tunde! Legal is reviewing now. Quick question — can we add a clause...',
+    lastMessage: 'Thanks Tunde! Legal is reviewing now. Quick question - can we add a clause...',
     time: '2 hours ago',
     unread: 2,
     online: true
@@ -59,7 +59,7 @@ const threads = [
 const messages = [
   { id: 1, sender: 'them', name: 'Adenike Ogunlesi', content: 'Hi Tunde, hope you\'re doing well! I wanted to follow up on the Burna Boy campaign proposal.', time: '10:15 AM', read: true },
   { id: 2, sender: 'me', content: 'Hi Adenike! Yes, I just sent over the revised contract for the Burna Boy activation. Let me know if legal has any questions.', time: '10:20 AM', read: true },
-  { id: 3, sender: 'them', name: 'Adenike Ogunlesi', content: 'Thanks Tunde! Legal is reviewing now. Quick question — can we add a clause about social media exclusivity during the campaign period?', time: '10:42 AM', read: true },
+  { id: 3, sender: 'them', name: 'Adenike Ogunlesi', content: 'Thanks Tunde! Legal is reviewing now. Quick question - can we add a clause about social media exclusivity during the campaign period?', time: '10:42 AM', read: true },
   { id: 4, sender: 'me', content: 'Absolutely. I\'ll draft that amendment and send over by EOD. Burna\'s team is flexible on this.', time: '10:45 AM', read: true },
   { id: 5, sender: 'them', name: 'Adenike Ogunlesi', content: 'Perfect. Also, Mark wants to discuss the listening party logistics. Can we do a call Thursday?', time: '11:00 AM', read: false },
   { id: 6, sender: 'them', name: 'Adenike Ogunlesi', content: 'Maybe around 2pm Lagos time?', time: '11:01 AM', read: false }

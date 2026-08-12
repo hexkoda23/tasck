@@ -4,7 +4,7 @@ import { Video, Plus, Clock, CheckCircle, Play, FileText, Sparkles, Mic, Calenda
 
 const meetings = [
   {
-    id: 'MTG-001', title: 'Guinness x Burna Boy — Deal Review', date: '2026-03-02', time: '10:00 AM', duration: '45 min', status: 'transcribed',
+    id: 'MTG-001', title: 'Guinness x Burna Boy - Deal Review', date: '2026-03-02', time: '10:00 AM', duration: '45 min', status: 'transcribed',
     participants: ['Tunde Adeyemi', 'Adenike Okafor', 'James Smith (Guinness)'], recording: true, transcript: true,
     actionItems: [
       { text: 'Send revised contract with updated payment terms to Guinness legal', assignee: 'Tunde Adeyemi', due: '2026-03-04', done: false },
@@ -14,7 +14,7 @@ const meetings = [
     summary: 'Discussed final terms for the Guinness x Burna Boy "Black Shines Brightest" campaign. Guinness confirmed ₦45M budget with milestone-based payments. Key blocker: need to finalize shoot dates before contract signing.'
   },
   {
-    id: 'MTG-002', title: 'MTN x Tems — Counter-Offer Discussion', date: '2026-02-28', time: '2:00 PM', duration: '30 min', status: 'transcribed',
+    id: 'MTG-002', title: 'MTN x Tems - Counter-Offer Discussion', date: '2026-02-28', time: '2:00 PM', duration: '30 min', status: 'transcribed',
     participants: ['Tunde Adeyemi', 'Folake Johnson (MTN)', 'Leading Vibes Team'], recording: true, transcript: true,
     actionItems: [
       { text: 'Draft counter-proposal at ₦68M (midpoint)', assignee: 'Tunde Adeyemi', due: '2026-03-01', done: true },
@@ -26,22 +26,22 @@ const meetings = [
     id: 'MTG-003', title: 'Weekly Pipeline Standup', date: '2026-02-27', time: '9:00 AM', duration: '25 min', status: 'transcribed',
     participants: ['Tunde Adeyemi', 'Adenike Okafor', 'Chidi Nwosu', 'Bola Adekunle'], recording: true, transcript: true,
     actionItems: [
-      { text: 'Follow up on Coca-Cola Coke Studio RFP — deadline March 5', assignee: 'Chidi Nwosu', due: '2026-03-01', done: true },
+      { text: 'Follow up on Coca-Cola Coke Studio RFP - deadline March 5', assignee: 'Chidi Nwosu', due: '2026-03-01', done: true },
       { text: 'Schedule Pepsi brand refresh discovery call', assignee: 'Bola Adekunle', due: '2026-02-28', done: true },
       { text: 'Update CRM with UBA Foundation deal status', assignee: 'Adenike Okafor', due: '2026-02-28', done: true }
     ],
     summary: 'Reviewed pipeline: 5 active deals worth ₦240M. Coca-Cola Coke Studio is highest priority. Pepsi moving to discovery.'
   },
   {
-    id: 'MTG-004', title: 'Coca-Cola — Coke Studio Africa Kickoff', date: '2026-03-03', time: '11:00 AM', duration: '60 min', status: 'scheduled',
+    id: 'MTG-004', title: 'Coca-Cola - Coke Studio Africa Kickoff', date: '2026-03-03', time: '11:00 AM', duration: '60 min', status: 'scheduled',
     participants: ['Tunde Adeyemi', 'Sarah Chen (Coca-Cola)', 'Mavin Records Rep', 'DMW Rep'], recording: false, transcript: false, actionItems: [], summary: null
   },
   {
-    id: 'MTG-005', title: 'Access Bank — Brand Partnership Review', date: '2026-03-04', time: '3:00 PM', duration: '45 min', status: 'scheduled',
+    id: 'MTG-005', title: 'Access Bank - Brand Partnership Review', date: '2026-03-04', time: '3:00 PM', duration: '45 min', status: 'scheduled',
     participants: ['Chidi Nwosu', 'Uche Nnamdi (Access Bank)'], recording: false, transcript: false, actionItems: [], summary: null
   },
   {
-    id: 'MTG-006', title: 'Rema x Boomplay — Content Strategy', date: '2026-02-25', time: '1:00 PM', duration: '35 min', status: 'transcribed',
+    id: 'MTG-006', title: 'Rema x Boomplay - Content Strategy', date: '2026-02-25', time: '1:00 PM', duration: '35 min', status: 'transcribed',
     participants: ['Adenike Okafor', 'Rema Team', 'Boomplay Marketing'], recording: true, transcript: true,
     actionItems: [
       { text: 'Share content calendar with Boomplay team', assignee: 'Adenike Okafor', due: '2026-02-27', done: true },
@@ -50,7 +50,7 @@ const meetings = [
     summary: 'Aligned on exclusive content drops for Rema x Boomplay partnership. 3-month rollout plan agreed. First exclusive drops March 15.'
   },
   {
-    id: 'MTG-007', title: 'UBA Foundation — CSR Campaign Brief', date: '2026-03-05', time: '10:30 AM', duration: '50 min', status: 'scheduled',
+    id: 'MTG-007', title: 'UBA Foundation - CSR Campaign Brief', date: '2026-03-05', time: '10:30 AM', duration: '50 min', status: 'scheduled',
     participants: ['Bola Adekunle', 'UBA CSR Team', 'Davido Foundation Rep'], recording: false, transcript: false, actionItems: [], summary: null
   }
 ];

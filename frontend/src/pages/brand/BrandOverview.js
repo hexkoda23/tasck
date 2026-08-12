@@ -10,16 +10,16 @@ import Avatar from '../../components/shared/Avatar';
 import { FolderOpen, Users, Star, Target, Sparkles, ArrowRight, Eye, TrendingUp, DollarSign, CheckCircle, BarChart3, ChevronRight } from 'lucide-react';
 
 const campaignData = [
-  { id: 'C-001', name: 'Pepsi x DMW — Street Vibes', artist: 'Davido', status: 'Active', budget: 65000000, spent: 42000000, progress: 62, tasks: '54/87', impressions: '12.4M', engagement: '8.2%' },
+  { id: 'C-001', name: 'Pepsi x DMW - Street Vibes', artist: 'Davido', status: 'Active', budget: 65000000, spent: 42000000, progress: 62, tasks: '54/87', impressions: '12.4M', engagement: '8.2%' },
   { id: 'C-002', name: 'Don Jazzy x Cadbury Social', artist: 'Don Jazzy', status: 'Active', budget: 8200000, spent: 3700000, progress: 45, tasks: '6/14', impressions: '3.1M', engagement: '6.7%' },
   { id: 'C-003', name: 'Rema x Boomplay Exclusive', artist: 'Rema', status: 'Active', budget: 12000000, spent: 3600000, progress: 30, tasks: '5/18', impressions: '1.8M', engagement: '11.2%' },
   { id: 'C-004', name: 'Wizkid x Lagos Fashion Week', artist: 'Wizkid', status: 'Completed', budget: 28000000, spent: 27500000, progress: 100, tasks: '42/42', impressions: '18.7M', engagement: '7.9%' }
 ];
 
 const deliverables = [
-  { id: 'DEL-001', title: 'TV Commercial — 30s Cut', campaign: 'Pepsi x DMW', status: 'In Review', submitted: '2h ago', type: 'Video' },
-  { id: 'DEL-002', title: 'Social Media Pack — Instagram', campaign: 'Cadbury Social', status: 'Approved', submitted: '1d ago', type: 'Creative' },
-  { id: 'DEL-003', title: 'Billboard Artwork — Lekki', campaign: 'Pepsi x DMW', status: 'Revision Needed', submitted: '2d ago', type: 'Print' },
+  { id: 'DEL-001', title: 'TV Commercial - 30s Cut', campaign: 'Pepsi x DMW', status: 'In Review', submitted: '2h ago', type: 'Video' },
+  { id: 'DEL-002', title: 'Social Media Pack - Instagram', campaign: 'Cadbury Social', status: 'Approved', submitted: '1d ago', type: 'Creative' },
+  { id: 'DEL-003', title: 'Billboard Artwork - Lekki', campaign: 'Pepsi x DMW', status: 'Revision Needed', submitted: '2d ago', type: 'Print' },
   { id: 'DEL-004', title: 'Boomplay Playlist Artwork', campaign: 'Rema x Boomplay', status: 'Pending', submitted: '3d ago', type: 'Digital' }
 ];
 

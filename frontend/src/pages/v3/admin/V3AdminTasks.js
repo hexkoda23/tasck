@@ -48,7 +48,7 @@ const V3AdminTasks = () => {
             project_id: pid,
             project_title: bc.title,
             brand_label: label,
-            title: `Review / draft Alignment Snapshot — ${bc.title}`,
+            title: `Review / draft Alignment Snapshot - ${bc.title}`,
             assignee_id: rmId,
             assignee_name: bc.rm_name || 'RM',
             priority: 'high',
@@ -62,7 +62,7 @@ const V3AdminTasks = () => {
             project_id: pid,
             project_title: bc.title,
             brand_label: label,
-            title: `Confirm creative brief and creator selection — ${bc.title}`,
+            title: `Confirm creative brief and creator selection - ${bc.title}`,
             assignee_id: rmId,
             assignee_name: bc.rm_name || 'RM',
             priority: 'high',
@@ -76,7 +76,7 @@ const V3AdminTasks = () => {
             project_id: pid,
             project_title: bc.title,
             brand_label: label,
-            title: `Track delivery and deliverable approvals — ${bc.title}`,
+            title: `Track delivery and deliverable approvals - ${bc.title}`,
             assignee_id: rmId,
             assignee_name: bc.rm_name || 'RM',
             priority: 'high',
@@ -250,7 +250,7 @@ const V3AdminTasks = () => {
                 </p>
                 <p className="text-[10px] text-[#8A8A8A]">
                   {task.brand_label}
-                  {task.project_title ? ` — ${task.project_title}` : ''}
+                  {task.project_title ? ` - ${task.project_title}` : ''}
                 </p>
               </div>
               <div

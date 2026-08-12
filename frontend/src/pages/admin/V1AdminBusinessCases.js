@@ -1,5 +1,5 @@
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-// Admin Business Cases — the v3.2 spec primitive (live from /api/v3)
+// Admin Business Cases - the v3.2 spec primitive (live from /api/v3)
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -175,7 +175,7 @@ const V1AdminBusinessCases = () => {
     try {
       [b, c] = await Promise.all([v3GetBrands(), v3GetCreators()]);
     } catch (e) {
-      // API unavailable — brand and creator lists will be empty
+      // API unavailable - brand and creator lists will be empty
     }
     const brandList = Array.isArray(b) ? b : [];
     const creatorList = Array.isArray(c) ? c : [];

@@ -121,7 +121,7 @@ export const CalendarPage = () => {
 
       {/* Today's Schedule */}
       <div className="dashboard-card p-5">
-        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Today's Schedule — March 2, 2026</h2>
+        <h2 className="text-sm font-semibold text-[#0F172A] mb-4">Today's Schedule - March 2, 2026</h2>
         <div className="space-y-4">
           {events.map(event => (
             <div key={event.id} className={`flex items-start gap-4 p-4 rounded-lg border-l-4 bg-[#F8FAFC] ${getEventColor(event.type).split(' ')[1]}`}>

@@ -5,7 +5,7 @@ import { FileText, Download, Eye, CheckCircle, Clock, AlertCircle } from 'lucide
 const contracts = [
   {
     id: 'CTR-2026-0042',
-    title: 'Burna Boy x Guinness Nigeria — Brand Activation',
+    title: 'Burna Boy x Guinness Nigeria - Brand Activation',
     parties: ['Spaceship (Burna Boy)', 'Guinness Nigeria', 'TASCK'],
     value: 45000000,
     status: 'pending_signature',
@@ -15,7 +15,7 @@ const contracts = [
   },
   {
     id: 'CTR-2026-0041',
-    title: 'Tems x MTN Nigeria — Brand Ambassador 2026',
+    title: 'Tems x MTN Nigeria - Brand Ambassador 2026',
     parties: ['Leading Vibes (Tems)', 'MTN Nigeria', 'TASCK'],
     value: 62000000,
     status: 'draft',
@@ -25,7 +25,7 @@ const contracts = [
   },
   {
     id: 'CTR-2026-0038',
-    title: 'Kelechi Amadi-Obi — Concert Photography',
+    title: 'Kelechi Amadi-Obi - Concert Photography',
     parties: ['Kelechi Amadi-Obi', 'Mavin Records', 'TASCK'],
     value: 1500000,
     status: 'signed',
@@ -35,7 +35,7 @@ const contracts = [
   },
   {
     id: 'CTR-2026-0037',
-    title: 'Ade Adesanya — Videography Services',
+    title: 'Ade Adesanya - Videography Services',
     parties: ['Ade Adesanya', 'Mavin Records', 'TASCK'],
     value: 1200000,
     status: 'signed',
@@ -45,7 +45,7 @@ const contracts = [
   },
   {
     id: 'CTR-2026-0035',
-    title: 'Davido x Pepsi Nigeria — National Campaign',
+    title: 'Davido x Pepsi Nigeria - National Campaign',
     parties: ['DMW (Davido)', 'Pepsi Nigeria', 'TASCK'],
     value: 85000000,
     status: 'active',
@@ -55,7 +55,7 @@ const contracts = [
   },
   {
     id: 'CTR-2026-0030',
-    title: 'Don Jazzy x Johnnie Walker — Walk With Giants',
+    title: 'Don Jazzy x Johnnie Walker - Walk With Giants',
     parties: ['Mavin Records (Don Jazzy)', 'Diageo Nigeria', 'TASCK'],
     value: 25000000,
     status: 'active',

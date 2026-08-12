@@ -44,7 +44,7 @@ const V3RoleSelector = () => {
 
         <div className="inline-flex items-center gap-2 mt-6 mb-6 px-3 py-1.5 rounded-full border border-[#E8E4DB] text-xs text-[#8A8A8A]">
           <span className="w-1.5 h-1.5 rounded-full bg-[#1F4A3A]" />
-          TASCK OS v3 — PRD Build
+          TASCK OS v3 - PRD Build
         </div>
 
         <h1 className="text-[#1A1A1A] text-2xl font-bold tracking-tight mb-1" style={{ fontFamily: "'Fraunces', serif" }}>Choose Your Portal</h1>

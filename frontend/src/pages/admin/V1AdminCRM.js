@@ -56,7 +56,7 @@ const normaliseBrand = (b) => ({
   website: b.website || b.url || b.brand_url || b.source_url || '',
   sourceUrl: b.source_url || '',
   // Contact email so we can derive a domain (and therefore a logo) even when
-  // the website is missing — most CRM rows are seeded from an inbound email
+  // the website is missing - most CRM rows are seeded from an inbound email
   // but never have their website filled in.
   email: b.email || b.contact_email || b.primary_contact_email || b.primaryContactEmail || '',
   about: b.about || b.brand_about || b.description || b.company_description || b.notes || '',
@@ -97,7 +97,7 @@ const domainFromWebsite = (website = '') => {
   }
 };
 
-// Corporate email domains that never resolve to the brand's own logo — free
+// Corporate email domains that never resolve to the brand's own logo - free
 // mail providers, generic Nigerian ISPs, etc. When the email domain is one of
 // these we skip the email-based candidate entirely.
 const GENERIC_EMAIL_DOMAINS = new Set([
@@ -120,7 +120,7 @@ const logoCandidatesForBrand = (brand) => {
   const domains = [websiteDomain, emailDomain].filter(Boolean)
     .filter((value, index, array) => array.indexOf(value) === index);
   const domainCandidates = domains.flatMap((domain) => [
-    // Clearbit (`logo.clearbit.com`) was removed here — the service shut down
+    // Clearbit (`logo.clearbit.com`) was removed here - the service shut down
     // and the domain no longer resolves. Ordering now: Google favicons
     // (biggest hit-rate for corporate domains) → DuckDuckGo → own /favicon.
     'https://www.google.com/s2/favicons?sz=256&domain=' + domain,
@@ -546,7 +546,7 @@ const V1AdminCRM = () => {
         <div className="space-y-3">
           {[
             { k: 'company', label: 'Company name', placeholder: 'e.g. Nigerian Breweries PLC', required: true },
-            { k: 'industry', label: 'Industry', placeholder: 'e.g. FMCG — Beverages', required: true },
+            { k: 'industry', label: 'Industry', placeholder: 'e.g. FMCG - Beverages', required: true },
             { k: 'primary_contact', label: 'Primary contact', placeholder: 'e.g. Funke Adebiyi', required: true },
             { k: 'role', label: 'Contact role', placeholder: 'e.g. Brand Manager, Star Lager', required: true },
             { k: 'email', label: 'Contact email (strongly recommended)', placeholder: 'name@brand.com', required: true },

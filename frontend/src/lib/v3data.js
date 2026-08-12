@@ -1,4 +1,4 @@
-// TASCK v3 — Utility Library
+// TASCK v3 - Utility Library
 // All demo/mock/seed data arrays have been removed.
 // Real data is loaded from the backend API via v3api.js.
 //
@@ -14,7 +14,7 @@ export const v3Stages = [
   { key: 'closed', label: 'Closed', color: '#B54A37' },
 ];
 
-// Currency formatter — handles USD ($), Naira (₦), and percentage labels
+// Currency formatter - handles USD ($), Naira (₦), and percentage labels
 export const formatNairaV3 = (amount) => {
   if (amount == null || Number.isNaN(Number(amount))) return '₦0';
   if (amount >= 1000000000) return `₦${(amount / 1000000000).toFixed(1)}B`;

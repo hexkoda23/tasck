@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // REACT_APP_BACKEND_URL must be provided at build time. No hardcoded fallback
-// — a stale fallback would silently point production API calls at the wrong
+// - a stale fallback would silently point production API calls at the wrong
 // domain after a redeploy.
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 const API = `${BACKEND_URL}/api`;

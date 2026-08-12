@@ -14,7 +14,7 @@ expects, plus a matching `v3_brands` record with a real website so the
 CRM Brands page can resolve a real brand logo (see brandLogo.js and
 logoCandidatesForBrand in V1AdminCRM.js).
 
-Existing rows are updated in place — we never orphan brand IDs already
+Existing rows are updated in place - we never orphan brand IDs already
 referenced by business cases, contacts, or projects.
 
 Run:

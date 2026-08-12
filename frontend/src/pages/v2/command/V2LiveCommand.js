@@ -26,14 +26,14 @@ const activeDealsFeed = [
 ];
 
 const teamActivity = [
-  { name: 'Tunde Balogun', role: 'Head of Deals', status: 'In Deal Room — Coca-Cola', time: '2m ago', online: true },
+  { name: 'Tunde Balogun', role: 'Head of Deals', status: 'In Deal Room - Coca-Cola', time: '2m ago', online: true },
   { name: 'Adenike Okafor', role: 'Account Lead', status: 'Reviewing MTN counter-offer', time: '5m ago', online: true },
   { name: 'Chidi Nwosu', role: 'Deal Manager', status: 'Call with Access Bank', time: '12m ago', online: true },
   { name: 'Bola Adeyemi', role: 'Creative Liaison', status: 'Onboarding Ayra Starr team', time: '18m ago', online: true },
   { name: 'Emeka Obi', role: 'Finance', status: 'Processing UBA escrow release', time: '25m ago', online: true },
   { name: 'Ngozi Eze', role: 'Legal', status: 'Reviewing Guinness NDA', time: '30m ago', online: true },
-  { name: 'Yemi Alade', role: 'Talent Scout', status: 'Offline — last active 2h ago', time: '2h ago', online: false },
-  { name: 'Kunle Remi', role: 'Ops Lead', status: 'Offline — last active 3h ago', time: '3h ago', online: false }
+  { name: 'Yemi Alade', role: 'Talent Scout', status: 'Offline - last active 2h ago', time: '2h ago', online: false },
+  { name: 'Kunle Remi', role: 'Ops Lead', status: 'Offline - last active 3h ago', time: '3h ago', online: false }
 ];
 
 const recentEvents = [
@@ -41,7 +41,7 @@ const recentEvents = [
   { time: '5 min ago', event: 'MTN sent counter-offer: ₦62M → Adenike', type: 'warning' },
   { time: '12 min ago', event: 'Access Bank confirmed meeting Mar 3', type: 'success' },
   { time: '18 min ago', event: 'Star Lager trademark signal detected (92%)', type: 'success' },
-  { time: '25 min ago', event: 'UBA escrow ₦12M — release initiated', type: 'success' },
+  { time: '25 min ago', event: 'UBA escrow ₦12M - release initiated', type: 'success' },
   { time: '32 min ago', event: 'Glo deal for Asake marked as lost', type: 'error' },
   { time: '45 min ago', event: 'Guinness approved ₦45M budget allocation', type: 'success' },
   { time: '1 hr ago', event: 'New signal: Flutterwave hiring Creator Lead', type: 'info' },

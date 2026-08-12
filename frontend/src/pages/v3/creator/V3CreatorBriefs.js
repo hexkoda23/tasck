@@ -83,7 +83,7 @@ const V3CreatorBriefs = () => {
               <div key={brief.project.id} className="v3-card p-5 border-l-3" style={{ borderLeftColor: '#C49B5F', borderLeftWidth: 3 }}>
                 <div className="flex items-center gap-3 mb-2">
                   <Briefcase className="w-4 h-4 text-[#C49B5F]" />
-                  <span className="text-[13px] font-medium text-[#1A1A1A]">{brief.brand?.company?.split(' ')[0]} — {brief.project.title}</span>
+                  <span className="text-[13px] font-medium text-[#1A1A1A]">{brief.brand?.company?.split(' ')[0]} - {brief.project.title}</span>
                 </div>
                 <p className="text-[12px] text-[#8A8A8A] mb-3">A new brief has been sent to you. Please review and respond.</p>
                 <button className="v3-btn-primary text-[12px]">View Brief & Respond</button>

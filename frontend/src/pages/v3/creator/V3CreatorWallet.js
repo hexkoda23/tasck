@@ -7,7 +7,7 @@ const creatorId = 'creator-rema';
 const V3CreatorWallet = () => {
   const creator = getCreator(creatorId);
 
-  // Seeded historical earnings for Rema — from past TASCK projects + current pipeline
+  // Seeded historical earnings for Rema - from past TASCK projects + current pipeline
   const totalEarnings = 142000000;
   const pendingAmount = 88000000;
   const availableBalance = totalEarnings;
@@ -25,13 +25,13 @@ const V3CreatorWallet = () => {
 
   // Seeded transaction history for Rema
   const transactions = [
-    { id: 'tx-r1', label: 'Creative direction fee — Puma Afrobeats Campaign', brand: 'Puma', project: 'Puma × Rema: Move Different', amount: 45000000, date: '15 Nov 2025', status: 'paid' },
-    { id: 'tx-r2', label: 'Music score delivery — Puma campaign', brand: 'Puma', project: 'Puma × Rema: Move Different', amount: 18000000, date: '28 Nov 2025', status: 'paid' },
-    { id: 'tx-r3', label: 'Campaign film — final master', brand: 'Puma', project: 'Puma × Rema: Move Different', amount: 22000000, date: '10 Dec 2025', status: 'paid' },
+    { id: 'tx-r1', label: 'Creative direction fee - Puma Afrobeats Campaign', brand: 'Puma', project: 'Puma × Rema: Move Different', amount: 45000000, date: '15 Nov 2025', status: 'paid' },
+    { id: 'tx-r2', label: 'Music score delivery - Puma campaign', brand: 'Puma', project: 'Puma × Rema: Move Different', amount: 18000000, date: '28 Nov 2025', status: 'paid' },
+    { id: 'tx-r3', label: 'Campaign film - final master', brand: 'Puma', project: 'Puma × Rema: Move Different', amount: 22000000, date: '10 Dec 2025', status: 'paid' },
     { id: 'tx-r4', label: 'Social content package (12 assets)', brand: 'Puma', project: 'Puma × Rema: Move Different', amount: 12000000, date: '18 Dec 2025', status: 'paid' },
-    { id: 'tx-r5', label: 'Brand partnership fee — Browns Fashion', brand: 'Browns', project: 'Browns × Rema: Lagos to London', amount: 28000000, date: '5 Jan 2026', status: 'paid' },
-    { id: 'tx-r6', label: 'Documentary direction — Browns', brand: 'Browns', project: 'Browns × Rema: Lagos to London', amount: 17000000, date: '22 Jan 2026', status: 'paid' },
-    { id: 'tx-r7', label: 'Creator fee — Made of More: Africa (on CS approval)', brand: 'Guinness', project: 'Made of More: Africa', amount: 88000000, date: 'Pending', status: 'pending' },
+    { id: 'tx-r5', label: 'Brand partnership fee - Browns Fashion', brand: 'Browns', project: 'Browns × Rema: Lagos to London', amount: 28000000, date: '5 Jan 2026', status: 'paid' },
+    { id: 'tx-r6', label: 'Documentary direction - Browns', brand: 'Browns', project: 'Browns × Rema: Lagos to London', amount: 17000000, date: '22 Jan 2026', status: 'paid' },
+    { id: 'tx-r7', label: 'Creator fee - Made of More: Africa (on CS approval)', brand: 'Guinness', project: 'Made of More: Africa', amount: 88000000, date: 'Pending', status: 'pending' },
   ];
 
   const projectBreakdown = [
@@ -105,7 +105,7 @@ const V3CreatorWallet = () => {
           {projectBreakdown.map(proj => (
             <div key={proj.id} className="v3-card p-4">
               <div className="flex items-center gap-3 mb-2">
-                <p className="text-[12px] font-medium text-[#1A1A1A] flex-1">{proj.brand} — {proj.name}</p>
+                <p className="text-[12px] font-medium text-[#1A1A1A] flex-1">{proj.brand} - {proj.name}</p>
                 <span className={`text-[10px] px-2 py-0.5 rounded ${
                   proj.status === 'Closed' ? 'text-[#1F4A3A] bg-[#DDE7E2]' : 'text-[#C49B5F] bg-[#C49B5F12]'
                 }`}>{proj.status}</span>
@@ -135,7 +135,7 @@ const V3CreatorWallet = () => {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-[12px] text-[#1A1A1A] truncate">{tx.label}</p>
-              <p className="text-[10px] text-[#8A8A8A]">{tx.brand} — {tx.project}</p>
+              <p className="text-[10px] text-[#8A8A8A]">{tx.brand} - {tx.project}</p>
             </div>
             <span className="text-[10px] text-[#8A8A8A] flex-shrink-0" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{tx.date}</span>
             {tx.status === 'paid' ? (

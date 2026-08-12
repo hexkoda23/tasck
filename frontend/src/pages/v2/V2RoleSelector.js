@@ -35,7 +35,7 @@ const v2Roles = [
     title: 'TALENT NETWORK',
     subtitle: 'Photographer',
     user: 'Kelechi Amadi-Obi',
-    description: 'Your creative career platform. Opportunities, projects, earnings, reputation — all in one place.',
+    description: 'Your creative career platform. Opportunities, projects, earnings, reputation - all in one place.',
     icon: Users,
     path: '/v2/talent',
     accent: '#F59E0B',

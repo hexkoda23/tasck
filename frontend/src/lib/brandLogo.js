@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 
-// Brand-specific logo overrides — for brands whose published logo is white-on-transparent,
+// Brand-specific logo overrides - for brands whose published logo is white-on-transparent,
 // has a stale CDN URL, or where the domain registered in the CRM doesn't resolve to a
 // usable favicon. Keys are matched against the brand name (after lowercasing and
 // stripping non-alphanumerics). The first override hit produces candidates that are
-// PREPENDED to whatever the caller passes — so if every override 404s we still fall
+// PREPENDED to whatever the caller passes - so if every override 404s we still fall
 // through to the caller's website-derived candidates and finally to the initials.
 //
-// NOTE (Feb 2026): Clearbit shut down `logo.clearbit.com` — the domain no
+// NOTE (Feb 2026): Clearbit shut down `logo.clearbit.com` - the domain no
 // longer resolves (`ERR_NAME_NOT_RESOLVED`). Every Clearbit URL has been
 // removed. Preferred order is now: brand's own site → Wikipedia SVG →
 // Google favicons (s2/favicons) → DuckDuckGo (icons.duckduckgo.com).
@@ -38,7 +38,7 @@ const BRAND_LOGO_OVERRIDES = [
     ],
   },
   {
-    // "Nigerian Breweries PLC (Star Lager)" — parent brand Heineken.
+    // "Nigerian Breweries PLC (Star Lager)" - parent brand Heineken.
     match: 'nigerianbreweries',
     candidates: [
       'https://www.google.com/s2/favicons?sz=256&domain=nbplc.com',
@@ -158,7 +158,7 @@ const CACHE_KEY = 'tasck_brand_logo_cache';
 const CACHE_VERSION = 3; // bumped: v2 caches held dead logo.clearbit.com URLs
 
 // Preseeded cache. On module load we merge this into localStorage so cold
-// visits render every known brand's logo instantly — no sequential HEAD
+// visits render every known brand's logo instantly - no sequential HEAD
 // probing through Clearbit/Google/DuckDuckGo before the first working URL is
 // found. Users on a fresh device or after clearing localStorage still get an
 // immediate render.
@@ -191,7 +191,7 @@ const writeCache = (entries) => {
   }
 };
 
-// Merge SEED_LOGO_CACHE into localStorage once per session — user-cached
+// Merge SEED_LOGO_CACHE into localStorage once per session - user-cached
 // entries always win over the seed (they were verified by an actual onLoad).
 // Runs at module import time so BrandLogo's first render already sees a hit.
 (() => {
@@ -216,7 +216,7 @@ const writeCache = (entries) => {
       });
     }
   } catch (_) {
-    // localStorage / Image unavailable — skip warm-up, fall back to on-demand.
+    // localStorage / Image unavailable - skip warm-up, fall back to on-demand.
   }
 })();
 
@@ -226,7 +226,7 @@ export const getCachedBrandLogo = (name) => {
   if (!name) return '';
   const key = brandCacheKey(name);
   const entries = readCache();
-  // Exact match wins — this is a URL previously verified by an onLoad
+  // Exact match wins - this is a URL previously verified by an onLoad
   // handler for this exact brand.
   if (entries[key]) return entries[key];
   // Fall back to the seed cache pattern (e.g. brand key "cocacolanigeria"
@@ -296,7 +296,7 @@ const detectWhiteLogo = (url, cb) => {
     next[url] = isDark;
     writeDarkCache(next);
   };
-  probe.onerror = () => markProbed(0); // CORS blocked or 404 — never retry.
+  probe.onerror = () => markProbed(0); // CORS blocked or 404 - never retry.
   probe.onload = () => {
     try {
       const w = Math.min(probe.naturalWidth || 48, 48);
@@ -322,7 +322,7 @@ const detectWhiteLogo = (url, cb) => {
       markProbed(isDark);
       if (isDark) cb(true);
     } catch (e) {
-      // Canvas tainted (logo host sent no CORS headers) — cannot inspect, leave as-is.
+      // Canvas tainted (logo host sent no CORS headers) - cannot inspect, leave as-is.
       markProbed(0);
     }
   };
@@ -349,7 +349,7 @@ export const BrandLogo = ({
   const resolved = [...overrides, ...userCandidates];
   const cached = getCachedBrandLogo(name);
   // When there's a cached URL, try it first (fast path). When cache is empty
-  // we must NOT prepend '' — an empty first entry short-circuits the <img>
+  // we must NOT prepend '' - an empty first entry short-circuits the <img>
   // render below and the whole fallback chain never fires.
   const initialResolved = cached
     ? [cached, ...resolved.filter((candidate) => candidate !== cached)]

@@ -146,7 +146,7 @@ const V3AdminBrandDetail = () => {
       const result = await v3MoveBrandToBusinessCall(brand.id);
       navigate(`/v3/admin/business-cases/${result.business_case_id}/connect`);
     } catch (e) {
-      alert(e.response?.data?.detail || e.message || 'Failed to create Business Call — Connect.');
+      alert(e.response?.data?.detail || e.message || 'Failed to create Business Call - Connect.');
     }
   };
 
@@ -215,7 +215,7 @@ const V3AdminBrandDetail = () => {
       ].join('\n\n');
     };
     let draft = '';
-    let subject = `Follow-up draft — ${brand.company}`;
+    let subject = `Follow-up draft - ${brand.company}`;
     let source = 'fallback';
     let model = '';
     try {
@@ -234,7 +234,7 @@ const V3AdminBrandDetail = () => {
     setFollowUpDraft(draft);
     setFollowUpMeta({ subject, source, model });
     setFollowUpNotice(source === 'fallback'
-      ? 'AI Assist is offline — used a safe deterministic draft. Edit before sending.'
+      ? 'AI Assist is offline - used a safe deterministic draft. Edit before sending.'
       : `Follow-up draft generated via ${source}${model ? ` (${model})` : ''}. Loaded into the interaction form.`);
     setInteractionForm({
       type: 'follow_up',
@@ -614,7 +614,7 @@ const V3AdminBrandDetail = () => {
               type="text"
               value={interactionForm.title}
               onChange={(e) => setInteractionForm({ ...interactionForm, title: e.target.value })}
-              placeholder="e.g. Discovery call — initial brief discussion"
+              placeholder="e.g. Discovery call - initial brief discussion"
               className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
               data-testid="interaction-title"
             />

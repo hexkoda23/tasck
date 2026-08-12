@@ -40,7 +40,7 @@ const EMPTY_VALUE = 'Not captured yet';
 // Friendly stage label shown under the scrape progress bar, driven by the
 // current percentage. When the scrape has just failed we still hit 100% (the
 // modal flips to the error state), so the label takes an `errored` flag and
-// swaps to a failure-appropriate line — otherwise the popup contradicts
+// swaps to a failure-appropriate line - otherwise the popup contradicts
 // itself with "Scrape did not complete" above "All details captured."
 const scrapeStageLabel = (p, errored = false) => {
   if (errored && p >= 100) return 'Scrape stopped before finishing.';
@@ -188,7 +188,7 @@ const logoCandidatesForBrand = (brand) => {
     .filter(Boolean)
     .filter((value, index, array) => array.indexOf(value) === index);
   const domainCandidates = domains.flatMap((domain) => [
-    // Clearbit (`logo.clearbit.com`) removed — the service shut down and the
+    // Clearbit (`logo.clearbit.com`) removed - the service shut down and the
     // domain no longer resolves.
     'https://www.google.com/s2/favicons?sz=256&domain=' + domain,
     'https://icons.duckduckgo.com/ip3/' + domain + '.ico',
@@ -531,7 +531,7 @@ const V1AdminCRMBrandDetail = () => {
       toast.error('Please choose an image file (PNG, JPG, SVG, WebP).');
       return;
     }
-    // 500KB is plenty for a logo — anything bigger is a design/marketing asset
+    // 500KB is plenty for a logo - anything bigger is a design/marketing asset
     // and shouldn't be inlined as a data URL on the brand document.
     if (file.size > 500 * 1024) {
       toast.error('Logo file is too large (max 500KB).');
@@ -990,7 +990,7 @@ const V1AdminCRMBrandDetail = () => {
                   {(() => {
                     const val = logoUrlForBrand(brand);
                     if (!val) return EMPTY_VALUE;
-                    // Data URLs uploaded via the file picker can be huge — show a
+                    // Data URLs uploaded via the file picker can be huge - show a
                     // friendly summary instead of a wall of base64 text.
                     if (val.startsWith('data:')) return 'Uploaded image (stored inline)';
                     return val;

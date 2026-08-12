@@ -1,7 +1,7 @@
 import React from 'react';
 
 const V3DocumentSurface = ({ title, subtitle, meta, children, versionTabs }) => {
-  // Safe meta rendering — never let a raw object hit React.
+  // Safe meta rendering - never let a raw object hit React.
   let metaContent = null;
   if (meta != null) {
     if (typeof meta === 'string' || typeof meta === 'number') {

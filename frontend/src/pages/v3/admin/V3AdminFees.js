@@ -28,7 +28,7 @@ const V3AdminFees = () => {
     );
   }
 
-  // Derived metrics — using API field names (snake_case)
+  // Derived metrics - using API field names (snake_case)
   const retainerProjects = projects.filter((p) => p.engagement_type === 'retainer');
   const directProjects = projects.filter((p) => p.engagement_type === 'direct');
 
@@ -200,7 +200,7 @@ const V3AdminFees = () => {
                 <span className="ml-auto v3-badge-direct">direct</span>
               </div>
               <p className="text-[12px] text-[#5C5C5C] mb-4 leading-relaxed">
-                Single-project execution with a one-time management fee. Simpler structure — no
+                Single-project execution with a one-time management fee. Simpler structure - no
                 Strategy Development Fee phase. Best for brands with clear briefs and pre-selected
                 creators.
               </p>

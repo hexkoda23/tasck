@@ -1,4 +1,4 @@
-// v3opportunityDemo.js — DEPRECATED
+// v3opportunityDemo.js - DEPRECATED
 // This module previously provided demo opportunity candidates for fictional brands.
 // It has been replaced by real opportunity data from the backend scanning API.
 // All exports are empty/no-op to avoid breaking imports during migration.

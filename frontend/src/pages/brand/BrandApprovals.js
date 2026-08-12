@@ -5,7 +5,7 @@ import { CheckCircle, XCircle, Clock, Eye, Download, MessageSquare, Image, Film,
 const approvals = [
   {
     id: 'APR-001',
-    title: 'Burna Boy Campaign — Hero Visual Set 1',
+    title: 'Burna Boy Campaign - Hero Visual Set 1',
     type: 'Photography',
     campaign: 'Guinness x Burna Boy',
     creative: 'Kelechi Amadi-Obi',
@@ -18,7 +18,7 @@ const approvals = [
   },
   {
     id: 'APR-002',
-    title: 'Davido Campaign — 30s TV Spot (Draft 2)',
+    title: 'Davido Campaign - 30s TV Spot (Draft 2)',
     type: 'Video',
     campaign: 'Guinness Foreign Extra',
     creative: 'Ade Adesanya',
@@ -31,7 +31,7 @@ const approvals = [
   },
   {
     id: 'APR-003',
-    title: 'Don Jazzy Series — Episode 11 Final Cut',
+    title: 'Don Jazzy Series - Episode 11 Final Cut',
     type: 'Video',
     campaign: "Smithwick's x Don Jazzy",
     creative: 'Mavin Records',
@@ -44,7 +44,7 @@ const approvals = [
   },
   {
     id: 'APR-004',
-    title: 'Harp Festive Campaign — Social Media Pack',
+    title: 'Harp Festive Campaign - Social Media Pack',
     type: 'Design',
     campaign: 'Harp Lager Festive',
     creative: 'Chidinma Okafor',
@@ -57,7 +57,7 @@ const approvals = [
   },
   {
     id: 'APR-005',
-    title: 'Burna Boy Campaign — Behind-the-Scenes Reel',
+    title: 'Burna Boy Campaign - Behind-the-Scenes Reel',
     type: 'Video',
     campaign: 'Guinness x Burna Boy',
     creative: 'Ade Adesanya',

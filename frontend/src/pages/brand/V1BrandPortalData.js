@@ -102,7 +102,7 @@ export const ProjectStageRail = ({ stage }) => { const current = stageIndex(stag
 // Per-section comment box (brand portal). Rendered below EVERY section of a
 // document when SnapshotSections is given an onSectionChange handler, so the
 // brand can comment on each part individually. There is NO send button here
-// any more — every section draft is collected at the page level and submitted
+// any more - every section draft is collected at the page level and submitted
 // together by the single "Send back to admin" button at the bottom of the page
 // (Chioma feedback: one send button, not one per section).
 const SectionCommentBox = ({ section, index, value, onChange }) => {
@@ -156,7 +156,7 @@ export const collectBrandSentHistory = (bundles) => {
         rows.push({
           id: `alignment:${snap.id}:${c.id || c.created_at}`,
           kind: 'alignment',
-          docLabel: snap.opportunity_title ? 'Alignment Snapshot — ' + snap.opportunity_title : 'Alignment Snapshot',
+          docLabel: snap.opportunity_title ? 'Alignment Snapshot - ' + snap.opportunity_title : 'Alignment Snapshot',
           projectTitle: caseTitle,
           section: cleanPortalText(c.quoted_text || 'Brand review'),
           comment: cleanPortalText(c.comment || ''),

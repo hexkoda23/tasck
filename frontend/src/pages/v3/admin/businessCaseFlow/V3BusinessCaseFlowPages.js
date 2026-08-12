@@ -558,7 +558,7 @@ export const V3BusinessCaseConnect = () => {
   const contact = bc.brand_contact_snapshot || {};
   const intelligence = bc.connect?.marketing_intelligence || {};
   return (
-    <FlowShell title="Connect / Business Call" subtitle="Business Call — Connect is the source of truth for Alignment Snapshot readiness." nextAction="Schedule the call, send the welcome email, then analyze the transcript.">
+    <FlowShell title="Connect / Business Call" subtitle="Business Call - Connect is the source of truth for Alignment Snapshot readiness." nextAction="Schedule the call, send the welcome email, then analyze the transcript.">
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4">
         <InfoCard title="Brand info">
           <div className="grid grid-cols-2 gap-3 text-[12px]">
@@ -644,7 +644,7 @@ export const V3BusinessCaseConnectSchedule = () => {
     setSaveNotice('');
     try {
       const meeting = await v3CreateMeeting({
-        title: `Business Call — Connect: ${bc.title || brand.company || 'Brand'}`,
+        title: `Business Call - Connect: ${bc.title || brand.company || 'Brand'}`,
         meeting_type: 'business_call',
         stage: 'connect',
         entity_type: 'brand',
@@ -717,7 +717,7 @@ export const V3BusinessCaseConnectQuestions = () => {
     let activeMeetingId = meetingId;
     if (!activeMeetingId) {
       const meeting = await v3CreateMeeting({
-        title: `Business Call — Connect: ${bc.title}`,
+        title: `Business Call - Connect: ${bc.title}`,
         meeting_type: 'business_call',
         stage: 'connect',
         entity_type: 'brand',
@@ -1304,14 +1304,14 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const p7 = round.phase_7_recommendation || {};
 
   return (
-    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60–90 minute session — defensible creator recommendation rooted in behavior, culture, and commercial logic.">
+    <FlowShell title="The TTA Snapshot Brainstorm" subtitle="60–90 minute session - defensible creator recommendation rooted in behavior, culture, and commercial logic.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
       <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border-b border-[#E8E4DB] -mx-1 px-1 py-2 flex flex-wrap items-center gap-2">
         <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}</button>
         <button onClick={() => save(true)} disabled={saving} className="v3-btn-primary" data-testid="brainstorm-save-advance-btn"><ArrowRight className="w-3.5 h-3.5" /> Save & open Creator Scan</button>
       </div>
 
-      <BSPhase phase="pre-work" title="Pre-work (MANDATORY — before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
+      <BSPhase phase="pre-work" title="Pre-work (MANDATORY - before session)" subtitle="Team lead must circulate the brief summary, hypothesis and any research before the session.">
         <p className="text-[11px] uppercase tracking-wider text-[#1A1A1A] font-semibold">Client Brief Summary (1 page max)</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSField label="Objective" rows={2} value={preWork.client_brief_summary?.objective} onChange={(v) => updateNested('pre_work', 'client_brief_summary', 'objective', v)} />
@@ -1327,8 +1327,8 @@ export const V3BusinessCasePlanBrainstorm = () => {
         </div>
       </BSPhase>
 
-      <BSPhase phase="0" title="Phase 0 — Focus Group Integration" subtitle="Use only when problem is unclear, audience behavior is ambiguous, or product is new/misunderstood.">
-        <p className="text-[12px] text-[#4F3E2F] bg-[#FBF4E4] rounded-md p-3 border border-[#E5C99A]"><strong>Objective:</strong> {'"Why don\'t you already behave this way?"'} — not {'"Do you like this?"'}</p>
+      <BSPhase phase="0" title="Phase 0 - Focus Group Integration" subtitle="Use only when problem is unclear, audience behavior is ambiguous, or product is new/misunderstood.">
+        <p className="text-[12px] text-[#4F3E2F] bg-[#FBF4E4] rounded-md p-3 border border-[#E5C99A]"><strong>Objective:</strong> {'"Why don\'t you already behave this way?"'} - not {'"Do you like this?"'}</p>
         <div className="space-y-2">
           {(p0.core_questions || []).map((q, idx) => (
             <div key={idx} className="rounded border border-[#E8E4DB] p-3">
@@ -1339,14 +1339,14 @@ export const V3BusinessCasePlanBrainstorm = () => {
         </div>
       </BSPhase>
 
-      <BSPhase phase="1" title="Phase 1 — Define the Problem (10–15 mins)" subtitle="Remove ambiguity. Lock the problem before solving it. ALL questions must be answered.">
+      <BSPhase phase="1" title="Phase 1 - Define the Problem (10–15 mins)" subtitle="Remove ambiguity. Lock the problem before solving it. ALL questions must be answered.">
         <BSField label="What is the core business objective?" value={p1.core_business_objective} onChange={(v) => updateField('phase_1_problem', 'core_business_objective', v)} />
         <BSField label="What specific action must the audience take?" value={p1.specific_action} onChange={(v) => updateField('phase_1_problem', 'specific_action', v)} />
         <BSField label="What is the primary barrier to that action?" value={p1.primary_barrier} onChange={(v) => updateField('phase_1_problem', 'primary_barrier', v)} />
         <BSField label="What type of influence is required?" value={p1.type_of_influence} onChange={(v) => updateField('phase_1_problem', 'type_of_influence', v)} />
         <BSField label="What observable behavior change defines success?" value={p1.observable_behavior_change} onChange={(v) => updateField('phase_1_problem', 'observable_behavior_change', v)} />
         <BSField
-          label="🔒 PROJECT TRUTH (mandatory output — max 3 lines)"
+          label="🔒 PROJECT TRUTH (mandatory output - max 3 lines)"
           hint="Template: [Target audience] currently [problem/barrier]. To achieve [business goal], they must [specific action]. This requires [type of influence]."
           rows={3}
           value={p1.project_truth}
@@ -1354,7 +1354,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="2" title="Phase 2 — Define Creator Archetype (10 mins)" subtitle="Define the type of mind, not the person.">
+      <BSPhase phase="2" title="Phase 2 - Define Creator Archetype (10 mins)" subtitle="Define the type of mind, not the person.">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSSelect label="Voice Type" options={BS_VOICE_TYPES} value={p2.voice_type} onChange={(v) => updateField('phase_2_archetype', 'voice_type', v)} />
           <BSSelect label="Audience Relationship" options={BS_AUDIENCE_REL} value={p2.audience_relationship} onChange={(v) => updateField('phase_2_archetype', 'audience_relationship', v)} />
@@ -1369,13 +1369,13 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="3" title="Phase 3 — Creator Identification & Scoring (20–25 mins)" subtitle="Scoring criteria (1–5): Audience Match, Trust Signals, Conversion Behaviour, Content Fit, Commercial Reliability. Any creator scoring below 3 on Conversion Behaviour = ELIMINATED.">
+      <BSPhase phase="3" title="Phase 3 - Creator Identification & Scoring (20–25 mins)" subtitle="Scoring criteria (1–5): Audience Match, Trust Signals, Conversion Behaviour, Content Fit, Commercial Reliability. Any creator scoring below 3 on Conversion Behaviour = ELIMINATED.">
         <p className="text-[12px] text-[#6E6657] bg-[#FBFAF7] rounded-md p-3 border border-[#E8E4DB]">Scoring happens on the next page (Creator Match Scanner). Each shortlisted creator must be backed by evidence; only 2–3 creators max are carried forward.</p>
       </BSPhase>
 
-      <BSPhase phase="4" title="Phase 4 — Interpretation Logic (15 mins)" subtitle="Explain how each creator thinks, not what they will post.">
+      <BSPhase phase="4" title="Phase 4 - Interpretation Logic (15 mins)" subtitle="Explain how each creator thinks, not what they will post.">
         <BSField
-          label="🔒 INTERPRETATION SUMMARY (per creator — one paragraph each)"
+          label="🔒 INTERPRETATION SUMMARY (per creator - one paragraph each)"
           hint='Template (per creator): "[Creator] will likely approach this by [angle], emphasising [focus], which aligns with [audience behavior]."'
           rows={5}
           value={(round.phase_4_interpretation || {}).notes || ''}
@@ -1383,17 +1383,17 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="5" title="Phase 5 — Execution Reality Check (10–15 mins)" subtitle="Pressure-test feasibility.">
+      <BSPhase phase="5" title="Phase 5 - Execution Reality Check (10–15 mins)" subtitle="Pressure-test feasibility.">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <BSField label="What level of brand involvement is required?" value={p5.test_questions_answered?.brand_involvement} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'brand_involvement', v)} />
           <BSField label="What is the execution speed?" value={p5.test_questions_answered?.execution_speed} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'execution_speed', v)} />
           <BSField label="Is this repeatable or one-off?" value={p5.test_questions_answered?.repeatable_or_one_off} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'repeatable_or_one_off', v)} />
           <BSField label="What are the top 2 risks?" value={p5.test_questions_answered?.top_risks} onChange={(v) => updateNested('phase_5_execution', 'test_questions_answered', 'top_risks', v)} />
         </div>
-        <BSField label="🔒 EXECUTION SNAPSHOT (per option — Effort / Speed / Scale / Key risks)" rows={4} value={p5.snapshot_notes} onChange={(v) => updateField('phase_5_execution', 'snapshot_notes', v)} />
+        <BSField label="🔒 EXECUTION SNAPSHOT (per option - Effort / Speed / Scale / Key risks)" rows={4} value={p5.snapshot_notes} onChange={(v) => updateField('phase_5_execution', 'snapshot_notes', v)} />
       </BSPhase>
 
-      <BSPhase phase="6" title="Phase 6 — Commercial Snapshot (10 mins)">
+      <BSPhase phase="6" title="Phase 6 - Commercial Snapshot (10 mins)">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <BSSelect label="Budget Level" options={BS_BUDGET} value={p6.budget_level} onChange={(v) => updateField('phase_6_commercial', 'budget_level', v)} />
           <BSSelect label="Expected Efficiency" options={BS_EFFICIENCY} value={p6.expected_efficiency} onChange={(v) => updateField('phase_6_commercial', 'expected_efficiency', v)} />
@@ -1408,8 +1408,8 @@ export const V3BusinessCasePlanBrainstorm = () => {
         />
       </BSPhase>
 
-      <BSPhase phase="7" title="Phase 7 — Final Recommendation (5 mins)" subtitle="Make a decision, not just present options.">
-        <BSField label="Selected option" hint="e.g., Option A — Creator X" value={p7.selected_option} onChange={(v) => updateField('phase_7_recommendation', 'selected_option', v)} rows={1} />
+      <BSPhase phase="7" title="Phase 7 - Final Recommendation (5 mins)" subtitle="Make a decision, not just present options.">
+        <BSField label="Selected option" hint="e.g., Option A - Creator X" value={p7.selected_option} onChange={(v) => updateField('phase_7_recommendation', 'selected_option', v)} rows={1} />
         <BSField
           label="🔒 RECOMMENDATION RATIONALE"
           hint={'Template:\n"Based on the objective of [goal], Option [X] offers the strongest balance between:\n  • Conversion potential\n  • Execution feasibility\n  • Commercial efficiency\nThis is driven by [key reason]."'}
@@ -1426,7 +1426,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
       </BSPhase>
 
       <InfoCard title="Strategy mapping">
-        <p className="text-[12px] text-[#6E6657] mb-3">After the session, the team does not rethink — they only clean language, format, and complete the Strategy template. Each phase produces a direct input block:</p>
+        <p className="text-[12px] text-[#6E6657] mb-3">After the session, the team does not rethink - they only clean language, format, and complete the Strategy template. Each phase produces a direct input block:</p>
         <div className="overflow-x-auto rounded-lg border border-[#E8E4DB]">
           <table className="min-w-full divide-y divide-[#E8E4DB] text-left text-[12px]">
             <thead className="bg-[#F4F2EC] text-[#6E6657]"><tr><th className="px-3 py-2 font-semibold">Brainstorm Phase</th><th className="px-3 py-2 font-semibold">Strategy Section It Fills</th></tr></thead>
@@ -1493,7 +1493,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Creator database</span>
             <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="creator-manual-select">
-              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} — {creatorSpecialty(creator)}</option>)}
+              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} - {creatorSpecialty(creator)}</option>)}
             </select>
           </label>
           <button onClick={() => addCreator(manualCreatorId)} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
@@ -1649,7 +1649,7 @@ export const V3BusinessCasePlanBrief = () => {
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Add another creator</span>
             <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]">
-              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} — {creatorSpecialty(creator)}</option>)}
+              {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} - {creatorSpecialty(creator)}</option>)}
             </select>
           </label>
           <button onClick={addCreator} className="v3-btn-secondary"><Plus className="w-3.5 h-3.5" /> Add creator</button>
@@ -1924,7 +1924,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
         if (getCase(bundle).stage === 'plan') {
           await v3AdvanceBusinessCase(id, { actor: 'admin', override: true, reason: 'Strategy Snapshot approved by admin.' });
         }
-      } catch (_err) { /* ignore — already advanced */ }
+      } catch (_err) { /* ignore - already advanced */ }
       await reload();
       navigate(`/v3/admin/business-cases/${id}/delivery/summary`);
     } catch (e) {
@@ -2005,7 +2005,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
         ) : editing ? (
           <div className="space-y-4 rounded-[8px] border border-[#1F4A3A]/30 bg-[#FBFAF7] p-4" data-testid="strategy-snapshot-editor">
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Editing — changes are not saved until you press Save</p>
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Editing - changes are not saved until you press Save</p>
               <input
                 value={editedTitle}
                 onChange={(e) => setEditedTitle(e.target.value)}
@@ -2136,7 +2136,7 @@ export const V3BusinessCaseDeliverySummary = () => {
 const buildFeedbackPreviewSections = (fb) => {
   if (!fb) return [];
   const sections = [];
-  if (fb.email_template) sections.push({ heading: 'Tab 1 — Email Template', content: fb.email_template });
+  if (fb.email_template) sections.push({ heading: 'Tab 1 - Email Template', content: fb.email_template });
   [['brand_partner', 'Brand Partner Feedback'], ['creative_partner', 'Creative Partner Feedback']].forEach(([key, fallback]) => {
     const block = fb[key];
     if (!block) return;
@@ -2234,7 +2234,7 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
     setEditing(false);
   };
   const openPreview = async () => {
-    // Legacy contracts may have empty sections — hit the PDF endpoint which backfills the doc, then refresh the list.
+    // Legacy contracts may have empty sections - hit the PDF endpoint which backfills the doc, then refresh the list.
     if (!(contract.sections && contract.sections.length) && onRefresh) {
       try { await fetch(v3ContractPdfUrl(contract.id), { method: 'GET' }); } catch (_e) { /* backfill best-effort */ }
       await onRefresh();
@@ -2688,7 +2688,7 @@ export const V3BusinessCaseFinalReport = () => {
       }
       return; // mark-sent already done by backend
     } else {
-      setNotice(`${option.label} — queued.`);
+      setNotice(`${option.label} - queued.`);
     }
     // Mark sent on any email_brand/email_creator/copy_link/download/whatsapp action
     try {
@@ -2816,7 +2816,7 @@ export const V3BusinessCaseFinalReport = () => {
             <div className="px-6 py-6 space-y-6">
               {/* Email Template */}
               <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-5">
-                <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Tab 1 — Email Template</p>
+                <p className="text-[11px] uppercase tracking-wider font-semibold text-[#1A1A1A] mb-2">Tab 1 - Email Template</p>
                 {editingFeedback ? (
                   <textarea value={draftFeedback?.email_template || ''} onChange={(e) => setDraftFeedback((p) => ({ ...p, email_template: e.target.value }))} rows={5} className="w-full text-[12px] text-[#4F3E2F] border border-[#E8E4DB] rounded-md px-3 py-2 focus:border-[#1F4A3A] outline-none whitespace-pre-wrap leading-relaxed bg-white" />
                 ) : (

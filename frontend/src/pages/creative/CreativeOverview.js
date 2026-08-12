@@ -21,10 +21,10 @@ const skillDemands = [
 ];
 
 const recentPayments = [
-  { desc: 'Pepsi x DMW — Shoot Set 1', amount: 187500, type: 'credit', time: '3d ago' },
-  { desc: 'Mavin All-Stars — Concert Photos', amount: 350000, type: 'credit', time: '1w ago' },
+  { desc: 'Pepsi x DMW - Shoot Set 1', amount: 187500, type: 'credit', time: '3d ago' },
+  { desc: 'Mavin All-Stars - Concert Photos', amount: 350000, type: 'credit', time: '1w ago' },
   { desc: 'Boomplay Exclusive Cover Art', amount: 120000, type: 'credit', time: '2w ago' },
-  { desc: 'Platform fee — February', amount: 45000, type: 'debit', time: '2w ago' }
+  { desc: 'Platform fee - February', amount: 45000, type: 'debit', time: '2w ago' }
 ];
 
 const portfolioStats = [

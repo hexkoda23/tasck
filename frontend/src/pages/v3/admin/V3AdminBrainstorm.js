@@ -9,12 +9,12 @@ const V3AdminBrainstorm = () => {
   const [newNote, setNewNote] = useState('');
 
   const notes = [
-    { id: 'n1', author: 'RM', color: '#1F4A3A', text: 'Alignment Snapshot confirmed — brand wants cultural specificity, not generic Afro-aesthetic. Creator must have real authority in their cultural context.', type: 'insight', time: '2 days ago' },
+    { id: 'n1', author: 'RM', color: '#1F4A3A', text: 'Alignment Snapshot confirmed - brand wants cultural specificity, not generic Afro-aesthetic. Creator must have real authority in their cultural context.', type: 'insight', time: '2 days ago' },
     { id: 'n2', author: 'AI Assist', color: '#C49B5F', text: 'Based on the brand\'s stated goals and audience (18–28, SEC A/B, urban Nigeria), recommend focusing on short-form storytelling formats. Long-form (>5 min) underperforms with this demographic unless anchored by a recognizable creator.', type: 'ai', time: '2 days ago' },
     { id: 'n3', author: 'RM', color: '#1F4A3A', text: 'Brand contact specifically mentioned "shareability" and "earned media" as priorities. The campaign should be built for organic distribution, not just paid reach. Consider a mechanic that rewards sharing.', type: 'insight', time: '1 day ago' },
-    { id: 'n4', author: 'AI Assist', color: '#C49B5F', text: 'Competitive analysis: Pepsi Nigeria ran a Fireboy campaign in Q2 2025 with similar audience targeting. It achieved 4.2% engagement — below category average. The differentiator should be cultural depth, not just celebrity placement.', type: 'ai', time: '1 day ago' },
-    { id: 'n5', author: 'RM', color: '#1F4A3A', text: 'Physical activation is important — brand mentioned "Lekki or VI" for a December event. Budget carve-out for this needs clarity before Plan. Could be 15–20% of total.', type: 'strategy', time: '12 hours ago' },
-    { id: 'n6', author: 'AI Assist', color: '#C49B5F', text: 'Budget note: at the estimated value, a 15% physical activation carve-out is feasible for a single-day Lagos activation with 500–1,000 attendees. Recommend confirming venue availability early — Detty December booking windows close fast.', type: 'ai', time: '12 hours ago' },
+    { id: 'n4', author: 'AI Assist', color: '#C49B5F', text: 'Competitive analysis: Pepsi Nigeria ran a Fireboy campaign in Q2 2025 with similar audience targeting. It achieved 4.2% engagement - below category average. The differentiator should be cultural depth, not just celebrity placement.', type: 'ai', time: '1 day ago' },
+    { id: 'n5', author: 'RM', color: '#1F4A3A', text: 'Physical activation is important - brand mentioned "Lekki or VI" for a December event. Budget carve-out for this needs clarity before Plan. Could be 15–20% of total.', type: 'strategy', time: '12 hours ago' },
+    { id: 'n6', author: 'AI Assist', color: '#C49B5F', text: 'Budget note: at the estimated value, a 15% physical activation carve-out is feasible for a single-day Lagos activation with 500–1,000 attendees. Recommend confirming venue availability early - Detty December booking windows close fast.', type: 'ai', time: '12 hours ago' },
   ];
 
   const project = v3Projects.find(p => p.id === id);
@@ -27,7 +27,7 @@ const V3AdminBrainstorm = () => {
 
   const campaignAngles = [
     { title: 'Multi-chapter storytelling', desc: 'Creator authors 3 short stories revealed across Detty December. Bottles carry story-fragments that complete when shared.', votes: 4, status: 'leading' },
-    { title: 'Creator-as-curator', desc: 'Creator curates a "Share a Coke" playlist of Nigerian moments — each moment becomes a short-form content piece.', votes: 2, status: 'exploring' },
+    { title: 'Creator-as-curator', desc: 'Creator curates a "Share a Coke" playlist of Nigerian moments - each moment becomes a short-form content piece.', votes: 2, status: 'exploring' },
     { title: 'UGC amplification', desc: 'Creator seeds the campaign, then fans continue the story. Mechanic: personalized bottle = personalized story.', votes: 1, status: 'exploring' },
   ];
 
@@ -76,7 +76,7 @@ const V3AdminBrainstorm = () => {
         <Lightbulb className="w-5 h-5 text-[#C49B5F]" />
         <div>
           <h1 className="text-xl font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>Campaign Workspace</h1>
-          <p className="text-[12px] text-[#8A8A8A]">{brand?.company?.split(' ')[0]} — {project.title}</p>
+          <p className="text-[12px] text-[#8A8A8A]">{brand?.company?.split(' ')[0]} - {project.title}</p>
         </div>
       </div>
 
@@ -197,7 +197,7 @@ const V3AdminBrainstorm = () => {
           </div>
         </div>
 
-        {/* Right rail — Creator shortlist + context */}
+        {/* Right rail - Creator shortlist + context */}
         <div className="w-[300px] flex-shrink-0 space-y-5">
           {/* Imported context */}
           <div className="v3-ai-panel">

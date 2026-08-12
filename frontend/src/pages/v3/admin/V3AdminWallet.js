@@ -66,7 +66,7 @@ const V3AdminWallet = () => {
       {
         id: `${pid}-brand-payment`,
         type: 'credit',
-        label: `Brand payment — ${proj.title}`,
+        label: `Brand payment - ${proj.title}`,
         counterparty: brandLabel,
         project: proj.title,
         amount: proj.estimated_value || 0,
@@ -75,7 +75,7 @@ const V3AdminWallet = () => {
       {
         id: `${pid}-creator-payment`,
         type: 'debit',
-        label: `Creator payment — ${proj.title}`,
+        label: `Creator payment - ${proj.title}`,
         counterparty: creatorLabel,
         project: proj.title,
         amount: creatorPay,
@@ -96,7 +96,7 @@ const V3AdminWallet = () => {
       transactions.push({
         id: `${pid}-strategy-fee`,
         type: 'credit',
-        label: `Strategy Development Fee — ${proj.title}`,
+        label: `Strategy Development Fee - ${proj.title}`,
         counterparty: proj.brand_name || 'Brand',
         project: proj.title,
         amount: Math.round((proj.estimated_value || 0) * 0.15),

@@ -1,10 +1,10 @@
-// TASCK OS v3 — Frontend API Client
+// TASCK OS v3 - Frontend API Client
 // Wraps every /api/v3/* endpoint. Always returns plain data (response.data).
 
 import axios from 'axios';
 
 // REACT_APP_BACKEND_URL must be provided at build time. No hardcoded fallback
-// — a stale fallback would silently point production API calls at the wrong
+// - a stale fallback would silently point production API calls at the wrong
 // domain after a redeploy.
 const BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 const V3 = `${BACKEND_URL}/api/v3`;

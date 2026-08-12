@@ -207,7 +207,7 @@ export const useBusinessCaseBundle = () => {
   }, [reload]);
   // Stamp "an admin opened this project just now" ONCE per project id, so the
   // CRM list shows the most recent visit time regardless of whether anything
-  // was edited. Fire-and-forget — never blocks or fails the page load.
+  // was edited. Fire-and-forget - never blocks or fails the page load.
   useEffect(() => {
     if (!id) return;
     v3TouchBusinessCase(id).catch(() => {});
@@ -269,7 +269,7 @@ const connectStatusUpdatedAt = (bundle) => {
 // Pitch Deck and Creative Brief are sibling Framing steps and the admin can
 // enter either FIRST from the Creator Match Scanner. Whichever page they open
 // first shows a button to the sibling page; the sibling (second) page shows
-// "Move to Business Case" instead — no looping back. The entry order is
+// "Move to Business Case" instead - no looping back. The entry order is
 // remembered per business case for the session; re-entering from the scanner
 // resets it.
 const frameEntryKey = (id) => `v1FrameEntry:${id}`;
@@ -365,7 +365,7 @@ export const businessCasePhasePath = (id, bc = {}) => {
     if (!plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm`);
     if (!Array.isArray(plan.selected_creator_ids) || plan.selected_creator_ids.length === 0) return adminRoute(`/business-cases/${id}/frame/creator-scan`);
     if (!plan.creative_brief_id) return adminRoute(`/business-cases/${id}/frame/brief`);
-    // Strategy Snapshot step removed — once the brief exists, the flow moves
+    // Strategy Snapshot step removed - once the brief exists, the flow moves
     // straight into the Planning phase.
     return adminRoute(`/business-cases/${id}/plan/planning`);
   }
@@ -799,7 +799,7 @@ export const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, 
   if (failures.length || savedSessions.length !== cleanSessions.length) {
     const lostCount = cleanSessions.length - savedSessions.length - failures.length;
     if (lostCount > 0) {
-      // Some sessions were silently lost (e.g. hung await) — synthesize a failure entry
+      // Some sessions were silently lost (e.g. hung await) - synthesize a failure entry
       for (let i = 0; i < lostCount; i++) {
         failures.push({ sessionName: `Session ${savedSessions.length + failures.length + 1}`, detail: 'Save did not complete (request stalled or aborted).' });
       }
@@ -1219,7 +1219,7 @@ export const V3BusinessCaseConnect = () => {
   const statusUpdatedAt = connectStatusUpdatedAt(bundle);
   // Whether the admin has already saved any Connect conversations (call
   // transcripts, emails or WhatsApp chats). Once they have, the "Add
-  // Transcript" CTA on this page becomes "Next" — it is no longer the first
+  // Transcript" CTA on this page becomes "Next" - it is no longer the first
   // time they are adding one, just a way back into the schedule page.
   const connectMeetings = (Array.isArray(bundle?.meetings) ? bundle.meetings : [])
     .filter((m) => (m.meeting_type === 'business_call' || m.type === 'business_call') && String(m.transcript || '').trim());
@@ -1577,7 +1577,7 @@ export const V3BusinessCaseConnectSchedule = () => {
           return;
         }
       } catch (err) {
-        // Transient poll error — keep trying unless explicitly 404
+        // Transient poll error - keep trying unless explicitly 404
         if (err?.response?.status === 404) {
           setSaveNotice('Analysis job missing on server. Please retry.');
           setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: 'Analysis job missing on server.', message: 'Analysis failed. Please retry.' }));
@@ -2572,7 +2572,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
         <InfoCard title={`Alignment Snapshots (${allSnapshots.length})`}>
           <p className="text-[12px] text-[#6E6657] mb-3">
             This Connect call produced several opportunities, so each has its own snapshot. Click one to edit it below,
-            then send each to the brand — the brand ranks them by priority and that ranking shows here immediately.
+            then send each to the brand - the brand ranks them by priority and that ranking shows here immediately.
           </p>
           <div className="space-y-2">
             {allSnapshots.map((snapshotItem) => {
@@ -2706,7 +2706,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
         {!hasSnapshot ? (
           <div className="rounded-[8px] border border-dashed border-[#D7CBB8] bg-[#FBFAF7] p-5 text-[13px] text-[#6E6657]">
             {generating
-              ? 'Generating the Alignment Snapshot from the Connect call. This can take up to a minute on the first run — please keep this page open.'
+              ? 'Generating the Alignment Snapshot from the Connect call. This can take up to a minute on the first run - please keep this page open.'
               : preparingFrame
                 ? 'Preparing the Frame phase and Alignment Snapshot from the Connect transcripts. This will appear here shortly.'
                 : bundle?.business_case?.frame?.alignment_snapshot_id ? (
@@ -3191,7 +3191,7 @@ const BSPhase = ({ phase, title, subtitle, children }) => (
 export const V3BusinessCasePlanBrainstormTranscript = () => {
   const navigate = useNavigate();
   const { id, snapshotId: urlSnapshotId, bundle } = useBusinessCaseBundle();
-  // The Creator Selector is unique per Alignment Snapshot — pick the snapshot
+  // The Creator Selector is unique per Alignment Snapshot - pick the snapshot
   // in scope from the URL, then fall back to the business case's active one.
   const activeSnapshotId = urlSnapshotId
     || bundle?.business_case?.frame?.alignment_snapshot_id
@@ -3326,7 +3326,7 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
             title="Use only when this brand is already past the Creator Selection stage on their CRM"
             data-testid="brainstorm-skip-transcript-existing"
           >
-            <ArrowRight className="w-3.5 h-3.5" /> Skip transcript — brand already past this stage
+            <ArrowRight className="w-3.5 h-3.5" /> Skip transcript - brand already past this stage
           </button>
           <p className="text-[11px] text-[#8A8A8A]">No transcript? Open the Creator Selector and fill each field yourself, or skip entirely if this brand is a returning one.</p>
         </div>
@@ -3390,7 +3390,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
       // or create the Creator Selector, so different snapshots on the same
       // Business Case each get their own selector document.
       if (!activeSnapshotId) {
-        // Bundle may still be resolving — wait for it before deciding.
+        // Bundle may still be resolving - wait for it before deciding.
         if (bundle === null || bundle === undefined) return;
         if (!cancelled) {
           setNotice('This Business Case has no active Alignment Snapshot yet. Approve a snapshot to unlock the Creator Selector.');
@@ -4003,7 +4003,7 @@ export const V3BusinessCasePlanBrief = () => {
     navigator.clipboard.writeText(link).then(() => setNotice(`Creator brief link copied for ${creatorName(creator)}.`)).catch(() => setNotice(`Creator brief link: ${link}`));
   };
   const downloadGoogleDoc = async (creator) => {
-    // Prefer the saved-brief DOCX endpoint — that's the fully-templated file
+    // Prefer the saved-brief DOCX endpoint - that's the fully-templated file
     // (TASCK banner + watermark + contact footer + embedded fonts) served by
     // the backend against a persisted brief row.
     const savedBrief = sentBriefs[creator.id];
@@ -4071,7 +4071,7 @@ export const V3BusinessCasePlanBrief = () => {
                   target="_blank"
                   rel="noreferrer"
                   className="v3-btn-secondary text-[12px]"
-                  title="Open a printable, shareable browser preview of this brief — no Google account needed."
+                  title="Open a printable, shareable browser preview of this brief - no Google account needed."
                   data-testid="brief-open-preview"
                 >
                   <ExternalLink className="w-3.5 h-3.5" /> Open in browser preview
@@ -4225,7 +4225,7 @@ export const V3BusinessCasePlanBrief = () => {
           <p className="text-[13px] text-[#6E6657]">
             {(getFrameEntry(id) === 'pitch' || pitchDeckDone)
               ? 'The Pitch Deck is done. Move this project into the Business Case planning phase.'
-              : 'Open the Pitch Deck next — once both are done the flow moves into the Business Case planning phase.'}
+              : 'Open the Pitch Deck next - once both are done the flow moves into the Business Case planning phase.'}
           </p>
           <div className="flex flex-wrap gap-2">
             {(getFrameEntry(id) === 'pitch' || pitchDeckDone) ? (
@@ -4591,7 +4591,7 @@ export const V3BusinessCasePitchDeck = () => {
           <p className="text-[13px] text-[#6E6657]">
             {briefWasFirst
               ? 'The Creative Brief is done. Move this project into the Business Case planning phase.'
-              : 'Open the Creative Brief next — once both are done the flow moves into the Business Case planning phase.'}
+              : 'Open the Creative Brief next - once both are done the flow moves into the Business Case planning phase.'}
           </p>
           {briefWasFirst ? (
             <button
@@ -4664,7 +4664,7 @@ export const V3BusinessCasePitchDeck = () => {
             </p>
             {genPopup.status === 'running' && (
               <p className="mt-1 text-[11px] text-[#6E6657]">
-                Claude is writing the Pitch Deck. Please keep this page open — this window will close automatically when it reaches 100%.
+                Claude is writing the Pitch Deck. Please keep this page open - this window will close automatically when it reaches 100%.
               </p>
             )}
             {genPopup.status === 'failed' && (
@@ -4688,7 +4688,7 @@ export const V3BusinessCasePitchDeck = () => {
           >
             <div className="flex items-center justify-between gap-3 border-b border-[#E6E0D2] bg-[#FBFAF7] px-5 py-4">
               <div>
-                <h3 className="text-[16px] font-semibold text-[#1A1A1A] leading-tight">Pitch Deck — Flipbook Preview</h3>
+                <h3 className="text-[16px] font-semibold text-[#1A1A1A] leading-tight">Pitch Deck - Flipbook Preview</h3>
                 <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">V1 Admin · Pitch Deck</p>
               </div>
               <button
@@ -5173,7 +5173,7 @@ export const V3BusinessCasePlanWaitingBrand = () => {
   const { id, bundle, loading } = useBusinessCaseBundle();
   useEffect(() => {
     if (!loading && bundle) {
-      // Strategy Snapshot step removed — the brief flow now continues straight
+      // Strategy Snapshot step removed - the brief flow now continues straight
       // into the Planning phase.
       navigate(adminRoute(`/business-cases/${id}/plan/planning`), { replace: true });
     }
@@ -6938,7 +6938,7 @@ export const V3BusinessCaseFinalReport = () => {
             <div className="min-w-0 flex-1 space-y-4">
               <div>
                 <p className="text-[10px] uppercase tracking-wider text-[#1F4A3A] font-semibold">Feedback received from portal</p>
-                <p className="text-[12px] text-[#3F4E45] mt-0.5">This is the exact feedback the brand and/or creator sent back from the Reports &amp; Feedback page in their portal — the notification bell links straight here so you can respond.</p>
+                <p className="text-[12px] text-[#3F4E45] mt-0.5">This is the exact feedback the brand and/or creator sent back from the Reports &amp; Feedback page in their portal - the notification bell links straight here so you can respond.</p>
               </div>
 
               {brandPortalFeedback && (

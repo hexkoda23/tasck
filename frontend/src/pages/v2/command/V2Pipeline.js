@@ -242,7 +242,7 @@ const V2Pipeline = () => {
         <div className="space-y-5" data-testid="pipeline-timeline">
           {/* Timeline header */}
           <div className="v2-card p-5">
-            <h2 className="text-white/50 text-xs font-medium uppercase tracking-wider mb-4">Deal Timeline — 2026</h2>
+            <h2 className="text-white/50 text-xs font-medium uppercase tracking-wider mb-4">Deal Timeline - 2026</h2>
             {/* Month headers */}
             <div className="flex mb-2">
               <div className="w-48 flex-shrink-0" />
@@ -309,7 +309,7 @@ const V2Pipeline = () => {
                 return (
                   <div key={d.id} onClick={() => setPopup({ type: 'deal', data: d })} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.02] cursor-pointer transition-colors">
                     <Clock className={`w-3 h-3 ${daysLeft < 7 ? 'text-[#EF4444]' : daysLeft < 14 ? 'text-[#F59E0B]' : 'text-white/20'}`} />
-                    <span className="text-xs text-white/50 flex-1">{d.brand} — {d.title}</span>
+                    <span className="text-xs text-white/50 flex-1">{d.brand} - {d.title}</span>
                     <span className={`text-[10px] font-mono ${daysLeft < 7 ? 'text-[#EF4444]' : daysLeft < 14 ? 'text-[#F59E0B]' : 'text-white/25'}`}>{daysLeft}d left</span>
                     <span className="text-[9px] font-mono text-white/20">{formatNaira(d.value, { compact: true })}</span>
                   </div>

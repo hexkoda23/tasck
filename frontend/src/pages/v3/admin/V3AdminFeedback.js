@@ -141,7 +141,7 @@ const V3AdminFeedback = () => {
 
       <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">FEEDBACK</p>
       <h1 className="v3-heading text-xl mb-1" style={{ fontFamily: "'Fraunces', serif" }}>
-        {brandName} — {bc.title}
+        {brandName} - {bc.title}
       </h1>
       <p className="text-[#8A8A8A] text-sm mb-6">
         Final feedback is collected after the final report has been generated.
@@ -183,7 +183,7 @@ const V3AdminFeedback = () => {
         </div>
       )}
 
-      {/* Brand feedback — already submitted */}
+      {/* Brand feedback - already submitted */}
       {feedbackUnlocked && formType === 'brand' && (brandFeedback?.submitted || brandSubmitted) && (
         <div className="space-y-5">
           <div className="v3-card p-5 flex items-center gap-6">
@@ -271,7 +271,7 @@ const V3AdminFeedback = () => {
         </div>
       )}
 
-      {/* Brand feedback form — not yet submitted */}
+      {/* Brand feedback form - not yet submitted */}
       {feedbackUnlocked && formType === 'brand' && !brandFeedback?.submitted && !brandSubmitted && (
         <div className="v3-card p-6 space-y-5" data-testid="brand-feedback-google-form">
           <div className="flex items-start justify-between gap-4">
@@ -341,7 +341,7 @@ const V3AdminFeedback = () => {
                 value={brandWouldRepeat}
                 onChange={(e) => setBrandWouldRepeat(e.target.value)}
                 className="w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]"
-                placeholder="Yes / No / Maybe — and why"
+                placeholder="Yes / No / Maybe - and why"
               />
             </label>
           </div>
@@ -361,7 +361,7 @@ const V3AdminFeedback = () => {
         </div>
       )}
 
-      {/* Creator feedback — submitted */}
+      {/* Creator feedback - submitted */}
       {feedbackUnlocked && formType === 'creator' && (creatorFeedback?.submitted || creatorSubmitted) && (
         <div className="v3-card p-6 space-y-4">
           <div className="flex items-center gap-2 text-[#1F4A3A]">

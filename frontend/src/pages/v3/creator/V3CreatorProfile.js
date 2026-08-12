@@ -14,7 +14,7 @@ const V3CreatorProfile = () => {
       <h1 className="v3-heading text-2xl mb-8" style={{ fontFamily: "'Fraunces', serif" }}>Your Profile</h1>
 
       <div className="flex gap-8">
-        {/* Left — Profile card */}
+        {/* Left - Profile card */}
         <div className="w-[300px] flex-shrink-0">
           <div className="v3-card p-6 text-center mb-5">
             <div className="w-20 h-20 rounded-full bg-[#DDE7E2] flex items-center justify-center mx-auto mb-4">
@@ -47,7 +47,7 @@ const V3CreatorProfile = () => {
           </div>
         </div>
 
-        {/* Right — Details */}
+        {/* Right - Details */}
         <div className="flex-1 space-y-5">
           <div className="v3-card p-5">
             <h3 className="text-[12px] font-semibold text-[#1A1A1A] uppercase tracking-wider mb-3">Bio</h3>

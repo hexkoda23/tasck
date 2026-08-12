@@ -47,7 +47,7 @@ const V3AdminSettings = () => {
           </div>
         </div>
 
-        {/* Automated Reminders & Escalation — INTERACTIVE */}
+        {/* Automated Reminders & Escalation - INTERACTIVE */}
         <div className="v3-card p-5">
           <div className="flex items-center gap-2 mb-4"><Clock className="w-4 h-4 text-[#C49B5F]" strokeWidth={1.5} /><h3 className="text-[13px] font-semibold text-[#1A1A1A]">Automated Reminders & Escalation</h3></div>
           <div className="space-y-3">

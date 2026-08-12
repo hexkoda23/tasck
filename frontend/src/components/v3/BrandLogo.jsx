@@ -58,7 +58,7 @@ const domainFromBrand = (brand) => {
   const website = brand.website || brand.url || brand.brand_url || brand.source_url || '';
   const cleaned = String(website || '').replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
   if (cleaned && cleaned.includes('.')) return cleaned;
-  // Try contact email as last resort (but NOT for the agency block list — the
+  // Try contact email as last resort (but NOT for the agency block list - the
   // server already filters these, but be defensive).
   const email = brand.email || brand.primary_email || '';
   if (typeof email === 'string' && email.includes('@')) {

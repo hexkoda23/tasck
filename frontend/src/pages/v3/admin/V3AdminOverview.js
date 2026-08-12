@@ -193,7 +193,7 @@ const V3AdminOverview = () => {
         </div>
       </div>
 
-      {/* Needs attention + Recent activity — side by side */}
+      {/* Needs attention + Recent activity - side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8" style={{ alignItems: 'start' }}>
         {/* Needs attention */}
         <div data-testid="overview-needs-attention">

@@ -7,7 +7,7 @@ const creatorId = 'creator-rema';
 const V3CreatorDeliverables = () => {
   const creator = getCreator(creatorId);
 
-  // Seeded deliverables — Rema's past + current projects
+  // Seeded deliverables - Rema's past + current projects
   const deliverableGroups = [
     {
       project: 'Made of More: Africa',
@@ -15,14 +15,14 @@ const V3CreatorDeliverables = () => {
       stage: 'plan',
       stageColor: '#1F4A3A',
       deliverables: [
-        { id: 'gd-1', title: 'Hero film 1 — Nigeria', format: 'Short documentary (8 min)', status: 'pending_upload', dueDate: 'Oct 12, 2026' },
-        { id: 'gd-2', title: 'Hero film 2 — Kenya', format: 'Short documentary (8 min)', status: 'pending_upload', dueDate: 'Oct 17, 2026' },
-        { id: 'gd-3', title: 'Hero film 3 — South Africa', format: 'Short documentary (8 min)', status: 'pending_upload', dueDate: 'Oct 24, 2026' },
+        { id: 'gd-1', title: 'Hero film 1 - Nigeria', format: 'Short documentary (8 min)', status: 'pending_upload', dueDate: 'Oct 12, 2026' },
+        { id: 'gd-2', title: 'Hero film 2 - Kenya', format: 'Short documentary (8 min)', status: 'pending_upload', dueDate: 'Oct 17, 2026' },
+        { id: 'gd-3', title: 'Hero film 3 - South Africa', format: 'Short documentary (8 min)', status: 'pending_upload', dueDate: 'Oct 24, 2026' },
         { id: 'gd-4', title: 'Trailer', format: 'Short film (90 sec)', status: 'pending_upload', dueDate: 'Nov 14, 2026' },
         { id: 'gd-5', title: 'Social cutdowns', format: '6 × 30 sec vertical', status: 'pending_upload', dueDate: 'Nov 28, 2026' },
         { id: 'gd-6', title: 'Behind-the-scenes', format: 'Docufeature (12 min)', status: 'pending_upload', dueDate: 'Dec 14, 2026' },
         { id: 'gd-7', title: 'Stills package', format: '40+ photographs', status: 'pending_upload', dueDate: 'Dec 14, 2026' },
-        { id: 'gd-8', title: 'Physical premiere', format: 'Event — Lagos', status: 'pending_upload', dueDate: 'Jan 2027' },
+        { id: 'gd-8', title: 'Physical premiere', format: 'Event - Lagos', status: 'pending_upload', dueDate: 'Jan 2027' },
       ],
     },
     {
@@ -31,9 +31,9 @@ const V3CreatorDeliverables = () => {
       stage: 'closed',
       stageColor: '#8A8A8A',
       deliverables: [
-        { id: 'pd-1', title: 'Campaign film — "Move Different"', format: 'Short film (3 min)', status: 'approved', approvedDate: '15 Oct 2025', payment: 22000000 },
+        { id: 'pd-1', title: 'Campaign film - "Move Different"', format: 'Short film (3 min)', status: 'approved', approvedDate: '15 Oct 2025', payment: 22000000 },
         { id: 'pd-2', title: 'Creative direction package', format: 'Mood boards, art direction, styling', status: 'approved', approvedDate: '28 Sep 2025', payment: 18000000 },
-        { id: 'pd-3', title: 'Music score — original', format: 'Audio (2 tracks)', status: 'approved', approvedDate: '10 Oct 2025', payment: 15000000 },
+        { id: 'pd-3', title: 'Music score - original', format: 'Audio (2 tracks)', status: 'approved', approvedDate: '10 Oct 2025', payment: 15000000 },
         { id: 'pd-4', title: 'Social content package', format: '12 × assets (reels, stills, stories)', status: 'approved', approvedDate: '18 Nov 2025', payment: 12000000 },
       ],
     },
@@ -43,7 +43,7 @@ const V3CreatorDeliverables = () => {
       stage: 'closed',
       stageColor: '#8A8A8A',
       deliverables: [
-        { id: 'bd-1', title: 'Documentary — "Lagos to London"', format: 'Short documentary (15 min)', status: 'approved', approvedDate: '5 Jan 2026', payment: 28000000 },
+        { id: 'bd-1', title: 'Documentary - "Lagos to London"', format: 'Short documentary (15 min)', status: 'approved', approvedDate: '5 Jan 2026', payment: 28000000 },
         { id: 'bd-2', title: 'Stills + editorial package', format: '25 photographs + layout', status: 'approved', approvedDate: '22 Jan 2026', payment: 17000000 },
       ],
     },
@@ -89,7 +89,7 @@ const V3CreatorDeliverables = () => {
         <div key={gi} className="mb-8">
           <div className="flex items-center gap-3 mb-3">
             <div className="w-2.5 h-2.5 rounded-full" style={{ background: group.stageColor }} />
-            <h3 className="text-[13px] font-semibold text-[#1A1A1A]">{group.brand} — {group.project}</h3>
+            <h3 className="text-[13px] font-semibold text-[#1A1A1A]">{group.brand} - {group.project}</h3>
             <span className={`text-[10px] px-2 py-0.5 rounded ${
               group.stage === 'closed' ? 'text-[#8A8A8A] bg-[#F4F2EC]' : 'text-[#1F4A3A] bg-[#DDE7E2]'
             }`}>{group.stage === 'closed' ? 'Closed' : 'Active'}</span>

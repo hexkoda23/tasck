@@ -1,4 +1,4 @@
-// v3demoStore.js — DEPRECATED
+// v3demoStore.js - DEPRECATED
 // This module previously stored "demo" business case bundles in localStorage.
 // It has been replaced by real API data from the backend.
 // All exports are now no-ops to prevent breaking imports during migration.

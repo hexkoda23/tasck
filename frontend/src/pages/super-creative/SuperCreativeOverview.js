@@ -18,10 +18,10 @@ const teamMembers = [
 ];
 
 const hiringPipeline = [
-  { role: 'Videographer — Rema Tour', applicants: 12, shortlisted: 4, budget: '₦1.5M', deadline: 'Mar 8' },
-  { role: 'Photographer — Album Cover', applicants: 8, shortlisted: 2, budget: '₦800K', deadline: 'Mar 12' },
-  { role: 'Stylist — Don Jazzy Campaign', applicants: 15, shortlisted: 5, budget: '₦1.2M', deadline: 'Mar 15' },
-  { role: 'Sound Engineer — Studio Session', applicants: 6, shortlisted: 3, budget: '₦600K', deadline: 'Mar 10' }
+  { role: 'Videographer - Rema Tour', applicants: 12, shortlisted: 4, budget: '₦1.5M', deadline: 'Mar 8' },
+  { role: 'Photographer - Album Cover', applicants: 8, shortlisted: 2, budget: '₦800K', deadline: 'Mar 12' },
+  { role: 'Stylist - Don Jazzy Campaign', applicants: 15, shortlisted: 5, budget: '₦1.2M', deadline: 'Mar 15' },
+  { role: 'Sound Engineer - Studio Session', applicants: 6, shortlisted: 3, budget: '₦600K', deadline: 'Mar 10' }
 ];
 
 const projectTimeline = [

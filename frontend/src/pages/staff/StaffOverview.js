@@ -38,7 +38,7 @@ const teamPerformance = [
 const recentTransactions = [
   { desc: 'Access Bank milestone payment', amount: 12000000, type: 'credit', time: '2h ago' },
   { desc: 'Rema x Boomplay escrow release', amount: 8500000, type: 'credit', time: '1d ago' },
-  { desc: 'Mavin Records payout — Feb batch', amount: 15000000, type: 'debit', time: '2d ago' },
+  { desc: 'Mavin Records payout - Feb batch', amount: 15000000, type: 'debit', time: '2d ago' },
   { desc: 'Guinness deposit received', amount: 22500000, type: 'credit', time: '3d ago' }
 ];
 
@@ -239,9 +239,9 @@ export const StaffOverview = () => {
           </div>
           <div className="space-y-2">
             {[
-              { title: 'Coca-Cola — Coke Studio Kickoff', date: 'Mar 3', time: '11:00 AM', with: 'Sarah Chen, Mavin Records' },
-              { title: 'Access Bank — Signing Prep', date: 'Mar 4', time: '3:00 PM', with: 'Uche Nnamdi' },
-              { title: 'UBA Foundation — CSR Brief', date: 'Mar 5', time: '10:30 AM', with: 'UBA CSR Team, Davido Foundation' },
+              { title: 'Coca-Cola - Coke Studio Kickoff', date: 'Mar 3', time: '11:00 AM', with: 'Sarah Chen, Mavin Records' },
+              { title: 'Access Bank - Signing Prep', date: 'Mar 4', time: '3:00 PM', with: 'Uche Nnamdi' },
+              { title: 'UBA Foundation - CSR Brief', date: 'Mar 5', time: '10:30 AM', with: 'UBA CSR Team, Davido Foundation' },
               { title: 'Weekly Pipeline Standup', date: 'Mar 6', time: '9:00 AM', with: 'Full Team' }
             ].map((mtg, i) => (
               <div key={i} onClick={() => setPopup({ type: 'meeting', data: mtg })} className="flex items-center gap-3 p-2.5 rounded-lg bg-[#F8FAFC] hover:bg-[#F1F5F9] cursor-pointer transition-colors">

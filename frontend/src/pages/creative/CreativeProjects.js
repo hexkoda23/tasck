@@ -6,7 +6,7 @@ import { FolderOpen, Clock, CheckSquare, ArrowRight } from 'lucide-react';
 const projects = [
   {
     id: 'PRJ-2026-0024',
-    title: 'Don Jazzy x Cadbury — Brand Campaign 2026',
+    title: 'Don Jazzy x Cadbury - Brand Campaign 2026',
     role: 'Lead Photographer',
     client: 'Mavin Records',
     status: 'active',
@@ -18,7 +18,7 @@ const projects = [
   },
   {
     id: 'PRJ-2025-0089',
-    title: 'UBA Foundation — Corporate Portrait Series',
+    title: 'UBA Foundation - Corporate Portrait Series',
     role: 'Photographer',
     client: 'UBA Foundation',
     status: 'active',
@@ -30,7 +30,7 @@ const projects = [
   },
   {
     id: 'PRJ-2025-0078',
-    title: 'Johnnie Walker x Don Jazzy — Walk With Giants',
+    title: 'Johnnie Walker x Don Jazzy - Walk With Giants',
     role: 'Campaign Photographer',
     client: 'Mavin Records',
     status: 'review',

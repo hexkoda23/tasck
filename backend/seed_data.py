@@ -719,7 +719,7 @@ def get_seed_data():
         {
             "id": "deal-001",
             "deal_id": "TK-2026-0042",
-            "title": "Spaceship (Burna Boy) x Guinness Nigeria — 'Twice As Tall' Anniversary Activation",
+            "title": "Spaceship (Burna Boy) x Guinness Nigeria - 'Twice As Tall' Anniversary Activation",
             "brand_id": "brand-002",
             "brand_name": "Guinness Nigeria",
             "super_creative_id": "sc-002",
@@ -737,7 +737,7 @@ def get_seed_data():
         {
             "id": "deal-002",
             "deal_id": "TK-2026-0043",
-            "title": "Leading Vibes (Tems) x MTN Nigeria — Brand Ambassador 2026",
+            "title": "Leading Vibes (Tems) x MTN Nigeria - Brand Ambassador 2026",
             "brand_id": "brand-001",
             "brand_name": "MTN Nigeria",
             "super_creative_id": "sc-005",
@@ -755,7 +755,7 @@ def get_seed_data():
         {
             "id": "deal-003",
             "deal_id": "TK-2026-0044",
-            "title": "DMW (Davido) x Pepsi Nigeria — 'Street Vibes' National Campaign",
+            "title": "DMW (Davido) x Pepsi Nigeria - 'Street Vibes' National Campaign",
             "brand_id": "brand-003",
             "brand_name": "Pepsi Nigeria",
             "super_creative_id": "sc-003",
@@ -773,7 +773,7 @@ def get_seed_data():
         {
             "id": "deal-004",
             "deal_id": "TK-2026-0045",
-            "title": "Coke Studio Africa 2026 — Multiple Artists",
+            "title": "Coke Studio Africa 2026 - Multiple Artists",
             "brand_id": "brand-004",
             "brand_name": "Coca-Cola Nigeria",
             "super_creative_id": None,
@@ -791,7 +791,7 @@ def get_seed_data():
         {
             "id": "deal-005",
             "deal_id": "TK-2026-0046",
-            "title": "Mavin Records (Don Jazzy) x Johnnie Walker — 'Walk With Giants'",
+            "title": "Mavin Records (Don Jazzy) x Johnnie Walker - 'Walk With Giants'",
             "brand_id": "brand-011",
             "brand_name": "Johnnie Walker (Diageo)",
             "super_creative_id": "sc-001",
@@ -809,7 +809,7 @@ def get_seed_data():
         {
             "id": "deal-006",
             "deal_id": "TK-2026-0047",
-            "title": "Mavin Records (Don Jazzy) x Cadbury Nigeria — Social Campaign",
+            "title": "Mavin Records (Don Jazzy) x Cadbury Nigeria - Social Campaign",
             "brand_id": "brand-012",
             "brand_name": "Cadbury Nigeria",
             "super_creative_id": "sc-001",
@@ -827,7 +827,7 @@ def get_seed_data():
         {
             "id": "deal-007",
             "deal_id": "TK-2026-0048",
-            "title": "Rema Team x Boomplay — Exclusive Partnership",
+            "title": "Rema Team x Boomplay - Exclusive Partnership",
             "brand_id": "brand-010",
             "brand_name": "Boomplay",
             "super_creative_id": "sc-007",
@@ -845,7 +845,7 @@ def get_seed_data():
         {
             "id": "deal-008",
             "deal_id": "TK-2026-0049",
-            "title": "Starboy (Wizkid) x Diageo Nigeria — Legacy Series",
+            "title": "Starboy (Wizkid) x Diageo Nigeria - Legacy Series",
             "brand_id": "brand-011",
             "brand_name": "Diageo Nigeria",
             "super_creative_id": "sc-004",
@@ -863,7 +863,7 @@ def get_seed_data():
         {
             "id": "deal-009",
             "deal_id": "TK-2026-0050",
-            "title": "Mavin Talent (Fireboy DML) x UBA Foundation — Financial Literacy",
+            "title": "Mavin Talent (Fireboy DML) x UBA Foundation - Financial Literacy",
             "brand_id": "brand-005",
             "brand_name": "UBA Foundation",
             "super_creative_id": "sc-008",
@@ -935,7 +935,7 @@ def get_seed_data():
         {
             "id": "deal-013",
             "deal_id": "TK-2026-0030",
-            "title": "YBNL (Olamide) x Jumia — 'Street to Screen'",
+            "title": "YBNL (Olamide) x Jumia - 'Street to Screen'",
             "brand_id": "brand-007",
             "brand_name": "Jumia Nigeria",
             "super_creative_id": "sc-006",
@@ -953,7 +953,7 @@ def get_seed_data():
         {
             "id": "deal-014",
             "deal_id": "TK-2026-0028",
-            "title": "Asake Team x Globacom — Brand Deal",
+            "title": "Asake Team x Globacom - Brand Deal",
             "brand_id": "brand-001",
             "brand_name": "Globacom",
             "super_creative_id": "sc-010",
@@ -975,7 +975,7 @@ def get_seed_data():
         {
             "id": "proj-001",
             "project_id": "PRJ-2026-0018",
-            "title": "Pepsi Nigeria x DMW (Davido) — 'Street Vibes' National Campaign",
+            "title": "Pepsi Nigeria x DMW (Davido) - 'Street Vibes' National Campaign",
             "brand_id": "brand-003",
             "brand_name": "Pepsi Nigeria",
             "super_creative_id": "sc-003",
@@ -1080,7 +1080,7 @@ def get_seed_data():
         {
             "id": "proj-006",
             "project_id": "PRJ-2026-0015",
-            "title": "YBNL x Jumia — 'Street to Screen'",
+            "title": "YBNL x Jumia - 'Street to Screen'",
             "brand_id": "brand-007",
             "brand_name": "Jumia Nigeria",
             "super_creative_id": "sc-006",
@@ -1275,7 +1275,7 @@ def get_seed_data():
             "id": "task-001",
             "opportunity_id": "opp-005",
             "project_id": "proj-003",
-            "title": "Product lifestyle shoot — Set 1",
+            "title": "Product lifestyle shoot - Set 1",
             "description": "15 edited lifestyle photos (3000x2000px, 300dpi) + 5 BTS shots",
             "creative_id": "cr-001",
             "creative_name": "Kelechi Amadi-Obi",
@@ -1287,7 +1287,7 @@ def get_seed_data():
             "id": "task-002",
             "opportunity_id": "opp-005",
             "project_id": "proj-003",
-            "title": "Product lifestyle shoot — Set 2",
+            "title": "Product lifestyle shoot - Set 2",
             "description": "15 edited lifestyle photos + 5 BTS shots",
             "creative_id": "cr-001",
             "creative_name": "Kelechi Amadi-Obi",
@@ -1299,7 +1299,7 @@ def get_seed_data():
             "id": "task-003",
             "opportunity_id": "opp-005",
             "project_id": "proj-003",
-            "title": "Product lifestyle shoot — Set 3",
+            "title": "Product lifestyle shoot - Set 3",
             "description": "15 edited lifestyle photos + 5 BTS shots",
             "creative_id": "cr-001",
             "creative_name": "Kelechi Amadi-Obi",
@@ -1311,7 +1311,7 @@ def get_seed_data():
             "id": "task-004",
             "opportunity_id": "opp-005",
             "project_id": "proj-003",
-            "title": "Product lifestyle shoot — Set 4",
+            "title": "Product lifestyle shoot - Set 4",
             "description": "15 edited lifestyle photos + 5 BTS shots",
             "creative_id": "cr-001",
             "creative_name": "Kelechi Amadi-Obi",
@@ -1323,7 +1323,7 @@ def get_seed_data():
             "id": "task-005",
             "opportunity_id": "opp-006",
             "project_id": "proj-001",
-            "title": "Hero TVC — Rough Cut",
+            "title": "Hero TVC - Rough Cut",
             "description": "60-second hero TVC rough cut for review",
             "creative_id": "cr-002",
             "creative_name": "Ade Adesanya",
@@ -1370,7 +1370,7 @@ def get_seed_data():
             "entity_type": "deal",
             "entity_id": "deal-004",
             "action": "opportunity_detected",
-            "description": "New opportunity detected: Coca-Cola Africa launching 'Coke Studio Africa 2026' — Budget: $2.5M. AI Match: Wizkid (94%), Ayra Starr (89%), Rema (87%).",
+            "description": "New opportunity detected: Coca-Cola Africa launching 'Coke Studio Africa 2026' - Budget: $2.5M. AI Match: Wizkid (94%), Ayra Starr (89%), Rema (87%).",
             "metadata": {"status": "info"},
             "created_at": (now - timedelta(hours=8)).isoformat()
         },
@@ -1426,7 +1426,7 @@ def get_seed_data():
         {
             "id": "rec-001",
             "type": "deal_signal",
-            "title": "Nigerian Breweries — Star Lager Relaunch",
+            "title": "Nigerian Breweries - Star Lager Relaunch",
             "description": "Star Lager filed new trademark for 'Star Music Live' on Feb 20. Social media spend increased 340% in 30 days. New CMO appointed from Diageo.",
             "confidence": 92,
             "brand_name": "Nigerian Breweries",
@@ -1442,7 +1442,7 @@ def get_seed_data():
         {
             "id": "rec-002",
             "type": "deal_signal",
-            "title": "Access Bank — 10th Anniversary Campaign",
+            "title": "Access Bank - 10th Anniversary Campaign",
             "description": "Access Bank Q4 earnings call mentioned 'significant marketing spend for anniversary celebration.' PR agency Mediacraft already briefed.",
             "confidence": 87,
             "brand_name": "Access Bank",
@@ -1457,7 +1457,7 @@ def get_seed_data():
         {
             "id": "rec-003",
             "type": "deal_signal",
-            "title": "Flutterwave — Creator Economy Product Launch",
+            "title": "Flutterwave - Creator Economy Product Launch",
             "description": "Flutterwave hiring 'Creator Partnerships Lead' on LinkedIn. CEO tweeted about creator economy being 'next frontier.'",
             "confidence": 84,
             "brand_name": "Flutterwave",
@@ -1491,7 +1491,7 @@ def get_seed_data():
             "sender_name": "Adenike Ogunlesi",
             "recipient_id": "staff-001",
             "recipient_name": "Tunde Balogun",
-            "content": "Thanks Tunde! Legal is reviewing now. Quick question — can we add a clause about social media exclusivity during the campaign period?",
+            "content": "Thanks Tunde! Legal is reviewing now. Quick question - can we add a clause about social media exclusivity during the campaign period?",
             "read": True,
             "created_at": (now - timedelta(hours=3)).isoformat()
         },
@@ -1513,7 +1513,7 @@ def get_seed_data():
             "sender_name": "Mavin Records",
             "recipient_id": "cr-001",
             "recipient_name": "Kelechi Amadi-Obi",
-            "content": "Kelechi, the Cadbury Set 2 photos are stunning! Quick note — can we get 3 of them re-cropped to 9:16 for Stories?",
+            "content": "Kelechi, the Cadbury Set 2 photos are stunning! Quick note - can we get 3 of them re-cropped to 9:16 for Stories?",
             "read": True,
             "created_at": (now - timedelta(hours=6)).isoformat()
         },

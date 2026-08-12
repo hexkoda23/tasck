@@ -25,7 +25,7 @@ const AnalyzerSourceBanner = ({ source, model, note, className = '' }) => {
         <AlertTriangle className="w-4 h-4 mt-0.5 text-[#7A5A1E] shrink-0" />
         <div className="space-y-1">
           <p className="text-[12px] font-semibold text-[#7A5A1E]">
-            AI analyser offline — showing safe fallback (no Claude analysis ran).
+            AI analyser offline - showing safe fallback (no Claude analysis ran).
           </p>
           <p className="text-[11px] text-[#7A5A1E] leading-snug">
             {note

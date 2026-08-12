@@ -120,10 +120,10 @@ const V3AdminContracts = () => {
                       <AlertCircle className="w-4 h-4 text-[#D4CDBF] flex-shrink-0" />
                       <div className="flex-1">
                         <p className="text-[13px] text-[#1A1A1A]">
-                          {proj.brand_name || 'Brand'} — {proj.title}
+                          {proj.brand_name || 'Brand'} - {proj.title}
                         </p>
                         <p className="text-[10px] text-[#8A8A8A]">
-                          {stageLabel} stage — contract not yet applicable
+                          {stageLabel} stage - contract not yet applicable
                         </p>
                       </div>
                     </div>

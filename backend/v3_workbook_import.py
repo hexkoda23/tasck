@@ -1,4 +1,4 @@
-"""TASCK OS — CRM Workbook Importer (clean rewrite).
+"""TASCK OS - CRM Workbook Importer (clean rewrite).
 
 Reads `backend/data/Copy of Copy of CRM Template.xlsx` and populates:
   v3_brands, v3_contacts, v3_creators, v3_rms, v3_admin_users,
@@ -8,7 +8,7 @@ Reads `backend/data/Copy of Copy of CRM Template.xlsx` and populates:
 Rules:
 - Idempotent: deterministic IDs by slug; re-runs UPDATE never duplicate.
 - Continuation-row aware: blank company → attach to last brand as another contact.
-- Never wipes destination collections — uses `update_one({id}, {$set: doc}, upsert=True)`.
+- Never wipes destination collections - uses `update_one({id}, {$set: doc}, upsert=True)`.
 - Preserves source provenance on every record (workbook, sheet, row, original values).
 - Path resolved relative to this file so it works regardless of cwd.
 """
@@ -512,7 +512,7 @@ class WorkbookImporter:
             notes = _norm(row[c_notes]) if c_notes is not None and c_notes < len(row) else ""
 
             # Skip rows that have neither a project context nor a goal nor any
-            # interesting content beyond the stage label — these are visual
+            # interesting content beyond the stage label - these are visual
             # spacers in the workbook, not real business cases.
             has_substance = bool(project_context or project_goal or notes)
             if not has_substance and not (folder or lead):
@@ -559,11 +559,11 @@ class WorkbookImporter:
                 fee_raw, fee_amount, fee_currency, budget_raw, budget_amount, budget_currency,
             )
 
-            # Build a clean title: `Organisation — Project Descriptor`.
+            # Build a clean title: `Organisation - Project Descriptor`.
             descriptor = _derive_project_descriptor(project_context, project_goal, effective_lead, effective_folder, fee_raw)
             brand_company = self.brands.get(brand_id, {}).get("company") if brand_id else None
             display_company = brand_company or unlinked_brand_name or "Unlinked"
-            title = f"{display_company} — {descriptor}" if display_company and descriptor else (descriptor or display_company or f"Business Case #{ridx}")
+            title = f"{display_company} - {descriptor}" if display_company and descriptor else (descriptor or display_company or f"Business Case #{ridx}")
 
             bc_id = _det_id("bc", brand_id or f"unlinked-{_slug(unlinked_brand_name or '')}", _slug(descriptor))
             brand = self.brands.get(brand_id, {}) if brand_id else {}
@@ -950,7 +950,7 @@ class WorkbookImporter:
             "business_case_id": bc_id,
             "brand_id": brand_id,
             "status": status,
-            "agreement_description": agreement_raw or "Pending — derived from CRM",
+            "agreement_description": agreement_raw or "Pending - derived from CRM",
             "value": fee_amount or 0,
             "currency": fee_currency or "NGN",
             "source_sheet": self.SHEET_FRAMING,
@@ -1071,7 +1071,7 @@ class WorkbookImporter:
             "brand_id": brand_id,
             "title": f"Report: {title}",
             "status": "complete" if report_raw and feedback_raw else "draft",
-            "content": report_raw or "(Draft report — derived from CRM. Populate with delivery insights.)",
+            "content": report_raw or "(Draft report - derived from CRM. Populate with delivery insights.)",
             "feedback": feedback_raw,
             "source": "crm_derived_test_record" if not report_raw else "crm_template",
             "source_row_number": ridx,
@@ -1172,7 +1172,7 @@ class WorkbookImporter:
             self.business_cases[bc_id] = {
                 "id": bc_id, "brand_id": brand["id"],
                 "brand_name": company,
-                "title": f"{company} — Connect",
+                "title": f"{company} - Connect",
                 "project_descriptor": "Connect",
                 "stage": "connect",
                 "stage_label": "Connect",

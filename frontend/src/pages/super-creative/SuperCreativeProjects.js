@@ -5,7 +5,7 @@ import { FolderOpen, Search, Plus, Users, CheckSquare, Clock, ArrowRight } from 
 const projects = [
   {
     id: 'PRJ-2026-0024',
-    title: 'Don Jazzy x Cadbury — Brand Campaign 2026',
+    title: 'Don Jazzy x Cadbury - Brand Campaign 2026',
     client: 'Cadbury Nigeria',
     status: 'active',
     budget: 32000000,
@@ -18,7 +18,7 @@ const projects = [
   },
   {
     id: 'PRJ-2026-0019',
-    title: 'Mavin Concert Tour — Lagos/Abuja/PH',
+    title: 'Mavin Concert Tour - Lagos/Abuja/PH',
     client: 'Self-Funded',
     status: 'active',
     budget: 18000000,
@@ -31,7 +31,7 @@ const projects = [
   },
   {
     id: 'PRJ-2025-0078',
-    title: 'Johnnie Walker x Don Jazzy — Walk With Giants Q1',
+    title: 'Johnnie Walker x Don Jazzy - Walk With Giants Q1',
     client: 'Diageo Nigeria',
     status: 'review',
     budget: 25000000,

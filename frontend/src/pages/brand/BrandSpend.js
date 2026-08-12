@@ -16,12 +16,12 @@ const campaignSpend = [
 ];
 
 const recentPayments = [
-  { id: 1, description: 'Kelechi Amadi-Obi — Hero Visual Set 1', campaign: 'Guinness x Burna Boy', amount: 350000, date: '2026-03-01', status: 'completed' },
-  { id: 2, description: 'Ade Adesanya — TV Spot Production', campaign: 'Guinness Foreign Extra', amount: 1200000, date: '2026-02-28', status: 'completed' },
-  { id: 3, description: 'Mavin Records — Episode 11 Production', campaign: "Smithwick's x Don Jazzy", amount: 2000000, date: '2026-02-25', status: 'completed' },
-  { id: 4, description: 'Chidinma Okafor — Social Media Design Pack', campaign: 'Harp Lager Festive', amount: 450000, date: '2026-02-20', status: 'completed' },
+  { id: 1, description: 'Kelechi Amadi-Obi - Hero Visual Set 1', campaign: 'Guinness x Burna Boy', amount: 350000, date: '2026-03-01', status: 'completed' },
+  { id: 2, description: 'Ade Adesanya - TV Spot Production', campaign: 'Guinness Foreign Extra', amount: 1200000, date: '2026-02-28', status: 'completed' },
+  { id: 3, description: 'Mavin Records - Episode 11 Production', campaign: "Smithwick's x Don Jazzy", amount: 2000000, date: '2026-02-25', status: 'completed' },
+  { id: 4, description: 'Chidinma Okafor - Social Media Design Pack', campaign: 'Harp Lager Festive', amount: 450000, date: '2026-02-20', status: 'completed' },
   { id: 5, description: 'TASCK Platform Fee (15%)', campaign: 'Guinness x Burna Boy', amount: 2775000, date: '2026-02-15', status: 'completed' },
-  { id: 6, description: 'Escrow Funding — Burna Boy Campaign Phase 2', campaign: 'Guinness x Burna Boy', amount: 15000000, date: '2026-02-10', status: 'held_in_escrow' }
+  { id: 6, description: 'Escrow Funding - Burna Boy Campaign Phase 2', campaign: 'Guinness x Burna Boy', amount: 15000000, date: '2026-02-10', status: 'held_in_escrow' }
 ];
 
 const formatNaira = (amount) => {

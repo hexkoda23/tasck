@@ -8,7 +8,7 @@ const tryParseDictString = (str) => {
   try {
     return JSON.parse(s);
   } catch (e) {
-    // Convert single quotes to double quotes (defensive — handles Python repr)
+    // Convert single quotes to double quotes (defensive - handles Python repr)
     try {
       const fixed = s
         .replace(/'/g, '"')
@@ -82,7 +82,7 @@ export const formatReadinessFieldValue = (key, value) => {
   return String(value);
 };
 
-// React renderer for a KPI cell — used in tables and the Alignment Snapshot preview.
+// React renderer for a KPI cell - used in tables and the Alignment Snapshot preview.
 export const renderKpiList = (kpis, { className = '' } = {}) => {
   const items = normalizeKpiList(kpis);
   if (!items.length) return null;
@@ -96,7 +96,7 @@ export const renderKpiList = (kpis, { className = '' } = {}) => {
   }));
 };
 
-// Renderer that turns a cell value into a React node — handles dict-shaped
+// Renderer that turns a cell value into a React node - handles dict-shaped
 // KPIs cleanly, otherwise falls back to plain text.
 export const cellNodeForReadinessValue = (key, value) => {
   if (key === 'kpis' || (Array.isArray(value) && value.length && typeof value[0] === 'object' && value[0] && ('kpi' in value[0] || 'target' in value[0] || 'metric' in value[0]))) {

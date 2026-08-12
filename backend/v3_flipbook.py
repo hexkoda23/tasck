@@ -1149,7 +1149,7 @@ body{
 .viewport{position:relative; width:min(1220px,97vw); display:flex; align-items:center; justify-content:center;}
 /* The book block is two pages wide. When the cover (right half) or back cover
    (left half) is shown alone, glide the block sideways so the single page sits
-   centered — exactly like the reference viewer. */
+   centered - exactly like the reference viewer. */
 .book-wrap{width:min(1020px,82vw); transition:transform .8s cubic-bezier(.4,.1,.2,1);}
 .viewport.at-start .book-wrap{transform:translateX(-25%);}
 .viewport.at-end .book-wrap{transform:translateX(25%);}
@@ -1472,7 +1472,7 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
     )
 
     # A dark navy "title" endpaper (inside front cover). Only inserted when
-    # parity needs it — with showCover, the front and back covers each display
+    # parity needs it - with showCover, the front and back covers each display
     # alone, so the inner page count must be EVEN for spreads to line up.
     endpaper = (
         '<div class="pend">' + top_row +

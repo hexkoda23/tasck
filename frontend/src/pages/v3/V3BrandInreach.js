@@ -59,7 +59,7 @@ const V3BrandInreach = () => {
                 <select value={form.industry} onChange={e => handleChange('industry', e.target.value)}
                   className="w-full px-3 py-2.5 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A] transition-colors" data-testid="inreach-industry">
                   <option value="">Select industry</option>
-                  <option>FMCG — Beverages</option><option>FMCG — Food</option><option>Telecommunications</option>
+                  <option>FMCG - Beverages</option><option>FMCG - Food</option><option>Telecommunications</option>
                   <option>Banking & Financial Services</option><option>Energy & Industrials</option><option>Fashion & Lifestyle</option>
                   <option>Technology</option><option>Entertainment</option><option>Other</option>
                 </select>

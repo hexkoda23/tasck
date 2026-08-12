@@ -1,4 +1,4 @@
-// Admin Business Cases — the v3.2 spec primitive (live from /api/v3)
+// Admin Business Cases - the v3.2 spec primitive (live from /api/v3)
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
@@ -105,7 +105,7 @@ const V3AdminBusinessCases = () => {
     try {
       [b, c] = await Promise.all([v3GetBrands(), v3GetCreators()]);
     } catch (e) {
-      // API unavailable — brand and creator lists will be empty
+      // API unavailable - brand and creator lists will be empty
     }
     const brandList = Array.isArray(b) ? b : [];
     const creatorList = Array.isArray(c) ? c : [];
@@ -690,7 +690,7 @@ const V3AdminBusinessCases = () => {
             type="text"
             value={form.title}
             onChange={(e) => setForm({ ...form, title: e.target.value })}
-            placeholder="e.g. Star Originals — A Lagos After-Dark Anthology"
+            placeholder="e.g. Star Originals - A Lagos After-Dark Anthology"
             className="w-full px-3 py-2 text-[13px] rounded-lg border border-[#E8E4DB] bg-white focus:outline-none focus:border-[#1F4A3A]"
             data-testid="new-bc-title"
           />

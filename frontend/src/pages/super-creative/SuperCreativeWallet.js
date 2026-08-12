@@ -10,14 +10,14 @@ const walletData = {
 };
 
 const transactions = [
-  { id: 1, type: 'credit', description: 'Cadbury Nigeria — Campaign Payment Milestone 2', amount: 8000000, date: '2026-03-01', balance: 12500000 },
-  { id: 2, type: 'escrow_out', description: 'Escrow funded — Kelechi Amadi-Obi (Photographer)', amount: 750000, date: '2026-02-28', balance: 4500000 },
-  { id: 3, type: 'escrow_out', description: 'Escrow funded — Ade Adesanya (Videographer)', amount: 1200000, date: '2026-02-28', balance: 5250000 },
-  { id: 4, type: 'release', description: 'Auto-released — Kelechi task approved (Set 2)', amount: 187500, date: '2026-02-25', balance: 6450000 },
-  { id: 5, type: 'credit', description: 'Diageo Nigeria — Johnnie Walker Q1 Final', amount: 6250000, date: '2026-02-20', balance: 6637500 },
+  { id: 1, type: 'credit', description: 'Cadbury Nigeria - Campaign Payment Milestone 2', amount: 8000000, date: '2026-03-01', balance: 12500000 },
+  { id: 2, type: 'escrow_out', description: 'Escrow funded - Kelechi Amadi-Obi (Photographer)', amount: 750000, date: '2026-02-28', balance: 4500000 },
+  { id: 3, type: 'escrow_out', description: 'Escrow funded - Ade Adesanya (Videographer)', amount: 1200000, date: '2026-02-28', balance: 5250000 },
+  { id: 4, type: 'release', description: 'Auto-released - Kelechi task approved (Set 2)', amount: 187500, date: '2026-02-25', balance: 6450000 },
+  { id: 5, type: 'credit', description: 'Diageo Nigeria - Johnnie Walker Q1 Final', amount: 6250000, date: '2026-02-20', balance: 6637500 },
   { id: 6, type: 'withdrawal', description: 'Withdrawal to First Bank ****4521', amount: 5000000, date: '2026-02-15', balance: 387500 },
-  { id: 7, type: 'credit', description: 'Beat FM — Concert Final Settlement', amount: 2950000, date: '2026-02-10', balance: 5387500 },
-  { id: 8, type: 'escrow_out', description: 'Escrow funded — Concert Sound Engineer', amount: 600000, date: '2026-02-08', balance: 2437500 }
+  { id: 7, type: 'credit', description: 'Beat FM - Concert Final Settlement', amount: 2950000, date: '2026-02-10', balance: 5387500 },
+  { id: 8, type: 'escrow_out', description: 'Escrow funded - Concert Sound Engineer', amount: 600000, date: '2026-02-08', balance: 2437500 }
 ];
 
 const formatNaira = (amount) => `₦${amount.toLocaleString()}`;

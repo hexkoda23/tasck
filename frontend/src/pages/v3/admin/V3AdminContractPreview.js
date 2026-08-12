@@ -43,7 +43,7 @@ const V3AdminContractPreview = () => {
 
         <h2>2. Project Scope</h2>
         <p><strong>Campaign Title:</strong> "{project.title}"</p>
-        <p><strong>Engagement Model:</strong> {isRetainer ? 'Retainer — strategic advisory + campaign management' : 'Direct — single-project execution'}</p>
+        <p><strong>Engagement Model:</strong> {isRetainer ? 'Retainer - strategic advisory + campaign management' : 'Direct - single-project execution'}</p>
         <p><strong>Estimated Value:</strong> {formatNairaV3(project.estimatedValue)}</p>
         <p>TASCK shall provide campaign strategy, creator matching, creative direction oversight, production management, deliverable quality assurance, and project closure services as detailed in the Strategy Snapshot (Appendix A, to be attached upon approval).</p>
 

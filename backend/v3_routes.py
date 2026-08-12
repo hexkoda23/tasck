@@ -82,7 +82,7 @@ def _temporary_password() -> str:
 # Frontend URL used in emails and portal links is resolved from env vars at
 # runtime. Local dev exports FRONTEND_URL=http://localhost:7159; production
 # gets it from FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL. No hardcoded
-# domain — a stale hardcoded URL would ship emails with the wrong domain
+# domain - a stale hardcoded URL would ship emails with the wrong domain
 # when redeployed to a new host.
 
 
@@ -621,7 +621,7 @@ ABSOLUTE RULE - NO TRANSCRIPT ARTIFACTS:
 - NEVER include verbatim quotes that begin with a person's name, position, or "we", "I", "you guys", "they said" attribution that exposes who spoke.
 - Refer to the organisation, the brand, the leadership team, the marketing team, the partner, the funder, or the audience instead.
 - Strip first names, last names, nicknames, and email-style names (e.g. "kehinde@") from anything you write.
-- Convert every piece of dialog into clean third-person business prose. The output should read like an independent analyst wrote it from public knowledge of the brand plus the captured discussion points — never like a meeting minutes summary.
+- Convert every piece of dialog into clean third-person business prose. The output should read like an independent analyst wrote it from public knowledge of the brand plus the captured discussion points - never like a meeting minutes summary.
 
 WRITING LENGTH AND DEPTH:
 - about_the_organisation MUST be a rich, specific 6 to 9 sentence paragraph (target 700-1500 characters) that covers:
@@ -632,9 +632,9 @@ WRITING LENGTH AND DEPTH:
     (e) the current commercial or cultural context the brand is operating in if the transcripts mention it,
     (f) any recent strategic direction, expansion plans, or partnerships that the transcripts surface.
 - Never return a one-liner, never use generic phrases like "a consumer culture organisation", and never repeat the brand name in every sentence.
-- core_focus_areas, key_customers_beneficiaries, key_goals_metrics, success_timeline, focus, priority should each be 4 to 6 sentences of concrete, evidence-grounded prose (target 400-900 characters per field) — not bullet labels.
+- core_focus_areas, key_customers_beneficiaries, key_goals_metrics, success_timeline, focus, priority should each be 4 to 6 sentences of concrete, evidence-grounded prose (target 400-900 characters per field) - not bullet labels.
 - Mirror the brand's actual language and category vocabulary from the transcript without quoting people by name.
-- If the transcript mentions specific numbers, KPIs, channels, partners, geographies, sub-brands, or product names, INCLUDE them — that is the value-add.
+- If the transcript mentions specific numbers, KPIs, channels, partners, geographies, sub-brands, or product names, INCLUDE them - that is the value-add.
 
 Return JSON only, no markdown, with exactly these keys:
 {
@@ -694,7 +694,7 @@ BUSINESS CASE CONTEXT
 - Existing extracted challenge: {_safe(mi_existing.get("current_marketing_challenge"))}
 - Existing extracted timeline: {_safe(mi_existing.get("timeline"))}
 
-CONNECT TRANSCRIPTS (pre-sanitised: names, speaker labels, timestamps, and meeting dates have been redacted at the input layer — do not infer or reinsert them)
+CONNECT TRANSCRIPTS (pre-sanitised: names, speaker labels, timestamps, and meeting dates have been redacted at the input layer - do not infer or reinsert them)
 {combined_text[:30000] if combined_text else "(no transcripts captured yet - use only the CRM context above, and call out anything that needs the brand to confirm)"}
 
 Use ALL of the CRM context above, not just the transcripts. The about_the_organisation paragraph should weave together the brand's category, what they actually do, who they serve, their stated focus or challenge, and what makes them distinctive - drawing from the stored description, RM notes, and transcripts. If the transcripts contradict CRM context, prefer the transcript and mention the uncertainty in evidence_notes.
@@ -775,14 +775,14 @@ def _brand_about_system_prompt() -> str:
     return """
 You are TASCK's Brand Description Analyst. You are doing this for a paying enterprise client; the output is shown to TASCK admin and forwarded to the brand's marketing team. Quality matters.
 
-You will be given the raw website text (and where available, search-engine knowledge-graph + top news snippets) for a brand. Your job is to produce a CLEAN, RICH, AUTHORITATIVE 6 to 9 sentence brand description in polished Nigerian business English that explains what the BRAND IS — the organisation, not the current marketing campaign.
+You will be given the raw website text (and where available, search-engine knowledge-graph + top news snippets) for a brand. Your job is to produce a CLEAN, RICH, AUTHORITATIVE 6 to 9 sentence brand description in polished Nigerian business English that explains what the BRAND IS - the organisation, not the current marketing campaign.
 
 The description MUST cover, in this order, in separate sentences:
   (a) what kind of organisation the brand is (company, label, agency, programme, NGO, retailer, manufacturer, beverage company, telco, fintech, etc.), its category / sector, and its parent company / group if applicable,
   (b) headquarters / country of origin and the geographic markets it serves (continent, region, key countries),
   (c) what they primarily make, sell, distribute, manufacture, or do, including their flagship product lines, service categories, or programme areas explicitly named in the source,
   (d) who they primarily serve (audience, market, customer segment, beneficiaries),
-  (e) what makes them notable in their market — heritage / year founded if explicitly stated, scale (number of countries, employees, partners) if explicitly stated, distinctive positioning, awards or rankings — ONLY if the source supports it; never invent,
+  (e) what makes them notable in their market - heritage / year founded if explicitly stated, scale (number of countries, employees, partners) if explicitly stated, distinctive positioning, awards or rankings - ONLY if the source supports it; never invent,
   (f) (when supported by the source) recent strategic direction, sustainability commitments, social impact programmes, or major partnerships.
 
 QUALITY BAR:
@@ -790,14 +790,14 @@ QUALITY BAR:
   - Use the brand's actual category vocabulary from the source text. Quote specific product names, programme names, sub-brands, country counts, and partner names when present in the source.
   - Read like a corporate one-paragraph "About Us" written by an analyst, not a press release.
   - Never start with "The brand" or repeat the brand name in every sentence. Vary the subject (the company, the firm, the organisation, its parent).
-  - If the source contains rich detail (e.g. Wikipedia knowledge-graph snippet + heritage page + product page), USE that detail — concrete numbers, founding year, parent company, country count.
+  - If the source contains rich detail (e.g. Wikipedia knowledge-graph snippet + heritage page + product page), USE that detail - concrete numbers, founding year, parent company, country count.
 
-ABSOLUTE RULES — never include any of the following:
+ABSOLUTE RULES - never include any of the following:
   - App store boilerplate: "Download X on the App Store", "Available on Google Play", "See screenshots, ratings and reviews", "Download for free", "Get it on...".
   - Specific campaign / promotional copy: "Now's your chance to nominate", "Honour that incredible woman", "Tag a friend", "Click to win", "Buy two, get one free", "Mum of the Year", competition rules, voucher offers, hashtags.
   - Calls to action: "Sign up", "Subscribe", "Visit our store", "Download our app", "Shop now".
   - Tagline-only descriptions ("Refreshingly Yours", "Open Happiness") unless paired with what the brand actually does.
-  - Holiday / seasonal marketing copy ("festive playlists", "holiday magic", "meals worth sharing") — these are campaigns, not the brand.
+  - Holiday / seasonal marketing copy ("festive playlists", "holiday magic", "meals worth sharing") - these are campaigns, not the brand.
   - Verbatim quotes, hashtags, emoji, social handles, prices, or dates of promotions.
   - Any first or last names of specific employees (CEOs only if explicitly named in the source and integral to the description).
   - Invented facts (year founded, founder, headcount, awards, market share, country count) unless explicitly stated in the source.
@@ -952,7 +952,7 @@ def _sanitize_transcript_for_llm(
     meeting-date headers from a raw transcript before sending it to the LLM.
 
     The system prompt also instructs the LLM to never leak these, but stripping
-    at the input layer means leakage is mathematically impossible — the LLM
+    at the input layer means leakage is mathematically impossible - the LLM
     literally cannot quote a name it never saw.
     """
     if not (combined_text or "").strip():
@@ -2346,7 +2346,7 @@ def make_v3_router(db):
     async def migrate_snapshot_segmentation():
         """One-off, idempotent: attach existing Pitch Deck / Creative Brief /
         selected-creator data to a specific alignment snapshot so each snapshot
-        owns its downstream artifacts. Runs safely on every startup — it only
+        owns its downstream artifacts. Runs safely on every startup - it only
         stamps docs that have no `alignment_snapshot_id` yet.
 
         Rule: pick the target snapshot per case as
@@ -2376,7 +2376,7 @@ def make_v3_router(db):
                 {"$set": {"alignment_snapshot_id": active_id}},
             )
             stamped_decks += res.modified_count or 0
-            # Creative brief doc collection (if used) — stamp unstamped.
+            # Creative brief doc collection (if used) - stamp unstamped.
             res = await db.v3_creative_briefs.update_many(
                 {"business_case_id": bc_id, "alignment_snapshot_id": {"$exists": False}},
                 {"$set": {"alignment_snapshot_id": active_id}},
@@ -2431,7 +2431,7 @@ def make_v3_router(db):
     def _email_logo_data_uri() -> str:
         """Return a small, email-optimised TASCK logo as a base64 data URI.
 
-        The full logo PNG is ~150 KB — far too heavy to inline in every
+        The full logo PNG is ~150 KB - far too heavy to inline in every
         transactional email. We resize once (max 240 px wide, RGBA→RGB on a
         brand-green background so the mark reads on dark headers) and cache
         the base64 result on first use.
@@ -2476,7 +2476,7 @@ def make_v3_router(db):
 
         Gmail and most webmail readers respect ``font-family`` when it names
         a widely-installed face. We lead with **Century Gothic** for body
-        copy — installed with Office on ~95% of desktops — and fall back to
+        copy - installed with Office on ~95% of desktops - and fall back to
         AppleGothic / Verdana / sans-serif. Every line whose first character
         is a word AND ends with a colon after fewer than 60 chars is
         treated as a section label and rendered in **Bebas Neue** display
@@ -2491,7 +2491,7 @@ def make_v3_router(db):
             if not stripped:
                 return '<br />'
             escaped = html.escape(stripped)
-            # Section title? Short line ending with ':' — render as Bebas display heading.
+            # Section title? Short line ending with ':' - render as Bebas display heading.
             if len(stripped) <= 60 and stripped.endswith(':') and ' ' in stripped:
                 return (
                     f'<div style="font-family:{display_stack};color:#4A90E2;'
@@ -2523,13 +2523,13 @@ def make_v3_router(db):
         )
         return (
             '<!doctype html><html><head><meta charset="utf-8">'
-            # Google Fonts import — Gmail will pull Bebas Neue for desktop
+            # Google Fonts import - Gmail will pull Bebas Neue for desktop
             # clients that allow it; the CSS stack falls back cleanly.
             '<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">'
             '</head><body style="margin:0;padding:24px;background:#F5F1E8;">'
             f'<div style="max-width:680px;margin:0 auto;background:#FFFFFF;'
             'border:1px solid #E7DFD2;border-radius:6px;overflow:hidden;">'
-            # TASCK brand strip — inline logo when available, wordmark fallback
+            # TASCK brand strip - inline logo when available, wordmark fallback
             f'<div style="background:#1F4A3A;color:#FFFFFF;padding:14px 24px;'
             f'font-family:{display_stack};letter-spacing:.12em;font-size:20px;'
             'line-height:0;">'
@@ -3492,7 +3492,7 @@ def make_v3_router(db):
             scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
         if not scraped_logo:
             scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
-        # We Yan's scraped logo is white and invisible on the tile — always pin a known-good logo.
+        # We Yan's scraped logo is white and invisible on the tile - always pin a known-good logo.
         if _is_weyan_brand(brand_name):
             scraped_logo = WEYAN_LOGO_URL
         if not scraped_budget:
@@ -4979,7 +4979,7 @@ def make_v3_router(db):
     # For projects built outside the system that already passed the alignment
     # stage. Bypasses Connect + Alignment Snapshot entirely and lands the case
     # on the Creator Selector page (stage=plan with the brainstorm transcript
-    # marked skipped — same routing trick as the skip-transcript endpoint).
+    # marked skipped - same routing trick as the skip-transcript endpoint).
     # ------------------------------------------------------------------------
     class ImportExistingProject(BaseModel):
         brand_id: Optional[str] = None
@@ -5018,7 +5018,7 @@ def make_v3_router(db):
         contact_phone = (payload.contact_phone or "").strip()
         contact_role = (payload.contact_role or "").strip()
 
-        # Brand contact is compulsory — the imported project must have a real
+        # Brand contact is compulsory - the imported project must have a real
         # person to email login credentials and future documents to. Phone is
         # optional.
         if not contact_name:
@@ -5132,7 +5132,7 @@ def make_v3_router(db):
             "created_at": now,
             "status": "skipped",
             "transcript_analysis_source": "imported_project",
-            "notes": "Imported existing project — alignment and transcript stages bypassed.",
+            "notes": "Imported existing project - alignment and transcript stages bypassed.",
         })
 
         description = (payload.description or "").strip()
@@ -5166,9 +5166,9 @@ def make_v3_router(db):
             {"heading": "1. WHY THIS SNAPSHOT IS READ-ONLY", "type": "prose", "content": (
                 f"This project was imported into TASCK after the alignment stage had already been completed outside the platform. "
                 f"The snapshot below is provided so {brand_company} has a single source of truth for the project details on record. "
-                "It is read-only — approvals were captured outside TASCK, so no further approval is required from this screen."
+                "It is read-only - approvals were captured outside TASCK, so no further approval is required from this screen."
             )},
-            {"heading": "2. PROJECT SUMMARY", "type": "prose", "content": (description or f"{brand_company} imported project — details captured at import.")},
+            {"heading": "2. PROJECT SUMMARY", "type": "prose", "content": (description or f"{brand_company} imported project - details captured at import.")},
             {"heading": "3. OBJECTIVES", "type": "prose", "content": (payload.objectives.strip() if payload.objectives else "Objectives were not captured at import time.")},
             {"heading": "4. TARGET AUDIENCE", "type": "prose", "content": (payload.target_audience.strip() if payload.target_audience else "Target audience not captured at import time.")},
             {"heading": "5. CHANNELS", "type": "bullets", "content": "Channels selected for this project.", "items": channels_list or ["Not captured at import time."]},
@@ -5196,7 +5196,7 @@ def make_v3_router(db):
             "approved_by_party": "external",
             "brand_approved": False,
             "brand_header": f"{brand_company.split(' ')[0].upper()} x TASCK",
-            "title": f"{title} — Imported Alignment Snapshot",
+            "title": f"{title} - Imported Alignment Snapshot",
             "opportunity_title": title,
             "meta": "Read-only snapshot for an imported project. Alignment happened outside TASCK.",
             "sections": imported_sections,
@@ -5265,7 +5265,7 @@ def make_v3_router(db):
             "timeline": [{
                 "at": now,
                 "event": "project_imported",
-                "note": "Imported existing project — alignment stage bypassed, sent to Creator Selector.",
+                "note": "Imported existing project - alignment stage bypassed, sent to Creator Selector.",
                 "snapshot_id": as_id,
             }],
             "updated_at": now,
@@ -6311,7 +6311,7 @@ def make_v3_router(db):
             )
             return {"ok": True, "brand_approved": True, "approved_at": approved_at, "next_action": "Awaiting admin approval to move to the next phase."}
 
-        # ADMIN approval: the existing behaviour — snapshot is approved and the
+        # ADMIN approval: the existing behaviour - snapshot is approved and the
         # case advances to the Plan phase so the downstream data slots open.
         await db.v3_alignment_snapshots.update_one(
             {"id": snap["id"]},
@@ -6330,7 +6330,7 @@ def make_v3_router(db):
             "updated_at": _now_iso(),
         }
         # (Brand approval is handled in the early-return branch above and does
-        # NOT advance the stage — the admin approval below is what moves the
+        # NOT advance the stage - the admin approval below is what moves the
         # case to the Plan phase.)
 
         if case.get("engagement_track") == "grant":
@@ -6681,7 +6681,7 @@ def make_v3_router(db):
         )
         # Trim decorative suffixes that snapshots sometimes carry so the
         # filename reads "MTN Alignment Snapshot for Naija Cup" instead of
-        # "MTN Alignment Snapshot for MTN — Naija Cup - Project Alignment Snapshot".
+        # "MTN Alignment Snapshot for MTN - Naija Cup - Project Alignment Snapshot".
         project = project_raw
         for suffix in (
             " - Project Alignment Snapshot",
@@ -6691,7 +6691,7 @@ def make_v3_router(db):
         ):
             if project.lower().endswith(suffix.lower()):
                 project = project[: -len(suffix)].rstrip(" -–—")
-        # Drop the brand-name prefix from the project so "MTN — Naija Cup"
+        # Drop the brand-name prefix from the project so "MTN - Naija Cup"
         # becomes just "Naija Cup" when concatenated with the brand.
         low_brand = brand_name.lower()
         low_proj = project.lower()
@@ -6811,7 +6811,7 @@ def make_v3_router(db):
 
         # ---- Static template assets ----
         # Logo band: 6.5 inches wide (full content width), exactly as the
-        # template — the artwork is whitespace on the left with the bold TASCK
+        # template - the artwork is whitespace on the left with the bold TASCK
         # Logo is now a SQUARE hi-res PNG (circle fills the frame). Place it as a
         # properly sized circle (~1.0") top-right so the circle stays crisp in
         # Word/Google Docs (a wide 6.5" banner made the small circle blurry).
@@ -6823,7 +6823,7 @@ def make_v3_router(db):
         footer_bytes = _read_template_asset("footer_contact.png")
         footer_cx = _emu_inch(6.0)
         footer_cy = int(footer_cx * 180 / 2048)
-        # Faint curved decorative watermark (decorative_curves.png) — two pale
+        # Faint curved decorative watermark (decorative_curves.png) - two pale
         # grey curves, matched from the approved TTA letterhead template. Sits
         # behind all body text (low opacity, centred) like the .docx watermark.
         watermark_bytes = _read_template_asset("decorative_curves.png")
@@ -7106,7 +7106,7 @@ def make_v3_router(db):
         # Route every generic document (Strategy Snapshot, emailed Creative
         # Brief, contract export) through the shared TASCK template packager
         # so they all carry the logo header, contact-strip footer and embedded
-        # Bebas Neue + Century Gothic fonts — matching the approved letterhead
+        # Bebas Neue + Century Gothic fonts - matching the approved letterhead
         # exactly. (Chioma: every doc sent to a brand or creator must use the
         # TASCK template.)
         return _docx_package(blocks)
@@ -7675,7 +7675,7 @@ def make_v3_router(db):
 
     def _docx_package(blocks: List[str]) -> bytes:
         """Assemble a TASCK-template .docx around the given body blocks: full
-        approved letterhead — header banner (black bar + TASCK Agency circle),
+        approved letterhead - header banner (black bar + TASCK Agency circle),
         contact-strip footer, faint decorative-curves watermark on the
         background, embedded Bebas Neue + Century Gothic fonts. Every TASCK
         document sent to a brand or creator is routed through here so they
@@ -7683,7 +7683,7 @@ def make_v3_router(db):
         # Logo is now a SQUARE hi-res PNG (circle fills the frame). Place it as a
         # properly sized circle (~1.05") top-right so the circle stays crisp in
         # Word/Google Docs (a wide 6.5" banner made the small circle blurry).
-        # Use the inlined logo bytes (deploy-proof) — falls back to the file
+        # Use the inlined logo bytes (deploy-proof) - falls back to the file
         # asset internally if decoding ever fails.
         logo_bytes = _tasck_logo_bytes()
         logo_size_in = 1.05
@@ -10656,7 +10656,7 @@ def make_v3_router(db):
             blocks.append(para("(Internal name: Creator Brief for Fee Confirmation)", bold=True, italic=True, after=240))
 
         # NOTE: the top-of-page project-reference block is intentionally
-        # omitted — Section 1 ("1. Project Reference") in the template already
+        # omitted - Section 1 ("1. Project Reference") in the template already
         # carries Brand/Organisation, Project working title, TTA project lead
         # and Date, so we do not duplicate them here.
 
@@ -10666,7 +10666,7 @@ def make_v3_router(db):
             if heading:
                 blocks.append(head(heading))
 
-            # Label / value lines — one per paragraph.
+            # Label / value lines - one per paragraph.
             for line in section.get("lines", []) or []:
                 label = str(line.get("label") or "").strip()
                 value = str(line.get("value") or "").strip()
@@ -10687,7 +10687,7 @@ def make_v3_router(db):
                     joined = f"{intro} {box_str}".strip() if intro else box_str
                 blocks.append(para(joined, after=80))
 
-            # Availability question (Section 8) — question + inline Yes/Conditional/No.
+            # Availability question (Section 8) - question + inline Yes/Conditional/No.
             if section.get("availability_label"):
                 q = str(section.get("availability_label")).strip()
                 opts = section.get("availability_options") or []
@@ -10708,11 +10708,11 @@ def make_v3_router(db):
             for bullet in section.get("scope_signal", []) or []:
                 blocks.append(para(str(bullet), after=40))
 
-            # Working assumptions (Section 6) — one per line, matching template.
+            # Working assumptions (Section 6) - one per line, matching template.
             for item in section.get("assumptions", []) or []:
                 blocks.append(para(str(item), after=40))
 
-            # Confirmations (Section 9) — inline checkbox line per item, matching template.
+            # Confirmations (Section 9) - inline checkbox line per item, matching template.
             for item in section.get("confirmations", []) or []:
                 blocks.append(para(f"{CHECKBOX} {item}", after=40))
 
@@ -10906,11 +10906,11 @@ def make_v3_router(db):
 
     def creative_brief_html(brief: Dict[str, Any]) -> str:
         """Render the Creative Alignment Brief as a standalone printable HTML
-        page. Same content model as ``creative_brief_docx_bytes`` — the two
+        page. Same content model as ``creative_brief_docx_bytes`` - the two
         rendering paths stay in sync so brand reviewers see the same wording
         online that they'd get in the downloaded .docx.
 
-        Anyone with the URL can open this in a browser — no Google, no
+        Anyone with the URL can open this in a browser - no Google, no
         install. A print button hooks into ``window.print()`` so the page
         also works as a lightweight PDF export.
         """
@@ -11033,7 +11033,7 @@ def make_v3_router(db):
     async def preview_creative_brief_html(bc_id: str, alignment_snapshot_id: Optional[str] = None):
         """Public browser preview of the Creative Brief. Same content as the
         .docx download, rendered as a printable HTML page. Brand reviewers can
-        open the URL directly in any browser — no Google, no install."""
+        open the URL directly in any browser - no Google, no install."""
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
@@ -11474,7 +11474,7 @@ def make_v3_router(db):
         subject = str(payload.get("subject") or f"Creative Brief - {case.get('title') or 'Creative Brief'}").strip()
         brief_text = str(payload.get("brief_text") or "").strip()
         if not brief_text:
-            raise HTTPException(400, "brief_text is required — generate the Creative Brief first")
+            raise HTTPException(400, "brief_text is required - generate the Creative Brief first")
         docx_bytes = creative_brief_docx_bytes(
             creative_brief_from_raw_text(subject, brief_text, creator_name="")
         )
@@ -11560,7 +11560,7 @@ def make_v3_router(db):
         templated .docx (TASCK banner + watermark + contact footer + Century
         Gothic body) without persisting anything. The Creative Brief Studio
         calls this when the admin clicks 'Download Google Docs' before the
-        brief has been sent — previously that path fell back to plain HTML
+        brief has been sent - previously that path fell back to plain HTML
         in a browser tab with no design, which the client flagged."""
         # Confirm the business case exists so we don't leak DOCX generation.
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -12108,7 +12108,7 @@ def make_v3_router(db):
 
     async def _resolve_active_snapshot_id(bc_id: str, provided: Optional[str] = None) -> Optional[str]:
         """Fall back to the Business Case's active snapshot when the caller
-        didn't provide one — keeps the endpoint usable while still stamping
+        didn't provide one - keeps the endpoint usable while still stamping
         every row with the correct snapshot."""
         if provided:
             return provided
@@ -12284,7 +12284,7 @@ def make_v3_router(db):
             # Return this snapshot's Creator Selector only. Older rounds that
             # were created before snapshot-scoping was introduced (and still
             # have an empty alignment_snapshot_id) count as belonging to the
-            # snapshot the case now has active — the migration in
+            # snapshot the case now has active - the migration in
             # `_backfill_snapshot_ids` already stamps them, so we just match
             # exactly here.
             query["alignment_snapshot_id"] = alignment_snapshot_id
@@ -12397,7 +12397,7 @@ def make_v3_router(db):
         (see V1BusinessCaseFlowPages ``routeToNextFrameStep``) jumps straight
         into the Creator Match Scanner without demanding a transcript.
 
-        No brainstorm round is created — the admin still fills the Creator
+        No brainstorm round is created - the admin still fills the Creator
         Selector by hand or uses the shortlist they already had.
         """
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -12405,7 +12405,7 @@ def make_v3_router(db):
             raise HTTPException(404, "Business case not found")
         skipped_at = _now_iso()
         # A short marker round captures "why" for the timeline without polluting
-        # the analyzer stack — future analyze calls will still work if the admin
+        # the analyzer stack - future analyze calls will still work if the admin
         # changes their mind later.
         round_id = f"bs-skip-{uuid.uuid4().hex[:8]}"
         await db.v3_brainstorm_rounds.insert_one({
@@ -12414,7 +12414,7 @@ def make_v3_router(db):
             "created_at": skipped_at,
             "status": "skipped",
             "transcript_analysis_source": "admin_skip",
-            "notes": "Admin skipped transcript — brand already past this stage.",
+            "notes": "Admin skipped transcript - brand already past this stage.",
         })
         await db.v3_business_cases.update_one(
             {"id": bc_id},
@@ -12769,7 +12769,7 @@ def make_v3_router(db):
                 "link": f"/admin/business-cases/{row.get('business_case_id')}/frame/brief",
             })
 
-        # 5. Brand comments on alignment snapshots — the actual pain point.
+        # 5. Brand comments on alignment snapshots - the actual pain point.
         # A brand can comment on the Alignment Snapshot from the brand portal
         # while the case is already in Plan; without a notification, admin
         # never sees the comment because they land on the Plan page. Link
@@ -12933,7 +12933,7 @@ def make_v3_router(db):
         # 7. Direct chat messages from the brand portal Messages page. These
         # are stored in v3_interactions with type="brand_message" and are
         # scoped to a brand (not tied to a case). This is what the "Chat with
-        # TASCK admin" send button posts — without this notification the admin
+        # TASCK admin" send button posts - without this notification the admin
         # never sees them because the Messages page isn't the default landing.
         chat_msgs = await db.v3_interactions.find(
             {"type": "brand_message"},
@@ -14243,7 +14243,7 @@ def make_v3_router(db):
                     {"$set": {"status": "running", "progress": 25, "message": "Running Claude alignment analysis…", "updated_at": _now_iso()}},
                 )
                 result = await _run_alignment_analysis(bc_id, meetings, case, brand, combined_text, meeting_dates)
-                # Alignment recommendation is stored — now split the same
+                # Alignment recommendation is stored - now split the same
                 # conversation corpus into distinct campaign opportunities so
                 # the "Campaigns found" panel populates in the same click.
                 # Users were running Analyze Conversations and still seeing
@@ -14296,7 +14296,7 @@ def make_v3_router(db):
                                 }},
                             )
                 except Exception as opp_exc:  # noqa: BLE001
-                    # Opportunity detection is a bonus — never fail the whole
+                    # Opportunity detection is a bonus - never fail the whole
                     # analyze-all job if it goes sideways. The alignment
                     # recommendation is still valid.
                     logger.exception("Bundled opportunity detection failed for %s: %s", bc_id, opp_exc)
@@ -14307,7 +14307,7 @@ def make_v3_router(db):
                         "status": "completed",
                         "progress": 100,
                         "message": (
-                            f"Analysis complete — found {len(opportunities_payload)} opportunit{'y' if len(opportunities_payload) == 1 else 'ies'}."
+                            f"Analysis complete - found {len(opportunities_payload)} opportunit{'y' if len(opportunities_payload) == 1 else 'ies'}."
                             if opportunities_payload
                             else "Analysis complete."
                         ),
@@ -14322,7 +14322,7 @@ def make_v3_router(db):
                 # Never fail the job from the user's perspective. Run the
                 # deterministic fallback and mark the job complete, but record
                 # the LLM error in `error` for diagnostics.
-                logger.exception("Background analysis failed for %s — falling back to deterministic: %s", bc_id, exc)
+                logger.exception("Background analysis failed for %s - falling back to deterministic: %s", bc_id, exc)
                 try:
                     fallback = await _build_deterministic_analysis_payload(bc_id, meetings, case, brand, combined_text, meeting_dates)
                     await db.v3_analysis_jobs.update_one(

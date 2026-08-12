@@ -38,7 +38,7 @@ api_router = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# v3 router — registered here so the startup handler can call it.
+# v3 router - registered here so the startup handler can call it.
 v3_router = make_v3_router(db)
 
 # ==================== SEED DATABASE ====================
@@ -101,7 +101,7 @@ async def startup_event():
             logger.warning(f"Workbook import skipped or failed: {exc}")
         try:
             # Restore the four demo Brand Portal accounts (Coca-Cola, MTN,
-            # Nigerian Breweries, Test Brand) on every boot. Idempotent — if
+            # Nigerian Breweries, Test Brand) on every boot. Idempotent - if
             # they already exist we just refresh identity + website so the
             # CRM logo pipeline never regresses after `clear-v3-demo-data`.
             from seed_demo_brand_accounts import seed_demo_brand_accounts
@@ -112,7 +112,7 @@ async def startup_event():
         logger.info("Background hydration completed.")
 
     asyncio.create_task(_hydrate())
-    logger.info("TASCK OS API started successfully (v1+v2+v3) — hydration running in background")
+    logger.info("TASCK OS API started successfully (v1+v2+v3) - hydration running in background")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -647,7 +647,7 @@ async def health_check():
 # Include router
 app.include_router(api_router)
 
-# v3 router — separate /api/v3 namespace, isolated from v1/v2 collections
+# v3 router - separate /api/v3 namespace, isolated from v1/v2 collections
 app.include_router(v3_router)
 
 # CORS

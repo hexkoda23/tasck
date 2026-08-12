@@ -8,15 +8,15 @@ const V3BrandOnboarding = ({ onComplete }) => {
   const steps = [
     {
       title: 'Welcome to TASCK',
-      desc: 'Your brand portal is ready. Here you\'ll track your campaigns, review documents, approve deliverables, and manage invoices — all in one place.',
+      desc: 'Your brand portal is ready. Here you\'ll track your campaigns, review documents, approve deliverables, and manage invoices - all in one place.',
       icon: FolderOpen,
       detail: 'Your dedicated Relationship Manager, Temi Bakare, has set up your account and will be your primary point of contact throughout every campaign.',
     },
     {
       title: 'Your Document Vault',
-      desc: 'Every document generated for your campaigns — Alignment Snapshots, Strategy Snapshots, contracts, and final reports — lives here. Version-controlled and always accessible.',
+      desc: 'Every document generated for your campaigns - Alignment Snapshots, Strategy Snapshots, contracts, and final reports - lives here. Version-controlled and always accessible.',
       icon: FileCheck,
-      detail: 'When a document is ready for your review, you\'ll see it in Approvals. Approve or request changes directly from the portal — no email ping-pong.',
+      detail: 'When a document is ready for your review, you\'ll see it in Approvals. Approve or request changes directly from the portal - no email ping-pong.',
     },
     {
       title: 'Stay in the Loop',

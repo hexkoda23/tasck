@@ -268,14 +268,14 @@ const V2DealRoom = () => {
                 {simCloseProb >= 70
                   ? `This deal has strong close probability. At ${simCommission}% commission, TASCK nets ${formatNaira(simResults.tasckRevenue, { compact: true })}. Recommend proceeding to contract stage.`
                   : simCloseProb >= 40
-                  ? `Moderate probability. Consider increasing engagement frequency. A ${Math.min(simCommission + 2, 25)}% commission could still work — the expected value of ${formatNaira(simResults.expectedValue, { compact: true })} justifies the effort.`
+                  ? `Moderate probability. Consider increasing engagement frequency. A ${Math.min(simCommission + 2, 25)}% commission could still work - the expected value of ${formatNaira(simResults.expectedValue, { compact: true })} justifies the effort.`
                   : `Low probability deal. The expected value of ${formatNaira(simResults.expectedValue, { compact: true })} may not justify resource allocation. Consider nurturing or deprioritizing.`
                 }
               </p>
               {simCloseProb < 40 && (
                 <div className="mt-3 flex items-center gap-2 p-2 rounded-lg bg-[#F59E0B]/5 border border-[#F59E0B]/10">
                   <AlertTriangle className="w-3 h-3 text-[#F59E0B]" />
-                  <span className="text-[10px] text-[#F59E0B]">Low probability — resource allocation risk</span>
+                  <span className="text-[10px] text-[#F59E0B]">Low probability - resource allocation risk</span>
                 </div>
               )}
             </div>

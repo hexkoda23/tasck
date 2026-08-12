@@ -5,7 +5,7 @@ import { CheckSquare, Clock, Upload, ArrowRight, AlertCircle, CheckCircle, Eye, 
 const tasks = [
   {
     id: 'TSK-001',
-    title: 'Cadbury Product Photography — Set 3',
+    title: 'Cadbury Product Photography - Set 3',
     project: 'Don Jazzy x Cadbury Campaign',
     client: 'Mavin Records',
     status: 'in_progress',
@@ -17,7 +17,7 @@ const tasks = [
   },
   {
     id: 'TSK-002',
-    title: 'UBA Corporate Portraits — Final Set',
+    title: 'UBA Corporate Portraits - Final Set',
     project: 'UBA Foundation Portrait Series',
     client: 'UBA Foundation',
     status: 'in_progress',
@@ -29,7 +29,7 @@ const tasks = [
   },
   {
     id: 'TSK-003',
-    title: 'Cadbury Social Media Crops — Set 2',
+    title: 'Cadbury Social Media Crops - Set 2',
     project: 'Don Jazzy x Cadbury Campaign',
     client: 'Mavin Records',
     status: 'submitted',
@@ -42,7 +42,7 @@ const tasks = [
   },
   {
     id: 'TSK-004',
-    title: 'UBA Portraits — Set 3',
+    title: 'UBA Portraits - Set 3',
     project: 'UBA Foundation Portrait Series',
     client: 'UBA Foundation',
     status: 'approved',
@@ -55,7 +55,7 @@ const tasks = [
   },
   {
     id: 'TSK-005',
-    title: 'Cadbury Product Photography — Set 2',
+    title: 'Cadbury Product Photography - Set 2',
     project: 'Don Jazzy x Cadbury Campaign',
     client: 'Mavin Records',
     status: 'approved',
@@ -68,7 +68,7 @@ const tasks = [
   },
   {
     id: 'TSK-006',
-    title: 'Cadbury Product Photography — Set 1',
+    title: 'Cadbury Product Photography - Set 1',
     project: 'Don Jazzy x Cadbury Campaign',
     client: 'Mavin Records',
     status: 'approved',
@@ -89,7 +89,7 @@ const tasks = [
     deadline: '2025-12-28',
     payment: 250000,
     description: 'Pre-production photos for concert marketing materials.',
-    deliverables: '30 photos — artist portraits, venue, and promotional shots',
+    deliverables: '30 photos - artist portraits, venue, and promotional shots',
     approvedDate: '2025-12-30'
   }
 ];

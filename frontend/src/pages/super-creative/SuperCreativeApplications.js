@@ -92,7 +92,7 @@ const applications = [
     appliedDate: '2026-02-18',
     message: 'Experienced lighting designer with international tour experience.',
     portfolio: 4,
-    rejectionReason: 'Budget mismatch — another candidate selected at better rate'
+    rejectionReason: 'Budget mismatch - another candidate selected at better rate'
   }
 ];
 
@@ -172,7 +172,7 @@ export const SuperCreativeApplications = () => {
                           <StatusIcon className="w-3 h-3" /> {app.status.charAt(0).toUpperCase() + app.status.slice(1)}
                         </span>
                       </div>
-                      <p className="text-[#64748B] text-sm">Applying for: <span className="text-[#334155]">{app.role}</span> — {app.project}</p>
+                      <p className="text-[#64748B] text-sm">Applying for: <span className="text-[#334155]">{app.role}</span> - {app.project}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-[#22C55E] font-mono text-lg">{formatNaira(app.rate)}</p>
