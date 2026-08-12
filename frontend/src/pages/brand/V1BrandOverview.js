@@ -25,6 +25,7 @@ const BRAND_KIND_ICON = {
   alignment_approved: CheckCircle2,
   strategy_ready: FileText,
   contract_ready: FileSignature,
+  admin_message: MessageSquare,
 };
 
 const loadSeen = () => {

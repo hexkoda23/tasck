@@ -10318,6 +10318,34 @@ def make_v3_router(db):
                 "link": "/brand/contracts",
             })
 
+        # 4. Direct chat messages from TASCK admin to this brand. Stored in
+        # v3_interactions with type="admin_brand_message". Without this the
+        # brand never sees admin replies until they manually open Messages.
+        admin_msgs = await db.v3_interactions.find(
+            {"brand_id": brand_id, "type": "admin_brand_message"},
+            {"_id": 0, "id": 1, "content": 1, "author": 1, "date_iso": 1, "business_case_id": 1},
+        ).sort("date_iso", -1).to_list(50)
+        for row in admin_msgs:
+            when = row.get("date_iso")
+            if not when or not _within_window(when):
+                continue
+            text = str(row.get("content") or "").strip()
+            if not text:
+                continue
+            preview = (text[:180] + "…") if len(text) > 180 else text
+            author = str(row.get("author") or "TASCK admin").strip() or "TASCK admin"
+            notifications.append({
+                "id": f"admin_message:{row.get('id')}",
+                "kind": "admin_message",
+                "actor": "admin",
+                "when": when,
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case_titles.get(row.get("business_case_id")),
+                "title": "New message from TASCK admin",
+                "message": f"{author}: {preview}",
+                "link": "/brand/messages",
+            })
+
         def _ts(item: Dict[str, Any]) -> str:
             return str(item.get("when") or "")
         notifications.sort(key=_ts, reverse=True)
