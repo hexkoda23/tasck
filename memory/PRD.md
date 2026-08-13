@@ -1194,3 +1194,12 @@ One contact email can own MULTIPLE brand portal accounts (one per brand, e.g. ke
 - Exposed `_smtp_transactional_html` + `_email_logo_data_uri` on the router for tests. New regression suite: `/app/backend/tests/test_email_logo_branding.py` (3 tests — all pass: `<img>` present, cached, size <15 KB, header colour preserved, wrapper reused across welcome & snapshot bodies).
 - Verified visually: rendered a live sample HTML wrapper against the welcome body and confirmed the new "THE TASCK AGENCY" mark sits on the brand-green strip above the message.
 
+
+## 2026-08-13 - Claude restored via Emergent Universal Key (env-only change)
+- User's direct Anthropic key is usage-limit blocked until 2026-09-01 ("You have reached your specified API usage limits") despite the spend limit being "raised" (likely a workspace-level cap still in place).
+- Fix: routed ALL AI features through the Emergent Universal Key running Claude Sonnet 4.5 (`emergentintegrations` supports anthropic text models). Zero code changes - env vars only in `/app/backend/.env`:
+  - `TASCK_AI_PROVIDER=emergent` (skips the blocked direct-Anthropic HTTP path)
+  - `*_EMERGENT_PROVIDER=anthropic` + `*_EMERGENT_MODEL=claude-sonnet-4-5` for: ALIGNMENT_ANALYZER, PITCH_DECK, CREATIVE_BRIEF, BRAINSTORM, CREATOR_MATCH, BRAND_ABOUT, OPPORTUNITY, OPPORTUNITY_SCANNER.
+  - `IMPORT_EXTRACT_EMERGENT_MODEL` deliberately left at gemini-2.5-flash (file/document parsing).
+- Verified live: connect analyze-all (33 transcripts) and pitch-deck generate both completed with `analysis_source=emergent:anthropic/claude-sonnet-4-5`; pitch deck has 10 rich sections (400-1200 chars each).
+- Note: Claude usage now bills against the user's Emergent key balance. When the direct Anthropic key unblocks (Sept 1 or workspace cap fixed), reverting is just removing `TASCK_AI_PROVIDER=emergent` from .env.
