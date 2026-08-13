@@ -143,7 +143,7 @@ const BrandNeedsAttentionCard = ({ brandId }) => {
 
 const V1BrandOverview = () => {
   const navigate = useNavigate();
-  const { loading, error, brand, session, bundles } = useV1BrandPortalData();
+  const { loading, hydrated, error, brand, session, bundles } = useV1BrandPortalData();
   const groups = useMemo(() => documentGroupsFromBundles(bundles), [bundles]);
   const activeBundles = bundles.filter((bundle) => bundleCase(bundle).stage !== 'closed');
   const currentBundle = bundles[0];
@@ -151,7 +151,7 @@ const V1BrandOverview = () => {
   const docs = [...groups.alignment, ...groups.strategy, ...groups.contracts, ...groups.reports];
   const pendingDocs = docs.filter((doc) => /review|sent|pending/i.test(doc.snapshot?.status || ''));
   const approvedDocs = docs.filter((doc) => /approve|signed|complete/i.test(doc.snapshot?.status || ''));
-  if (loading) return <LoadingState />;
+  if (loading || !hydrated) return <LoadingState />;
   if (error) return <ErrorState error={error} />;
   return <div className="space-y-5" data-testid="v1-brand-overview">
     <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4"><div><p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">Brand Portal</p><h1 className="v3-heading text-3xl" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)} project workspace</h1><p className="text-[13px] text-[#6B6258] mt-2 max-w-3xl">Track the live work between your brand and TASCK, review documents sent for approval, and send comments directly back to admin.</p></div><button onClick={() => navigate('/brand/projects')} className="v3-btn-primary w-fit"><BriefcaseBusiness className="w-4 h-4" /> View projects</button></div>

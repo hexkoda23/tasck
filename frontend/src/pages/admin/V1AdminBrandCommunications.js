@@ -6,20 +6,44 @@ import { v3CreateInteraction, v3GetBrands, v3GetBusinessCase, v3ListBusinessCase
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { brandName, cleanPortalText, formatDate, sentenceCaseStatus } from '../brand/V1BrandPortalData';
 
+// Module-level cache so revisits render instantly (stale-while-revalidate).
+let commsCache = null;
+
 const V1AdminBrandCommunications = () => {
   const location = useLocation();
   // Deep-link support: /admin/brand-communications?brand=<id> preselects that
   // brand so admins landing here from a "New message from …" notification see
   // the sender's thread immediately without hunting through the list.
   const queryBrandId = new URLSearchParams(location.search || '').get('brand') || '';
-  const [loading, setLoading] = useState(true);
-  const [brands, setBrands] = useState([]);
-  const [bundles, setBundles] = useState([]);
-  const [interactions, setInteractions] = useState([]);
-  const [selectedBrand, setSelectedBrand] = useState(queryBrandId);
+  const [loading, setLoading] = useState(!commsCache);
+  const [brands, setBrands] = useState(commsCache?.brands || []);
+  const [bundles, setBundles] = useState(commsCache?.bundles || []);
+  const [interactions, setInteractions] = useState(commsCache?.interactions || []);
+  const [selectedBrand, setSelectedBrand] = useState(queryBrandId || commsCache?.brands?.[0]?.id || '');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const reload = useCallback(async () => { setLoading(true); try { const [brandList, caseList, interactionList] = await Promise.all([v3GetBrands(), v3ListBusinessCases(), v3ListInteractions()]); const cases = Array.isArray(caseList) ? caseList : []; const hydrated = await Promise.all(cases.slice(0, 80).map(async (businessCase) => { try { return await v3GetBusinessCase(businessCase.id); } catch (e) { return { business_case: businessCase }; } })); const nextBrands = Array.isArray(brandList) ? brandList : []; setBrands(nextBrands); setBundles(hydrated); setInteractions(Array.isArray(interactionList) ? interactionList : []); setSelectedBrand((current) => current || queryBrandId || nextBrands[0]?.id || ''); } catch (e) { toast.error(e.message || 'Could not load brand communications.'); } finally { setLoading(false); } }, [queryBrandId]);
+  const reload = useCallback(async () => {
+    if (!commsCache) setLoading(true);
+    try {
+      const [brandList, caseList, interactionList] = await Promise.all([v3GetBrands(), v3ListBusinessCases(), v3ListInteractions()]);
+      const cases = Array.isArray(caseList) ? caseList : [];
+      const nextBrands = Array.isArray(brandList) ? brandList : [];
+      const nextInteractions = Array.isArray(interactionList) ? interactionList : [];
+      // Phase 1: reveal immediately - messages and interaction-based comments
+      // render now; snapshot comments hydrate in the background below.
+      setBrands(nextBrands);
+      setInteractions(nextInteractions);
+      setSelectedBrand((current) => current || queryBrandId || nextBrands[0]?.id || '');
+      setLoading(false);
+      // Phase 2: hydrate business-case bundles for snapshot comments.
+      const hydrated = await Promise.all(cases.slice(0, 80).map(async (businessCase) => { try { return await v3GetBusinessCase(businessCase.id); } catch (e) { return { business_case: businessCase }; } }));
+      setBundles(hydrated);
+      commsCache = { brands: nextBrands, bundles: hydrated, interactions: nextInteractions };
+    } catch (e) {
+      toast.error(e.message || 'Could not load brand communications.');
+      setLoading(false);
+    }
+  }, [queryBrandId]);
   useEffect(() => { reload(); }, [reload]);
   // When the URL brand param changes (admin clicked a different notification),
   // sync the selection so the panel jumps to that sender's thread.

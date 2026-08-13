@@ -39,7 +39,7 @@ const DocumentReview = ({ kind, title, emptyLabel }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.snapshot?.id, selected?.kind]);
-  if (data.loading) return <LoadingState />;
+  if (data.loading || !data.hydrated) return <LoadingState />;
   if (data.error) return <ErrorState error={data.error} />;
   // Revision display: Rev 1 (or older docs without tracking) shows no badge.
   // Rev >= 2 means TASCK sent a corrected version - show a distinct banner,

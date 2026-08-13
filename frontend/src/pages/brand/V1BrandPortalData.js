@@ -54,22 +54,39 @@ export const projectValue = (bc) => { const value = bc?.estimated_value || bc?.v
 export const projectProgress = (stage) => Math.round(((stageIndex(stage) + 1) / stageOrder.length) * 100);
 export const projectSummary = (bundle) => { const bc = bundleCase(bundle); if (bc.stage === 'closed') return cleanPortalText('This project has been closed by TASCK. The final report, feedback, contracts, and approved documents remain available in this brand portal.'); return cleanPortalText(bc.next_action || bc.summary || bc.connect?.stated_intent || bc.description || 'TASCK is progressing this project with your team.'); };
 
+// Module-level stale-while-revalidate cache: brandId -> last good payload.
+// Every page navigation renders instantly from cache while a silent refresh
+// runs in the background (no full-screen loader after the first visit).
+const portalCache = new Map();
+export const clearBrandPortalCache = () => portalCache.clear();
+
 export const useV1BrandPortalData = () => {
   const session = useMemo(() => getBrandPortalSession(), []);
   const brandId = session?.brandId || session?.brand_id;
-  const [state, setState] = useState({ loading: true, error: '', brand: null, brandBundle: null, businessCases: [], bundles: [], interactions: [] });
+  const [state, setState] = useState(() => {
+    const cached = brandId ? portalCache.get(brandId) : null;
+    return cached
+      ? { loading: false, hydrated: true, error: '', ...cached }
+      : { loading: true, hydrated: false, error: '', brand: null, brandBundle: null, businessCases: [], bundles: [], interactions: [] };
+  });
   const reload = useCallback(async () => {
-    if (!brandId) { setState({ loading: false, error: 'Please sign in again so TASCK can identify your brand account.', brand: null, brandBundle: null, businessCases: [], bundles: [], interactions: [] }); return; }
-    setState((current) => ({ ...current, loading: true, error: '' }));
+    if (!brandId) { setState({ loading: false, hydrated: true, error: 'Please sign in again so TASCK can identify your brand account.', brand: null, brandBundle: null, businessCases: [], bundles: [], interactions: [] }); return; }
+    const hasCache = portalCache.has(brandId);
+    if (!hasCache) setState((current) => ({ ...current, loading: true, error: '' }));
     try {
       const [brandBundle, rawCases, rawInteractions] = await Promise.all([v3GetBrand(brandId), v3ListBusinessCases({ brand_id: brandId }), v3ListInteractions({ brand_id: brandId })]);
       const brand = brandBundle?.brand || brandBundle;
       const businessCases = Array.isArray(rawCases) ? rawCases : [];
+      const interactions = Array.isArray(rawInteractions) ? rawInteractions : [];
+      // Reveal core data immediately - messages/interactions don't need bundles.
+      setState((current) => ({ ...current, loading: false, error: '', brand, brandBundle, businessCases, interactions }));
       const bundles = await Promise.all(businessCases.map(async (businessCase) => { try { return await v3GetBusinessCase(businessCase.id); } catch (e) { return { business_case: businessCase, brand }; } }));
       bundles.sort((a, b) => activityTime(b) - activityTime(a));
-      setState({ loading: false, error: '', brand, brandBundle, businessCases, bundles, interactions: Array.isArray(rawInteractions) ? rawInteractions : [] });
+      const fresh = { brand, brandBundle, businessCases, bundles, interactions };
+      portalCache.set(brandId, fresh);
+      setState({ loading: false, hydrated: true, error: '', ...fresh });
     } catch (e) {
-      setState((current) => ({ ...current, loading: false, error: e?.response?.data?.detail || e.message || 'Brand portal data could not be loaded.' }));
+      setState((current) => ({ ...current, loading: false, error: portalCache.has(brandId) ? current.error : (e?.response?.data?.detail || e.message || 'Brand portal data could not be loaded.') }));
     }
   }, [brandId]);
   useEffect(() => { reload(); }, [reload]);

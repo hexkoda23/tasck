@@ -4,6 +4,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import Logo from '../shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 import { getBrandPortalBrand, getBrandPortalSession } from '../../lib/v3brandPortal';
+import { clearBrandPortalCache } from '../../pages/brand/V1BrandPortalData';
 import {
   Briefcase,
   FileCheck,
@@ -83,6 +84,7 @@ const V1PortalLayout = ({ portal }) => {
   // own login page.
   const handleSignOut = () => {
     logout();
+    clearBrandPortalCache();
     if (config.signOutUrl) {
       window.location.href = config.signOutUrl;
       return;

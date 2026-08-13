@@ -45,7 +45,16 @@ export const v3MoveBrandToBusinessCall = (brandId, payload = {}) => v3.post(`/br
 export const v3MoveBrandToFrame = (brandId, payload = {}) => v3.post(`/brands/${brandId}/move-to-frame`, payload).then(r => r.data);
 export const v3DeleteBrand = (brandId) => v3.delete(`/brands/${brandId}`).then(r => r.data);
 
-export const v3ScrapeBrandDetails = (brandId) => v3.post(`/brands/${brandId}/scrape`).then(r => r.data);
+// Long-running server-side scrape: give it a generous timeout and retry once
+// automatically so a cold-start/gateway timeout on the first attempt never
+// surfaces to the admin.
+export const v3ScrapeBrandDetails = async (brandId) => {
+  try {
+    return (await v3.post(`/brands/${brandId}/scrape`, undefined, { timeout: 120000 })).data;
+  } catch (e) {
+    return (await v3.post(`/brands/${brandId}/scrape`, undefined, { timeout: 120000 })).data;
+  }
+};
 
 export const v3UpdateBrandDetails = (brandId, updates) => v3.patch(`/brands/${brandId}`, updates).then(r => r.data);
 

@@ -2438,29 +2438,21 @@ def make_v3_router(db):
         reply_to = os.getenv("SMTP_REPLY_TO", configured_from or username).strip()
         return configured_from or username, from_name, reply_to
 
-    _email_logo_cache: Dict[str, str] = {}
+    _email_logo_cache: Dict[str, Any] = {}
 
-    def _email_logo_data_uri() -> str:
-        """Return a small, email-optimised TASCK logo as a base64 data URI.
-
-        The full logo PNG is ~150 KB - far too heavy to inline in every
-        transactional email. We resize once (max 240 px wide, RGBA→RGB on a
-        brand-green background so the mark reads on dark headers) and cache
-        the base64 result on first use.
-        """
-        cached = _email_logo_cache.get("uri")
+    def _email_logo_bytes() -> bytes:
+        """Email-optimised TASCK logo as JPEG bytes (resized, cached)."""
+        cached = _email_logo_cache.get("bytes")
         if cached is not None:
             return cached
         try:
             raw = _tasck_logo_bytes()
             if not raw:
-                _email_logo_cache["uri"] = ""
-                return ""
+                _email_logo_cache["bytes"] = b""
+                return b""
             from PIL import Image as _PILImage
             img = _PILImage.open(BytesIO(raw))
             img.load()
-            # Composite RGBA onto the brand-green header colour so the mark
-            # stays readable when it lands on the dark strip.
             if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
                 bg = _PILImage.new("RGB", img.size, (31, 74, 58))
                 bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
@@ -2474,16 +2466,34 @@ def make_v3_router(db):
                 img = img.resize((max_w, new_h), _PILImage.LANCZOS)
             out = BytesIO()
             img.save(out, format="JPEG", quality=82, optimize=True)
-            import base64 as _b64
-            uri = "data:image/jpeg;base64," + _b64.b64encode(out.getvalue()).decode("ascii")
-            _email_logo_cache["uri"] = uri
-            return uri
+            _email_logo_cache["bytes"] = out.getvalue()
+            return _email_logo_cache["bytes"]
         except Exception as exc:
-            logger.warning("Failed to build email logo data URI: %s", exc)
+            logger.warning("Failed to build email logo bytes: %s", exc)
+            _email_logo_cache["bytes"] = b""
+            return b""
+
+    def _email_logo_data_uri() -> str:
+        """Return a small, email-optimised TASCK logo as a base64 data URI.
+
+        The full logo PNG is ~150 KB - far too heavy to inline in every
+        transactional email. We resize once (max 240 px wide, RGBA→RGB on a
+        brand-green background so the mark reads on dark headers) and cache
+        the base64 result on first use.
+        """
+        cached = _email_logo_cache.get("uri")
+        if cached is not None:
+            return cached
+        data = _email_logo_bytes()
+        if not data:
             _email_logo_cache["uri"] = ""
             return ""
+        import base64 as _b64
+        uri = "data:image/jpeg;base64," + _b64.b64encode(data).decode("ascii")
+        _email_logo_cache["uri"] = uri
+        return uri
 
-    def _smtp_transactional_html(plain_body: str, from_email: str) -> str:
+    def _smtp_transactional_html(plain_body: str, from_email: str, logo_src: Optional[str] = None) -> str:
         """Render the plain-text email body as HTML with TASCK typography.
 
         Gmail and most webmail readers respect ``font-family`` when it names
@@ -2526,7 +2536,9 @@ def make_v3_router(db):
             return f'<div style="margin:0 0 6px;">{escaped}</div>'
 
         body_html = ''.join(render_line(line) for line in plain_body.splitlines())
-        logo_uri = _email_logo_data_uri()
+        # CID reference for real emails (data URIs are stripped by Gmail/Outlook);
+        # falls back to the inline data URI for previews/tests.
+        logo_uri = logo_src or _email_logo_data_uri()
         footer = html.escape(
             os.getenv(
                 "SMTP_EMAIL_FOOTER",
@@ -2562,6 +2574,7 @@ def make_v3_router(db):
     # Expose for tests / verification. Safe: these are internal renderers.
     router._smtp_transactional_html = _smtp_transactional_html  # type: ignore[attr-defined]
     router._email_logo_data_uri = _email_logo_data_uri  # type: ignore[attr-defined]
+    router._email_logo_bytes = _email_logo_bytes  # type: ignore[attr-defined]
 
     def _add_transactional_headers(message: EmailMessage, email: Dict[str, Any], from_email: str, reply_to: str) -> None:
         domain = _email_domain(from_email)
@@ -2663,7 +2676,17 @@ def make_v3_router(db):
         # transactional mail and scores better with spam filters than bare
         # plain text. Default ON; SMTP_SEND_HTML_ALTERNATIVE=false to disable.
         if _smtp_flag("SMTP_SEND_HTML_ALTERNATIVE", True) and not _email_uses_plain_text_only(kind):
-            message.add_alternative(_smtp_transactional_html(plain_body, reply_to or from_email), subtype="html")
+            # Gmail/Outlook strip data: URI images, so the logo must travel as a
+            # CID inline attachment referenced by the HTML part.
+            logo_bytes = _email_logo_bytes()
+            html_body = _smtp_transactional_html(
+                plain_body, reply_to or from_email,
+                logo_src="cid:tasck-logo" if logo_bytes else None,
+            )
+            message.add_alternative(html_body, subtype="html")
+            if logo_bytes:
+                html_part = message.get_payload()[-1]
+                html_part.add_related(logo_bytes, maintype="image", subtype="jpeg", cid="<tasck-logo>")
         for attachment in email.get("attachments") or []:
             content = attachment.get("content")
             if content is None or content == "":
