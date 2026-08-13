@@ -1160,7 +1160,11 @@ async def _call_alignment_analysis_tool(
 
             return None
 
-        http_result = await asyncio.to_thread(_call_http_model)
+        http_result = None
+        try:
+            http_result = await asyncio.to_thread(_call_http_model)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Alignment analyzer anthropic/http call failed (%s); falling back to emergent", exc)
         if http_result is not None:
             return http_result
         # Final fallback: try emergent (Gemini) if we hadn't already tried it above.
@@ -1359,7 +1363,11 @@ async def _call_creator_match_tool(
 
             return None
 
-        http_result = await asyncio.to_thread(_call_http_model)
+        http_result = None
+        try:
+            http_result = await asyncio.to_thread(_call_http_model)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Creator match anthropic/http call failed (%s); falling back to emergent", exc)
         if http_result is not None:
             return http_result
 
@@ -2134,7 +2142,11 @@ async def _call_brainstorm_analysis_tool(
             er = await _call_emergent()
             if er is not None:
                 return er
-        http_result = await asyncio.to_thread(_call_http_model)
+        http_result = None
+        try:
+            http_result = await asyncio.to_thread(_call_http_model)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Brainstorm anthropic/http call failed (%s); falling back to emergent", exc)
         if http_result is not None:
             return http_result
         if _prefer_anthropic:
