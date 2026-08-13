@@ -1,5 +1,24 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 13 Feb 2026 (Fix: Alignment Snapshot must NOT surface on brand portal until admin clicks "Send to Brand"; Alignment Snapshot Google Docs logo is way too big)
+
+### User request
+- After creating an alignment snapshot it should NOT be visible to the brand until the admin explicitly clicks "Send to Brand".
+- The TASCK logo embedded in the alignment snapshot Google Docs is way too big — shrink it.
+
+### Shipped
+- **Frontend (`/app/frontend/src/pages/brand/V1BrandPortalData.js`)**: Added `isAlignmentVisibleToBrand()` + `sanitizeBundleForBrand()` helpers. Every bundle returned by `useV1BrandPortalData` is now sanitised, stripping alignment snapshots (both the `alignment_snapshots` array and singular `alignment_snapshot`) that lack `sent_to_brand_at` (unless legacy `status` is `approved` / `imported` / `sent_to_brand`). Result: freshly generated snapshots stay admin-only. As soon as admin clicks "Send to Brand" (which stamps `sent_to_brand_at` + sets `status: sent_to_brand`), the doc appears in the brand portal. All existing brand pages (V1BrandAlignmentSnapshot, V1BrandProjects, V1BrandOverview) reuse the same sanitised bundles, so no per-page changes needed.
+- **Backend (`/app/backend/v3_routes.py`)**: Reduced the TASCK circle logo in the Alignment Snapshot `.docx` header (`alignment_snapshot_docx_bytes`) and the shared `_docx_package` template header from **1.05" → 0.6"** (`logo_size_in` constant). Verified via unzipping generated `.docx`: `cx/cy = 548640 EMU = 0.600"`.
+
+### Verified
+- Regenerated snapshot for `bc-0703881b2c` → `status: under_review`, `sent_to_brand_at: None` (would be filtered on brand portal).
+- Downloaded `/api/v3/alignment-snapshots/{id}/docx` → header logo now 0.6" × 0.6".
+
+### Files touched
+- `/app/frontend/src/pages/brand/V1BrandPortalData.js` (sanitiser + bundle filter)
+- `/app/backend/v3_routes.py` (two `logo_size_in` constants → 0.6)
+
+
 ## Update — 11 Feb 2026 (Feature: Imported Projects — brand contact + welcome email + read-only alignment snapshot)
 
 ### User request

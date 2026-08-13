@@ -60,6 +60,36 @@ export const projectSummary = (bundle) => { const bc = bundleCase(bundle); if (b
 const portalCache = new Map();
 export const clearBrandPortalCache = () => portalCache.clear();
 
+// A snapshot has only been "sent to brand" once admin explicitly clicks the
+// "Send to Brand" action (which stamps `sent_to_brand_at` and sets status to
+// `sent_to_brand` / `approved` on the server). Until that moment the doc is
+// still an admin-only draft under review and MUST NOT surface anywhere in
+// the brand portal (Chioma feedback, Feb 2026).
+const isAlignmentVisibleToBrand = (snap) => {
+  if (!snap) return false;
+  if (snap.sent_to_brand_at) return true;
+  const status = String(snap.status || '').toLowerCase();
+  // Legacy statuses that also imply the snapshot is out-of-admin-review:
+  // - 'approved' (already signed off, must remain visible to brand)
+  // - 'imported' (bypass import stamps its own sent_to_brand_at, keep as a safety net)
+  // - 'sent_to_brand' (explicit flag, sent_to_brand_at should exist but belt-and-braces)
+  return status === 'approved' || status === 'imported' || status === 'sent_to_brand';
+};
+
+// Strip un-sent alignment snapshots off a bundle before it ever reaches any
+// brand-portal render path. Keeps the rest of the bundle untouched.
+const sanitizeBundleForBrand = (bundle) => {
+  if (!bundle) return bundle;
+  const sanitised = { ...bundle };
+  if (Array.isArray(bundle.alignment_snapshots)) {
+    sanitised.alignment_snapshots = bundle.alignment_snapshots.filter(isAlignmentVisibleToBrand);
+  }
+  if (bundle.alignment_snapshot && !isAlignmentVisibleToBrand(bundle.alignment_snapshot)) {
+    sanitised.alignment_snapshot = null;
+  }
+  return sanitised;
+};
+
 export const useV1BrandPortalData = () => {
   const session = useMemo(() => getBrandPortalSession(), []);
   const brandId = session?.brandId || session?.brand_id;
@@ -80,7 +110,7 @@ export const useV1BrandPortalData = () => {
       const interactions = Array.isArray(rawInteractions) ? rawInteractions : [];
       // Reveal core data immediately - messages/interactions don't need bundles.
       setState((current) => ({ ...current, loading: false, error: '', brand, brandBundle, businessCases, interactions }));
-      const bundles = await Promise.all(businessCases.map(async (businessCase) => { try { return await v3GetBusinessCase(businessCase.id); } catch (e) { return { business_case: businessCase, brand }; } }));
+      const bundles = (await Promise.all(businessCases.map(async (businessCase) => { try { return await v3GetBusinessCase(businessCase.id); } catch (e) { return { business_case: businessCase, brand }; } }))).map(sanitizeBundleForBrand);
       bundles.sort((a, b) => activityTime(b) - activityTime(a));
       const fresh = { brand, brandBundle, businessCases, bundles, interactions };
       portalCache.set(brandId, fresh);

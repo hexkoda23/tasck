@@ -6848,10 +6848,11 @@ def make_v3_router(db):
         # Logo band: 6.5 inches wide (full content width), exactly as the
         # template - the artwork is whitespace on the left with the bold TASCK
         # Logo is now a SQUARE hi-res PNG (circle fills the frame). Place it as a
-        # properly sized circle (~1.0") top-right so the circle stays crisp in
-        # Word/Google Docs (a wide 6.5" banner made the small circle blurry).
+        # properly sized circle top-right so the circle stays crisp in
+        # Word/Google Docs. Per client feedback (Feb 2026), sized down from
+        # 1.05" to a subtler 0.6" so it doesn't overwhelm the page.
         logo_bytes = _tasck_logo_bytes()
-        logo_size_in = 1.05
+        logo_size_in = 0.6
         logo_cx = _emu_inch(logo_size_in)
         logo_cy = _emu_inch(logo_size_in)
         # Footer contact strip: 6 inches wide. Aspect from 2048x180.
@@ -7716,12 +7717,13 @@ def make_v3_router(db):
         document sent to a brand or creator is routed through here so they
         all share the exact same client-approved template."""
         # Logo is now a SQUARE hi-res PNG (circle fills the frame). Place it as a
-        # properly sized circle (~1.05") top-right so the circle stays crisp in
-        # Word/Google Docs (a wide 6.5" banner made the small circle blurry).
+        # properly sized circle top-right so the circle stays crisp in
+        # Word/Google Docs. Sized to 0.6" per Feb 2026 client feedback (was 1.05",
+        # too dominant on the page).
         # Use the inlined logo bytes (deploy-proof) - falls back to the file
         # asset internally if decoding ever fails.
         logo_bytes = _tasck_logo_bytes()
-        logo_size_in = 1.05
+        logo_size_in = 0.6
         logo_cx = _emu_inch(logo_size_in)
         logo_cy = _emu_inch(logo_size_in)
         # Footer contact-strip: same 6.5" width as the reference template so
