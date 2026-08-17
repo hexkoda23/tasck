@@ -92,8 +92,16 @@ const TasckFooter = ({ brandName, pageNo, pageCount, minimal }) => {
   );
 };
 
-const CoverPage = ({ title, brandName }) => (
-  <div className="pf-cover pf-paper" data-testid="pf-cover">
+// Page 1. When admin has uploaded a per-brand background it becomes a
+// full-bleed photo behind a dark scrim (as in the approved deck template);
+// otherwise the original gradient cover is used unchanged.
+const CoverPage = ({ title, brandName, coverImage }) => (
+  <div
+    className={`pf-cover pf-paper${coverImage ? ' pf-cover-photo' : ''}`}
+    data-testid="pf-cover"
+    style={coverImage ? { backgroundImage: `url(${coverImage})` } : undefined}
+  >
+    {coverImage && <div className="pf-cover-scrim" aria-hidden="true" />}
     <div className="pf-cover-spine-edge" />
     <TasckHeader />
     <div className="pf-cover-body">
@@ -105,6 +113,33 @@ const CoverPage = ({ title, brandName }) => (
       </p>
     </div>
     <TasckFooter brandName={brandName} />
+  </div>
+);
+
+// Page 7 imagery: the creator portraits admin selected for this campaign.
+// Rendered as a clean card grid that scales from 1 to 12 images.
+const CreatorImagesPage = ({ images, brandName, pageNo, pageCount }) => (
+  <div className="pf-page pf-paper pf-creators-page" data-testid="pf-creator-images">
+    <TasckHeader compact />
+    <div className="pf-page-body">
+      <p className="pf-sec-kicker">The Solution / Creator Strategy</p>
+      <h3 className="pf-sec-h pf-creators-h">Selected Creators</h3>
+      <div className={`pf-creator-grid pf-creator-grid-${Math.min(images.length, 4)}`}>
+        {images.map((img) => (
+          <figure className="pf-creator-card" key={img.id || img.image}>
+            <div className="pf-creator-shot">
+              <img src={img.image} alt={img.name || 'Selected creator'} loading="lazy" />
+            </div>
+            <figcaption className="pf-creator-meta">
+              {img.name && <span className="pf-creator-name">{cleanText(img.name)}</span>}
+              {img.handle && <span className="pf-creator-handle">{cleanText(img.handle)}</span>}
+              {img.role && <span className="pf-creator-role">{cleanText(img.role)}</span>}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </div>
+    <TasckFooter brandName={brandName} pageNo={pageNo} pageCount={pageCount} />
   </div>
 );
 
@@ -140,13 +175,21 @@ export const PitchDeckFlipbook = ({ deck, brandName }) => {
 
   const pages = useMemo(() => {
     const contentPages = paginateSections(deck?.sections);
+    const creatorImages = Array.isArray(deck?.creator_images) ? deck.creator_images.filter((i) => i && i.image) : [];
+    // Cover + content pages + (optional) the selected-creator page.
+    const total = contentPages.length + 2 + (creatorImages.length ? 1 : 0);
     const out = [];
-    out.push(<CoverPage key="cover" title={deckTitle} brandName={brandName} />);
+    out.push(<CoverPage key="cover" title={deckTitle} brandName={brandName} coverImage={deck?.cover_image || ''} />);
     contentPages.forEach((secs, i) =>
       out.push(
-        <ContentPage key={`c${i}`} sections={secs} deckTitle={deckTitle} brandName={brandName} pageNo={i + 2} pageCount={contentPages.length + 2} />
+        <ContentPage key={`c${i}`} sections={secs} deckTitle={deckTitle} brandName={brandName} pageNo={i + 2} pageCount={total} />
       )
     );
+    if (creatorImages.length) {
+      out.push(
+        <CreatorImagesPage key="creators" images={creatorImages} brandName={brandName} pageNo={contentPages.length + 2} pageCount={total} />
+      );
+    }
     if (out.length % 2 !== 0) out.push(<div key="blank" className="pf-page pf-page-blank" />);
     return out;
   }, [deck, deckTitle, brandName]);
@@ -533,6 +576,43 @@ html, body {
 .pf-footer-min { justify-content: center; }
 
 .pf-cover { color: #fff; }
+
+/* Admin-uploaded per-brand cover art, full-bleed behind a dark scrim so the
+   headline stays legible on any photo. */
+.pf-cover-photo { background-size: cover; background-position: center; background-repeat: no-repeat; }
+.pf-cover-scrim {
+  position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(180deg, rgba(6,12,22,.34) 0%, rgba(6,12,22,.58) 52%, rgba(6,12,22,.88) 100%);
+}
+.pf-cover-photo .pf-cover-body,
+.pf-cover-photo .pf-header,
+.pf-cover-photo .pf-footer { position: relative; z-index: 2; }
+
+/* Page 7 - selected creator portraits. */
+.pf-creators-page .pf-page-body { display: flex; flex-direction: column; }
+.pf-sec-kicker {
+  font-size: 10px; letter-spacing: .28em; text-transform: uppercase;
+  color: #7C8AA0; margin: 0 0 6px;
+}
+.pf-creators-h { margin-bottom: 14px; }
+.pf-creator-grid {
+  display: grid; gap: 12px; align-content: start;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pf-creator-grid-1 { grid-template-columns: minmax(0, 46%); }
+.pf-creator-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.pf-creator-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pf-creator-card {
+  margin: 0; border-radius: 10px; overflow: hidden;
+  background: #0E1B2E; border: 1px solid rgba(255,255,255,.10);
+  display: flex; flex-direction: column;
+}
+.pf-creator-shot { aspect-ratio: 4 / 5; overflow: hidden; background: #16253E; }
+.pf-creator-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pf-creator-meta { padding: 7px 9px 9px; display: flex; flex-direction: column; gap: 1px; }
+.pf-creator-name { font-size: 11px; font-weight: 700; color: #F2F6FB; line-height: 1.25; }
+.pf-creator-handle { font-size: 10px; color: #3ADBC8; line-height: 1.25; }
+.pf-creator-role { font-size: 9.5px; color: #93A2B8; line-height: 1.3; }
 
 .pf-cover-spine-edge {
   position: absolute;

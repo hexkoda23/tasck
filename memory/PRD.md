@@ -1,5 +1,122 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 17 Aug 2026 (Pitch Deck: brand access, send gating, proper filename, cover + creator imagery)
+
+### User request
+1. Add a Pitch Deck card to the brand Overview and pipeline/project pages, like the Alignment Snapshot one.
+2. The Pitch Deck must not reach the brand page automatically — add a "Send to brand page" button and gate it.
+3. Give the emailed Pitch Deck document a proper name.
+4. Rebuild the flip book so all 16 pages match `DECK TEMPLATE_ NIKE.pptx.pdf` exactly, including the page-9 flowchart.
+5. Page 7: admin can add selected-creator images that render cleanly.
+6. Admin can change the cover background image per brand.
+
+### Decisions taken with the client
+- **Deck data model** → restructure the AI schema so each of the 16 slides gets its own structured object (funnel tiers, risk row pairs, creator table columns, persona fields). Existing decks will need regenerating.
+- **Sequencing** → imagery first (cover + creator images), then the 16 layouts.
+
+### Shipped (items 1, 2, 3, 5, 6)
+- **Brand access** (`V1BrandOverview.js`, `V1BrandProjects.js`): Pitch Deck card added to the Overview quick-links (now a 3-up grid) with copy that changes based on whether a deck has been shared, and to the project detail document row. Uses the existing `/brand/pitch-deck` route.
+- **Send gating** (`V1BrandPortalData.js`): the sanitiser only filtered alignment snapshots — `bundle.pitch_deck` was passed straight through, which is exactly why decks appeared the moment they were generated. Added `isPitchDeckVisibleToBrand()` and wired it into `sanitizeBundleForBrand()`.
+- **Send-to-brand-page** (`v3_routes.py`): `PitchDeckSendPayload.send_email: bool = True`; when false, `send_pitch_deck` stamps `status/sent_to_brand_at/published_to_brand_page_at` and returns early with no docx build and no SMTP. Admin UI gains a primary **"Send to brand page"** button (`pitch-send-brand-page-btn`) plus a visibility banner; the email action becomes secondary "Email Pitch Deck".
+- **Filename** (`pitch_deck_filename()`): was always `<deck-id>-pitch-deck.docx`. Now `"<Brand> - <Title> (<id4>).docx"`, de-duplicating the brand when the title already leads with it. Used by both the emailed attachment and the `/docx` download (which previously produced a *third*, underscore-mangled name).
+- **Deck imagery** (`v3_routes.py` + `v3_flipbook.py` + `PitchDeckFlipbook.jsx`):
+  - `PUT/DELETE /pitch-decks/{id}/cover-image` and `POST/DELETE /pitch-decks/{id}/creator-images[/{img_id}]`.
+  - `_normalise_deck_image()` decodes, flattens transparency onto white, downscales (cover 1600×900, creator 600×750) and re-encodes to JPEG q82 — a 3000×2000 upload lands at ~15 KB, keeping Mongo documents small and stripping EXIF. Rejects non-images (400) and >8 MB (413); max 12 creator images.
+  - Rendered in **both** flip books (React + server-rendered) so emailed/downloaded single-file decks stay self-contained: cover as a full-bleed background behind a dark scrim, creators as a responsive 1–4 column card grid with name/handle/role.
+  - Admin "Deck imagery" card with cover preview, upload/replace/remove, and a creator thumbnail grid with hover-delete.
+
+### Verified
+- Gate: freshly generated deck → present in bundle but `passes brand-portal gate: False`; after `send_email:false` → `{ok, published_only, email: null}` and gate `True`.
+- Filenames: `Nike Running Nigeria - Creator-Led Running Communities (1a2b).docx`, `MTN Nigeria Creator Campaign Pitch (9988).docx`.
+- Uploads: 3000×2000 PNG → stored JPEG 1350×900 @15 KB; creator portraits → 600×750 @7 KB; `text/plain` → 400; unknown image delete → 404; clearing the cover restores the stock cover (verified against image-unique mid-stream bytes, not the shared JPEG header).
+- Rendered headless Chrome screenshots: page 1 shows the uploaded cover full-bleed with the headline legible; the creator page shows a clean 3-card grid with captions and no distortion (`object-fit: cover`).
+- Backend + all 6 changed frontend files parse clean.
+
+### NOT done — item 4 (the 16 bespoke page layouts)
+The flip book is still cover + paginated free-text sections + closing. Rebuilding it to the Nike template means 16 distinct layouts (alternating dark/white themes, page-9 funnel flowchart, page-11 risk table, page-13 creator table, page-6 persona card…) **and** the agreed AI-schema restructure to feed them. That is the next and largest piece of work.
+
+
+
+
+## Update — 17 Aug 2026 (Feature: "Send to brand page" button; Fix: brand page shows the admin-set snapshot title)
+
+### User request
+- After generating an Alignment Snapshot on the V1 admin page it goes straight to the brand page. Admins want to generate, make edits, and only then release it — via a new **"Send to brand page"** button.
+- The Alignment Snapshot title on the brand page should be the title admin set on the admin page, not the business-case name ("Business Call Connect").
+
+### Root cause
+- **Visibility**: the gate already existed and worked — generation sets `status: "under_review"` / `sent_to_brand_at: None`, and `V1BrandPortalData.js:isAlignmentVisibleToBrand()` filters on exactly that. It has never been deployed (production still runs the pre-13-Feb build). But there was a genuine gap: the *only* way to publish was "Send Alignment Snapshot to brand", which also fires the email. There was no publish-without-email path.
+- **Title**: `V1BrandDocuments.js` built `snapshotTitle` as `businessCase.title || snapshot.title` — the project name won, so the admin-set "Snapshot title" field (admin page `TextInput`, bound to `snapshot.title`) never showed.
+
+### Shipped
+- **Backend (`/app/backend/v3_routes.py`)**: `SendAlignmentPayload` gains `send_email: bool = True`. When false, `send_alignment_to_brand` runs the full visibility stamping (revision logic, `status: sent_to_brand`, `sent_to_brand_at`, timeline event), records `published_to_brand_page_at`, and **returns early** — no docx build, no `queue_email`, no SMTP. The early return also matters because the delivery-status block further down would otherwise reset `sent_to_brand_at` to `None`. The "brand email required" 400 is now only enforced on the emailing path.
+- **Frontend (`/app/frontend/src/lib/v3api.js`)**: `v3PublishAlignmentToBrandPage()` wrapper.
+- **Frontend (`/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js`)**: new **"Send to brand page"** primary button (`alignment-send-brand-page-btn`, relabels to "Update brand page" once live) + `publishToBrandPage()` handler, and a visibility banner (`alignment-brand-visibility`) reading either *"Admin-only. The brand cannot see this snapshot yet"* or *"Visible on the brand page since …"*. The email button is now secondary.
+- **Frontend (`/app/frontend/src/pages/brand/V1BrandDocuments.js`)**: `snapshotTitle` now prefers `snapshot.title` over `businessCase.title` (project title kept as fallback for older docs). Same order applied to the document-list card. Left `V1BrandProjects.js` alone — those are project pages, where the project title is correct.
+
+### Verified
+- Booted the real app (in-memory Mongo) with `business_case.title = "Business Call Connect"` and `snapshot.title = "MTN Nigeria - Q4 Awareness Alignment"`:
+  - freshly generated → `visible to brand? False`
+  - POST `send_email:false` → `{ok: true, published_only: true, email: null}`, **no SMTP attempted** (server log clean)
+  - after → `visible to brand? True`; heading goes from `'Business Call Connect'` to `'MTN Nigeria - Q4 Awareness Alignment'`
+- All 4 changed/related frontend files parse clean under `@babel/parser` (jsx). 8/8 backend tests still pass.
+- **Not build-verified**: `node_modules` is not installed locally, so no webpack/ESLint run — parse-only.
+
+### Follow-up (same day): title everywhere + black headline
+The brand page fix above covered the portal only. The client then asked for the admin-set title in the **email and attachment** too, and for the blue headline in the `.docx` to be black, matching a supplied screenshot.
+
+- **`.docx` headline** (`alignment_snapshot_docx_bytes`): was `_docx_title(brand_name)` - the *brand* name in template blue `1C4587`, Bebas Neue. Now the **admin-set `snap.title`** (brand name only as fallback), in **black**. `_DOCX_TITLE_COLOR` → `000000`.
+- **Headline font**: Bebas Neue → Century Gothic Bold at 22pt. Bebas has no true lowercase (it renders every title as condensed caps) and the client's reference is clearly mixed-case bold, so Bebas could not match it. *Flagged to the client as a judgement call beyond the literal "colour" ask.*
+- **New `_docx_subtitle()`**: small black bold "Alignment Snapshot" strap under the headline, as in the reference. Suppressed when the title already contains "alignment snapshot" (the default generated title does), so it never doubles up.
+- **Attachment filename** (`alignment_snapshot_filename`): when the snapshot has a title, the file is now just `"<title> (<id4>).docx"`. Was `"<Brand> Alignment Snapshot for <Project> (<id4>).docx"` → e.g. `"MTN Alignment Snapshot for Business Call Connect (7382).docx"`, which is exactly what the client objected to. Legacy composition kept as fallback for untitled snapshots.
+- **Email** (`send_alignment_to_brand`): `project_title` now prefers `snap.title` over `case.title`, and the three body lines are relabelled `Business Case:` → `Document:` since they now carry a document name.
+
+Verified by generating with `case.title="Business Call Connect"` / `snap.title="Chain Reactions Africa - The Nigeria Prize Awards 2026"` and rendering through Word:
+- filename → `Chain Reactions Africa - The Nigeria Prize Awards 2026 (7382).docx`
+- PDF text spans → headline `#000000` 22pt CenturyGothic-Bold, strap `#000000` 12pt, section headings still `#0C343D`
+
+**Regression check**: full backend suite at unmodified HEAD = 93 failed / 83 passed / 31 errors; with these changes = 93 failed / **88** passed / 31 errors. Identical failures, +5 (the new logo tests). The 93+31 are pre-existing environment failures - the suite wants a live Mongo and a running server, neither available locally.
+
+### Files touched
+- `/app/backend/v3_routes.py`, `/app/frontend/src/lib/v3api.js`, `/app/frontend/src/pages/admin/V1BusinessCaseFlowPages.js`, `/app/frontend/src/pages/brand/V1BrandDocuments.js`
+
+### Note — admin login has no password
+`/auth/demo-login` (`server.py`) takes a **role**, not credentials, and returns the first user with that role; `AuthContext.js` calls `login(role)`. Only brand accounts have passwords. `praisefowowe@gmail.com` does not exist anywhere in the repo. The Cloudflare "invalid or incomplete response" error is a 502 from the origin being down/misconfigured — unrelated to credentials, and most likely the same stale deployment.
+
+
+## Update — 17 Aug 2026 (Fix: .docx letterhead logo pinned to the approved TTA size)
+
+### User request
+- The TASCK circle logo in the Alignment Snapshot Word preview is far too big; it should match the size used in the approved TTA letterhead PDF, and the Pitch Deck + Creative Brief should match too.
+
+### Root cause
+- Production was still serving the pre-13-Feb build: the downloaded `MTN Alignment Snapshot for Business Call Connect (7382).docx` still had `wp:extent cx/cy = 960120 EMU = 1.05"`. The 13 Feb fix (1.05" → 0.6") was committed but never redeployed.
+- Separately, 0.6" was itself a guess rather than a measurement, so it undershot the approved artwork.
+
+### Approved size — measured, not guessed
+Measured off the client's approved TTA letterhead ("Draft Fee Note" PDF), rendered at 150 DPI: the blue circle measures **0.787"** across with its **right edge 7.49"** from the page's left edge. These are the two figures the client specified.
+
+(The *nominal* artwork size is 0.80" — the header band is a 2048×286px image placed 6.5" wide and the circle occupies a 252×252px box, so `252 × (6.5 / 2048)` = 0.80". The ~0.013" gap between nominal and rendered is the anti-aliased circle edge. We track the **rendered** figure because that is how the documents get compared side by side.)
+
+### Shipped
+- **Backend (`/app/backend/v3_routes.py`)**: Two constants next to `_emu_inch()` — `TASCK_LOGO_SIZE_IN = 0.787` and `TASCK_LOGO_RIGHT_INDENT_TWIPS = 14`. Both `alignment_snapshot_docx_bytes` and the shared `_docx_package` template header (used by the Pitch Deck and Creative Brief) read those constants, so the three brand-facing documents can no longer drift apart.
+- The header paragraph is right-aligned, so the logo's right edge would otherwise land on the 1.0" right margin at 7.5". A `<w:ind w:right="14"/>` (14 twips = 0.0097") pulls it in to **7.4903"**.
+- Exposed `_docx_package`, `alignment_snapshot_docx_bytes`, `pitch_deck_docx_bytes`, `creative_brief_docx_bytes`, `TASCK_LOGO_SIZE_IN` and `TASCK_LOGO_RIGHT_INDENT_TWIPS` on the router for regression testing.
+- **New test (`/app/backend/tests/test_docx_letterhead_logo_size.py`)**: 5 tests unzipping each generated `.docx` and asserting the header `wp:extent` is 0.787" square, that the paragraph is right-aligned with the 14-twip indent, and an explicit guard against the old oversized 1.05".
+
+### Verified
+- 8/8 backend tests pass (5 new + the 3 existing email-logo regressions).
+- Booted the real FastAPI app against an in-memory Mongo and pulled all three documents over HTTP (`/api/v3/alignment-snapshots/{id}/docx`, `/api/v3/pitch-decks/{id}/docx`, `/api/v3/creative-briefs/{id}/docx` — all 200), then converted each through **Microsoft Word** to PDF. All three measure **0.793" circle, 7.493" right edge** at 150 DPI, against the reference's 0.787" / 7.487" — a 1-pixel difference at that DPI, the closest a raster can land. The `.docx` XML itself is exactly 0.787" / 7.4903".
+- Note: no logo is embedded in the on-screen HTML previews (`alignment_snapshot_doc_html`, `creative_brief_html`), so the `.docx` header was the only place to change.
+
+### Files touched
+- `/app/backend/v3_routes.py` (two new constants; two `logo_size_in` sites; two header-paragraph indents; router test exports)
+- `/app/backend/tests/test_docx_letterhead_logo_size.py` (new)
+
+### Still required
+- **Redeploy** — production (`thcodemo.space`) is serving the old 1.05" build and will keep doing so until redeployed.
+
+
 ## Update — 13 Feb 2026 (Fix: Alignment Snapshot must NOT surface on brand portal until admin clicks "Send to Brand"; Alignment Snapshot Google Docs logo is way too big)
 
 ### User request

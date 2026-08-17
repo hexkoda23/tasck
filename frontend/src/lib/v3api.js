@@ -115,6 +115,12 @@ export const v3UpdateAlignment = (snapshotId, payload) => v3.patch(`/alignment-s
 
 export const v3SendAlignmentToBrand = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/ai/alignment/send`, payload).then(r => r.data);
 
+// "Send to Brand Page": reveal the snapshot in the brand portal without
+// emailing the brand. Generated snapshots stay admin-only until this runs, so
+// admins can generate, edit, then publish when they are ready.
+export const v3PublishAlignmentToBrandPage = (bcId, payload = {}) =>
+  v3SendAlignmentToBrand(bcId, { ...payload, send_email: false });
+
 export const v3AddAlignmentComment = (snapshotId, payload) => v3.post(`/alignment-snapshots/${snapshotId}/comments`, payload).then(r => r.data);
 export const v3ResolveAlignmentComment = (snapshotId, commentId) => v3.post(`/alignment-snapshots/${snapshotId}/comments/${commentId}/resolve`).then(r => r.data);
 export const v3ResolveScopeFlag = (bcId, idx) => v3.post(`/business-cases/${bcId}/scope-flags/${idx}/resolve`).then(r => r.data);
@@ -386,6 +392,33 @@ export const v3GeneratePitchDeck = async (bcId, onProgress, snapshotId) => {
 export const v3UpdatePitchDeck = (deckId, payload) => v3.patch(`/pitch-decks/${deckId}`, payload).then(r => r.data);
 export const v3ApprovePitchDeckAs = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/pitch-deck/approve`, { approver, approver_party }).then(r => r.data);
 export const v3SendPitchDeckToBrand = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/pitch-deck/send`, payload).then(r => r.data);
+
+// "Send to brand page": reveal the deck in the brand portal without emailing.
+// Generated decks stay admin-only until this (or the email send) runs.
+export const v3PublishPitchDeckToBrandPage = (bcId, payload = {}) =>
+  v3SendPitchDeckToBrand(bcId, { ...payload, send_email: false });
+
+// ---- Pitch deck imagery (per-brand cover art + page 7 creator portraits) ----
+// Images travel as base64 data URIs; the server downscales and re-encodes them
+// so the stored deck stays small and the flip book stays self-contained.
+export const v3ReadFileAsDataUri = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(new Error('Could not read that file.'));
+  reader.readAsDataURL(file);
+});
+
+export const v3SetPitchDeckCoverImage = (deckId, image) =>
+  v3.put(`/pitch-decks/${deckId}/cover-image`, { image }).then(r => r.data);
+
+export const v3ClearPitchDeckCoverImage = (deckId) =>
+  v3.delete(`/pitch-decks/${deckId}/cover-image`).then(r => r.data);
+
+export const v3AddPitchDeckCreatorImage = (deckId, payload) =>
+  v3.post(`/pitch-decks/${deckId}/creator-images`, payload).then(r => r.data);
+
+export const v3RemovePitchDeckCreatorImage = (deckId, imageId) =>
+  v3.delete(`/pitch-decks/${deckId}/creator-images/${imageId}`).then(r => r.data);
 export const v3AddPitchDeckComment = (deckId, payload) => v3.post(`/pitch-decks/${deckId}/comments`, payload).then(r => r.data);
 export const v3PitchDeckDocxUrl = (deckId) => `${V3}/pitch-decks/${deckId}/docx`;
 // Standalone flip-book HTML (fonts embedded, works offline). Inline for

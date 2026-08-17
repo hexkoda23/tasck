@@ -6501,6 +6501,11 @@ def make_v3_router(db):
         recipient_email: Optional[str] = None
         # Which snapshot to send when one Connect call produced several.
         snapshot_id: Optional[str] = None
+        # False = "Send to Brand Page": publish the snapshot to the brand
+        # portal (stamp sent_to_brand_at so it stops being admin-only) without
+        # emailing the brand. Admins use this when they want the brand to be
+        # able to open it, but intend to send the email themselves later.
+        send_email: bool = True
 
     def alignment_snapshot_doc_html(case: Dict[str, Any], brand: Dict[str, Any], snap: Dict[str, Any]) -> str:
         sections: List[str] = []
@@ -6565,7 +6570,9 @@ def make_v3_router(db):
     # renders identically even on machines without these fonts installed.
     _DOCX_BODY_FONT = "Century Gothic"
     _DOCX_TITLE_FONT = "Bebas Neue"
-    _DOCX_TITLE_COLOR = "1C4587"   # template client-name blue
+    # Client feedback (Aug 2026): the headline must read black, not the old
+    # template blue, matching the sample the client supplied.
+    _DOCX_TITLE_COLOR = "000000"
     _DOCX_HEADING_COLOR = "0C343D" # template section-heading dark teal
     _DOCX_BODY_COLOR = "000000"
 
@@ -6608,9 +6615,17 @@ def make_v3_router(db):
         )
 
     def _docx_title(value: Any) -> str:
-        # Client name headline: Bebas Neue, template blue, large.
-        return _docx_paragraph(value, size_half_pt=60, color=_DOCX_TITLE_COLOR,
-                               font=_DOCX_TITLE_FONT, before=240, after=120)
+        # Document headline: black, bold, large. Uses the body font rather than
+        # Bebas Neue because Bebas has no true lowercase (it renders every
+        # title as condensed caps), and the client's reference shows a
+        # mixed-case bold headline.
+        return _docx_paragraph(value, bold=True, size_half_pt=44, color=_DOCX_TITLE_COLOR,
+                               font=_DOCX_BODY_FONT, before=240, after=60)
+
+    def _docx_subtitle(value: Any) -> str:
+        # Small black bold line under the headline ("Alignment Snapshot").
+        return _docx_paragraph(value, bold=True, size_half_pt=24, color=_DOCX_TITLE_COLOR,
+                               font=_DOCX_BODY_FONT, before=0, after=160)
 
     def _docx_heading(value: Any) -> str:
         # Section heading: Century Gothic bold, dark teal, 12pt, tight after-space.
@@ -6651,6 +6666,23 @@ def make_v3_router(db):
     # EMU helper: 914400 EMU per inch.
     def _emu_inch(inches: float) -> int:
         return int(round(inches * 914400))
+
+    # Single source of truth for the TASCK circle logo in the .docx header, so
+    # the Alignment Snapshot, Pitch Deck and Creative Brief can never drift
+    # apart again.
+    #
+    # Both numbers are matched to the approved TTA letterhead as *rendered*:
+    # the reference PDF's circle measures 0.787" across with its right edge
+    # 7.49" from the page's left edge (measured at 150 DPI off the Word/PDF
+    # raster, which is how the client compares the documents side by side).
+    # The nominal artwork size is 0.80" - the ~0.013" difference is the
+    # anti-aliased circle edge - but we track the rendered figure so the
+    # generated docs measure identically to the reference.
+    TASCK_LOGO_SIZE_IN = 0.787
+    # The header paragraph is right-aligned, so the logo's right edge lands on
+    # the right margin (8.5" page - 1.0" margin = 7.5"). Nudge it in by 0.01"
+    # so it lands on the reference's 7.49". Word indents are in twips (1/1440").
+    TASCK_LOGO_RIGHT_INDENT_TWIPS = int(round((7.5 - 7.49) * 1440))  # 14
 
     def _drawing_inline(rid: str, cx: int, cy: int, doc_id: int, name: str) -> str:
         """Inline picture XML used inside header/footer paragraphs."""
@@ -6705,14 +6737,20 @@ def make_v3_router(db):
         with the same project title so filenames stay unique per snapshot.
         """
         brand_name = str(brand.get("company") or brand.get("name") or "Brand").strip() or "Brand"
-        # Prefer the case's project_title (raw project name) over snap.title
-        # because the snapshot title is usually decorated with "{Brand} —
-        # {Project} - Project Alignment Snapshot", which duplicates the brand
-        # AND the "Alignment Snapshot" phrase in our final filename.
+        snap_id = str(snap.get("id") or "").strip()
+        suffix_id = snap_id.replace("as-", "")[:4] if snap_id else ""
+        # Client feedback (Aug 2026): the file must be named after the title
+        # admin set on the snapshot - no brand prefix, no project name glued on.
+        admin_title = str(snap.get("title") or "").strip()
+        if admin_title:
+            base = f"{admin_title} ({suffix_id})" if suffix_id else admin_title
+            safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", base)
+            safe = re.sub(r"\s+", " ", safe).strip()
+            return f"{safe[:180] or (snap_id or 'alignment-snapshot')}.docx"
+        # Legacy fallback for snapshots with no title of their own.
         project_raw = (
             str(case.get("project_title") or "").strip()
             or str(case.get("title") or "").strip()
-            or str(snap.get("title") or "").strip()
         )
         # Trim decorative suffixes that snapshots sometimes carry so the
         # filename reads "MTN Alignment Snapshot for Naija Cup" instead of
@@ -6732,8 +6770,6 @@ def make_v3_router(db):
         low_proj = project.lower()
         if brand_name and low_proj.startswith(low_brand):
             project = project[len(brand_name):].lstrip(" -–—:").strip()
-        snap_id = str(snap.get("id") or "").strip()
-        suffix_id = snap_id.replace("as-", "")[:4] if snap_id else ""
         base = (
             f"{brand_name} Alignment Snapshot for {project}"
             if project else f"{brand_name} Alignment Snapshot"
@@ -6756,9 +6792,16 @@ def make_v3_router(db):
 
         # ---- Body content ----
         blocks: List[str] = []
-        # Title - brand name as the [Client Name] line in the template
-        # (Bebas Neue, blue), followed by a grey rule as in the template.
-        blocks.append(_docx_title(brand_name))
+        # Headline is the title admin set on the snapshot ("Snapshot title" on
+        # the admin page). Only fall back to the brand name for older snapshots
+        # that never had one. Brands should see the document's own name, not
+        # the business-case/project name.
+        headline = str(snap.get("title") or "").strip() or brand_name
+        blocks.append(_docx_title(headline))
+        # "Alignment Snapshot" strap under the headline, unless the title
+        # already says it (the default generated title ends with it).
+        if "alignment snapshot" not in headline.lower():
+            blocks.append(_docx_subtitle("Alignment Snapshot"))
         blocks.append(_docx_hr())
         # The intro paragraphs (italic, matching the template wording/style).
         intro_paras = _split_intro_paragraphs(snap.get("meta") or "")
@@ -6849,10 +6892,10 @@ def make_v3_router(db):
         # template - the artwork is whitespace on the left with the bold TASCK
         # Logo is now a SQUARE hi-res PNG (circle fills the frame). Place it as a
         # properly sized circle top-right so the circle stays crisp in
-        # Word/Google Docs. Per client feedback (Feb 2026), sized down from
-        # 1.05" to a subtler 0.6" so it doesn't overwhelm the page.
+        # Word/Google Docs. Sized from the approved TTA letterhead - see
+        # TASCK_LOGO_SIZE_IN. Was 1.05", which read far too dominant.
         logo_bytes = _tasck_logo_bytes()
-        logo_size_in = 0.6
+        logo_size_in = TASCK_LOGO_SIZE_IN
         logo_cx = _emu_inch(logo_size_in)
         logo_cy = _emu_inch(logo_size_in)
         # Footer contact strip: 6 inches wide. Aspect from 2048x180.
@@ -6881,7 +6924,10 @@ def make_v3_router(db):
             )
             header_paragraph_body = watermark_vml + header_paragraph_body
         header_paragraph = (
-            '<w:p><w:pPr><w:jc w:val="right"/></w:pPr>' + header_paragraph_body + '</w:p>'
+            '<w:p><w:pPr>'
+            f'<w:ind w:right="{TASCK_LOGO_RIGHT_INDENT_TWIPS}"/>'
+            '<w:jc w:val="right"/>'
+            '</w:pPr>' + header_paragraph_body + '</w:p>'
         ) if header_paragraph_body else '<w:p/>'
         header_xml = (
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -7188,12 +7234,17 @@ def make_v3_router(db):
         if not brand:
             raise HTTPException(404, "Brand not found")
         account = await ensure_brand_account(brand)
+        send_email = payload.send_email if payload else True
         recipient = (payload.recipient_email if payload and payload.recipient_email else "") or brand.get("email") or account.get("username") or ""
-        if not recipient:
+        # Publishing to the brand page needs no email address - only the
+        # emailing path does.
+        if send_email and not recipient:
             raise HTTPException(400, "Brand email is required before sending the Alignment Snapshot.")
         base_url = app_base_url()
         review_link = f"{base_url}/brand/approvals"
-        project_title = _clean_document_text(case.get("title") or snap.get("title") or "Alignment Snapshot", "Alignment Snapshot")
+        # The brand-facing email names the document by the title admin set on
+        # the snapshot, not the internal business-case/project name.
+        project_title = _clean_document_text(snap.get("title") or case.get("title") or "Alignment Snapshot", "Alignment Snapshot")
         sent_at = _now_iso()
         # Revision logic. The snapshot is Rev 1 the first time it is sent. If
         # admin edited it since the last send (recorded as pending_change_summary
@@ -7243,6 +7294,23 @@ def make_v3_router(db):
             {"$set": {"frame.alignment_snapshot_status": "sent_to_brand", "updated_at": _now_iso()},
              "$push": {"timeline": {"at": sent_at, "event": "alignment_sent_to_brand", "snapshot_id": snap["id"], "revision": int(snap.get("revision_number") or 1), "is_revision": is_revision_send}}},
         )
+        if not send_email:
+            # "Send to Brand Page": the stamping above is all the brand portal
+            # needs to reveal the snapshot. Stop here - no email, no SMTP, and
+            # crucially do not let the delivery-status block below reset
+            # `sent_to_brand_at` back to None.
+            await db.v3_alignment_snapshots.update_one(
+                {"id": snap["id"]},
+                {"$set": {"published_to_brand_page_at": sent_at}},
+            )
+            return {
+                "ok": True,
+                "published_only": True,
+                "sent_at": sent_at,
+                "revision": int(snap.get("revision_number") or 1),
+                "is_revision": is_revision_send,
+                "email": None,
+            }
         completion_section = next(
             (
                 section for section in snap.get("sections", [])
@@ -7284,7 +7352,7 @@ def make_v3_router(db):
                 f"{changed_list}\n\n"
                 "Please log back into your TASCK brand portal and re-check the updated sections. "
                 "If everything now aligns, approve the snapshot; if anything still needs work, add a new comment and we will revise again.\n\n"
-                f"Business Case: {project_title}\n"
+                f"Document: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
                 f"Password: {password}\n\n"
@@ -7296,7 +7364,7 @@ def make_v3_router(db):
             body = (
                 f"Hello {brand.get('primary_contact', 'there')},\n\n"
                 "Welcome to TASCK. Your Alignment Snapshot is ready for your review.\n\n"
-                f"Business Case: {project_title}\n"
+                f"Document: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
                 f"Password: {password}\n\n"
@@ -7310,7 +7378,7 @@ def make_v3_router(db):
             body = (
                 f"Hello {brand.get('primary_contact', 'there')},\n\n"
                 "Welcome to TASCK. Your Alignment Snapshot is ready in your TASCK brand portal.\n\n"
-                f"Business Case: {project_title}\n"
+                f"Document: {project_title}\n"
                 f"Brand portal: {review_link}\n"
                 f"Username: {account.get('username', '')}\n"
                 f"Password: {password}\n\n"
@@ -7718,12 +7786,12 @@ def make_v3_router(db):
         all share the exact same client-approved template."""
         # Logo is now a SQUARE hi-res PNG (circle fills the frame). Place it as a
         # properly sized circle top-right so the circle stays crisp in
-        # Word/Google Docs. Sized to 0.6" per Feb 2026 client feedback (was 1.05",
-        # too dominant on the page).
+        # Word/Google Docs. Sized from the approved TTA letterhead - see
+        # TASCK_LOGO_SIZE_IN. Was 1.05", which read far too dominant.
         # Use the inlined logo bytes (deploy-proof) - falls back to the file
         # asset internally if decoding ever fails.
         logo_bytes = _tasck_logo_bytes()
-        logo_size_in = 0.6
+        logo_size_in = TASCK_LOGO_SIZE_IN
         logo_cx = _emu_inch(logo_size_in)
         logo_cy = _emu_inch(logo_size_in)
         # Footer contact-strip: same 6.5" width as the reference template so
@@ -7761,7 +7829,13 @@ def make_v3_router(db):
             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
             'xmlns:v="urn:schemas-microsoft-com:vml" '
             'xmlns:o="urn:schemas-microsoft-com:office:office">'
-            + (f'<w:p><w:pPr><w:jc w:val="right"/></w:pPr>{header_body}</w:p>' if header_body else '<w:p/>')
+            + (
+                '<w:p><w:pPr>'
+                f'<w:ind w:right="{TASCK_LOGO_RIGHT_INDENT_TWIPS}"/>'
+                '<w:jc w:val="right"/>'
+                f'</w:pPr>{header_body}</w:p>'
+                if header_body else '<w:p/>'
+            )
             + "</w:hdr>"
         )
         footer_drawing = _drawing_inline("rIdFooter", footer_cx, footer_cy, 2, "Contact strip") if footer_bytes else ""
@@ -11266,6 +11340,141 @@ def make_v3_router(db):
         updated = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
         return {"ok": True, "pitch_deck": updated}
 
+    # ---------------- Pitch Deck imagery ----------------
+    # Admin-supplied artwork carried on the deck document itself:
+    #   deck["cover_image"]     -> page 1 full-bleed background, per brand
+    #   deck["creator_images"]  -> page 7 selected-creator portraits
+    # Stored as normalised data URIs so the flip book (React, server-rendered
+    # HTML, and the downloadable single-file HTML) all work with no external
+    # asset host and no broken links when a deck is emailed on.
+
+    _DECK_IMAGE_MAX_BYTES = 8 * 1024 * 1024   # reject anything huge up-front
+    _DECK_COVER_BOX = (1600, 900)             # 16:9, matches the slide
+    _DECK_CREATOR_BOX = (600, 750)            # portrait card on page 7
+    _DECK_MAX_CREATOR_IMAGES = 12
+
+    def _normalise_deck_image(data_uri: str, box: Tuple[int, int]) -> str:
+        """Decode, downscale and re-encode an uploaded image to a compact JPEG
+        data URI. Keeps Mongo documents small (a raw phone photo is ~5 MB; this
+        lands nearer 100 KB) and strips any EXIF payload along the way."""
+        import base64
+        raw = str(data_uri or "").strip()
+        if not raw:
+            raise HTTPException(400, "No image supplied.")
+        if raw.startswith("data:"):
+            header, _, encoded = raw.partition(",")
+            if not encoded or "base64" not in header:
+                raise HTTPException(400, "Image must be a base64 data URI.")
+            if not header.split(":", 1)[-1].split(";")[0].startswith("image/"):
+                raise HTTPException(400, "That file is not an image.")
+        else:
+            encoded = raw
+        try:
+            blob = base64.b64decode(encoded, validate=False)
+        except Exception:
+            raise HTTPException(400, "Could not decode the image data.")
+        if not blob:
+            raise HTTPException(400, "The image is empty.")
+        if len(blob) > _DECK_IMAGE_MAX_BYTES:
+            raise HTTPException(413, "Image is larger than 8 MB. Please use a smaller file.")
+        try:
+            from PIL import Image as _PILImage
+            img = _PILImage.open(BytesIO(blob))
+            img.load()
+            # Flatten transparency onto white so JPEG never goes black.
+            if img.mode in ("RGBA", "LA", "P"):
+                img = img.convert("RGBA")
+                flat = _PILImage.new("RGB", img.size, (255, 255, 255))
+                flat.paste(img, mask=img.split()[-1])
+                img = flat
+            else:
+                img = img.convert("RGB")
+            img.thumbnail(box, _PILImage.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=82, optimize=True)
+            return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Pitch deck image could not be processed: %s", exc)
+            raise HTTPException(400, "That image could not be read. Try a JPG or PNG.")
+
+    class DeckCoverImagePayload(BaseModel):
+        image: str  # base64 data URI
+
+    @router.put("/pitch-decks/{deck_id}/cover-image")
+    async def set_pitch_deck_cover_image(deck_id: str, payload: DeckCoverImagePayload):
+        """Set the page-1 background image for this brand's deck."""
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        normalised = _normalise_deck_image(payload.image, _DECK_COVER_BOX)
+        await db.v3_pitch_decks.update_one(
+            {"id": deck_id},
+            {"$set": {"cover_image": normalised, "updated_at": _now_iso()}},
+        )
+        return {"ok": True, "cover_image": normalised}
+
+    @router.delete("/pitch-decks/{deck_id}/cover-image")
+    async def clear_pitch_deck_cover_image(deck_id: str):
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        await db.v3_pitch_decks.update_one(
+            {"id": deck_id},
+            {"$set": {"cover_image": "", "updated_at": _now_iso()}},
+        )
+        return {"ok": True}
+
+    class DeckCreatorImagePayload(BaseModel):
+        image: str                       # base64 data URI
+        name: str = ""
+        handle: str = ""
+        role: str = ""
+        creator_id: Optional[str] = None
+
+    @router.post("/pitch-decks/{deck_id}/creator-images")
+    async def add_pitch_deck_creator_image(deck_id: str, payload: DeckCreatorImagePayload):
+        """Add one selected-creator portrait to page 7 of the deck."""
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        existing = list(deck.get("creator_images") or [])
+        if len(existing) >= _DECK_MAX_CREATOR_IMAGES:
+            raise HTTPException(
+                400,
+                f"Page 7 holds up to {_DECK_MAX_CREATOR_IMAGES} creator images. Remove one first.",
+            )
+        entry = {
+            "id": f"ci-{uuid.uuid4().hex[:8]}",
+            "image": _normalise_deck_image(payload.image, _DECK_CREATOR_BOX),
+            "name": str(payload.name or "").strip(),
+            "handle": str(payload.handle or "").strip(),
+            "role": str(payload.role or "").strip(),
+            "creator_id": payload.creator_id or "",
+            "added_at": _now_iso(),
+        }
+        existing.append(entry)
+        await db.v3_pitch_decks.update_one(
+            {"id": deck_id},
+            {"$set": {"creator_images": existing, "updated_at": _now_iso()}},
+        )
+        return {"ok": True, "creator_image": entry, "count": len(existing)}
+
+    @router.delete("/pitch-decks/{deck_id}/creator-images/{image_id}")
+    async def remove_pitch_deck_creator_image(deck_id: str, image_id: str):
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        remaining = [i for i in (deck.get("creator_images") or []) if i.get("id") != image_id]
+        if len(remaining) == len(deck.get("creator_images") or []):
+            raise HTTPException(404, "That creator image is not on this deck.")
+        await db.v3_pitch_decks.update_one(
+            {"id": deck_id},
+            {"$set": {"creator_images": remaining, "updated_at": _now_iso()}},
+        )
+        return {"ok": True, "count": len(remaining)}
+
     class PitchDeckApprovePayload(BaseModel):
         approver: str
         approver_party: str = "admin"
@@ -11290,6 +11499,32 @@ def make_v3_router(db):
 
     class PitchDeckSendPayload(BaseModel):
         recipient_email: Optional[str] = None
+        # False = "Send to brand page": reveal the deck in the brand portal
+        # without emailing. Generated decks stay admin-only until one of the
+        # two send actions runs, so admin can edit first.
+        send_email: bool = True
+
+    def pitch_deck_filename(deck: Dict[str, Any], brand: Dict[str, Any]) -> str:
+        """Human-readable attachment name, e.g.
+        "Nike Running Nigeria - Creator Campaign Pitch (1a2b).docx".
+
+        Was "<deck-id>-pitch-deck.docx", which reached brands as an opaque
+        id (client feedback, Aug 2026).
+        """
+        title = str(deck.get("title") or "").strip()
+        brand_name = str(brand.get("company") or brand.get("name") or "").strip()
+        if not title:
+            title = f"{brand_name} Creator Campaign Pitch".strip() or "Creator Campaign Pitch"
+        # Avoid "Nike - Nike Creator Campaign Pitch" when the title already
+        # leads with the brand name.
+        base = title if (not brand_name or title.lower().startswith(brand_name.lower())) else f"{brand_name} - {title}"
+        deck_id = str(deck.get("id") or "").strip()
+        suffix = deck_id.replace("pd-", "")[:4]
+        if suffix:
+            base = f"{base} ({suffix})"
+        safe = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", base)
+        safe = re.sub(r"\s+", " ", safe).strip()
+        return f"{safe[:180] or (deck_id or 'pitch-deck')}.docx"
 
     @router.post("/business-cases/{bc_id}/pitch-deck/send")
     async def send_pitch_deck(bc_id: str, payload: Optional[PitchDeckSendPayload] = Body(None)):
@@ -11303,11 +11538,24 @@ def make_v3_router(db):
         if not brand:
             raise HTTPException(404, "Brand not found")
         account = await ensure_brand_account(brand)
+        send_email = payload.send_email if payload else True
         recipient = (payload.recipient_email if payload and payload.recipient_email else "") or brand.get("email") or account.get("username") or ""
-        if not recipient:
+        # Publishing to the brand page needs no email address.
+        if send_email and not recipient:
             raise HTTPException(400, "Brand email is required before sending the Pitch Deck.")
         review_link = f"{app_base_url()}/brand/pitch-deck"
         sent_at = _now_iso()
+        if not send_email:
+            # "Send to brand page": make it visible in the portal, no email.
+            await db.v3_pitch_decks.update_one(
+                {"id": deck["id"]},
+                {"$set": {"status": "sent_to_brand", "sent_to_brand_at": sent_at,
+                          "published_to_brand_page_at": sent_at}})
+            await db.v3_business_cases.update_one(
+                {"id": bc_id},
+                {"$set": {"plan.pitch_deck_status": "sent_to_brand", "updated_at": _now_iso()},
+                 "$push": {"timeline": {"at": sent_at, "event": "pitch_deck_sent_to_brand", "deck_id": deck["id"]}}})
+            return {"ok": True, "published_only": True, "sent_at": sent_at, "email": None}
         docx_bytes = pitch_deck_docx_bytes(deck)
         email = await queue_email(
             to=recipient,
@@ -11328,7 +11576,7 @@ def make_v3_router(db):
                 "type": "google_docs_compatible_pitch_deck",
                 "id": deck["id"],
                 "title": deck.get("title"),
-                "filename": f"{deck['id']}-pitch-deck.docx",
+                "filename": pitch_deck_filename(deck, brand),
                 "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 "content": docx_bytes,
                 "review_link": review_link,
@@ -11390,11 +11638,17 @@ def make_v3_router(db):
         if not deck:
             raise HTTPException(404, "Pitch Deck not found")
         data = pitch_deck_docx_bytes(deck)
-        filename = re.sub(r"[^A-Za-z0-9]+", "_", str(deck.get("title") or "Pitch_Deck"))[:60] or "Pitch_Deck"
+        # Same human-readable name the emailed attachment uses, rather than
+        # an underscore-mangled one, so downloads and emails agree.
+        case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0}) or {}
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        filename = pitch_deck_filename(deck, brand)
+        from urllib.parse import quote
+        ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "pitch-deck.docx"
         return StreamingResponse(
             BytesIO(data),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f'attachment; filename="{filename}.docx"'},
+            headers={"Content-Disposition": f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"},
         )
 
     @router.post("/creative-briefs")
@@ -18459,5 +18713,16 @@ Produce the opportunity card JSON.
             "needs_attention": needs_attention[:10],
             "latest_activity": latest_activity,
         }
+
+    # Exposed for the letterhead regression tests: every brand/creator-facing
+    # .docx must carry the TASCK circle logo at the approved size.
+    router.TASCK_LOGO_SIZE_IN = TASCK_LOGO_SIZE_IN  # type: ignore[attr-defined]
+    router.TASCK_LOGO_RIGHT_INDENT_TWIPS = TASCK_LOGO_RIGHT_INDENT_TWIPS  # type: ignore[attr-defined]
+    router._docx_package = _docx_package  # type: ignore[attr-defined]
+    router.alignment_snapshot_docx_bytes = alignment_snapshot_docx_bytes  # type: ignore[attr-defined]
+    router.alignment_snapshot_filename = alignment_snapshot_filename  # type: ignore[attr-defined]
+    router.pitch_deck_docx_bytes = pitch_deck_docx_bytes  # type: ignore[attr-defined]
+    router.pitch_deck_filename = pitch_deck_filename  # type: ignore[attr-defined]
+    router.creative_brief_docx_bytes = creative_brief_docx_bytes  # type: ignore[attr-defined]
 
     return router

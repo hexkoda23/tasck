@@ -76,8 +76,18 @@ const isAlignmentVisibleToBrand = (snap) => {
   return status === 'approved' || status === 'imported' || status === 'sent_to_brand';
 };
 
-// Strip un-sent alignment snapshots off a bundle before it ever reaches any
-// brand-portal render path. Keeps the rest of the bundle untouched.
+// The Pitch Deck follows the exact same rule: a generated deck is an
+// admin-only draft until admin clicks "Send to brand page" (or emails it),
+// which stamps `sent_to_brand_at` / `status: sent_to_brand` server-side.
+const isPitchDeckVisibleToBrand = (deck) => {
+  if (!deck) return false;
+  if (deck.sent_to_brand_at) return true;
+  const status = String(deck.status || '').toLowerCase();
+  return status === 'approved' || status === 'imported' || status === 'sent_to_brand';
+};
+
+// Strip un-sent alignment snapshots and pitch decks off a bundle before it
+// ever reaches any brand-portal render path. Rest of the bundle untouched.
 const sanitizeBundleForBrand = (bundle) => {
   if (!bundle) return bundle;
   const sanitised = { ...bundle };
@@ -86,6 +96,9 @@ const sanitizeBundleForBrand = (bundle) => {
   }
   if (bundle.alignment_snapshot && !isAlignmentVisibleToBrand(bundle.alignment_snapshot)) {
     sanitised.alignment_snapshot = null;
+  }
+  if (bundle.pitch_deck && !isPitchDeckVisibleToBrand(bundle.pitch_deck)) {
+    sanitised.pitch_deck = null;
   }
   return sanitised;
 };

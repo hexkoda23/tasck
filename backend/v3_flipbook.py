@@ -1182,6 +1182,24 @@ body{
 .dsec.alt-teal .dsec-h .acc{color:var(--teal);}
 .dsec.alt-orange .dsec-rule{background:var(--orange);}
 .dsec.alt-orange .dsec-h .acc{color:var(--orange);}
+
+/* ---- Selected creator portraits (page 7) ---- */
+.ci-kicker{font-size:clamp(7px,1.1cqw,10px); letter-spacing:.26em; text-transform:uppercase;
+  color:#7C8AA0; margin:0 0 clamp(3px,.8cqw,6px);}
+.ci-grid{display:grid; gap:clamp(6px,1.5cqw,12px); align-content:start;
+  margin-top:clamp(6px,1.6cqw,12px); grid-template-columns:repeat(4,minmax(0,1fr));}
+.ci-cols-1{grid-template-columns:minmax(0,46%);}
+.ci-cols-2{grid-template-columns:repeat(2,minmax(0,1fr));}
+.ci-cols-3{grid-template-columns:repeat(3,minmax(0,1fr));}
+.ci-card{margin:0; border-radius:clamp(5px,1.2cqw,10px); overflow:hidden; background:#0E1B2E;
+  border:1px solid rgba(255,255,255,.10); display:flex; flex-direction:column;}
+.ci-shot{aspect-ratio:4/5; overflow:hidden; background:#16253E;}
+.ci-shot img{width:100%; height:100%; object-fit:cover; display:block;}
+.ci-meta{padding:clamp(4px,1cqw,8px) clamp(5px,1.2cqw,9px) clamp(5px,1.3cqw,9px);
+  display:flex; flex-direction:column; gap:1px;}
+.ci-name{font-size:clamp(7.5px,1.25cqw,11px); font-weight:700; color:#F2F6FB; line-height:1.25;}
+.ci-handle{font-size:clamp(7px,1.1cqw,10px); color:var(--teal); line-height:1.25;}
+.ci-role{font-size:clamp(6.5px,1cqw,9.5px); color:#93A2B8; line-height:1.3;}
 .dsec p{font-size:clamp(9px,2.36cqw,13.5px); line-height:1.78; color:var(--body); margin-top:8px;}
 .dsec ul{list-style:none; margin-top:9px; display:flex; flex-direction:column; gap:clamp(4px,1.2cqw,7px);}
 .dsec li{position:relative; padding-left:clamp(12px,3cqw,18px);
@@ -1435,13 +1453,20 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
         f'<span class="dp-badge"><img src="{logo_uri}" alt="" /></span>'
         if logo_uri else ''
     )
-    # The photo background is inlined for photo variants; minimal_navy skips
-    # the raster entirely so the CSS gradient becomes the whole cover.
-    include_photo = cover_option != "minimal_navy" and bool(COVER_JPG_B64)
-    cover_bg = (
-        f'<div class="pcov-bg" style="background-image:url(data:image/jpeg;base64,{COVER_JPG_B64})"></div>'
-        if include_photo else '<div class="pcov-bg"></div>'
-    )
+    # A per-brand cover image uploaded by admin always wins over the baked-in
+    # stock photo and over the cover_option variants, so each brand's deck can
+    # open on its own artwork.
+    custom_cover = str(deck.get("cover_image") or "").strip()
+    if custom_cover:
+        cover_bg = f'<div class="pcov-bg" style="background-image:url({_esc(custom_cover)})"></div>'
+    else:
+        # The photo background is inlined for photo variants; minimal_navy skips
+        # the raster entirely so the CSS gradient becomes the whole cover.
+        include_photo = cover_option != "minimal_navy" and bool(COVER_JPG_B64)
+        cover_bg = (
+            f'<div class="pcov-bg" style="background-image:url(data:image/jpeg;base64,{COVER_JPG_B64})"></div>'
+            if include_photo else '<div class="pcov-bg"></div>'
+        )
     top_row = f'<div class="pcov-top"><span class="pcov-agency">The TASCK Agency.</span>{badge}</div>'
 
     cover = (
@@ -1513,6 +1538,39 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
             f'<div class="dp-body">{body}</div>'
             f'<div class="dp-foot"><span>{site} <span class="dot">&bull;</span> {contact}</span>'
             f'<span><span class="num">{idx + 1:02d}</span> / {content_total:02d}</span></div>'
+            '</div>'
+        )
+    # Selected-creator portraits (page 7 in the approved template). Admin
+    # uploads these against the deck; they are already normalised data URIs
+    # so the downloadable single-file flip book stays self-contained.
+    creator_images = [i for i in (deck.get("creator_images") or []) if isinstance(i, dict) and i.get("image")]
+    if creator_images:
+        cards = ""
+        for img in creator_images:
+            meta = ""
+            if img.get("name"):
+                meta += f'<span class="ci-name">{_esc(img["name"])}</span>'
+            if img.get("handle"):
+                meta += f'<span class="ci-handle">{_esc(img["handle"])}</span>'
+            if img.get("role"):
+                meta += f'<span class="ci-role">{_esc(img["role"])}</span>'
+            cards += (
+                '<figure class="ci-card">'
+                f'<div class="ci-shot"><img src="{_esc(img["image"])}" alt="{_esc(img.get("name") or "Selected creator")}"/></div>'
+                f'<figcaption class="ci-meta">{meta}</figcaption>'
+                '</figure>'
+            )
+        cols = min(len(creator_images), 4)
+        pages_html.append(
+            '<div class="dpage">'
+            f'<div class="dp-head"><span>{_esc(brand_name or "Creator Campaign")} &times; TASCK</span>{small_badge}</div>'
+            '<div class="dp-body">'
+            '<p class="ci-kicker">The Solution / Creator Strategy</p>'
+            '<h2 class="dsec-h">Selected Creators</h2><div class="dsec-rule"></div>'
+            f'<div class="ci-grid ci-cols-{cols}">{cards}</div>'
+            '</div>'
+            f'<div class="dp-foot"><span>{site} <span class="dot">&bull;</span> {contact}</span>'
+            f'<span><span class="num">{content_total + 1:02d}</span> / {content_total + 1:02d}</span></div>'
             '</div>'
         )
     pages_html.append(closing)

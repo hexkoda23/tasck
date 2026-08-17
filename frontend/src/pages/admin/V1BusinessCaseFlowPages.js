@@ -119,6 +119,12 @@ import {
   v3UpdatePitchDeck,
   v3ApprovePitchDeckAs,
   v3SendPitchDeckToBrand,
+  v3PublishPitchDeckToBrandPage,
+  v3ReadFileAsDataUri,
+  v3SetPitchDeckCoverImage,
+  v3ClearPitchDeckCoverImage,
+  v3AddPitchDeckCreatorImage,
+  v3RemovePitchDeckCreatorImage,
   v3PitchDeckDocxUrl,
   v3PitchDeckFlipbookUrl,
   v3GenerateCreativeBrief,
@@ -156,6 +162,7 @@ import {
   v3RescheduleBusinessCaseConnect,
   v3RescheduleCreatorBriefing,
   v3SendAlignmentToBrand,
+  v3PublishAlignmentToBrandPage,
   v3SendConnectMeetingEmail,
   v3SendConnectRescheduleEmail,
   v3SendFeedbackRequest,
@@ -2329,6 +2336,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [sendPopup, setSendPopup] = useState(null);
   const [generating, setGenerating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [frameRefreshCount, setFrameRefreshCount] = useState(0);
   const stage = bundle?.business_case?.stage;
   const brand = getBrand(bundle);
@@ -2517,6 +2525,42 @@ export const V3BusinessCaseFrameSnapshot = () => {
         message: e?.response?.data?.detail || e?.message || 'Could not send the Alignment Snapshot. Generate it first.',
         tone: 'warning',
       });
+    }
+  };
+
+  // "Send to Brand Page": publish the snapshot to the brand portal without
+  // emailing anyone. A generated snapshot stays admin-only until this runs, so
+  // admins can generate it, make their edits, and only then let the brand see it.
+  const publishToBrandPage = async () => {
+    if (!activeSnapshot?.id) {
+      setNotice('Generate the Alignment Snapshot before sending it to the brand page.');
+      return;
+    }
+    setPublishing(true);
+    setSendPopup({
+      title: 'Publishing',
+      message: 'Making the Alignment Snapshot visible on the brand page...',
+      tone: 'pending',
+    });
+    try {
+      await persistDraft();
+      const result = await v3PublishAlignmentToBrandPage(id, { snapshot_id: activeSnapshot.id });
+      await reload();
+      setSendPopup({
+        title: 'Live on the brand page',
+        message: result?.is_revision
+          ? `The brand can now see Rev ${result.revision} of this Alignment Snapshot when they log in. No email was sent - use "Send Alignment Snapshot to brand" when you want to notify them.`
+          : 'The brand can now see this Alignment Snapshot when they log in to their portal. No email was sent - use "Send Alignment Snapshot to brand" when you want to notify them.',
+        tone: 'success',
+      });
+    } catch (e) {
+      setSendPopup({
+        title: 'Not published',
+        message: e?.response?.data?.detail || e?.message || 'Could not publish the Alignment Snapshot to the brand page.',
+        tone: 'warning',
+      });
+    } finally {
+      setPublishing(false);
     }
   };
 
@@ -2779,13 +2823,34 @@ export const V3BusinessCaseFrameSnapshot = () => {
                 data-testid="alignment-recipient-email"
               />
             </label>
+            {/* Visibility state: a generated snapshot is admin-only until
+                "Send to brand page" is clicked, so admin can edit in peace. */}
+            <div
+              className={'mb-3 rounded-lg border px-3 py-2 text-[12px] ' + (activeSnapshot?.sent_to_brand_at
+                ? 'border-[#C7D7CF] bg-[#EAF4EE] text-[#1F4A3A]'
+                : 'border-[#E5C99A] bg-[#FBF4E4] text-[#7A5A1E]')}
+              data-testid="alignment-brand-visibility"
+            >
+              {activeSnapshot?.sent_to_brand_at
+                ? `Visible on the brand page since ${formatDateTime(activeSnapshot.sent_to_brand_at)}. Saved edits go live immediately.`
+                : 'Admin-only. The brand cannot see this snapshot yet - click "Send to brand page" when you are ready.'}
+            </div>
             <div className="flex flex-wrap gap-2">
-              <button data-testid="alignment-email-brand-btn" onClick={sendEmailToBrand} className="v3-btn-primary"><Mail className="w-3.5 h-3.5" /> Send Alignment Snapshot to brand</button>
+              <button
+                data-testid="alignment-send-brand-page-btn"
+                onClick={publishToBrandPage}
+                disabled={publishing || !activeSnapshot?.id}
+                className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                <Send className={`w-3.5 h-3.5 ${publishing ? 'animate-pulse' : ''}`} />
+                {publishing ? 'Publishing…' : (activeSnapshot?.sent_to_brand_at ? 'Update brand page' : 'Send to brand page')}
+              </button>
+              <button data-testid="alignment-email-brand-btn" onClick={sendEmailToBrand} className="v3-btn-secondary"><Mail className="w-3.5 h-3.5" /> Send Alignment Snapshot to brand</button>
               <button data-testid="alignment-copy-link-btn" onClick={copyBrandReviewLink} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
               <button data-testid="alignment-download-google-docs-btn" onClick={downloadGoogleDoc} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download Google Docs</button>
               <button data-testid="alignment-whatsapp-share-btn" onClick={shareWhatsApp} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
             </div>
-            <p className="mt-2 text-[12px] text-[#6E6657]">Save edits first if you changed the snapshot, then send it to the brand for review, comments, or approval.</p>
+            <p className="mt-2 text-[12px] text-[#6E6657]">Save edits first if you changed the snapshot. <span className="font-semibold">Send to brand page</span> makes it visible in the brand portal without emailing; <span className="font-semibold">Send Alignment Snapshot to brand</span> publishes it and emails the brand.</p>
           </div>
         {sendPopup && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4" data-testid="alignment-sent-popup">
@@ -4435,6 +4500,96 @@ export const V3BusinessCasePitchDeck = () => {
     }
   };
 
+  // ---- Deck imagery: per-brand cover art + page 7 creator portraits ----
+  const [imageBusy, setImageBusy] = useState('');
+
+  const uploadCoverImage = async (file) => {
+    if (!file || !deck?.id) return;
+    setImageBusy('cover');
+    try {
+      const dataUri = await v3ReadFileAsDataUri(file);
+      await v3SetPitchDeckCoverImage(deck.id, dataUri);
+      await reload();
+      toast.success('Cover image updated. It shows on page 1 of the flip book.');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not upload that cover image.');
+    } finally {
+      setImageBusy('');
+    }
+  };
+
+  const clearCoverImage = async () => {
+    if (!deck?.id) return;
+    setImageBusy('cover');
+    try {
+      await v3ClearPitchDeckCoverImage(deck.id);
+      await reload();
+      toast.success('Cover image removed. The default TASCK cover is back.');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not remove the cover image.');
+    } finally {
+      setImageBusy('');
+    }
+  };
+
+  const addCreatorImage = async (file) => {
+    if (!file || !deck?.id) return;
+    setImageBusy('creator');
+    try {
+      const dataUri = await v3ReadFileAsDataUri(file);
+      // Filename (minus extension) seeds the caption; admin can rename after.
+      const guessedName = String(file.name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+      await v3AddPitchDeckCreatorImage(deck.id, { image: dataUri, name: guessedName });
+      await reload();
+      toast.success('Creator image added to page 7.');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not add that creator image.');
+    } finally {
+      setImageBusy('');
+    }
+  };
+
+  const removeCreatorImage = async (imageId) => {
+    if (!deck?.id) return;
+    setImageBusy(imageId);
+    try {
+      await v3RemovePitchDeckCreatorImage(deck.id, imageId);
+      await reload();
+      toast.success('Creator image removed.');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not remove that image.');
+    } finally {
+      setImageBusy('');
+    }
+  };
+
+  // "Send to brand page": make the deck visible in the brand portal without
+  // emailing. A generated deck stays admin-only until this is clicked, so
+  // admin can edit it first.
+  const publishDeckToBrandPage = async () => {
+    if (!deck?.id) {
+      toast.error('Generate the Pitch Deck before sending it to the brand page.');
+      return;
+    }
+    setSendPopup({ title: 'Publishing', message: 'Making the Pitch Deck visible on the brand page…', tone: 'pending' });
+    try {
+      await persist();
+      await v3PublishPitchDeckToBrandPage(id);
+      await reload();
+      setSendPopup({
+        title: 'Live on the brand page',
+        message: 'The brand can now open this Pitch Deck from their portal. No email was sent - use "Send to brand" when you want to notify them.',
+        tone: 'success',
+      });
+    } catch (e) {
+      setSendPopup({
+        title: 'Not published',
+        message: e?.response?.data?.detail || e?.message || 'Could not publish the Pitch Deck to the brand page.',
+        tone: 'warning',
+      });
+    }
+  };
+
   // Preview + download both use the server-rendered flip book: one source of
   // truth, TASCK-blue design, and the brand fonts are EMBEDDED in the file so
   // it looks identical when a client opens it offline.
@@ -4565,6 +4720,89 @@ export const V3BusinessCasePitchDeck = () => {
       </InfoCard>
 
       {deck && (
+        <InfoCard title="Deck imagery">
+          <p className="text-[12px] text-[#6E6657] mb-3">
+            Set this brand's cover artwork for page 1, and add the selected creator images that render on page 7 of the flip book.
+          </p>
+
+          {/* Page 1 - per-brand cover background */}
+          <div className="rounded-[8px] border border-[#E8E4DB] bg-[#FBFAF7] p-3">
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="h-[68px] w-[120px] flex-shrink-0 overflow-hidden rounded-md border border-[#E8E4DB] bg-[#101E33]">
+                {deck.cover_image
+                  ? <img src={deck.cover_image} alt="Deck cover" className="h-full w-full object-cover" data-testid="pitch-cover-preview" />
+                  : <div className="flex h-full w-full items-center justify-center text-[10px] text-[#8FA0B8]">Default cover</div>}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] font-semibold text-[#1F1B18]">Page 1 background</p>
+                <p className="text-[11px] text-[#6E6657] mt-0.5">JPG or PNG, landscape works best. Resized automatically.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <label className="v3-btn-secondary text-[11px] cursor-pointer">
+                    <Upload className="w-3.5 h-3.5" />
+                    {imageBusy === 'cover' ? 'Uploading…' : (deck.cover_image ? 'Replace cover' : 'Upload cover')}
+                    <input
+                      type="file" accept="image/*" className="hidden"
+                      data-testid="pitch-cover-input"
+                      disabled={imageBusy === 'cover'}
+                      onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; uploadCoverImage(f); }}
+                    />
+                  </label>
+                  {deck.cover_image && (
+                    <button onClick={clearCoverImage} disabled={imageBusy === 'cover'} className="v3-btn-secondary text-[11px]" data-testid="pitch-cover-clear">
+                      <Trash2 className="w-3.5 h-3.5" /> Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Page 7 - selected creator images */}
+          <div className="mt-3 rounded-[8px] border border-[#E8E4DB] bg-[#FBFAF7] p-3" data-testid="pitch-creator-images">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-[12px] font-semibold text-[#1F1B18]">Page 7 - selected creators</p>
+                <p className="text-[11px] text-[#6E6657] mt-0.5">
+                  {(deck.creator_images || []).length} of 12 added. These render as a clean grid on page 7.
+                </p>
+              </div>
+              <label className="v3-btn-secondary text-[11px] cursor-pointer">
+                <Upload className="w-3.5 h-3.5" />
+                {imageBusy === 'creator' ? 'Adding…' : 'Add creator image'}
+                <input
+                  type="file" accept="image/*" className="hidden"
+                  data-testid="pitch-creator-input"
+                  disabled={imageBusy === 'creator'}
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; addCreatorImage(f); }}
+                />
+              </label>
+            </div>
+            {(deck.creator_images || []).length > 0 ? (
+              <div className="mt-3 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2">
+                {(deck.creator_images || []).map((img) => (
+                  <div key={img.id} className="group relative overflow-hidden rounded-md border border-[#E8E4DB] bg-white">
+                    <img src={img.image} alt={img.name || 'Creator'} className="aspect-[4/5] w-full object-cover" />
+                    {img.name && <p className="truncate px-1.5 py-1 text-[10px] text-[#4F3E2F]">{img.name}</p>}
+                    <button
+                      onClick={() => removeCreatorImage(img.id)}
+                      disabled={imageBusy === img.id}
+                      title="Remove this creator image"
+                      className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white opacity-0 transition group-hover:opacity-100 focus:opacity-100"
+                      data-testid={`pitch-creator-remove-${img.id}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-[11px] text-[#8A8A8A]">No creator images yet. Page 7 is skipped until you add at least one.</p>
+            )}
+          </div>
+        </InfoCard>
+      )}
+
+      {deck && (
         <InfoCard title="Send to brand">
           <p className="text-[12px] text-[#6E6657] mb-2">
             Emails the formatted Pitch Deck (TASCK-branded .docx attached) and makes it reviewable in the brand portal.
@@ -4578,7 +4816,18 @@ export const V3BusinessCasePitchDeck = () => {
               className="flex-1 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"
               data-testid="pitch-recipient-input"
             />
-            <button onClick={sendToBrand} className="v3-btn-primary text-[12px]" data-testid="pitch-send-btn"><Send className="w-3.5 h-3.5" /> Send Pitch Deck</button>
+            <button onClick={publishDeckToBrandPage} className="v3-btn-primary text-[12px]" data-testid="pitch-send-brand-page-btn"><Send className="w-3.5 h-3.5" /> {deck?.sent_to_brand_at ? 'Update brand page' : 'Send to brand page'}</button>
+            <button onClick={sendToBrand} className="v3-btn-secondary text-[12px]" data-testid="pitch-send-btn"><Mail className="w-3.5 h-3.5" /> Email Pitch Deck</button>
+          </div>
+          <div
+            className={'mt-3 rounded-lg border px-3 py-2 text-[12px] ' + (deck?.sent_to_brand_at
+              ? 'border-[#C7D7CF] bg-[#EAF4EE] text-[#1F4A3A]'
+              : 'border-[#E5C99A] bg-[#FBF4E4] text-[#7A5A1E]')}
+            data-testid="pitch-brand-visibility"
+          >
+            {deck?.sent_to_brand_at
+              ? `Visible on the brand page since ${formatDateTime(deck.sent_to_brand_at)}. Saved edits go live immediately.`
+              : 'Admin-only. The brand cannot see this Pitch Deck yet - click "Send to brand page" when you are ready.'}
           </div>
         </InfoCard>
       )}
