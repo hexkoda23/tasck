@@ -4,10 +4,16 @@ import React from 'react';
 // .docx: blue circle logo top-right (THE / TASCK / AGENCY. with green T + A),
 // a contact footer strip, and two faint curved watermark lines bottom-right.
 // Colours taken straight from the template artwork:
-//   logo blue   #0024FF
+//   logo blue   #0024FF  (the circle mark only)
 //   logo green  #00D651
 //   ink / navy  #141C37
 //   watermark   #EBEBEB
+//
+// The document headline is BLACK, not the logo blue - client feedback
+// (Aug 2026), and it matches the generated .docx (TASCK_LOGO/title colour
+// 000000 in v3_routes.py). Keep the two in step: this component is the
+// on-screen twin of that document.
+const TASCK_HEADLINE = '#000000';
 
 const TASCK_BLUE = '#0024FF';
 const TASCK_GREEN = '#00D651';
@@ -75,7 +81,18 @@ export const TtaLetterhead = ({ title, children, className = '' }) => (
           no empty band between header and body. */}
       <div className="flex items-center justify-between gap-4 px-6 pt-4 pb-1">
         <div className="min-w-0">
-          {title && <h1 className="text-[26px] font-bold tracking-wide text-[#0024FF]" style={{ fontFamily: "'Bebas Neue', 'Arial Narrow', sans-serif" }}>{title}</h1>}
+          {/* Black, mixed-case bold - mirrors the .docx headline. Bebas Neue is
+              deliberately NOT used: it has no true lowercase, so it renders
+              every title as condensed caps and cannot match the reference. */}
+          {title && (
+            <h1
+              className="text-[26px] font-bold leading-tight"
+              style={{ color: TASCK_HEADLINE, fontFamily: "'Century Gothic', 'CenturyGothic', AppleGothic, 'Questrial', sans-serif" }}
+              data-testid="tta-letterhead-title"
+            >
+              {title}
+            </h1>
+          )}
         </div>
         <TasckLogo size={64} className="flex-shrink-0" />
       </div>
