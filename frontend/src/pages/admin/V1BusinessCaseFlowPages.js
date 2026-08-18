@@ -2421,9 +2421,36 @@ export const V3BusinessCaseFrameSnapshot = () => {
       const detail = e?.response?.data?.detail;
       if (e?.response?.status === 400 && String(detail || '').includes('Frame stage')) {
         setNotice("Can't generate the Alignment Snapshot yet. Complete the Connect stage and move this Business Case to Frame first.");
-      } else {
-        setNotice(detail || 'Could not generate the Alignment Snapshot. Please try again.');
+        setGenerating(false);
+        return;
       }
+      // The analyser keeps running server-side after a client/gateway timeout,
+      // so the snapshot is often written even though this request errored.
+      // Re-read before crying failure - otherwise admin is told it failed and
+      // regenerates a snapshot that already exists.
+      const timedOut = !e?.response
+        || e?.code === 'ECONNABORTED'
+        || [502, 503, 504, 520, 522, 524].includes(Number(e?.response?.status));
+      if (timedOut) {
+        try {
+          const bundle = await reload();
+          const landed = bundle?.alignment_snapshots?.length
+            ? bundle.alignment_snapshots[bundle.alignment_snapshots.length - 1]
+            : bundle?.alignment_snapshot;
+          if (landed && (landed.sections || []).length) {
+            setDraft(cloneAlignmentSnapshot(landed));
+            setNotice('Alignment Snapshot generated. It took longer than usual, so it was recovered after the page timed out - review it below before sending to the brand.');
+            setGenerating(false);
+            return;
+          }
+        } catch (reloadError) {
+          // fall through to the error notice below
+        }
+        setNotice('The Alignment Snapshot is taking longer than usual to generate. It may still be running - wait a moment and reload before trying again.');
+        setGenerating(false);
+        return;
+      }
+      setNotice(detail || 'Could not generate the Alignment Snapshot. Please try again.');
     } finally {
       setGenerating(false);
     }

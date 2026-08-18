@@ -101,9 +101,22 @@ export const v3ContinueBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}
 export const v3UpdateBusinessCaseValue = (bcId, payload) => v3.patch(`/business-cases/${bcId}/value`, payload).then(r => r.data);
 
 // -------- Frame stage --------
-export const v3GenerateAlignment = (bcId) => v3.post(`/business-cases/${bcId}/ai/alignment`).then(r => r.data);
+// The alignment analyser runs a Claude call with a 75s server-side budget
+// (ALIGNMENT_ANALYZER_TIMEOUT_SECONDS), but this client defaulted to 45s. The
+// browser gave up first while the server carried on and wrote the snapshot, so
+// admins saw "Could not generate the Alignment Snapshot" for a snapshot that
+// had in fact been created. Same class of bug as the brand scrape above.
+// The endpoint upserts one snapshot per business case, so retrying is safe.
+export const v3GenerateAlignment = async (bcId) => {
+  try {
+    return (await v3.post(`/business-cases/${bcId}/ai/alignment`, undefined, { timeout: 180000 })).data;
+  } catch (e) {
+    return (await v3.post(`/business-cases/${bcId}/ai/alignment`, undefined, { timeout: 180000 })).data;
+  }
+};
 
-export const v3GenerateAlignmentQuestions = (bcId) => v3.post(`/business-cases/${bcId}/ai/alignment/questions`).then(r => r.data);
+export const v3GenerateAlignmentQuestions = (bcId) =>
+  v3.post(`/business-cases/${bcId}/ai/alignment/questions`, undefined, { timeout: 180000 }).then(r => r.data);
 
 export const v3ApproveAlignment = (bcId, approver) => v3.post(`/business-cases/${bcId}/ai/alignment/approve`, { approver }).then(r => r.data);
 
@@ -113,7 +126,12 @@ export const v3MarkAlignmentViewed = (bcId, snapshotId, viewer) => v3.post(`/bus
 
 export const v3UpdateAlignment = (snapshotId, payload) => v3.patch(`/alignment-snapshots/${snapshotId}`, payload).then(r => r.data);
 
-export const v3SendAlignmentToBrand = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/ai/alignment/send`, payload).then(r => r.data);
+// Sending builds the .docx and then talks to Gmail SMTP (20s socket timeout)
+// before writing the outbox row, which can outrun the default 45s client
+// timeout and surface as a gateway error even though delivery is in flight.
+// Deliberately NOT retried: a retry would email the brand twice.
+export const v3SendAlignmentToBrand = (bcId, payload = {}) =>
+  v3.post(`/business-cases/${bcId}/ai/alignment/send`, payload, { timeout: 120000 }).then(r => r.data);
 
 // "Send to Brand Page": reveal the snapshot in the brand portal without
 // emailing the brand. Generated snapshots stay admin-only until this runs, so
@@ -273,6 +291,9 @@ export const v3AnalyzeMeetingTranscript = (meetingId, payload = {}) => v3.post(`
 export const v3AnalyzeAllTranscripts = (bcId) => v3.post(`/business-cases/${bcId}/connect/analyze-all`, undefined, { timeout: 180000 }).then(r => r.data);
 export const v3GetAnalyzeAllJob = (bcId, jobId) => v3.get(`/business-cases/${bcId}/connect/analyze-all/jobs/${jobId}`, { timeout: 30000 }).then(r => r.data.job || r.data);
 
+// Runs the analyser across every uploaded transcript, so it is the slowest AI
+// call in the app. Not retried: this endpoint can create a business case, and
+// a retry would risk a duplicate.
 export const v3GenerateAlignmentFromTranscripts = (brandId, transcripts = []) => v3.post(`/brands/${brandId}/frame-transcripts`, {
   actor: 'admin',
   source: 'v1_admin_multi_transcript_frame',
@@ -282,7 +303,7 @@ export const v3GenerateAlignmentFromTranscripts = (brandId, transcripts = []) =>
     session_label: item.session || item.session_label || `Session ${index + 1}`,
     notes: item.notes || '',
   })),
-}).then(r => r.data);
+}, { timeout: 240000 }).then(r => r.data);
 export const v3RegenerateMeetingQuestions = (meetingId) => v3.post(`/meetings/${meetingId}/questions/regenerate`).then(r => r.data);
 export const v3DraftBrandFollowUp = (brandId, payload = {}) => v3.post(`/brands/${brandId}/ai/follow-up-draft`, payload).then(r => r.data);
 export const v3AcceptQualificationMeeting = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/qualification/accept`, payload).then(r => r.data);
@@ -391,7 +412,10 @@ export const v3GeneratePitchDeck = async (bcId, onProgress, snapshotId) => {
 };
 export const v3UpdatePitchDeck = (deckId, payload) => v3.patch(`/pitch-decks/${deckId}`, payload).then(r => r.data);
 export const v3ApprovePitchDeckAs = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/pitch-deck/approve`, { approver, approver_party }).then(r => r.data);
-export const v3SendPitchDeckToBrand = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/pitch-deck/send`, payload).then(r => r.data);
+// Same shape as the alignment send: docx build + SMTP. Longer timeout, and no
+// retry so the brand is never emailed the deck twice.
+export const v3SendPitchDeckToBrand = (bcId, payload = {}) =>
+  v3.post(`/business-cases/${bcId}/pitch-deck/send`, payload, { timeout: 120000 }).then(r => r.data);
 
 // "Send to brand page": reveal the deck in the brand portal without emailing.
 // Generated decks stay admin-only until this (or the email send) runs.
