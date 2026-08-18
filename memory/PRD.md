@@ -1,5 +1,33 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 18 Aug 2026 (Production incident: "Could not generate the Alignment Snapshot" + Cloudflare error on send)
+
+### Reported
+Client testing on `thcodemo.space`: "I am having issues creating alignment snapshot and sending mails". Two screenshots — the admin snapshot page showing *Could not generate the Alignment Snapshot. Please try again.*, and an *Email not sent* dialog carrying Cloudflare's "origin returned an empty response, malformed HTTP headers, or an otherwise invalid response".
+
+### What the evidence actually showed
+Neither error meant what it looked like.
+
+- **Origin was healthy** — `GET /api/`, `/`, and `/api/v3/business-cases` all returned 200 while the client was reporting failures.
+- **The "failed" snapshot exists.** The business case in the screenshot URL (`bc-0c473cfe`, "Jenjies Marketing Campaign") holds `as-835c0124` with 8 populated sections, matching the content visible on the client's screen.
+- **Email works.** The outbox holds 28 `sent` and **zero** delivery failures ever; an `alignment_snapshot_review` mail sent successfully at **10:26 the same morning**. The 11:24 failure left *no outbox row at all*, so the request died before `insert_one` rather than failing in SMTP.
+
+### Root cause (two layers)
+1. **Client timeout shorter than the server budget.** `axios` defaults to 45s (`v3api.js`), the alignment analyser has a 75s budget (`ALIGNMENT_ANALYZER_TIMEOUT_SECONDS`). The browser gave up while the server finished and wrote the snapshot — so admins were told it failed, and regenerated work that had succeeded. Identical to the brand-scrape bug fixed in `ca8a833`; the alignment paths were missed.
+2. **Unbounded background fan-out.** Each "Generate Snapshot" fired a bare `asyncio.create_task(_safe_refresh_transcripts(bc_id))`. Every retry stacked another full LLM run over every transcript on the same single-worker container. Enough of those starve the worker, and a starved worker returns gateway errors to whatever request is in flight — which is how a *healthy* origin produced a Cloudflare 520 on an unrelated email send. The codebase already documents this failure mode at `_reap_stale_job` ("OOM-crashes … runner dies").
+
+### Shipped
+- `b7943d7` — timeouts raised: generate 180s **+ one silent retry** (the endpoint upserts one snapshot per case, so retry cannot duplicate); alignment questions 180s; transcript-driven generation 240s **no retry** (that endpoint can create a business case); alignment and pitch-deck sends 120s **no retry** (a retry would email the brand twice). The admin page now re-reads the bundle on a timeout/5xx/52x and adopts the snapshot if it landed, instead of reporting failure.
+- This commit — `_kick_alignment_refresh()` allows **one background re-analysis per business case**, skipping duplicates while one is in flight and holding a strong task reference (asyncio keeps only a weak one, so a bare `create_task` can be garbage-collected mid-flight).
+
+### Verified
+- 4 new guard tests (`test_alignment_refresh_guard.py`): six rapid clicks leave exactly one task; a finished run frees its slot; the guard is per-case not global; a failing run never raises into the worker. 12/12 focused tests pass.
+- 20 concurrent POSTs to the live generate endpoint: all 200, zero tracebacks.
+- Caveat: local hammering shows 0 "skipping duplicate" because the mocked analysis completes within a tick and never overlaps. Overlap is a production condition (30-70s LLM calls); the unit tests cover it directly.
+
+### Still open
+Both fixes need a **redeploy** — the client is still running the old 45s client. If timeouts recur after deploy, the durable fix is moving alignment generation onto the background-job + polling pattern the Pitch Deck already uses (`/ai/pitch-deck/jobs/{job_id}`), rather than holding an HTTP request open at all.
+
 ## Update — 17 Aug 2026 (Pitch Deck: brand access, send gating, proper filename, cover + creator imagery)
 
 ### User request

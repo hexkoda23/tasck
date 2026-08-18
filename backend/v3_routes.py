@@ -5920,6 +5920,27 @@ def make_v3_router(db):
         except Exception as exc:  # noqa: BLE001
             logger.warning("Background alignment refresh failed for %s: %s", bc_id, exc)
 
+    # One background re-analysis per business case, ever.
+    #
+    # Every "Generate Snapshot" click used to fire a fresh
+    # analyze_all_connect_transcripts task. When the click appeared to fail the
+    # admin clicked again, stacking another full LLM run over every transcript
+    # on the same single-worker container. Enough of those and the worker is
+    # starved, which is how a healthy origin starts returning gateway errors to
+    # unrelated requests (an email send, say). Holding the task also keeps a
+    # strong reference: asyncio only holds a weak one, so a bare create_task
+    # can be garbage-collected mid-flight.
+    _alignment_refresh_tasks: Dict[str, "asyncio.Task"] = {}
+
+    def _kick_alignment_refresh(bc_id: str) -> None:
+        running = _alignment_refresh_tasks.get(bc_id)
+        if running is not None and not running.done():
+            logger.info("Alignment refresh already running for %s - skipping duplicate", bc_id)
+            return
+        task = asyncio.create_task(_safe_refresh_transcripts(bc_id))
+        _alignment_refresh_tasks[bc_id] = task
+        task.add_done_callback(lambda finished, key=bc_id: _alignment_refresh_tasks.pop(key, None))
+
     @router.post("/business-cases/{bc_id}/ai/alignment/questions")
     async def generate_alignment_questions_for_v1(bc_id: str, fast: bool = True, opportunity: Optional[Dict[str, Any]] = None):
         """Build an Alignment Snapshot for this case.
@@ -5949,7 +5970,7 @@ def make_v3_router(db):
             # background analysis PER opportunity - skip it.
             pass
         elif fast:
-            asyncio.create_task(_safe_refresh_transcripts(bc_id))
+            _kick_alignment_refresh(bc_id)
         else:
             await analyze_all_connect_transcripts(bc_id)
             case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or case
@@ -18713,6 +18734,10 @@ Produce the opportunity card JSON.
             "needs_attention": needs_attention[:10],
             "latest_activity": latest_activity,
         }
+
+    # Exposed for the background-refresh guard tests.
+    router._kick_alignment_refresh = _kick_alignment_refresh  # type: ignore[attr-defined]
+    router._alignment_refresh_tasks = _alignment_refresh_tasks  # type: ignore[attr-defined]
 
     # Exposed for the letterhead regression tests: every brand/creator-facing
     # .docx must carry the TASCK circle logo at the approved size.
