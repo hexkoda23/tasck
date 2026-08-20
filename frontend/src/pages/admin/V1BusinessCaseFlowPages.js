@@ -2618,7 +2618,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   return (
-    <FlowShell title="Alignment Snapshot" subtitle="Framing step 1 of 5. Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval.">
+    <FlowShell title="Alignment Snapshot" subtitle="Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval.">
       {alignmentComments.length > 0 && (
         <InfoCard title={`Brand Comments (${alignmentComments.length})`}>
           {/* Comments are scoped to THIS snapshot - name it so, when a Connect
@@ -3046,7 +3046,7 @@ export const V3BusinessCaseFrameApproved = () => {
   const navigate = useNavigate();
   const { id, bundle } = useBusinessCaseBundle();
   const snap = bundle?.alignment_snapshot || {};
-  return <FlowShell title="Alignment Approved" subtitle="Framing continues. The Alignment Snapshot is approved; the next Framing step is the Creator Selector transcript upload."><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`))} className="v3-btn-primary mt-4">Continue to Creator Selector</button></InfoCard></FlowShell>;
+  return <FlowShell title="Alignment Approved"><InfoCard title="Approval status"><p className="text-[13px]">Approved by: {snap.approved_by || 'Pending'}</p><p className="text-[13px]">Approved at: {snap.approved_at || 'Pending'}</p><button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`))} className="v3-btn-primary mt-4">Continue to Creator Selector</button></InfoCard></FlowShell>;
 };
 
 export const V1BusinessCaseFrameTranscripts = () => {
@@ -3357,7 +3357,7 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
   return (
     <FlowShell
       title="Creator Selector & Transcript Analysis"
-      subtitle="Framing step 2 of 5. Run the creator selection session using the suggested questions, then upload the transcript here. Claude will analyse it and fill the entire Creator Selector for you to review."
+      subtitle="Run the creator selection session using the suggested questions, then upload the transcript here. Claude will analyse it and fill the entire Creator Selector for you to review."
     >
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
 
@@ -3555,7 +3555,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
 
   if (!round) {
     return (
-      <FlowShell title="The TTA Creator Selector" subtitle="Framing step 2 of 5.">
+      <FlowShell title="The TTA Creator Selector" >
         {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
         <InfoCard title={bootstrapping ? 'Loading Creator Selector…' : 'Creator Selector unavailable'}>
           <p className="text-[13px] text-[#6E6657]">
@@ -3602,7 +3602,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
           the BOTTOM of the page, not in a sticky top bar. Admin fills the
           whole brainstorm template and then hits Save once at the end. */}
       <InfoCard title="Save brainstorm">
-        <p className="text-[12px] text-[#6E6657] mb-3">Save your progress at any point, or save and move on to the next Framing step (Creator Match Scanner).</p>
+        <p className="text-[12px] text-[#6E6657] mb-3">Save your progress at any point, or save and move on to the Creator Match Scanner.</p>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => save(false)} disabled={saving} className="v3-btn-secondary" data-testid="brainstorm-save-btn">
             <Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save'}
@@ -3765,7 +3765,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
   };
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
   return (
-    <FlowShell title="Creator Match Scanner" subtitle="Framing step 3 of 5. Scan creators, manually choose creatives from the full database, and prepare one or more creators for briefing." nextAction="Pick one or more creators, then generate editable briefs for each selected creator.">
+    <FlowShell title="Creator Match Scanner" subtitle="Scan creators, manually choose creatives from the full database, and prepare one or more creators for briefing." nextAction="Pick one or more creators, then generate editable briefs for each selected creator.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Matching criteria">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[12px] text-[#4F3E2F]">
@@ -4137,7 +4137,7 @@ export const V3BusinessCasePlanBrief = () => {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
   return (
-    <FlowShell title="Creative Brief Studio" subtitle="Framing step 4 of 5. Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
+    <FlowShell title="Creative Brief Studio" subtitle="Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
       {/* The brand-tailored Creative Brief in the approved TASCK template
           (the 4-page WE.YAN-style document). Claude writes it from the
           alignment snapshot + Creator Selector data; download is the styled
@@ -5323,7 +5323,7 @@ export const V3BusinessCasePlanStrategySnapshot = () => {
   };
 
   return (
-    <FlowShell title="Strategy Snapshot Studio" subtitle="Framing step 5 of 5." nextAction="Review, send to brand and creatives, then approve.">
+    <FlowShell title="Strategy Snapshot Studio"  nextAction="Review, send to brand and creatives, then approve.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       {/* Top toolbar - primary action only.
           Approve Snapshot lives on the RIGHT (the headline action).

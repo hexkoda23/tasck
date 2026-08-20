@@ -4829,6 +4829,39 @@ def make_v3_router(db):
             )
         return {"ok": True, "business_case_id": bc_id, "last_interaction_at": now}
 
+    class BusinessCaseTitleUpdate(BaseModel):
+        title: str = Field(..., min_length=1, max_length=160)
+        actor: Optional[str] = "admin"
+
+    @router.patch("/business-cases/{bc_id}/title")
+    async def rename_business_case(bc_id: str, payload: BusinessCaseTitleUpdate):
+        """Rename a project.
+
+        Business cases are created with a generated name (the brand name plus
+        a stage word), so every project under one brand read almost the same.
+        Admin and the brand can now give each one a real name.
+        """
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        title = _clean_document_text(payload.title, "").strip()
+        if not title:
+            raise HTTPException(400, "Give the project a name.")
+        previous = str(case.get("title") or "")
+        now = _now_iso()
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {"title": title, "updated_at": now, "last_interaction_at": now},
+                "$push": {"timeline": {
+                    "at": now, "event": "business_case_renamed",
+                    "actor": payload.actor or "admin", "from": previous, "to": title,
+                }},
+            },
+        )
+        updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        return {"ok": True, "business_case": updated, "business_case_id": bc_id, "title": title}
+
     class BusinessCaseValueUpdate(BaseModel):
         estimated_value: float = Field(..., ge=0)
         approved_by: Optional[str] = "admin"
@@ -6628,12 +6661,23 @@ def make_v3_router(db):
             "</w:rPr>"
         )
 
+    # Line spacing, in 240ths of a line (Word's unit): 240 = single, 360 = 1.5.
+    # Client asked for 1.5 across every brand/creator-facing document so the
+    # pages read less densely. Body copy is also justified.
+    _DOCX_LINE_1_5 = 360
+
     def _docx_paragraph(value: Any, *, bold: bool = False, italic: bool = False,
                         size_half_pt: int = 22, color: str = _DOCX_BODY_COLOR,
-                        font: str = _DOCX_BODY_FONT, before: int = 120, after: int = 240) -> str:
+                        font: str = _DOCX_BODY_FONT, before: int = 120, after: int = 240,
+                        justify: bool = True, line: int = _DOCX_LINE_1_5) -> str:
+        # Headings, titles and table cells pass justify=False: justification
+        # only helps multi-line prose, and in a short heading or a narrow table
+        # column it opens ugly word gaps.
+        alignment = '<w:jc w:val="both"/>' if justify else ""
         return (
             "<w:p>"
-            f'<w:pPr><w:spacing w:before="{before}" w:after="{after}" w:line="276" w:lineRule="auto"/></w:pPr>'
+            f'<w:pPr><w:spacing w:before="{before}" w:after="{after}" w:line="{line}" w:lineRule="auto"/>'
+            f"{alignment}</w:pPr>"
             "<w:r>"
             f"{_docx_run_props(bold=bold, italic=italic, size_half_pt=size_half_pt, color=color, font=font)}"
             f'<w:t xml:space="preserve">{_docx_text(value)}</w:t>'
@@ -6657,22 +6701,22 @@ def make_v3_router(db):
         # title as condensed caps), and the client's reference shows a
         # mixed-case bold headline.
         return _docx_paragraph(value, bold=True, size_half_pt=44, color=_DOCX_TITLE_COLOR,
-                               font=_DOCX_BODY_FONT, before=240, after=60)
+                               font=_DOCX_BODY_FONT, before=240, after=60, justify=False)
 
     def _docx_subtitle(value: Any) -> str:
         # Small black bold line under the headline ("Alignment Snapshot").
         return _docx_paragraph(value, bold=True, size_half_pt=24, color=_DOCX_TITLE_COLOR,
-                               font=_DOCX_BODY_FONT, before=0, after=160)
+                               font=_DOCX_BODY_FONT, before=0, after=160, justify=False)
 
     def _docx_heading(value: Any) -> str:
         # Section heading: Century Gothic bold, dark teal, 12pt, tight after-space.
         return _docx_paragraph(value, bold=True, size_half_pt=24, color=_DOCX_HEADING_COLOR,
-                               before=240, after=80)
+                               before=240, after=80, justify=False)
 
     def _docx_cell(value: Any, *, bold: bool = False) -> str:
         return (
             '<w:tc><w:tcPr><w:tcW w:w="4500" w:type="dxa"/></w:tcPr>'
-            f"{_docx_paragraph(value, bold=bold)}</w:tc>"
+            f"{_docx_paragraph(value, bold=bold, justify=False)}</w:tc>"
         )
 
     def _docx_question_row(row: Any) -> Tuple[str, str]:
@@ -10782,6 +10826,7 @@ def make_v3_router(db):
             return _docx_paragraph(
                 value, bold=False, italic=False, size_half_pt=size,
                 color=HEADING_BLUE, font="Bebas Neue", before=before, after=after,
+                justify=False,
             )
 
         def para(value, *, bold=False, italic=False, size=BODY_SIZE, before=0, after=120):

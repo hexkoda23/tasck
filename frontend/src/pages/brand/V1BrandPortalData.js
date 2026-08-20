@@ -47,6 +47,44 @@ export const brandLogoCandidates = (brand) => {
 };
 export const stageOrder = ['connect', 'frame', 'plan', 'deliver', 'reporting', 'closed'];
 export const stageLabel = (stage) => ({ connect: 'Connect', frame: 'Frame', plan: 'Plan', deliver: 'Delivery', reporting: 'Reporting', closed: 'Closed' }[stage] || sentenceCaseStatus(stage));
+
+// One lifecycle for every brand-facing document - Alignment Snapshot, Pitch
+// Deck, Creative Brief, Contract, Report. The raw backend status leaked
+// through before ("Under Review", "Sent To Brand", "Not Ready Yet"), which
+// read inconsistently and did not move when the brand acted.
+//
+//   Not ready  -> admin has not released it yet
+//   Sent       -> admin sent it (to the brand page and/or by email)
+//   In progress-> the brand replied and there is an open comment to action
+//   Approved   -> signed off
+//
+// A re-send resolves the brand's open comments server-side, so a corrected
+// document settles back on "Sent" rather than sticking on "In progress".
+export const DOC_STATUS = { NOT_READY: 'Not ready', SENT: 'Sent', IN_PROGRESS: 'In progress', APPROVED: 'Approved' };
+
+const hasOpenBrandComment = (doc) => Array.isArray(doc?.brand_comments)
+  && doc.brand_comments.some((c) => {
+    const status = String(c?.status || 'open').toLowerCase();
+    return status === 'open' || status === '';
+  });
+
+export const documentStatusLabel = (doc) => {
+  if (!doc) return DOC_STATUS.NOT_READY;
+  const status = String(doc.status || '').toLowerCase();
+  if (doc.brand_approved || doc.approved_at || status === 'approved') return DOC_STATUS.APPROVED;
+  const released = Boolean(doc.sent_to_brand_at) || ['sent_to_brand', 'imported', 'sent'].includes(status);
+  // The brand sending it back outranks "Sent": there is something to action.
+  if (released && hasOpenBrandComment(doc)) return DOC_STATUS.IN_PROGRESS;
+  if (released) return DOC_STATUS.SENT;
+  return DOC_STATUS.NOT_READY;
+};
+
+export const documentStatusTone = (doc) => ({
+  [DOC_STATUS.APPROVED]: 'border-[#C7D7CF] bg-[#E8F5ED] text-[#2E7D5B]',
+  [DOC_STATUS.SENT]: 'border-[#C9D6EE] bg-[#EEF1F6] text-[#3A5BA0]',
+  [DOC_STATUS.IN_PROGRESS]: 'border-[#E5C99A] bg-[#FBF4E4] text-[#7A5A1E]',
+  [DOC_STATUS.NOT_READY]: 'border-[#E8E4DB] bg-white text-[#8A8A8A]',
+}[documentStatusLabel(doc)]);
 export const stageIndex = (stage) => Math.max(0, stageOrder.indexOf(stage || 'connect'));
 export const bundleCase = (bundle) => bundle?.business_case || bundle?.businessCase || bundle?.case || bundle || {};
 export const activityTime = (item) => { const bc = bundleCase(item); return Math.max(...[bc.updated_at, bc.last_interaction_at, bc.created_at, item?.updated_at, item?.created_at].map((v) => { const p = Date.parse(v || ''); return Number.isNaN(p) ? 0 : p; }), 0); };
@@ -158,7 +196,12 @@ export const approveDocument = ({ kind, businessCase, author, snapshot }) => { i
 export const sendReportFeedback = async ({ businessCase, brand, author, feedback }) => { const cleanFeedback = cleanPortalText(feedback); if (!cleanFeedback) throw new Error('Add feedback before sending it to TASCK.'); await v3SubmitBrandFeedback(businessCase.id, { rater: author, scores: { clarity: 10, representation: 10, coordination: 10, professionalism: 10, overall: 10 }, comment: cleanFeedback }); return v3CreateInteraction({ brand_id: businessCase.brand_id || brand?.id, business_case_id: businessCase.id, type: 'brand_report_feedback', title: 'Report feedback from brand', author, content: cleanFeedback }); };
 
 export const BrandIdentityCard = ({ brand, session, compact = false }) => { return <div className={'v3-card ' + (compact ? 'p-4' : 'p-5')}><div className="flex items-start gap-4"><SharedBrandLogo name={brandName(brand)} candidates={brandLogoCandidates(brand)} containerClassName="w-16 h-16 rounded-xl border border-[#E8E4DB] bg-white overflow-hidden flex items-center justify-center shrink-0" imgClassName="w-full h-full object-contain p-1.5" initialsClassName="text-lg font-bold text-[#1F4A3A]" /><div className="min-w-0"><p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">Signed-in brand</p><h2 className="v3-heading text-2xl break-words" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)}</h2><p className="text-[13px] text-[#6B6258] mt-1">{brandIndustry(brand)} · {brandContact(brand, session)}</p>{!compact && <p className="text-[13px] text-[#5C5C5C] mt-3 leading-6">{brandAbout(brand)}</p>}</div></div></div>; };
-export const ProjectStageRail = ({ stage }) => { const current = stageIndex(stage); return <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">{stageOrder.map((item, index) => <div key={item} className={'rounded-lg border px-3 py-2 text-[12px] ' + (index < current ? 'border-[#C7D7CF] bg-[#EEF5F1] text-[#1F4A3A]' : index === current ? 'border-[#C49B5F] bg-[#F7EFE1] text-[#7A5F23]' : 'border-[#E8E4DB] bg-white text-[#8A8A8A]')}><div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5" />{stageLabel(item)}</div></div>)}</div>; };
+// "Closed" is intentionally not shown to brands (client feedback, Aug 2026):
+// it is an internal end-state, not a phase a brand is working through. It
+// stays in `stageOrder` so stageIndex/projectProgress keep working for closed
+// projects - it is only dropped from the rail the brand sees.
+export const brandVisibleStages = stageOrder.filter((item) => item !== 'closed');
+export const ProjectStageRail = ({ stage }) => { const current = stageIndex(stage); return <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">{brandVisibleStages.map((item, index) => <div key={item} className={'rounded-lg border px-3 py-2 text-[12px] ' + (index < current ? 'border-[#C7D7CF] bg-[#EEF5F1] text-[#1F4A3A]' : index === current ? 'border-[#C49B5F] bg-[#F7EFE1] text-[#7A5F23]' : 'border-[#E8E4DB] bg-white text-[#8A8A8A]')}><div className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5" />{stageLabel(item)}</div></div>)}</div>; };
 // Per-section comment box (brand portal). Rendered below EVERY section of a
 // document when SnapshotSections is given an onSectionChange handler, so the
 // brand can comment on each part individually. There is NO send button here

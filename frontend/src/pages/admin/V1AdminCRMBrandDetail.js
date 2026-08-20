@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   BriefcaseBusiness,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {
   v3GetBrand,
+  v3RenameBusinessCase,
   v3MoveBrandToBusinessCall,
   v3MoveBrandToFrame,
   v3ContinueBusinessCase,
@@ -417,6 +418,49 @@ const V1AdminCRMBrandDetail = () => {
       setBundle(data);
     } catch (err) {
       setNotice(err?.response?.data?.detail || err?.message || 'Failed to reload brand details.');
+    }
+  };
+
+  // Inline project rename. Business cases are created with a generated name,
+  // so a brand with several projects sees the same title repeated until one
+  // is renamed here.
+  const [renamingId, setRenamingId] = useState('');
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renameBusy, setRenameBusy] = useState(false);
+
+  // Freshly created brands arrive with { autoScrape: true } when the admin
+  // supplied a website, so the details and logo are pulled without anyone
+  // having to click Scrape. Guarded by a ref so React 18's double-invoked
+  // effects (and any re-render) cannot fire the fetch twice.
+  const location = useLocation();
+  const autoScrapeFired = useRef(false);
+  useEffect(() => {
+    if (autoScrapeFired.current) return;
+    if (!location.state?.autoScrape) return;
+    if (!bundle) return;               // wait for the brand to load
+    autoScrapeFired.current = true;
+    // Clear the flag so a refresh or back-navigation does not re-scrape.
+    navigate(location.pathname, { replace: true, state: {} });
+    handleScrape();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle, location.state]);
+
+  const saveBusinessCaseName = async (bcId) => {
+    const next = renameDraft.trim();
+    if (!next) {
+      setNotice('Give the project a name.');
+      return;
+    }
+    setRenameBusy(true);
+    try {
+      await v3RenameBusinessCase(bcId, next, 'admin');
+      await reloadData();
+      setRenamingId('');
+      setNotice('Project renamed.');
+    } catch (err) {
+      setNotice(err?.response?.data?.detail || err?.message || 'Could not rename this project.');
+    } finally {
+      setRenameBusy(false);
     }
   };
 
@@ -1192,10 +1236,46 @@ const V1AdminCRMBrandDetail = () => {
             <div className="grid gap-2">
               {businessCases.map((businessCase) => (
                 <div key={businessCase.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 hover:border-[#1F4A3A]">
-                  <button type="button" onClick={() => navigate(businessCasePhasePath(businessCase.id, businessCase))} className="block w-full text-left" data-testid={`brand-bc-open-${businessCase.id}`}>
-                    <div className="flex items-center gap-2 text-[13px] font-medium text-[#1A1A1A]"><BriefcaseBusiness className="h-4 w-4 text-[#1F4A3A]" /> {businessCase.title || 'Business Case'}</div>
-                    <p className="mt-1 text-[11px] text-[#8A8A8A]">Stage: {businessCase.stage_label || statusLabel(businessCase.stage)}</p>
-                  </button>
+                  {renamingId === businessCase.id ? (
+                    // Inline rename. Projects are created with a generated
+                    // name, so every one under a brand reads the same until
+                    // someone gives it a real one.
+                    <form
+                      onSubmit={(e) => { e.preventDefault(); saveBusinessCaseName(businessCase.id); }}
+                      className="flex flex-wrap items-center gap-2"
+                    >
+                      <input
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Escape') setRenamingId(''); }}
+                        maxLength={160}
+                        placeholder="Project name"
+                        className="flex-1 min-w-[200px] rounded-md border border-[#E8E4DB] bg-white px-2 py-1.5 text-[13px] outline-none focus:border-[#1F4A3A]"
+                        data-testid={`brand-bc-rename-input-${businessCase.id}`}
+                      />
+                      <button type="submit" disabled={renameBusy} className="v3-btn-primary text-[11px]" data-testid={`brand-bc-rename-save-${businessCase.id}`}>
+                        {renameBusy ? 'Saving…' : 'Save'}
+                      </button>
+                      <button type="button" onClick={() => setRenamingId('')} className="v3-btn-secondary text-[11px]">Cancel</button>
+                    </form>
+                  ) : (
+                    <div className="flex items-start justify-between gap-2">
+                      <button type="button" onClick={() => navigate(businessCasePhasePath(businessCase.id, businessCase))} className="block flex-1 min-w-0 text-left" data-testid={`brand-bc-open-${businessCase.id}`}>
+                        <div className="flex items-center gap-2 text-[13px] font-medium text-[#1A1A1A]"><BriefcaseBusiness className="h-4 w-4 flex-shrink-0 text-[#1F4A3A]" /> <span className="break-words">{businessCase.title || 'Business Case'}</span></div>
+                        <p className="mt-1 text-[11px] text-[#8A8A8A]">Stage: {businessCase.stage_label || statusLabel(businessCase.stage)}</p>
+                      </button>
+                      <button
+                        type="button"
+                        title="Rename this project"
+                        onClick={(e) => { e.stopPropagation(); setRenamingId(businessCase.id); setRenameDraft(businessCase.title || ''); }}
+                        className="flex-shrink-0 rounded-md border border-[#E8E4DB] px-2 py-1 text-[10px] text-[#1F4A3A] hover:border-[#1F4A3A]"
+                        data-testid={`brand-bc-rename-${businessCase.id}`}
+                      >
+                        Rename
+                      </button>
+                    </div>
+                  )}
                   {/* Direct jump links to Framing artifacts so admin can open
                       any earlier document without having to walk back through
                       Planning. Visible at every stage. */}

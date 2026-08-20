@@ -100,6 +100,11 @@ export const v3ContinueBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}
 
 export const v3UpdateBusinessCaseValue = (bcId, payload) => v3.patch(`/business-cases/${bcId}/value`, payload).then(r => r.data);
 
+// Rename a project. Business cases are created with a generated name, so every
+// project under one brand reads almost the same until someone renames it.
+export const v3RenameBusinessCase = (bcId, title, actor = 'admin') =>
+  v3.patch(`/business-cases/${bcId}/title`, { title, actor }).then(r => r.data);
+
 // -------- Frame stage --------
 // The alignment analyser runs a Claude call with a 75s server-side budget
 // (ALIGNMENT_ANALYZER_TIMEOUT_SECONDS), but this client defaulted to 45s. The

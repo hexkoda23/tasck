@@ -243,10 +243,15 @@ const V1AdminCRM = () => {
         if (!brandId) {
           throw new Error('CRM brand was created but no brand id was returned.');
         }
-        toast.success("Saved to CRM!");
+        // If the admin gave us a website, pull the brand's details and logo
+        // straight off it. The brand detail page already owns the scrape and
+        // its progress UI, so hand off rather than duplicating it here - and
+        // the admin sees the page immediately instead of waiting on the fetch.
+        const hasWebsite = Boolean(String(form.website || '').trim());
+        toast.success(hasWebsite ? 'Saved to CRM! Pulling details from the website…' : 'Saved to CRM!');
         setAddOpen(false);
         resetForm();
-        navigate(adminRoute(`/crm-brands/${brandId}`));
+        navigate(adminRoute(`/crm-brands/${brandId}`), { state: { autoScrape: hasWebsite } });
         return;
       }
       const created = await v3CreateBrandQualificationCandidate({ ...form, source: 'manual_brand' });
