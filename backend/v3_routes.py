@@ -2493,6 +2493,20 @@ def make_v3_router(db):
         _email_logo_cache["uri"] = uri
         return uri
 
+    # Email header logo, in CSS pixels.
+    #
+    # The mark is a CIRCLE and the source is a perfect square (180x180), so it
+    # must be rendered square or it reads as a squashed ellipse - which is what
+    # the old markup did: width:120px with max-height:44px clamped a 1:1 image
+    # to 2.73:1 (client report, Aug 2026).
+    #
+    # 76px is the approved 0.787" letterhead logo at the 96 CSS-px-per-inch
+    # that mail clients assume: 0.787 * 96 = 75.6 -> 76. That keeps the emails
+    # in step with the .docx (TASCK_LOGO_SIZE_IN) so a brand sees the same mark
+    # at the same size in the mail and in the attachment. The 180px source is
+    # left oversized on purpose: it is the 2x asset for retina displays.
+    _EMAIL_LOGO_PX = 76
+
     def _smtp_transactional_html(plain_body: str, from_email: str, logo_src: Optional[str] = None) -> str:
         """Render the plain-text email body as HTML with TASCK typography.
 
@@ -2558,9 +2572,10 @@ def make_v3_router(db):
             f'font-family:{display_stack};letter-spacing:.12em;font-size:20px;'
             'line-height:0;">'
             + (
-                f'<img src="{logo_uri}" alt="TASCK" width="120" '
-                'style="display:inline-block;height:auto;max-height:44px;'
-                'width:120px;max-width:120px;vertical-align:middle;border:0;" />'
+                f'<img src="{logo_uri}" alt="TASCK" '
+                f'width="{_EMAIL_LOGO_PX}" height="{_EMAIL_LOGO_PX}" '
+                f'style="display:inline-block;width:{_EMAIL_LOGO_PX}px;height:{_EMAIL_LOGO_PX}px;'
+                'vertical-align:middle;border:0;outline:none;text-decoration:none;" />'
                 if logo_uri else 'TASCK'
             )
             + '</div>'
@@ -2575,6 +2590,7 @@ def make_v3_router(db):
     router._smtp_transactional_html = _smtp_transactional_html  # type: ignore[attr-defined]
     router._email_logo_data_uri = _email_logo_data_uri  # type: ignore[attr-defined]
     router._email_logo_bytes = _email_logo_bytes  # type: ignore[attr-defined]
+    router._EMAIL_LOGO_PX = _EMAIL_LOGO_PX  # type: ignore[attr-defined]
 
     def _add_transactional_headers(message: EmailMessage, email: Dict[str, Any], from_email: str, reply_to: str) -> None:
         domain = _email_domain(from_email)
