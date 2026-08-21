@@ -1703,108 +1703,94 @@ async def _call_opportunity_detection_tool(
 # ---------------------------------------------------------------------------
 def _creative_brief_system_prompt() -> str:
     return """
-You are TASCK's senior brief writer. Write a "Creative Alignment Brief (Creator Version)" that follows the agency's approved template EXACTLY - the same nine section headings, in the same order, worded for THIS brand and campaign. The reader is the creator ("you"). Write in polished Nigerian business English: confident, warm, concrete.
+You are TASCK's senior brief writer. Write a CREATOR ROLE BRIEF in the agency's
+approved house style - the same rhythm, tone and section order as the WE.YAN
+Merchant Ambassador and Sabi Sweat Retreat briefs - but every sentence written
+for THIS brand, project and creator.
 
-Ground every claim in the brand and project data provided. Do NOT invent product features, benefit programmes, fees, percentages, or numbers that are not in the inputs - where a commercial detail is unknown, keep it directional ("to be confirmed after brand approval") rather than inventing figures.
+Voice: polished Nigerian business English. Address the creator directly as
+"you". Confident, warm, concrete. Short paragraphs. No agency jargon, no filler
+like "in today's fast-paced world".
 
-Return JSON only, no markdown fences, with EXACTLY this shape (nine sections, in this order):
+Length matters: this is a real working document, not a summary. Write a full,
+substantial brief. The opportunity and role sections should each run to a
+proper paragraph or two, and every bullet list should be specific to this
+campaign rather than generic.
+
+Ground every claim in the data provided. Never invent product features, fee
+figures, percentages, dates or benefit programmes that are not in the inputs.
+Where a commercial detail is genuinely unknown, keep it directional ("to be
+confirmed after brand approval") instead of inventing a number.
+
+Return JSON only, no markdown fences, in EXACTLY this shape:
+
 {
-  "title": "TTA – Creative Alignment Brief (Creator Version)",
-  "subtitle": "(Internal name: Creator Brief for Fee Confirmation)",
-  "project_reference": {
-    "brand_organisation": "string - the brand/organisation name",
-    "project_working_title": "string - the project working title (use the business case title)",
-    "tta_project_lead": "string - TASCK project lead if known, else 'TTA project lead'",
-    "date_shared_with_creator": "string - today's date in 'July 18, 2026' format",
-    "creator": "string - the creator's name, or 'To be confirmed'",
-    "creator_contact": "string - creator contact, or 'To be confirmed'"
-  },
+  "title": "string - e.g. 'WE.YAN CREATIVE BRIEF: MERCHANT AMBASSADOR' or 'CREATOR ROLE BRIEF: SABI SWEAT RETREAT'. Upper case, names this brand and the creator's role.",
+  "duration": "string - e.g. '6 Months' or 'August - October 2026'. Use the project timeline; 'To be confirmed' if unknown.",
   "sections": [
     {
-      "heading": "1. Project Reference",
-      "lines": [
-        {"label": "Brand / Organisation", "value": "..."},
-        {"label": "Project working title", "value": "..."},
-        {"label": "TTA project lead", "value": "..."},
-        {"label": "Date shared with creator", "value": "..."}
+      "heading": "The Opportunity",
+      "paragraphs": ["2-4 substantial paragraphs introducing the brand and what it actually does, written for a creator who may not know it."],
+      "bullets": ["optional - what the platform/product gives its users, if that helps the creator understand it"]
+    },
+    {
+      "heading": "Your Role",
+      "paragraphs": ["What this creator is actually being asked to be - not just 'promote'. Make the distinction concrete."]
+    },
+    {
+      "heading": "Core Narrative (Non-Negotiable)",
+      "paragraphs": ["The one story every piece of content must reinforce."],
+      "bullets": ["The pillars that story rests on, each written as 'Pillar - what it means in practice'"]
+    },
+    {
+      "heading": "Objective",
+      "bullets": ["The measurable things this campaign exists to achieve."]
+    },
+    {
+      "heading": "What You'll Do",
+      "groups": [
+        {"title": "1. A concrete workstream", "bullets": ["specific action", "specific action"]},
+        {"title": "2. Another workstream", "bullets": ["specific action"]}
       ]
     },
     {
-      "heading": "2. Context (High-Level)",
-      "lines": [
-        {"label": "Brand objective (summary)", "value": "one sentence on what the brand is trying to achieve, grounded in the inputs"},
-        {"label": "Why this project is happening now", "value": "one sentence on timing/urgency, grounded in the inputs"}
-      ]
+      "heading": "Content Approach",
+      "paragraphs": ["How the content should work as a series rather than one-offs."],
+      "bullets": ["What each piece should drive the audience to do"]
     },
     {
-      "heading": "3. Role of the Creative",
-      "intro": "The creative would act as:",
-      "checkboxes": ["Public-facing lead", "Conceptual lead", "Talent & cultural translator", "Executional partner", "Other"],
-      "primary_label": "Primary responsibility:",
-      "primary_value": "one sentence describing the creator's primary responsibility (describe responsibility, not outputs), tailored to the creator and brand"
+      "heading": "Creator Benefits",
+      "bullets": ["What the creator actually gets - only what the inputs support"]
     },
     {
-      "heading": "4. Expected Scope (Signal Only)",
-      "intro": "This engagement may include:",
-      "checkboxes": ["Content creation", "Appearances / representation", "Concept contribution", "Performance / activation involvement", "Other"],
-      "scope_signal": [
-        "Creator involvement is being explored for planning and pricing alignment only.",
-        "Specific deliverables are not yet defined.",
-        "Final scope is subject to brand approval."
-      ]
+      "heading": "Success Metrics",
+      "paragraphs": ["optional one-liner framing, e.g. 'This is a performance-led partnership.'"],
+      "bullets": ["The metrics this partnership is judged on"],
+      "note": "optional - e.g. 'Primary KPI: Direct conversions (sales)'"
     },
     {
-      "heading": "5. Indicative Timeline",
-      "lines": [
-        {"label": "Proposed engagement period", "value": "to be confirmed after brand approval and creator availability check (or the project timeline if known)"},
-        {"label": "Known timing constraints", "value": "confirm availability, blackout dates, production constraints, and any campaign launch windows"}
-      ],
-      "note": "No schedules. No milestones."
+      "heading": "Commercial Model",
+      "paragraphs": ["How the deal is structured, directionally."],
+      "bullets": ["Components of the structure, if applicable"]
     },
     {
-      "heading": "6. Working Assumptions",
-      "intro": "Please assume:",
-      "assumptions": [
-        "TTA will coordinate the engagement and act as the administrative lead.",
-        "Contracts will be issued through TTA.",
-        "Payment will be processed through TTA.",
-        "Reporting and brand liaison will be handled by TTA."
-      ]
-    },
-    {
-      "heading": "7. Fee Indication Request",
-      "intro": "Based on the information above, please share:",
-      "lines": [
-        {"label": "Your fee for this engagement (range or fixed)", "value": "creator to propose"},
-        {"label": "Fee basis", "value": "Project-based / Time-based / Retainer-style"},
-        {"label": "What your fee covers (brief)", "value": "state what your indication includes (content, appearances, concept contribution, usage, exclusivity, production support, or management fees where relevant). No breakdown required at this stage."}
-      ]
-    },
-    {
-      "heading": "8. Availability & Conditions",
-      "availability_label": "Are you available within the proposed period?",
-      "availability_options": ["Yes", "Conditional", "No"],
-      "conditions_label": "Any conditions or exclusions we should note:",
-      "conditions_hint": "category conflicts, usage limits, exclusivity restrictions, production requirements, travel constraints, or anything that would affect the final scope."
-    },
-    {
-      "heading": "9. Confirmation",
-      "confirmations": [
-        "I understand that this is for planning and pricing alignment only.",
-        "I understand that this is not a confirmed booking.",
-        "I am open to proceeding subject to final scope and budget approval."
-      ]
+      "heading": "Next Steps",
+      "paragraphs": ["A short, warm close inviting the creator to confirm interest or share a rate card."]
     }
-  ],
-  "signature": {"name_label": "Name:", "date_label": "Date:"}
+  ]
 }
 
 Rules:
-- Keep the nine section headings EXACTLY as written, including the numbering.
-- Fill every field with content tailored to the brand, project and creator from the inputs. Where a detail genuinely is unknown, use "To be confirmed" rather than inventing it.
-- The role checkboxes (section 3) and scope checkboxes (section 4) are a fixed list - return them all; do not pre-select (the DOCX renders them as unchecked boxes).
-- Sections 3, 4, 6, 8, 9 have a fixed structure that does not change between briefs; only the tailored sentences (primary_value, scope_signal, conditions_hint, etc.) vary.
-- The closing Name/Date signature is always returned as labels only.
+- Use ONLY the headings listed above, in that order. Drop any section that this
+  project genuinely has no material for rather than padding it - a brief with
+  eight strong sections beats ten with filler.
+- "Core Narrative (Non-Negotiable)" suits product/platform campaigns; an events
+  or ticketing campaign may not need it. Use judgement.
+- Every section needs either paragraphs, bullets or groups. Never emit an empty
+  section.
+- Do not number the section headings. Only the "What You'll Do" group titles
+  carry numbers.
+- No markdown syntax anywhere in the strings - no asterisks, no hashes.
 """.strip()
 
 
@@ -10818,14 +10804,16 @@ def make_v3_router(db):
         HEADING_SIZE = 28     # 14pt section heading in Bebas Neue
         BODY_SIZE = 22        # 11pt body in Century Gothic
         BLACK = "000000"
-        HEADING_BLUE = "4A90E2"  # Light TASCK blue used for section titles
-        CHECKBOX = "\u2610"
+        CHECKBOX = "\u2610"      # legacy checkbox rows on pre-Aug-2026 briefs
 
         def head(value, *, size=HEADING_SIZE, before=240, after=120):
-            # Section / title heading: Bebas Neue in light blue.
+            # Section heading: black, bold, mixed case - matching the approved
+            # creator briefs. Was Bebas Neue in light blue, but Bebas has no
+            # true lowercase so "The Opportunity" rendered as condensed caps,
+            # and the reference briefs are plainly black.
             return _docx_paragraph(
-                value, bold=False, italic=False, size_half_pt=size,
-                color=HEADING_BLUE, font="Bebas Neue", before=before, after=after,
+                value, bold=True, italic=False, size_half_pt=size,
+                color=BLACK, font=_DOCX_BODY_FONT, before=before, after=after,
                 justify=False,
             )
 
@@ -10838,148 +10826,134 @@ def make_v3_router(db):
         def blank(after=120):
             return para("", after=after)
 
+        BULLET = "●"      # matches the approved brief PDFs
+        SUB_BULLET = "○"
+
+        def bullet(value, *, sub=False, after=60):
+            mark = SUB_BULLET if sub else BULLET
+            pad = "      " if sub else ""
+            return para(f"{pad}{mark}  {value}", after=after)
+
         blocks: List[str] = []
 
-        # Title + subtitle. Title uses Bebas Neue light blue (heading style).
-        blocks.append(head(str(brief.get("title") or "TTA – Creative Alignment Brief (Creator Version)"),
-                           size=TITLE_SIZE, before=0, after=60))
-        if brief.get("subtitle"):
-            blocks.append(para(str(brief.get("subtitle")), bold=True, italic=True, after=240))
-        else:
-            blocks.append(para("(Internal name: Creator Brief for Fee Confirmation)", bold=True, italic=True, after=240))
+        # ---- Title + duration -------------------------------------------------
+        title = str(brief.get("title") or "CREATOR ROLE BRIEF").strip()
+        blocks.append(head(title, size=TITLE_SIZE, before=0, after=60))
+        duration = str(brief.get("duration") or "").strip()
+        if duration:
+            blocks.append(para(f"Duration: {duration}", bold=True, after=200))
+        elif brief.get("subtitle"):
+            blocks.append(para(str(brief["subtitle"]), bold=True, italic=True, after=200))
 
-        # NOTE: the top-of-page project-reference block is intentionally
-        # omitted - Section 1 ("1. Project Reference") in the template already
-        # carries Brand/Organisation, Project working title, TTA project lead
-        # and Date, so we do not duplicate them here.
-
-        # Sections 1-9.
+        # ---- Sections ---------------------------------------------------------
         for section in brief.get("sections", []) or []:
             heading = str(section.get("heading") or "").strip()
             if heading:
                 blocks.append(head(heading))
 
-            # Label / value lines - one per paragraph.
+            # New shape: prose paragraphs.
+            for text in section.get("paragraphs", []) or []:
+                text = str(text or "").strip()
+                if text:
+                    blocks.append(para(text, after=120))
+
+            # A single "content" string is accepted too (the free-text path).
+            content = str(section.get("content") or "").strip()
+            if content:
+                for chunk in content.splitlines():
+                    if chunk.strip():
+                        blocks.append(para(chunk.strip(), after=120))
+
+            # New shape: flat bullet list.
+            for item in section.get("bullets", []) or []:
+                item = str(item or "").strip()
+                if item:
+                    blocks.append(bullet(item))
+
+            # New shape: numbered workstreams, each with its own bullets.
+            for group in section.get("groups", []) or []:
+                if not isinstance(group, dict):
+                    continue
+                group_title = str(group.get("title") or "").strip()
+                if group_title:
+                    blocks.append(para(group_title, bold=True, before=80, after=40))
+                for item in group.get("bullets", []) or []:
+                    item = str(item or "").strip()
+                    if item:
+                        blocks.append(bullet(item))
+                for item in group.get("sub_bullets", []) or []:
+                    item = str(item or "").strip()
+                    if item:
+                        blocks.append(bullet(item, sub=True))
+
+            # ---- Legacy shape (briefs generated before Aug 2026) --------------
+            # Older stored briefs use label/value lines and checkbox rows. Keep
+            # rendering them so historical documents still download correctly.
             for line in section.get("lines", []) or []:
                 label = str(line.get("label") or "").strip()
                 value = str(line.get("value") or "").strip()
                 if label and value:
                     blocks.append(para(f"{label}: {value}", after=60))
-                elif label:
-                    blocks.append(para(f"{label}:", after=60))
-                elif value:
-                    blocks.append(para(value, after=60))
-
-            # Intro line (e.g. "The creative would act as:") + inline checkboxes.
+                elif label or value:
+                    blocks.append(para(f"{label}:" if label else value, after=60))
             checkboxes = section.get("checkboxes") or []
             intro = str(section.get("intro") or "").strip()
             if intro or checkboxes:
-                joined = intro
-                if checkboxes:
-                    box_str = "  ".join(f"{CHECKBOX} {opt}" for opt in checkboxes)
-                    joined = f"{intro} {box_str}".strip() if intro else box_str
-                blocks.append(para(joined, after=80))
-
-            # Availability question (Section 8) - question + inline Yes/Conditional/No.
-            if section.get("availability_label"):
-                q = str(section.get("availability_label")).strip()
-                opts = section.get("availability_options") or []
-                box_str = "  ".join(f"{CHECKBOX} {o}" for o in opts)
-                blocks.append(para(f"{q} {box_str}".strip(), after=80))
-            if section.get("conditions_label"):
-                blocks.append(para(str(section.get("conditions_label")), after=40))
-                if section.get("conditions_hint"):
-                    blocks.append(para(str(section.get("conditions_hint")), italic=True, after=80))
-
-            # Primary responsibility (Section 3).
-            if section.get("primary_label"):
-                blocks.append(para(str(section.get("primary_label")), bold=True, before=60, after=40))
-            if section.get("primary_value"):
-                blocks.append(para(str(section.get("primary_value")), after=80))
-
-            # Scope signal caveats (Section 4).
-            for bullet in section.get("scope_signal", []) or []:
-                blocks.append(para(str(bullet), after=40))
-
-            # Working assumptions (Section 6) - one per line, matching template.
+                box_str = "  ".join(f"{CHECKBOX} {opt}" for opt in checkboxes)
+                blocks.append(para(f"{intro} {box_str}".strip(), after=80))
             for item in section.get("assumptions", []) or []:
                 blocks.append(para(str(item), after=40))
-
-            # Confirmations (Section 9) - inline checkbox line per item, matching template.
             for item in section.get("confirmations", []) or []:
                 blocks.append(para(f"{CHECKBOX} {item}", after=40))
 
-            # Free note (e.g. "No schedules. No milestones.").
-            if section.get("note"):
-                blocks.append(para(str(section.get("note")), italic=True, after=80))
+            note = str(section.get("note") or "").strip()
+            if note:
+                blocks.append(para(note, bold=True, before=60, after=120))
 
-        # Name / Date signature.
-        sig = brief.get("signature") or {}
-        blocks.append(para(str(sig.get("name_label") or "Name:"), before=200, after=60))
-        blocks.append(para(str(sig.get("date_label") or "Date:"), after=60))
         return _docx_package(blocks)
 
     def creative_brief_from_raw_text(title: str, raw_text: str, *, creator_name: str = "") -> Dict[str, Any]:
-        """Wrap a free-text creator brief (the per-creator briefs sent from the
-        admin studio store only plain `brief_text`) into the same approved
-        'Creative Alignment Brief (Creator Version)' shape the template renderer
-        expects, so the .docx download and the email attachment match the
-        approved template word-for-word. The raw text becomes section 1's body;
-        the remaining fixed sections use the template's standard wording so the
-        document is identical in structure to the generated brief."""
-        return {
-            "title": title or "TTA – Creative Alignment Brief (Creator Version)",
-            "subtitle": "(Internal name: Creator Brief for Fee Confirmation)",
-            "project_reference": {
-                "brand_organisation": "",
-                "project_working_title": "",
-                "tta_project_lead": "",
-                "date_shared_with_creator": "",
-                "creator": creator_name or "To be confirmed",
-                "creator_contact": "",
-            },
-            "sections": [
-                {"heading": "1. Project Reference", "lines": [
-                    {"label": "Brand / Organisation", "value": ""},
-                    {"label": "Project working title", "value": ""},
-                    {"label": "TTA project lead", "value": ""},
-                    {"label": "Date shared with creator", "value": ""},
-                ]},
-                {"heading": "2. Context (High-Level)", "lines": [
-                    {"label": "Brand objective (summary)", "value": raw_text or "To be confirmed"},
-                    {"label": "Why this project is happening now", "value": "To be confirmed"},
-                ]},
-                {"heading": "3. Role of the Creative", "intro": "The creative would act as:",
-                 "checkboxes": ["Public-facing lead", "Conceptual lead", "Talent & cultural translator", "Executional partner"],
-                 "primary_label": "Primary responsibility:", "primary_value": "To be confirmed"},
-                {"heading": "4. Expected Scope (Signal Only)", "intro": "This engagement may include:",
-                 "checkboxes": ["Content creation", "Appearances / representation", "Concept contribution", "Performance / activation involvement", "Other"],
-                 "scope_signal": ["Creator involvement is being explored for planning and pricing alignment only.",
-                                   "Specific deliverables are not yet defined.", "Final scope is subject to brand approval."]},
-                {"heading": "5. Indicative Timeline", "lines": [
-                    {"label": "Proposed engagement period", "value": "To be confirmed after brand approval and creator availability check"},
-                    {"label": "Known timing constraints", "value": "To be confirmed"}],
-                 "note": "No schedules. No milestones."},
-                {"heading": "6. Working Assumptions", "intro": "Please assume:", "assumptions": [
-                    "TTA will coordinate the engagement and act as the administrative lead.",
-                    "Contracts will be issued through TTA.",
-                    "Payment will be processed through TTA.",
-                    "Reporting and brand liaison will be handled by TTA."]},
-                {"heading": "7. Fee Indication Request", "intro": "Based on the information above, please share:",
-                 "lines": [{"label": "Your fee for this engagement (range or fixed)", "value": "creator to propose"},
-                           {"label": "Fee basis", "value": "Project-based / Time-based / Retainer-style"},
-                           {"label": "What your fee covers (brief)", "value": "state what your indication includes. No breakdown required at this stage."}]},
-                {"heading": "8. Availability & Conditions", "availability_label": "Are you available within the proposed period?",
-                 "availability_options": ["Yes", "Conditional", "No"],
-                 "conditions_label": "Any conditions or exclusions we should note:",
-                 "conditions_hint": "category conflicts, usage limits, exclusivity restrictions, production requirements, travel constraints, or anything that would affect the final scope."},
-                {"heading": "9. Confirmation", "confirmations": [
-                    "I understand that this is for planning and pricing alignment only.",
-                    "I understand that this is not a confirmed booking.",
-                    "I am open to proceeding subject to final scope and budget approval."]},
-            ],
-            "signature": {"name_label": "Name:", "date_label": "Date:"},
-        }
+        """Wrap a free-text creator brief into the current brief shape.
+
+        The per-creator briefs written in the admin studio are stored as plain
+        `brief_text`. Rendering them through the same structure the generated
+        briefs use keeps the .docx download and the emailed attachment looking
+        like every other TASCK creator brief. Paragraphs are split on blank
+        lines, and a line that ends in a colon becomes a heading so a pasted
+        brief with its own sections keeps them.
+        """
+        newline = chr(10)
+        blocks: List[Dict[str, Any]] = []
+        current: Dict[str, Any] = {"heading": "The Opportunity", "paragraphs": []}
+        for chunk in str(raw_text or "").split(newline + newline):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            single_line = newline not in chunk
+            if single_line and chunk.endswith(":") and len(chunk) <= 80:
+                if current["paragraphs"] or current.get("bullets"):
+                    blocks.append(current)
+                current = {"heading": chunk.rstrip(":").strip(), "paragraphs": []}
+                continue
+            bullets = [
+                ln.strip().lstrip("-•●○").strip()
+                for ln in chunk.splitlines()
+                if ln.strip().startswith(("-", "•", "●", "○"))
+            ]
+            if bullets:
+                current.setdefault("bullets", []).extend(bullets)
+            else:
+                current["paragraphs"].append(" ".join(chunk.split()))
+        if current["paragraphs"] or current.get("bullets"):
+            blocks.append(current)
+        if not blocks:
+            blocks = [{"heading": "The Opportunity",
+                       "paragraphs": ["This brief will be shared once TASCK confirms the details."]}]
+        heading_title = title or "CREATOR ROLE BRIEF"
+        if creator_name:
+            blocks.append({"heading": "Next Steps", "paragraphs": [
+                f"{creator_name}, kindly review this brief and confirm your interest so we can move forward."]})
+        return {"title": heading_title, "duration": "", "sections": blocks}
 
     @router.post("/business-cases/{bc_id}/ai/creative-brief/generate")
     async def generate_creative_brief(bc_id: str, alignment_snapshot_id: Optional[str] = None):
@@ -11114,15 +11088,43 @@ def make_v3_router(db):
 
         parts: List[str] = []
         title = str(brief.get("title") or "TTA – Creative Alignment Brief (Creator Version)")
-        subtitle = str(brief.get("subtitle") or "(Internal name: Creator Brief for Fee Confirmation)")
         parts.append(f'<h1 class="cb-title">{esc(title)}</h1>')
-        parts.append(f'<p class="cb-subtitle">{esc(subtitle)}</p>')
+        duration = str(brief.get("duration") or "").strip()
+        if duration:
+            parts.append(f'<p class="cb-duration"><strong>Duration:</strong> {esc(duration)}</p>')
+        elif brief.get("subtitle"):
+            parts.append(f'<p class="cb-subtitle">{esc(str(brief["subtitle"]))}</p>')
 
         for section in brief.get("sections", []) or []:
             heading = str(section.get("heading") or "").strip()
             parts.append('<section class="cb-section">')
             if heading:
                 parts.append(f'<h2 class="cb-heading">{esc(heading)}</h2>')
+
+            # Current shape: prose, bullets and numbered workstreams.
+            for text in section.get("paragraphs", []) or []:
+                text = str(text or "").strip()
+                if text:
+                    parts.append(f'<p class="cb-para">{esc(text)}</p>')
+            content = str(section.get("content") or "").strip()
+            for chunk in content.splitlines():
+                if chunk.strip():
+                    parts.append(f'<p class="cb-para">{esc(chunk.strip())}</p>')
+            bullets = [str(b).strip() for b in (section.get("bullets") or []) if str(b).strip()]
+            if bullets:
+                parts.append('<ul class="cb-list">' + "".join(f'<li>{esc(b)}</li>' for b in bullets) + '</ul>')
+            for group in section.get("groups", []) or []:
+                if not isinstance(group, dict):
+                    continue
+                gtitle = str(group.get("title") or "").strip()
+                if gtitle:
+                    parts.append(f'<p class="cb-group">{esc(gtitle)}</p>')
+                gb = [str(b).strip() for b in (group.get("bullets") or []) if str(b).strip()]
+                if gb:
+                    parts.append('<ul class="cb-list">' + "".join(f'<li>{esc(b)}</li>' for b in gb) + '</ul>')
+                gs = [str(b).strip() for b in (group.get("sub_bullets") or []) if str(b).strip()]
+                if gs:
+                    parts.append('<ul class="cb-list cb-sublist">' + "".join(f'<li>{esc(b)}</li>' for b in gs) + '</ul>')
 
             for line in section.get("lines", []) or []:
                 label = str(line.get("label") or "").strip()
@@ -11171,11 +11173,17 @@ def make_v3_router(db):
                 parts.append(f'<p class="cb-hint">{esc(section["note"])}</p>')
             parts.append('</section>')
 
+        # Only the legacy fee-confirmation brief carried a Name/Date sign-off.
+        # The current creator brief closes on "Next Steps", like the approved
+        # reference briefs, so the block is rendered only when one is present.
         sig = brief.get("signature") or {}
-        parts.append('<section class="cb-signature">')
-        parts.append(f'<p class="cb-line">{esc(sig.get("name_label") or "Name:")}</p>')
-        parts.append(f'<p class="cb-line">{esc(sig.get("date_label") or "Date:")}</p>')
-        parts.append('</section>')
+        if sig.get("name_label") or sig.get("date_label"):
+            parts.append('<section class="cb-signature">')
+            if sig.get("name_label"):
+                parts.append(f'<p class="cb-line">{esc(sig["name_label"])}</p>')
+            if sig.get("date_label"):
+                parts.append(f'<p class="cb-line">{esc(sig["date_label"])}</p>')
+            parts.append('</section>')
 
         body = "\n".join(parts)
         return f"""<!doctype html>
@@ -11196,11 +11204,18 @@ def make_v3_router(db):
     .cb-toolbar button {{ background: #FFF; color: #1F4A3A; border: 0; padding: 8px 16px; border-radius: 999px; font-weight: 600; cursor: pointer; letter-spacing: .04em; }}
     .cb-toolbar button:hover {{ background: #EEE7D6; }}
     .cb-paper {{ background: #FFF; max-width: 820px; margin: 24px auto; padding: 56px 64px; box-shadow: 0 2px 24px rgba(0,0,0,.08); border-radius: 6px; }}
-    .cb-title {{ font-family: 'Bebas Neue', sans-serif; color: #4A90E2; font-weight: 400; font-size: 32px; letter-spacing: .04em; margin: 0 0 6px; }}
+    .cb-title {{ color: #000; font-weight: 700; font-size: 26px; line-height: 1.3; margin: 0 0 8px; }}
     .cb-subtitle {{ font-weight: 700; font-style: italic; margin: 0 0 32px; font-size: 13px; color: #4F3E2F; }}
     .cb-section {{ margin: 0 0 24px; }}
-    .cb-heading {{ font-family: 'Bebas Neue', sans-serif; color: #4A90E2; font-weight: 400; font-size: 22px; letter-spacing: .06em; margin: 24px 0 12px; }}
-    .cb-line, .cb-checkboxes, .cb-bullet, .cb-hint {{ font-size: 14px; line-height: 1.65; margin: 0 0 6px; }}
+    .cb-heading {{ color: #000; font-weight: 700; font-size: 16px; margin: 26px 0 10px; }}
+    .cb-line, .cb-checkboxes, .cb-bullet, .cb-hint {{ font-size: 14px; line-height: 1.5; margin: 0 0 6px; }}
+    /* Match the .docx: justified body copy at 1.5 spacing. */
+    .cb-duration {{ font-size: 14px; line-height: 1.5; margin: 0 0 18px; }}
+    .cb-para {{ font-size: 14px; line-height: 1.5; text-align: justify; margin: 0 0 12px; }}
+    .cb-group {{ font-size: 14px; line-height: 1.5; font-weight: 700; margin: 14px 0 6px; }}
+    .cb-list {{ font-size: 14px; line-height: 1.5; margin: 0 0 12px; padding-left: 22px; }}
+    .cb-list li {{ margin: 0 0 5px; }}
+    .cb-sublist {{ padding-left: 40px; list-style-type: circle; }}
     .cb-label {{ font-weight: 700; color: #1A1A1A; }}
     .cb-hint {{ font-style: italic; color: #6B5A4C; }}
     .cb-bullet {{ padding-left: 8px; }}
@@ -18810,5 +18825,7 @@ Produce the opportunity card JSON.
     router.pitch_deck_docx_bytes = pitch_deck_docx_bytes  # type: ignore[attr-defined]
     router.pitch_deck_filename = pitch_deck_filename  # type: ignore[attr-defined]
     router.creative_brief_docx_bytes = creative_brief_docx_bytes  # type: ignore[attr-defined]
+    router.creative_brief_html = creative_brief_html  # type: ignore[attr-defined]
+    router.creative_brief_from_raw_text = creative_brief_from_raw_text  # type: ignore[attr-defined]
 
     return router
