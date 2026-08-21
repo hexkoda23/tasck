@@ -401,14 +401,26 @@ export const v3GetPitchDeck = (bcId, snapshotId) => v3.get(`/business-cases/${bc
   params: snapshotId ? { alignment_snapshot_id: snapshotId } : undefined,
 }).then(r => r.data);
 export const v3GeneratePitchDeck = async (bcId, onProgress, snapshotId) => {
+  // Long AI job: generous timeout on the kick-off call, and tolerate a few
+  // transient poll failures (gateway blips) instead of failing the whole run.
   const started = await v3.post(`/business-cases/${bcId}/ai/pitch-deck/generate`, null, {
     params: snapshotId ? { alignment_snapshot_id: snapshotId } : undefined,
+    timeout: 120000,
   }).then(r => r.data);
   const jobId = started?.job_id;
   if (!jobId) return started;
+  let pollFailures = 0;
   for (let attempt = 0; attempt < 120; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2500));
-    const { job } = await v3.get(`/business-cases/${bcId}/ai/pitch-deck/jobs/${jobId}`).then(r => r.data);
+    let job;
+    try {
+      ({ job } = await v3.get(`/business-cases/${bcId}/ai/pitch-deck/jobs/${jobId}`, { timeout: 30000 }).then(r => r.data));
+      pollFailures = 0;
+    } catch (e) {
+      pollFailures += 1;
+      if (pollFailures >= 5) throw new Error('Lost connection while checking Pitch Deck progress. The deck may still be writing - reload the page in a minute.');
+      continue;
+    }
     if (typeof onProgress === 'function' && job?.message) onProgress(job);
     if (job?.status === 'completed') return { ok: true, pitch_deck: job.pitch_deck };
     if (job?.status === 'failed') throw new Error(job?.message || 'Pitch Deck generation failed.');

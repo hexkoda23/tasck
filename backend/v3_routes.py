@@ -374,17 +374,25 @@ def _country_to_gl(country: str) -> str:
     }.get(value, "ng")
 
 
+_EMAIL_PLACEHOLDERS = {"nil", "n/a", "na", "none", "null", "-", "--", "tbc", "tbd", "unknown"}
+
+
+def _clean_email(value: Any) -> str:
+    """Return a plausible email address or '' - scraped data often carries
+    placeholder strings like 'nil' that SMTP rejects with a 553."""
+    email = str(value or "").strip().lower()
+    if not email or email in _EMAIL_PLACEHOLDERS:
+        return ""
+    if "@" not in email or "." not in email.split("@")[-1] or " " in email:
+        return ""
+    return email
+
+
 def _fallback_creator_email(creator: Dict[str, Any]) -> str:
-    email = (
-        creator.get("email")
-        or creator.get("contact_email")
-        or creator.get("creator_email")
-        or creator.get("manager_email")
-        or creator.get("business_email")
-        or creator.get("public_email")
-    )
-    if email:
-        return str(email).strip().lower()
+    for key in ("email", "contact_email", "creator_email", "manager_email", "business_email", "public_email"):
+        email = _clean_email(creator.get(key))
+        if email:
+            return email
     return f"{_slug(creator.get('name', 'creator'))}@creator.tasck.local"
 
 
@@ -1910,6 +1918,54 @@ PITCH_DECK_SECTIONS = [
 ]
 
 
+_PITCH_SLIDE_ORDER = [
+    ("cover", "Cover"), ("about", "About The Organisation"), ("context", "Context & Core Focus"),
+    ("problem", "The Problem"), ("objective", "The Objective"), ("market", "The Market / Core Audience"),
+    ("solution", "The Solution / Creator Strategy"), ("journey", "Go To Market / Customer Journey"),
+    ("funnel", "The Funnel"), ("projections", "Campaign Projections"), ("risks", "Risk & Mitigation"),
+    ("budget", "Budget"), ("creator_mix", "Talent Suggestions / Team"), ("team", "Delivery Team"),
+    ("closing", "Closing Statement"), ("thank_you", "Thank You"),
+]
+
+
+def _flatten_slide_value(value: Any) -> List[str]:
+    out: List[str] = []
+    if isinstance(value, str):
+        if value.strip():
+            out.append(value.strip())
+    elif isinstance(value, list):
+        for item in value:
+            out.extend(_flatten_slide_value(item))
+    elif isinstance(value, dict):
+        parts = [str(v).strip() for v in value.values() if isinstance(v, (str, int, float)) and str(v).strip()]
+        if parts:
+            out.append(" - ".join(parts))
+        for v in value.values():
+            if isinstance(v, (list, dict)):
+                out.extend(_flatten_slide_value(v))
+    return out
+
+
+def _pitch_sections_from_slides(slides: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Convert the 16-slide payload into the legacy sections list the .docx
+    renderer and older UI read from."""
+    sections: List[Dict[str, str]] = []
+    for key, default_heading in _PITCH_SLIDE_ORDER:
+        slide = slides.get(key)
+        if not isinstance(slide, dict):
+            continue
+        heading = str(slide.get("kicker") or slide.get("title") or slide.get("headline") or default_heading).strip()
+        lines: List[str] = []
+        for field, value in slide.items():
+            if field in ("kicker",):
+                continue
+            lines.extend(_flatten_slide_value(value))
+        content = "\n".join(dict.fromkeys(lines))
+        if content:
+            sections.append({"heading": heading, "content": content})
+    return sections
+
+
 def _pitch_deck_system_prompt() -> str:
     return """
 You are TASCK's senior strategist writing a brand-facing Pitch Deck on the
@@ -2156,8 +2212,21 @@ async def _call_pitch_deck_tool(brand: Dict[str, Any], case: Dict[str, Any], sna
     for call in order:
         try:
             result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
-            if isinstance(result, dict) and isinstance(result.get("sections"), list) and len(result["sections"]) >= 8:
+            if not isinstance(result, dict):
+                continue
+            sections = result.get("sections")
+            slides = result.get("slides") if isinstance(result.get("slides"), dict) else {}
+            # Current prompt returns the 16-slide payload only; older prompts
+            # returned a 10-section list. Accept either, and synthesize the
+            # sections list from slides so the .docx renderer keeps working.
+            if not (isinstance(sections, list) and len(sections) >= 8) and len(slides) >= 10:
+                result["sections"] = _pitch_sections_from_slides(slides)
+                sections = result["sections"]
+            if isinstance(sections, list) and len(sections) >= 8:
                 return result
+            logger.warning("Pitch deck generation via %s returned an incomplete payload (sections=%s, slides=%s)",
+                           getattr(call, "__name__", "?"),
+                           len(sections) if isinstance(sections, list) else 0, len(slides))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Pitch deck generation via %s failed: %s", getattr(call, "__name__", "?"), exc)
     return None
@@ -2781,9 +2850,14 @@ def make_v3_router(db):
                 "status": "queued",
                 "delivery_error": "SMTP is not configured. Set SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, and SMTP_FROM_EMAIL to send real email immediately.",
             }
-        to_email = str(email.get("to") or "").strip()
+        raw_to = str(email.get("to") or "").strip()
+        to_email = _clean_email(raw_to)
         if not to_email or to_email.endswith(".tasck.local"):
-            return {"status": "delivery_failed", "delivery_error": "A real recipient email address is required before sending."}
+            reason = (
+                f"'{raw_to}' is not a valid email address. Enter a real recipient email and try again."
+                if raw_to and not to_email else "A real recipient email address is required before sending."
+            )
+            return {"status": "delivery_failed", "delivery_error": reason}
 
         port = int(os.getenv("SMTP_PORT", "587"))
         from_email, from_name, reply_to = _smtp_sender_identity(username)
@@ -7428,7 +7502,7 @@ def make_v3_router(db):
             raise HTTPException(404, "Brand not found")
         account = await ensure_brand_account(brand)
         send_email = payload.send_email if payload else True
-        recipient = (payload.recipient_email if payload and payload.recipient_email else "") or brand.get("email") or account.get("username") or ""
+        recipient = _clean_email(payload.recipient_email if payload else "") or _clean_email(brand.get("email")) or _clean_email(account.get("username")) or ""
         # Publishing to the brand page needs no email address - only the
         # emailing path does.
         if send_email and not recipient:
@@ -7969,6 +8043,7 @@ def make_v3_router(db):
         creator_id: str
         brief_text: str
         subject: Optional[str] = None
+        creator_contact_email: Optional[str] = None
 
     def _docx_package(blocks: List[str]) -> bytes:
         """Assemble a TASCK-template .docx around the given body blocks: full
@@ -11769,7 +11844,7 @@ def make_v3_router(db):
             raise HTTPException(404, "Brand not found")
         account = await ensure_brand_account(brand)
         send_email = payload.send_email if payload else True
-        recipient = (payload.recipient_email if payload and payload.recipient_email else "") or brand.get("email") or account.get("username") or ""
+        recipient = _clean_email(payload.recipient_email if payload else "") or _clean_email(brand.get("email")) or _clean_email(account.get("username")) or ""
         # Publishing to the brand page needs no email address.
         if send_email and not recipient:
             raise HTTPException(400, "Brand email is required before sending the Pitch Deck.")
@@ -11905,7 +11980,7 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
         project_title = _clean_document_text(case.get("title") or "Creative Brief", "Creative Brief")
         cb_id = f"cb-{uuid.uuid4().hex[:8]}"
-        creator_email = _fallback_creator_email(creator)
+        creator_email = _clean_email(payload.creator_contact_email) or _fallback_creator_email(creator)
         doc = {
             "id": cb_id,
             "business_case_id": payload.business_case_id,
@@ -12002,9 +12077,9 @@ def make_v3_router(db):
         if not case:
             raise HTTPException(404, "Business case not found")
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
-        recipient = str(payload.get("recipient_email") or "").strip()
+        recipient = _clean_email(payload.get("recipient_email"))
         if not recipient:
-            raise HTTPException(400, "recipient_email is required")
+            raise HTTPException(400, "A valid recipient email address is required.")
         subject = str(payload.get("subject") or f"Creative Brief - {case.get('title') or 'Creative Brief'}").strip()
         brief_text = str(payload.get("brief_text") or "").strip()
         if not brief_text:

@@ -912,6 +912,19 @@ const creatorSpecialty = (creator) => cleanV1Text(
   || creator?.platform
   || 'Creator profile'
 );
+const isRealEmail = (value) => {
+  const email = String(value || '').trim().toLowerCase();
+  if (!email || ['nil', 'n/a', 'na', 'none', 'null', '-', 'tbc', 'tbd', 'unknown'].includes(email)) return '';
+  if (!email.includes('@') || !email.split('@').pop().includes('.') || email.includes(' ')) return '';
+  return email;
+};
+const creatorEmail = (creator) => (
+  isRealEmail(creator?.email)
+  || isRealEmail(creator?.contact_email)
+  || isRealEmail(creator?.creator_email)
+  || isRealEmail(creator?.manager_email)
+  || ''
+);
 const creatorContact = (creator) => cleanV1Text(
   creator?.email
   || creator?.contact_email
@@ -4061,13 +4074,17 @@ export const V3BusinessCasePlanBrief = () => {
     setNotice('AI generated a draft brief for every selected creator.');
   };
   const send = async (creator) => {
-    const overrideEmail = (briefEmails[creator.id] || '').trim();
-    const recipient = overrideEmail || creatorContact(creator) || creatorName(creator);
+    const overrideEmail = isRealEmail((briefEmails[creator.id] || '').trim());
+    const recipient = overrideEmail || creatorEmail(creator);
+    if (!recipient) {
+      setSendPopup({ title: 'Add an email', message: `${creatorName(creator)} has no valid email on file. Type the creator's email address before sending.`, tone: 'warning' });
+      return;
+    }
     setNotice(`Sending creative brief to ${creatorName(creator)}...`);
     setSendPopup({ title: 'Sending', message: `Sending creative brief to ${recipient}...`, tone: 'pending' });
     const brief = briefs[creator.id] || generateCreatorBriefDraft(bundle, creator, planningFields || {});
     try {
-      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, brief_text: brief, creator_contact_email: overrideEmail || undefined, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
+      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, brief_text: brief, creator_contact_email: recipient, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
       setSentBriefs((current) => ({ ...current, [creator.id]: doc }));
       const status = doc?.email?.status || doc?.email_status || 'queued';
       const sentTo = doc?.email?.to || doc?.creator_contact_email || overrideEmail || creatorContact(creator) || creatorName(creator);
