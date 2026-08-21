@@ -1911,32 +1911,158 @@ PITCH_DECK_SECTIONS = [
 
 
 def _pitch_deck_system_prompt() -> str:
-    section_lines = "\n".join(f'    {{"heading": "{h}", "content": "string"}},' for h in PITCH_DECK_SECTIONS)
-    return f"""
-You are TASCK's senior strategist writing a brand-facing Pitch Deck - the document that convinces the brand this creator-led campaign is the right move. You will be given everything TASCK knows about the brand and project: the approved Alignment Snapshot, the Creator Selector data (audience platforms, funnel, timelines, risks, budget), and the selected creators.
+    return """
+You are TASCK's senior strategist writing a brand-facing Pitch Deck on the
+agency's approved 16-slide template. The layout is FIXED - your job is to fill
+every slide with words that are specific to THIS brand and campaign. Two decks
+for two different brands must read completely differently while sitting on the
+identical design.
 
-Write ALL TEN sections below. Each section is 1-3 tight paragraphs of polished Nigerian business English - specific, confident, and grounded ONLY in the inputs. Use the brand's own numbers where given (funnel size, timelines, budget level). Where a number is not given, keep it directional rather than inventing figures. Never include speaker names or internal TASCK process talk.
+Voice: polished Nigerian business English. Confident, concrete, commercial.
+Short lines - this is a slide, not a report. No speaker names, no internal
+TASCK process talk, no filler.
 
-Section guidance:
-- About The Organisation: who the brand is, what they do, who they serve.
-- Context & Core Focus: where the brand is right now and the single focus this work sharpens.
-- The Problem: the audience/behaviour barrier standing in the way.
-- The Objective: the concrete outcome this campaign must drive.
-- The Market / Core Audience: who we are reaching, where they live (platforms), and how big the opportunity is.
-- The Solution / Creator Strategy: why creators, which creators, and the roles they play. NAME EACH SELECTED CREATOR EXPLICITLY and give each a one-line role.
-- Go To Market / Campaign: how the campaign rolls out - phases, content series, platforms, timeline.
-- Campaign Projections: what the funnel milestones should deliver, directionally quantified from the inputs.
-- Risk & Mitigation Analysis: the named risks and exactly how each is de-risked.
-- Budget Assumptions: the working budget level and what it covers.
+Ground everything in the inputs (Alignment Snapshot, Creator Selector data,
+selected creators). Use the brand's own numbers where given. Where a number is
+not given, keep it directional rather than inventing one.
 
-Return JSON only, no markdown fences:
-{{
-  "title": "string - '<Brand Name> x TASCK - Creator Campaign Pitch'",
-  "sections": [
-{section_lines}
-  ]
-}}
-Keep the ten headings EXACTLY as given, in this order.
+Return JSON only, no markdown fences, with EXACTLY this shape:
+
+{
+  "title": "string - '<Brand> - Creator Campaign Pitch'",
+  "slides": {
+    "cover": {
+      "title": "The campaign headline, e.g. 'NIKE RUNNING NIGERIA'",
+      "accent_word": "the final word or two of the title, highlighted",
+      "subtitle": "one line naming the strategy, e.g. 'Creator-Led Running Communities'",
+      "strapline": "a short outcome line, e.g. 'Building a running culture that drives participation'"
+    },
+    "about": {
+      "kicker": "About The Organisation",
+      "title": "the brand's legal or trading name",
+      "paragraphs": ["1-2 short paragraphs on who they are and what they sell"],
+      "pills": ["2-3 short standing labels, e.g. 'Global Position'"],
+      "bullets": ["3-4 proof points about scale, reach or capability"],
+      "callout": {"title": "Opportunity in <market>", "paragraphs": ["2 short paragraphs on the opening"]}
+    },
+    "context": {
+      "kicker": "Context & Core Focus",
+      "title": "the shift, e.g. 'From Brand Awareness'",
+      "accent_title": "the second half, highlighted, e.g. 'to Behaviour Change'",
+      "columns": [
+        {"label": "Current Reality", "body": "short paragraph"},
+        {"label": "Strategic Opportunity", "body": "short paragraph"},
+        {"label": "Campaign Goal", "body": "short paragraph"}
+      ]
+    },
+    "problem": {
+      "kicker": "The Problem",
+      "title": "the problem in the brand's own terms, 4-9 words",
+      "lead": "one framing line",
+      "bullets": ["4-5 specific barriers"],
+      "highlight": "the one-sentence reframe, e.g. 'The gap is no longer awareness. The gap is sustained participation.'"
+    },
+    "objective": {
+      "kicker": "The Objective",
+      "title": "the objective, 5-10 words",
+      "lead": "one line of framing",
+      "columns": [
+        {"label": "Business Objectives", "items": ["3-4 commercial outcomes"]},
+        {"label": "Behaviour Objectives", "items": ["3-4 behaviour changes"]}
+      ]
+    },
+    "market": {
+      "kicker": "The Market / Core Audience",
+      "title": "the audience in a phrase, e.g. 'Urban Millennials (30-40)'",
+      "lead": "one line describing them",
+      "persona_label": "Audience Persona",
+      "persona": {"name": "a plausible persona name", "age": "e.g. 34"},
+      "traits": ["5-7 short persona traits"],
+      "market_size_label": "Market Size",
+      "market_size": "the size of the opportunity, directional if unknown",
+      "focus_label": "Initial Focus",
+      "initial_focus": ["2-3 launch markets or segments"]
+    },
+    "solution": {
+      "kicker": "The Solution / Creator Strategy",
+      "title": "the strategy in a phrase, e.g. 'Build Communities, Not Campaigns'",
+      "paragraphs": ["1-2 short paragraphs on why creators and how they are used"],
+      "suggested_label": "Suggested Creator Profiles",
+      "suggested": ["4-6 creator archetypes"],
+      "roles_label": "Their Roles",
+      "roles": ["4-6 things the creators actually do"]
+    },
+    "journey": {
+      "kicker": "Go-To-Market / Campaign",
+      "title": "e.g. 'Four-Stage Behaviour Change Journey'",
+      "stages": [
+        {"window": "e.g. '(Months 1-2)'", "title": "Awareness", "lead": "one line",
+         "activities_label": "Activities", "activities": ["3-4 activities"], "goal": "one line"}
+      ]
+    },
+    "funnel": {
+      "kicker": "Go-To-Market / Campaign",
+      "title": "e.g. 'The Campaign Funnel'",
+      "tiers": [{"label": "Awareness", "note": "the target at this tier"}],
+      "primary_label": "Primary Platforms",
+      "primary_platforms": ["2-3 platforms"],
+      "secondary_label": "Secondary Platforms",
+      "secondary_platforms": ["2-4 platforms"]
+    },
+    "projections": {
+      "kicker": "Campaign Projections",
+      "title": "e.g. 'Success Metrics (12 Months)'",
+      "columns": [
+        {"label": "Community Growth", "items": ["2-3 measurable targets"]},
+        {"label": "Content", "items": ["2-3 measurable targets"]},
+        {"label": "Commercial", "items": ["2-3 measurable targets"]},
+        {"label": "Behaviour", "items": ["2-3 measurable outcomes"]}
+      ]
+    },
+    "risks": {
+      "title": "Risk & Mitigation Analysis",
+      "rows": [{"risk": "short risk", "mitigation": "how it is de-risked"}]
+    },
+    "budget": {
+      "kicker": "Budget Assumptions",
+      "title": "e.g. '12-Month Pilot Investment'",
+      "amount_label": "Estimated Budget",
+      "amount": "the working range, directional if not given",
+      "includes_label": "Budget Includes",
+      "includes": ["6-8 cost lines"],
+      "footnote": "one line on what a successful pilot unlocks"
+    },
+    "creator_mix": {
+      "kicker": "Talent Suggestions / Team",
+      "title": "Recommended Creator Mix",
+      "rows": [{"creator": "NAME THE ACTUAL SELECTED CREATORS", "audience": "e.g. '8M+'",
+                "why": "why they fit", "role": "their campaign role"}],
+      "why_label": "Why This Mix Works",
+      "why_works": ["2-4 short paragraphs on how the mix works as a funnel"],
+      "footnote": "e.g. 'Estimated audience sizes should be validated before contracting.'"
+    },
+    "team": {
+      "title": "Delivery Team",
+      "cards": [{"title": "Strategy & Campaign Management", "items": ["3-4 responsibilities"]}]
+    },
+    "closing": {
+      "kicker": "Closing Statement",
+      "title": "the closing thought, 6-10 words",
+      "paragraphs": ["2 short paragraphs making the case"]
+    },
+    "thank_you": {"headline": "Thank You", "email": "hitusup@thetasck.com"}
+  }
+}
+
+Rules:
+- Return ALL 16 slide keys. Never omit one; the template has a fixed page count.
+- "journey" needs exactly 4 stages. "funnel" needs 4-5 tiers, widest first.
+- "risks" needs 4-6 rows. "team" needs exactly 3 cards.
+- "creator_mix" rows must name the creators actually selected for this project.
+  If none are selected yet, use the archetypes and say so in the footnote.
+- Keep every string short enough to sit on a slide: titles under 12 words,
+  bullets under 14, paragraphs under 45.
+- No markdown syntax anywhere - no asterisks, no hashes, no bullet characters.
 """.strip()
 
 
@@ -11370,6 +11496,10 @@ def make_v3_router(db):
                         {"heading": str(s.get("heading") or ""), "content": str(s.get("content") or "")}
                         for s in (result.get("sections") or []) if isinstance(s, dict)
                     ],
+                    # Structured 16-slide payload for the approved deck template.
+                    # `sections` is still written so the .docx and any older
+                    # renderer keep working off the same generation.
+                    "slides": result.get("slides") if isinstance(result.get("slides"), dict) else {},
                     "status": "under_review",
                     "generated_at": now,
                     "analysis_source": result.get("analysis_source"),
@@ -11378,6 +11508,9 @@ def make_v3_router(db):
                     "approved_by": None,
                     "approved_by_party": None,
                     "brand_comments": (existing or {}).get("brand_comments", []),
+                    # Admin-uploaded artwork survives a regenerate.
+                    "cover_image": (existing or {}).get("cover_image", ""),
+                    "creator_images": (existing or {}).get("creator_images", []),
                     "updated_at": now,
                 }
                 if existing:
@@ -11713,17 +11846,30 @@ def make_v3_router(db):
         return {"ok": True, "comment": comment}
 
     @router.get("/pitch-decks/{deck_id}/flipbook")
-    async def pitch_deck_flipbook(deck_id: str, download: int = 0):
-        """The Pitch Deck as a standalone TASCK-blue flip book (single HTML
-        file, fonts embedded - works offline). Serves inline for Preview;
-        ?download=1 downloads the same file so admin can send it to clients."""
+    async def pitch_deck_flipbook(deck_id: str, download: int = 0, view: str = "flip"):
+        """The Pitch Deck as a standalone single-file HTML deck.
+
+        Decks carrying the structured 16-slide payload render on the approved
+        template and ship BOTH presentation modes in the one document - the
+        page-turn flip book and full-bleed slides - with a toggle, so the same
+        URL serves the brand portal embed, the admin preview and the download.
+        `?view=slides` just picks which one opens first.
+
+        Decks generated before the template rebuild have no `slides` payload,
+        so they keep rendering on the previous flip book rather than showing
+        a deck of empty layouts.
+        """
         from v3_flipbook import pitch_deck_flipbook_html, flipbook_filename
+        from v3_deck_template import deck_document_html, deck_has_template_content
         deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
         if not deck:
             raise HTTPException(404, "Pitch Deck not found")
         case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0}) or {}
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
-        html_out = pitch_deck_flipbook_html(deck, brand)
+        if deck_has_template_content(deck):
+            html_out = deck_document_html(deck, brand, logo_uri=_email_logo_data_uri(), mode=view)
+        else:
+            html_out = pitch_deck_flipbook_html(deck, brand)
         headers = {}
         if download:
             headers["Content-Disposition"] = f'attachment; filename="{flipbook_filename(deck)}"'

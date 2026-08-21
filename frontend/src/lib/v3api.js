@@ -454,6 +454,11 @@ export const v3PitchDeckDocxUrl = (deckId) => `${V3}/pitch-decks/${deckId}/docx`
 // preview; ?download=1 saves the file so admin can send it to clients.
 export const v3PitchDeckFlipbookUrl = (deckId, download = false) => `${V3}/pitch-decks/${deckId}/flipbook${download ? '?download=1' : ''}`;
 
+// The same document opened straight into slide view. Both modes ship in the
+// one file with a toggle, so this only chooses which one opens first.
+export const v3PitchDeckSlidesUrl = (deckId, download = false) =>
+  `${V3}/pitch-decks/${deckId}/flipbook?view=slides${download ? '&download=1' : ''}`;
+
 // --- Alignment snapshot priority (brand ranks; admin can override) --------
 export const v3ListPriorityOptions = () => v3.get('/priority-options').then(r => r.data);
 export const v3SetSnapshotPriority = (snapshotId, priority, actor) =>

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { v3PitchDeckFlipbookUrl } from '../../lib/v3api';
+import { v3PitchDeckFlipbookUrl, v3PitchDeckSlidesUrl } from '../../lib/v3api';
 
 // Brand-facing Pitch Deck viewer that embeds the EXACT same server-rendered
 // flip book the admin previews (TASCK-blue cover, real page-curl, embedded
@@ -24,6 +24,9 @@ export const PitchDeckFlipbookEmbed = ({ deckId }) => {
       />
       <div className="flex justify-end gap-2 border-t border-[#EEE7D6] bg-[#FBFAF7] px-4 py-2.5">
         <a href={url} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brand-pitch-open-fullscreen">Open full screen</a>
+        {/* The embedded deck carries a Flip book / Slides toggle of its own;
+            this opens it straight into slide view for anyone who wants it. */}
+        <a href={v3PitchDeckSlidesUrl(deckId)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brand-pitch-view-slides">View as slides</a>
         <a href={`${url}?print=1`} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brand-pitch-download-pdf">Download PDF</a>
         <a href={v3PitchDeckFlipbookUrl(deckId, true)} target="_blank" rel="noreferrer" className="v3-btn-primary text-[12px]" data-testid="brand-pitch-download-html">Download</a>
       </div>

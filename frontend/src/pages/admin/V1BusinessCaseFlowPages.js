@@ -127,6 +127,7 @@ import {
   v3RemovePitchDeckCreatorImage,
   v3PitchDeckDocxUrl,
   v3PitchDeckFlipbookUrl,
+  v3PitchDeckSlidesUrl,
   v3GenerateCreativeBrief,
   v3StrategySnapshotDocxUrl,
   v3ContractDocxUrl,
@@ -4625,6 +4626,13 @@ export const V3BusinessCasePitchDeck = () => {
     window.open(v3PitchDeckFlipbookUrl(deck.id), '_blank', 'noopener,noreferrer');
   };
 
+  // Slide view of the same deck. One document carries both presentations, so
+  // this only decides which one opens first.
+  const openSlides = () => {
+    if (!deck?.id) return;
+    window.open(v3PitchDeckSlidesUrl(deck.id), '_blank', 'noopener,noreferrer');
+  };
+
   const downloadFlipbook = () => {
     if (!deck?.id) return;
     window.open(v3PitchDeckFlipbookUrl(deck.id, true), '_blank', 'noopener,noreferrer');
@@ -4675,6 +4683,10 @@ export const V3BusinessCasePitchDeck = () => {
               <>
                 <button onClick={saveEdits} disabled={saving} className="v3-btn-secondary text-[12px]" data-testid="pitch-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save edits'}</button>
                 <button onClick={openPreview} className="v3-btn-secondary text-[12px]" data-testid="pitch-preview-btn"><Presentation className="w-3.5 h-3.5" /> Preview flipbook</button>
+                {/* Same document, opened straight into slide view. The two
+                    modes ship together with a toggle, so the brand can switch
+                    without another link. */}
+                <button onClick={openSlides} className="v3-btn-secondary text-[12px]" data-testid="pitch-preview-slides-btn"><Presentation className="w-3.5 h-3.5" /> Preview slides</button>
                 <a href={v3PitchDeckDocxUrl(deck.id)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="pitch-download-btn"><Download className="w-3.5 h-3.5" /> Download (.docx)</a>
                 <button onClick={downloadFlipbook} className="v3-btn-secondary text-[12px]" data-testid="pitch-download-flipbook-btn"><BookOpen className="w-3.5 h-3.5" /> Download flipbook (.html)</button>
                 <button onClick={downloadPdf} className="v3-btn-secondary text-[12px]" data-testid="pitch-download-pdf-btn"><Download className="w-3.5 h-3.5" /> Download PDF</button>
