@@ -129,7 +129,8 @@ def _about(d: Dict[str, Any], i: int, n: int, logo: str) -> str:
             if callout else ""
         )
         + "</div>"
-        f'<div>{("<div class=\'pills\'>" + pills + "</div>") if pills else ""}'
+        + "<div>"
+        + (('<div class="pills">' + pills + "</div>") if pills else "")
         + _ul(_items(d, "bullets"), "tick-list")
         + "</div></div>"
     )

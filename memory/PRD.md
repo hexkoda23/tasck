@@ -1382,3 +1382,5 @@ One contact email can own MULTIPLE brand portal accounts (one per brand, e.g. ke
 2. **Scrape fails first time** - frontend `v3ScrapeBrandDetails` used the 45s axios default vs a 40s backend budget → first-run cold-cache timeouts. Now 120s timeout + one automatic silent retry.
 3. **Logo missing in brand emails** - data-URI images are STRIPPED by Gmail/Outlook. `_deliver_email_now` now attaches the logo as a CID inline attachment (`cid:tasck-logo`, multipart/related) referenced by the HTML; `_email_logo_bytes()` added (cached JPEG ~5KB); `_smtp_transactional_html` accepts `logo_src`. Unit-verified MIME: multipart/alternative → [text/plain, multipart/related[text/html, image/jpeg + Content-ID]]. Existing email tests still pass. NOTE: user must REDEPLOY for production emails to carry the logo.
 - Testing: iteration_34.json - 7/7 frontend flows pass (brand login, fast messages+send, overview/projects/alignment render, cached nav, admin comms fast+send+comments, scrape first-click success).
+
+- 2026-06: Fixed f-string backslash SyntaxError in v3_deck_template.py line 132 (flipbook rendering 500 error). Verified flipbook returns 200.
