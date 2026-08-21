@@ -4969,7 +4969,7 @@ export const V3BusinessCasePitchDeck = () => {
             </p>
             {genPopup.status === 'running' && (
               <p className="mt-1 text-[11px] text-[#6E6657]">
-                Claude is writing the Pitch Deck. Please keep this page open - this window will close automatically when it reaches 100%.
+                Drafting Pitch Deck. Please keep this page open - this window will close automatically when it reaches 100%.
               </p>
             )}
             {genPopup.status === 'failed' && (
