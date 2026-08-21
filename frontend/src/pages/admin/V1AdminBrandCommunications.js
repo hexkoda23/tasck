@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MessageSquare, RefreshCcw, Send } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
-import { v3CreateInteraction, v3GetBrands, v3GetBusinessCase, v3ListBusinessCases, v3ListInteractions } from '../../lib/v3api';
+import { v3AdminMessagesMarkRead, v3CreateInteraction, v3GetBrands, v3GetBusinessCase, v3ListBusinessCases, v3ListInteractions } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { brandName, cleanPortalText, formatDate, sentenceCaseStatus } from '../brand/V1BrandPortalData';
 
@@ -45,6 +45,9 @@ const V1AdminBrandCommunications = () => {
     }
   }, [queryBrandId]);
   useEffect(() => { reload(); }, [reload]);
+  // Landing on the admin Messages page counts as "seen" - mark every unread
+  // brand->admin message as read so the sidebar badge clears immediately.
+  useEffect(() => { v3AdminMessagesMarkRead().catch(() => {}); }, []);
   // When the URL brand param changes (admin clicked a different notification),
   // sync the selection so the panel jumps to that sender's thread.
   useEffect(() => { if (queryBrandId) setSelectedBrand(queryBrandId); }, [queryBrandId]);

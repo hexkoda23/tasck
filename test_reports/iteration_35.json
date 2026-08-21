@@ -1,0 +1,36 @@
+{
+  "summary": "Tested three new admin features on TASCK OS v1: (1) Duplicate Flagger (scan/count/list/dismiss/merge), (2) Unread Messages badge (count/mark-read/interaction increment), (3) Deck Analytics (view/turn/get + flipbook tracker injection). Also verified the frontend sidebar badges, /admin/duplicates panel merge+dismiss flows, and the Deck analytics InfoCard on the pitch-deck admin page. All 10 backend tests pass. All UI flows verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global (multiple admin pages)", "issues": ["React hydration warnings from ve-dynamic <span> wrappers being injected as children of <select>/<option>. Pre-existing infra noise unrelated to this iteration, but should be addressed."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v3_duplicates_messages_analytics.py",
+    "/app/test_reports/pytest/iter35_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "v3_routes.py is now 19,386 lines — please split by feature area (duplicates/messages/deck-analytics could live in their own routers) per the >700 line guideline.",
+    "Dismiss endpoint has no un-dismiss / listing endpoint — once a pair is dismissed there is no admin recovery UI to restore it. Consider adding a 'Show dismissed' toggle.",
+    "merge-into does not verify that the two cases actually share brand/track before merging — an admin could accidentally merge unrelated cases. Consider a soft-check with an override flag.",
+    "admin_messages_mark_read({}) with an empty body marks ALL brand messages read across all brands. The frontend on /admin/brand-communications mounts and calls this globally — a brand-specific mark-read on selection would be more precise.",
+    "Deck analytics /view endpoint accepts an optional session_id but the generated ID (uuid) is not persisted client-side beyond the request, which is fine — however the code stores it in $setOnInsert AND uses last_event_at only in $set which is correct. Confirmed no conflict."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v3_duplicates_messages_analytics.py"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% of tested flows"},
+  "test_credentials": "V1 admin via POST /api/auth/demo-login {role:'admin'} + localStorage seed (per /app/memory/test_credentials.md).",
+  "seed_data_creation": "Created 1 brand_message interaction (TEST_unread_probe) that was subsequently marked-read. Seeded ~2 deck_view sessions with page_turns for pd-aad78149. Dismissed the top-similarity duplicate pair once (persisted in v3_duplicate_dismissals). Merged one business case (source removed from list). These test-scoped writes remain in the DB.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend endpoints verified: GET /api/v3/business-case-duplicates(/count), POST /api/v3/business-cases/{id}/duplicate-dismiss, POST /api/v3/business-cases/{id}/merge-into, GET/POST /api/v3/admin/messages/(unread-count|mark-read), POST /api/v3/pitch-decks/{deck}/analytics/(view|turn), GET /api/v3/pitch-decks/{deck}/analytics, and GET /api/v3/pitch-decks/{deck}/flipbook (tracker injection + ?download=1 skip). Note: /api/v3/interactions REQUIRES fields `title` and `author` in payload (undocumented in review request). Frontend flow: /admin/duplicates uses window.confirm for 'Keep this' merge — Playwright dialog handler must accept it.",
+  "rca of the issue": "No bugs found. All features work as designed. The only friction encountered during testing was that visiting /admin/business-cases/{id}/frame/pitch-deck auto-regenerates the deck when no persisted bundle exists (takes ~60-90s), so testing the Deck analytics InfoCard required waiting for generation to complete (or seeding a business case with an existing bundle)."
+}

@@ -4958,6 +4958,7 @@ def make_v3_router(db):
         engagement: Optional[str] = None,
         brand_id: Optional[str] = None,
         rm_id: Optional[str] = None,
+        include_merged: bool = False,
         x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
         x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
     ):
@@ -4973,6 +4974,8 @@ def make_v3_router(db):
             query["rm_id"] = extracted_rm_id
         elif rm_id:
             query["rm_id"] = rm_id
+        if not include_merged:
+            query["merged_into"] = {"$exists": False}
         return await db.v3_business_cases.find(query, {"_id": 0}).sort("created_at", -1).to_list(1000)
 
     @router.post("/business-cases/{bc_id}/continue")
@@ -11921,7 +11924,7 @@ def make_v3_router(db):
         return {"ok": True, "comment": comment}
 
     @router.get("/pitch-decks/{deck_id}/flipbook")
-    async def pitch_deck_flipbook(deck_id: str, download: int = 0, view: str = "flip"):
+    async def pitch_deck_flipbook(deck_id: str, download: int = 0, view: str = "flip", source: str = "brand"):
         """The Pitch Deck as a standalone single-file HTML deck.
 
         Decks carrying the structured 16-slide payload render on the approved
@@ -11941,10 +11944,17 @@ def make_v3_router(db):
             raise HTTPException(404, "Pitch Deck not found")
         case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0}) or {}
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        # The flipbook HTML is served from the backend origin, so an empty
+        # api_base lets the tracker fetch same-origin. Downloads are opened
+        # from disk and can't phone home, so analytics wiring is skipped
+        # entirely for those.
+        api_base = ""
+        deck_source = "download" if download else (source or "brand")
         if deck_has_template_content(deck):
-            html_out = deck_document_html(deck, brand, logo_uri=_email_logo_data_uri(), mode=view)
+            html_out = deck_document_html(deck, brand, logo_uri=_email_logo_data_uri(),
+                                          mode=view, api_base=api_base, source=deck_source)
         else:
-            html_out = pitch_deck_flipbook_html(deck, brand)
+            html_out = pitch_deck_flipbook_html(deck, brand, api_base=api_base, source=deck_source)
         headers = {}
         if download:
             headers["Content-Disposition"] = f'attachment; filename="{flipbook_filename(deck)}"'
@@ -19030,6 +19040,329 @@ Produce the opportunity card JSON.
             "top_creators": creators[:8],
             "needs_attention": needs_attention[:10],
             "latest_activity": latest_activity,
+        }
+
+    # ------------------------------------------------------------------------
+    # DUPLICATE FLAGGER (business cases / opportunities)
+    # ------------------------------------------------------------------------
+    # Fast heuristic (no LLM budget): normalise brand company + case title and
+    # score pair similarity with difflib.SequenceMatcher. Matches above the
+    # threshold surface in the admin "Possible Duplicate" panel with a
+    # side-by-side compare and a one-click merge.
+    # ------------------------------------------------------------------------
+    from difflib import SequenceMatcher as _SeqMatcher
+
+    def _dupe_norm(text: Any) -> str:
+        raw = str(text or "").lower()
+        cleaned = re.sub(r"[^a-z0-9 ]+", " ", raw)
+        return re.sub(r"\s+", " ", cleaned).strip()
+
+    def _dupe_score(a: str, b: str) -> float:
+        if not a or not b:
+            return 0.0
+        return float(_SeqMatcher(None, a, b).ratio())
+
+    def _pair_key(id_a: str, id_b: str) -> str:
+        first, second = sorted([str(id_a), str(id_b)])
+        return f"{first}|{second}"
+
+    async def _scan_case_duplicates() -> List[Dict[str, Any]]:
+        """Scan for likely-duplicate active business cases.
+
+        Combines brand match (same brand_id or high-similarity brand name)
+        with a case-title similarity check. Any pair scoring 0.72+ on title
+        similarity OR sharing the same brand with 0.55+ title similarity is
+        surfaced. Merged/dismissed cases are excluded.
+        """
+        cases = await db.v3_business_cases.find(
+            {
+                "merged_into": {"$exists": False},
+                "dupe_dismissed": {"$ne": True},
+            },
+            {"_id": 0},
+        ).to_list(2000)
+        brands = await db.v3_brands.find({}, {"_id": 0}).to_list(2000)
+        brand_by_id = {b.get("id"): b for b in brands if b.get("id")}
+
+        # Load user-confirmed non-duplicate pairs so we never resurface them.
+        dismissed_rows = await db.v3_duplicate_dismissals.find(
+            {}, {"_id": 0, "pair_key": 1}
+        ).to_list(5000)
+        dismissed_keys = {row.get("pair_key") for row in dismissed_rows if row.get("pair_key")}
+
+        # Precompute normalized keys once per case.
+        case_terms: List[Tuple[Dict[str, Any], str, str]] = []
+        for case in cases:
+            title_norm = _dupe_norm(case.get("title"))
+            brand_id = case.get("brand_id") or ""
+            brand_name = ""
+            b = brand_by_id.get(brand_id)
+            if b:
+                brand_name = b.get("company") or b.get("name") or ""
+            brand_norm = _dupe_norm(brand_name)
+            case_terms.append((case, title_norm, brand_norm))
+
+        pairs: List[Dict[str, Any]] = []
+        seen: set = set()
+        for i in range(len(case_terms)):
+            case_a, title_a, brand_a = case_terms[i]
+            for j in range(i + 1, len(case_terms)):
+                case_b, title_b, brand_b = case_terms[j]
+                title_sim = _dupe_score(title_a, title_b)
+                brand_sim = _dupe_score(brand_a, brand_b) if brand_a and brand_b else 0.0
+                same_brand = bool(case_a.get("brand_id")) and case_a.get("brand_id") == case_b.get("brand_id")
+                score = 0.0
+                reasons: List[str] = []
+                if same_brand and title_sim >= 0.55:
+                    score = max(score, 0.75 + (title_sim - 0.55) * 0.5)
+                    reasons.append("Same brand, similar title")
+                if title_sim >= 0.72:
+                    score = max(score, title_sim)
+                    reasons.append(f"Title match {int(title_sim * 100)}%")
+                if brand_sim >= 0.85 and title_sim >= 0.5:
+                    score = max(score, (brand_sim + title_sim) / 2)
+                    reasons.append(f"Similar brand ({int(brand_sim * 100)}%)")
+                if score < 0.7:
+                    continue
+                pair_key = _pair_key(case_a.get("id"), case_b.get("id"))
+                if pair_key in seen or pair_key in dismissed_keys:
+                    continue
+                seen.add(pair_key)
+
+                def _summarize(case_row: Dict[str, Any]) -> Dict[str, Any]:
+                    b_row = brand_by_id.get(case_row.get("brand_id")) or {}
+                    return {
+                        "id": case_row.get("id"),
+                        "title": case_row.get("title"),
+                        "stage": case_row.get("stage"),
+                        "engagement_track": case_row.get("engagement_track"),
+                        "estimated_value": case_row.get("estimated_value"),
+                        "created_at": case_row.get("created_at"),
+                        "updated_at": case_row.get("updated_at"),
+                        "brand_id": case_row.get("brand_id"),
+                        "brand_name": b_row.get("company") or b_row.get("name") or "",
+                    }
+
+                pairs.append({
+                    "pair_key": pair_key,
+                    "similarity": round(min(score, 1.0), 3),
+                    "reasons": list(dict.fromkeys(reasons)),
+                    "left": _summarize(case_a),
+                    "right": _summarize(case_b),
+                })
+        pairs.sort(key=lambda p: p["similarity"], reverse=True)
+        return pairs
+
+    @router.get("/business-case-duplicates")
+    async def list_business_case_duplicates():
+        pairs = await _scan_case_duplicates()
+        return {"count": len(pairs), "pairs": pairs}
+
+    @router.get("/business-case-duplicates/count")
+    async def business_case_duplicates_count():
+        pairs = await _scan_case_duplicates()
+        return {"count": len(pairs)}
+
+    class DuplicateDismissPayload(BaseModel):
+        other_id: str
+
+    @router.post("/business-cases/{bc_id}/duplicate-dismiss")
+    async def dismiss_duplicate_pair(bc_id: str, payload: DuplicateDismissPayload):
+        other_id = (payload.other_id or "").strip()
+        if not other_id:
+            raise HTTPException(422, "other_id is required")
+        pair_key = _pair_key(bc_id, other_id)
+        now = _now_iso()
+        await db.v3_duplicate_dismissals.update_one(
+            {"pair_key": pair_key},
+            {"$set": {"pair_key": pair_key, "dismissed_at": now}},
+            upsert=True,
+        )
+        return {"ok": True, "pair_key": pair_key}
+
+    class DuplicateMergePayload(BaseModel):
+        target_id: str  # the case to KEEP
+        actor: Optional[str] = "admin"
+
+    @router.post("/business-cases/{bc_id}/merge-into")
+    async def merge_business_case(bc_id: str, payload: DuplicateMergePayload):
+        target_id = (payload.target_id or "").strip()
+        if not target_id or target_id == bc_id:
+            raise HTTPException(422, "target_id must be a different case id")
+        source = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        target = await db.v3_business_cases.find_one({"id": target_id}, {"_id": 0})
+        if not source:
+            raise HTTPException(404, "Source case not found")
+        if not target:
+            raise HTTPException(404, "Target case not found")
+        now = _now_iso()
+
+        # Move interactions from source -> target so message history is kept.
+        await db.v3_interactions.update_many(
+            {"business_case_id": bc_id},
+            {"$set": {"business_case_id": target_id, "merged_from_case_id": bc_id}},
+        )
+
+        # Mark source as merged. We keep the doc so audit trail is intact but
+        # filter it out of the default list endpoint.
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {
+                "$set": {
+                    "merged_into": target_id,
+                    "merged_at": now,
+                    "updated_at": now,
+                },
+                "$push": {
+                    "timeline": {
+                        "at": now,
+                        "event": "business_case_merged",
+                        "actor": payload.actor or "admin",
+                        "target_id": target_id,
+                    },
+                },
+            },
+        )
+        # Stamp target with the merge event too.
+        await db.v3_business_cases.update_one(
+            {"id": target_id},
+            {
+                "$set": {"updated_at": now, "last_interaction_at": now},
+                "$push": {
+                    "timeline": {
+                        "at": now,
+                        "event": "business_case_merged_from",
+                        "actor": payload.actor or "admin",
+                        "source_id": bc_id,
+                    },
+                },
+            },
+        )
+        return {"ok": True, "merged_case_id": bc_id, "target_id": target_id}
+
+    # ------------------------------------------------------------------------
+    # UNREAD MESSAGES BADGE (admin)
+    # ------------------------------------------------------------------------
+    @router.get("/admin/messages/unread-count")
+    async def admin_messages_unread_count():
+        count = await db.v3_interactions.count_documents(
+            {"type": "brand_message", "admin_read_at": {"$exists": False}}
+        )
+        return {"count": int(count)}
+
+    class MarkMessagesReadPayload(BaseModel):
+        brand_id: Optional[str] = None
+
+    @router.post("/admin/messages/mark-read")
+    async def admin_messages_mark_read(payload: Optional[MarkMessagesReadPayload] = None):
+        query: Dict[str, Any] = {
+            "type": "brand_message",
+            "admin_read_at": {"$exists": False},
+        }
+        if payload and payload.brand_id:
+            query["brand_id"] = payload.brand_id
+        now = _now_iso()
+        result = await db.v3_interactions.update_many(query, {"$set": {"admin_read_at": now}})
+        return {"ok": True, "marked": int(result.modified_count)}
+
+    # ------------------------------------------------------------------------
+    # PITCH DECK ANALYTICS (deck opens + page turns per brand view)
+    # ------------------------------------------------------------------------
+    class DeckViewPayload(BaseModel):
+        session_id: Optional[str] = None
+        brand_id: Optional[str] = None
+        source: Optional[str] = "brand"  # brand | admin | download
+
+    @router.post("/pitch-decks/{deck_id}/analytics/view")
+    async def pitch_deck_analytics_view(deck_id: str, payload: DeckViewPayload):
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0, "business_case_id": 1})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        # Derive brand from the deck's case when the caller didn't provide one
+        brand_id = (payload.brand_id or "").strip()
+        if not brand_id:
+            case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0, "brand_id": 1})
+            if case:
+                brand_id = case.get("brand_id") or ""
+        session_id = (payload.session_id or f"sess-{uuid.uuid4().hex[:12]}")[:80]
+        now = _now_iso()
+        doc = {
+            "deck_id": deck_id,
+            "session_id": session_id,
+            "brand_id": brand_id or None,
+            "source": payload.source or "brand",
+            "opened_at": now,
+            "page_turns": 0,
+        }
+        # Upsert so a repeat view from same session doesn't spawn a new row.
+        await db.v3_deck_views.update_one(
+            {"deck_id": deck_id, "session_id": session_id},
+            {"$setOnInsert": doc, "$set": {"last_event_at": now}},
+            upsert=True,
+        )
+        return {"ok": True, "session_id": session_id, "opened_at": now}
+
+    class DeckTurnPayload(BaseModel):
+        session_id: str
+        page: Optional[int] = None
+
+    @router.post("/pitch-decks/{deck_id}/analytics/turn")
+    async def pitch_deck_analytics_turn(deck_id: str, payload: DeckTurnPayload):
+        session_id = (payload.session_id or "").strip()
+        if not session_id:
+            raise HTTPException(422, "session_id is required")
+        now = _now_iso()
+        update: Dict[str, Any] = {
+            "$inc": {"page_turns": 1},
+            "$set": {"last_event_at": now},
+        }
+        if isinstance(payload.page, int):
+            update["$set"]["last_page"] = int(payload.page)
+        result = await db.v3_deck_views.update_one(
+            {"deck_id": deck_id, "session_id": session_id},
+            update,
+        )
+        if result.matched_count == 0:
+            # No open-event fired first (e.g. old cached HTML) — seed the row.
+            await db.v3_deck_views.update_one(
+                {"deck_id": deck_id, "session_id": session_id},
+                {
+                    "$setOnInsert": {
+                        "deck_id": deck_id,
+                        "session_id": session_id,
+                        "opened_at": now,
+                        "source": "brand",
+                        "page_turns": 1,
+                    },
+                    "$set": {"last_event_at": now},
+                },
+                upsert=True,
+            )
+        return {"ok": True}
+
+    @router.get("/pitch-decks/{deck_id}/analytics")
+    async def pitch_deck_analytics(deck_id: str):
+        rows = await db.v3_deck_views.find(
+            {"deck_id": deck_id}, {"_id": 0}
+        ).sort("opened_at", -1).to_list(500)
+        # Attach brand name for display convenience.
+        brand_ids = list({r.get("brand_id") for r in rows if r.get("brand_id")})
+        brand_lookup: Dict[str, str] = {}
+        if brand_ids:
+            brands = await db.v3_brands.find(
+                {"id": {"$in": brand_ids}}, {"_id": 0, "id": 1, "company": 1, "name": 1}
+            ).to_list(500)
+            for b in brands:
+                brand_lookup[b.get("id")] = b.get("company") or b.get("name") or ""
+        total_views = len(rows)
+        total_turns = sum(int(r.get("page_turns") or 0) for r in rows)
+        for r in rows:
+            r["brand_name"] = brand_lookup.get(r.get("brand_id") or "", "")
+        return {
+            "deck_id": deck_id,
+            "total_views": total_views,
+            "total_page_turns": total_turns,
+            "views": rows,
         }
 
     # Exposed for the background-refresh guard tests.

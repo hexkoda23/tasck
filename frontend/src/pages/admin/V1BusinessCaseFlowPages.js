@@ -128,6 +128,7 @@ import {
   v3PitchDeckDocxUrl,
   v3PitchDeckFlipbookUrl,
   v3PitchDeckSlidesUrl,
+  v3GetPitchDeckAnalytics,
   v3GenerateCreativeBrief,
   v3StrategySnapshotDocxUrl,
   v3ContractDocxUrl,
@@ -4397,6 +4398,17 @@ export const V3BusinessCasePitchDeck = () => {
   };
   useEffect(() => () => stopGenTick(), []);
   const [saving, setSaving] = useState(false);
+  // Deck analytics: brand opens + page turns per view. Loaded on mount and
+  // whenever the deck id changes so admins see fresh numbers without a refresh.
+  const [deckAnalytics, setDeckAnalytics] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!deck?.id) { setDeckAnalytics(null); return () => {}; }
+    const load = () => v3GetPitchDeckAnalytics(deck.id).then((data) => { if (!cancelled) setDeckAnalytics(data); }).catch(() => {});
+    load();
+    const t = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [deck?.id]);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [sendPopup, setSendPopup] = useState(null);
   const brandEmail = brand?.email || brand?.contact_email || '';
@@ -4885,6 +4897,56 @@ export const V3BusinessCasePitchDeck = () => {
               ? `Visible on the brand page since ${formatDateTime(deck.sent_to_brand_at)}. Saved edits go live immediately.`
               : 'Admin-only. The brand cannot see this Pitch Deck yet - click "Send to brand page" when you are ready.'}
           </div>
+        </InfoCard>
+      )}
+
+      {deck && (
+        <InfoCard title="Deck analytics">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3" data-testid="deck-analytics-summary">
+            <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF6] p-3">
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Total opens</p>
+              <p className="text-[22px] font-semibold text-[#1A1A1A]" data-testid="deck-analytics-opens">{deckAnalytics?.total_views ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF6] p-3">
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Page turns</p>
+              <p className="text-[22px] font-semibold text-[#1A1A1A]" data-testid="deck-analytics-turns">{deckAnalytics?.total_page_turns ?? 0}</p>
+            </div>
+            <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF6] p-3">
+              <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Latest opened</p>
+              <p className="text-[13px] text-[#1A1A1A] font-medium" data-testid="deck-analytics-latest">
+                {deckAnalytics?.views?.[0]?.opened_at ? formatDateTime(deckAnalytics.views[0].opened_at) : 'No opens yet'}
+              </p>
+            </div>
+          </div>
+          {Array.isArray(deckAnalytics?.views) && deckAnalytics.views.length > 0 && (
+            <div className="mt-3 overflow-hidden rounded-lg border border-[#E8E4DB]" data-testid="deck-analytics-table">
+              <table className="w-full text-[12px]">
+                <thead className="bg-[#F4F2EC] text-[#6B6258]">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium">Brand</th>
+                    <th className="text-left px-3 py-2 font-medium">Opened at</th>
+                    <th className="text-left px-3 py-2 font-medium">Page turns</th>
+                    <th className="text-left px-3 py-2 font-medium">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deckAnalytics.views.slice(0, 20).map((v) => (
+                    <tr key={v.session_id} className="border-t border-[#E8E4DB]" data-testid={`deck-analytics-row-${v.session_id}`}>
+                      <td className="px-3 py-2 text-[#1A1A1A]">{v.brand_name || v.brand_id || 'Unknown'}</td>
+                      <td className="px-3 py-2 text-[#4F4941]">{v.opened_at ? formatDateTime(v.opened_at) : '—'}</td>
+                      <td className="px-3 py-2 text-[#4F4941] tabular-nums">{v.page_turns ?? 0}</td>
+                      <td className="px-3 py-2 text-[#8A8A8A]">{v.source || 'brand'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {(!deckAnalytics || (deckAnalytics.total_views ?? 0) === 0) && (
+            <p className="text-[12px] text-[#6B6258] mt-2" data-testid="deck-analytics-empty">
+              You&apos;ll see brand opens and how many pages they turned as soon as they view the flipbook.
+            </p>
+          )}
         </InfoCard>
       )}
 

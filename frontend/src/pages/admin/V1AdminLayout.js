@@ -6,6 +6,7 @@ import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, FolderIn
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 import { useAdminNotifications } from '../../hooks/useAdminNotifications';
+import { v3AdminMessagesUnreadCount, v3BusinessCaseDuplicatesCount } from '../../lib/v3api';
 
 // Per Chioma's clarification: Connect + Framing (Alignment Snapshot,
 // Brainstorm, Creator Selection, Creative Brief, Strategy Snapshot) belong
@@ -67,7 +68,33 @@ const V1AdminLayout = () => {
   const [darkMode, setDarkMode] = useThemeMode();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [messagesUnread, setMessagesUnread] = useState(0);
+  const [duplicatesCount, setDuplicatesCount] = useState(0);
   const notificationsBoxRef = useRef(null);
+
+  // Poll the admin unread-messages count + duplicate-flagger count every 45s
+  // so the sidebar badges stay fresh without hammering the API. Also refresh
+  // whenever the admin navigates to a new route (fast route-change refresh
+  // keeps the badge in sync after opening Messages).
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const [msg, dupe] = await Promise.all([
+          v3AdminMessagesUnreadCount().catch(() => null),
+          v3BusinessCaseDuplicatesCount().catch(() => null),
+        ]);
+        if (cancelled) return;
+        if (msg && typeof msg.count === 'number') setMessagesUnread(msg.count);
+        if (dupe && typeof dupe.count === 'number') setDuplicatesCount(dupe.count);
+      } catch (_) {
+        // Silent - badges are best-effort.
+      }
+    };
+    load();
+    const timer = setInterval(load, 45000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [location.pathname]);
 
   const handleSessionButton = () => {
     if (isAuthenticated) {
@@ -144,16 +171,38 @@ const V1AdminLayout = () => {
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isNavActive(location.pathname, item);
+            let badge = 0;
+            if (item.label === 'Messages') badge = messagesUnread;
+            if (item.label === 'Business Cases') badge = duplicatesCount;
+            const badgeLabel = badge > 9 ? '9+' : String(badge);
             return (
               <button
                 key={item.path}
                 onClick={() => navigate(item.path)}
-                className={`v3-nav-item ${active ? 'v3-nav-item--active' : ''} ${sidebarCollapsed ? 'justify-center' : ''}`}
+                className={`v3-nav-item relative ${active ? 'v3-nav-item--active' : ''} ${sidebarCollapsed ? 'justify-center' : ''}`}
                 data-testid={navTestId(item.label)}
                 title={sidebarCollapsed ? item.label : undefined}
               >
-                <Icon className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
+                <span className="relative flex-shrink-0">
+                  <Icon className="w-4 h-4" strokeWidth={1.5} />
+                  {badge > 0 && sidebarCollapsed && (
+                    <span
+                      className="absolute -top-1.5 -right-2 min-w-[14px] h-[14px] px-1 rounded-full bg-[#B54A37] text-white text-[9px] font-semibold flex items-center justify-center leading-none"
+                      data-testid={`${navTestId(item.label)}-badge`}
+                    >
+                      {badgeLabel}
+                    </span>
+                  )}
+                </span>
                 {!sidebarCollapsed && <span className="text-[13px]">{item.label}</span>}
+                {!sidebarCollapsed && badge > 0 && (
+                  <span
+                    className="ml-auto min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#B54A37] text-white text-[10px] font-semibold flex items-center justify-center leading-none"
+                    data-testid={`${navTestId(item.label)}-badge`}
+                  >
+                    {badgeLabel}
+                  </span>
+                )}
               </button>
             );
           })}

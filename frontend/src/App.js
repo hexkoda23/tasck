@@ -156,6 +156,7 @@ import V1AdminCRM from './pages/admin/V1AdminCRM';
 import V1AdminCRMBrandDetail from './pages/admin/V1AdminCRMBrandDetail';
 import V1AdminBrandCallRedirect from './pages/admin/V1AdminBrandCallRedirect';
 import V1AdminBrandCommunications from './pages/admin/V1AdminBrandCommunications';
+import V1AdminDuplicates from './pages/admin/V1AdminDuplicates';
 import FeedbackAdmin from './pages/FeedbackAdmin';
 
 // Pages
@@ -424,6 +425,7 @@ function AppRoutes() {
         <Route path="meetings/creator-briefing" element={<V3AdminCreatorBriefingCalls />} />
         <Route path="meetings/creator-briefing/:meetingId" element={<V3AdminCreatorBriefingCallDetail />} />
         <Route path="business-cases" element={<V1AdminBusinessCases />} />
+        <Route path="duplicates" element={<V1AdminDuplicates />} />
         <Route path="import-project" element={<V1ImportExistingProject />} />
         <Route path="business-cases/:id" element={<V1BusinessCaseStageHome />} />
         <Route path="business-cases/:id/connect" element={<V1BusinessCaseConnect />} />

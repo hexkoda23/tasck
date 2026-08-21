@@ -471,6 +471,26 @@ export const v3PitchDeckFlipbookUrl = (deckId, download = false) => `${V3}/pitch
 export const v3PitchDeckSlidesUrl = (deckId, download = false) =>
   `${V3}/pitch-decks/${deckId}/flipbook?view=slides${download ? '&download=1' : ''}`;
 
+// --- Deck analytics -----------------------------------------------------
+export const v3GetPitchDeckAnalytics = (deckId) =>
+  v3.get(`/pitch-decks/${deckId}/analytics`).then(r => r.data);
+
+// --- Duplicate flagger --------------------------------------------------
+export const v3ListBusinessCaseDuplicates = () =>
+  v3.get('/business-case-duplicates').then(r => r.data);
+export const v3BusinessCaseDuplicatesCount = () =>
+  v3.get('/business-case-duplicates/count').then(r => r.data);
+export const v3MergeBusinessCaseInto = (sourceId, targetId, actor = 'admin') =>
+  v3.post(`/business-cases/${sourceId}/merge-into`, { target_id: targetId, actor }).then(r => r.data);
+export const v3DismissDuplicatePair = (sourceId, otherId) =>
+  v3.post(`/business-cases/${sourceId}/duplicate-dismiss`, { other_id: otherId }).then(r => r.data);
+
+// --- Admin messages unread badge ---------------------------------------
+export const v3AdminMessagesUnreadCount = () =>
+  v3.get('/admin/messages/unread-count').then(r => r.data);
+export const v3AdminMessagesMarkRead = (brandId) =>
+  v3.post('/admin/messages/mark-read', brandId ? { brand_id: brandId } : {}).then(r => r.data);
+
 // --- Alignment snapshot priority (brand ranks; admin can override) --------
 export const v3ListPriorityOptions = () => v3.get('/priority-options').then(r => r.data);
 export const v3SetSnapshotPriority = (snapshotId, priority, actor) =>

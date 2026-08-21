@@ -1,5 +1,22 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 21 Feb 2026 — Admin quality-of-life: Duplicates, Unread badge, Deck analytics
+
+### Shipped
+- **Duplicate Flagger (business cases)** — Fast heuristic (difflib.SequenceMatcher on normalised brand + title). New endpoints: `GET /api/v3/business-case-duplicates`, `GET /api/v3/business-case-duplicates/count`, `POST /api/v3/business-cases/{id}/merge-into` (moves interactions, marks source `merged_into`, appends timeline events), `POST /api/v3/business-cases/{id}/duplicate-dismiss` (persists to `v3_duplicate_dismissals`). `list_business_cases` now filters out merged cases unless `include_merged=true`. New admin page `/admin/duplicates` (`V1AdminDuplicates.js`) with side-by-side compare + one-click "Keep this" merge and "Not a duplicate" dismiss. Business Cases list page shows a "Duplicates" button with red badge.
+- **Unread Message Badge (admin sidebar)** — `GET /api/v3/admin/messages/unread-count`, `POST /api/v3/admin/messages/mark-read` (optional `brand_id`). `V1AdminLayout` polls both counts every 45s + on route change and renders red badges next to the Messages and Business Cases nav items. Landing on `/admin/brand-communications` calls mark-read so the badge clears.
+- **Deck Analytics (opens + page turns)** — `POST /api/v3/pitch-decks/{deck_id}/analytics/view`, `POST /api/v3/pitch-decks/{deck_id}/analytics/turn`, `GET /api/v3/pitch-decks/{deck_id}/analytics`. Data stored in `v3_deck_views` (dedup per session_id). Tracker JS injected into both the template deck (`v3_deck_template.py`) and the fallback flipbook (`v3_flipbook.py`) via a `<meta id="deck-analytics">` element; `?download=1` skips wiring since offline HTML can't phone home. Admin pitch-deck page shows a "Deck analytics" InfoCard with Total opens, Page turns, Latest opened, and a per-session table (30s polling).
+
+### Verified
+- Testing agent iteration 35: 10/10 backend tests pass, all frontend flows (nav badges, duplicates panel merge+dismiss, deck analytics card) verified. Report: `/app/test_reports/iteration_35.json`.
+
+### Follow-ups (not shipped this iteration)
+- Per-brand mark-read on selection (current mark-read on `/admin/brand-communications` mount clears globally).
+- Admin recovery UI to un-dismiss duplicate pairs.
+- Soft-check on merge to warn when cases don't share a brand.
+- Continue splitting `v3_routes.py` (now 19,386 lines) into per-domain routers.
+
+
 ## Update — 18 Aug 2026 (Production incident: "Could not generate the Alignment Snapshot" + Cloudflare error on send)
 
 ### Reported

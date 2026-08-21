@@ -1328,6 +1328,7 @@ body{
 </style>
 </head>
 <body>
+<meta id="deck-analytics" data-deck-id="__DECK_ID__" data-api-base="__API_BASE__" data-source="__SOURCE__">
 <div class="util no-print">
   <button class="btn" id="print-pdf" data-testid="flipbook-download-pdf">Download PDF</button>
 </div>
@@ -1382,6 +1383,35 @@ function sync(idx){
     atStart ? 'Cover' : (atEnd ? 'Back cover' : 'Page ' + idx + ' of ' + (total - 2));
 }
 pf.on('flip', function(e){ sync(e.data); });
+// Deck analytics: log the open + count page turns per session.
+(function(){
+  try{
+    var meta=document.getElementById('deck-analytics');
+    if(!meta) return;
+    var deckId=meta.getAttribute('data-deck-id')||'';
+    var base=meta.getAttribute('data-api-base')||'';
+    var src=meta.getAttribute('data-source')||'brand';
+    if(!deckId) return;
+    var sid=null;
+    try{ sid=sessionStorage.getItem('tasck-deck-'+deckId); }catch(_){}
+    if(!sid){
+      sid='sess-'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+      try{ sessionStorage.setItem('tasck-deck-'+deckId, sid); }catch(_){}
+    }
+    try{
+      fetch(base+'/api/v3/pitch-decks/'+encodeURIComponent(deckId)+'/analytics/view',
+        {method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
+         body:JSON.stringify({session_id:sid,source:src})}).catch(function(){});
+    }catch(_){}
+    pf.on('flip', function(e){
+      try{
+        fetch(base+'/api/v3/pitch-decks/'+encodeURIComponent(deckId)+'/analytics/turn',
+          {method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
+           body:JSON.stringify({session_id:sid,page:e.data})}).catch(function(){});
+      }catch(_){}
+    });
+  }catch(_){ }
+})();
 document.getElementById('prev').onclick = function(){ pf.flipPrev(); };
 document.getElementById('next').onclick = function(){ pf.flipNext(); };
 document.getElementById('first').onclick = function(){ pf.flip(0); };
@@ -1418,7 +1448,8 @@ if (/[?&]print=1(?:&|$)/.test(window.location.search)) {
 """
 
 
-def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = None) -> str:
+def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = None,
+                             api_base: str = "", source: str = "brand") -> str:
     """Render the deck as the dark navy Nike-template flip book: photo cover
     with dark overlay, uppercase Bebas titles with accent-coloured last words,
     green/teal/orange rules, and a green Thank You closing page."""
@@ -1591,6 +1622,9 @@ def pitch_deck_flipbook_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any
         .replace("__FONTS__", _font_face_css())
         .replace("__PAGEFLIP_JS__", _pageflip_js())
         .replace("__SHEETS__", sheets)
+        .replace("__DECK_ID__", _esc(str(deck.get("id") or "")))
+        .replace("__API_BASE__", _esc(str(api_base or "")))
+        .replace("__SOURCE__", _esc(str(source or "brand")))
     )
 
 

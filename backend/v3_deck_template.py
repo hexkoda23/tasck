@@ -776,12 +776,47 @@ VIEWER_JS = """
   document.getElementById('m-flip').onclick=function(){setMode('flip')};
   document.getElementById('m-slides').onclick=function(){setMode('slides')};
   setMode(mode);
+  // Deck analytics: log the open + count page turns per session.
+  try{
+    var meta=document.getElementById('deck-analytics');
+    if(meta){
+      var deckId=meta.getAttribute('data-deck-id')||'';
+      var base=meta.getAttribute('data-api-base')||'';
+      var src=meta.getAttribute('data-source')||'brand';
+      if(deckId){
+        var sid=null;
+        try{ sid=sessionStorage.getItem('tasck-deck-'+deckId); }catch(_){}
+        if(!sid){
+          sid='sess-'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+          try{ sessionStorage.setItem('tasck-deck-'+deckId, sid); }catch(_){}
+        }
+        var url=base+'/api/v3/pitch-decks/'+encodeURIComponent(deckId)+'/analytics/view';
+        try{
+          fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
+            body:JSON.stringify({session_id:sid,source:src})}).catch(function(){});
+        }catch(_){}
+        var origGo=go;
+        go=function(dir){
+          var prev=at; origGo(dir);
+          if(at!==prev){
+            try{
+              fetch(base+'/api/v3/pitch-decks/'+encodeURIComponent(deckId)+'/analytics/turn',
+                {method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
+                 body:JSON.stringify({session_id:sid,page:at+1})}).catch(function(){});
+            }catch(_){}
+          }
+        };
+        prev.onclick=function(){go(-1)}; next.onclick=function(){go(1)};
+      }
+    }
+  }catch(_){ }
 })();
 """
 
 
 def deck_document_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = None,
-                       logo_uri: str = "", mode: str = "flip") -> str:
+                       logo_uri: str = "", mode: str = "flip",
+                       api_base: str = "", source: str = "brand") -> str:
     """One self-contained HTML file carrying all 16 slides in both modes.
 
     `mode` only picks which view opens first - the toggle switches between the
@@ -792,6 +827,9 @@ def deck_document_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = N
     mode = "slides" if str(mode).lower() == "slides" else "flip"
     pages = "".join(deck_slides_html(deck, brand, logo_uri))
     title = str(deck.get("title") or brand.get("company") or "Creator Campaign Pitch")
+    deck_id = esc(str(deck.get("id") or ""))
+    api_base_esc = esc(str(api_base or ""))
+    src_esc = esc(str(source or "brand"))
     return (
         "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -800,6 +838,7 @@ def deck_document_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = N
         "<link href='https://fonts.googleapis.com/css2?family=Play:wght@400;700&display=swap' rel='stylesheet'>"
         f"<style>{DECK_CSS}{VIEWER_CSS}</style></head>"
         f"<body data-mode='{mode}'>"
+        f"<meta id='deck-analytics' data-deck-id='{deck_id}' data-api-base='{api_base_esc}' data-source='{src_esc}'>"
         "<div class='toolbar'>"
         "<button class='tbtn' id='m-flip' type='button'>Flip book</button>"
         "<button class='tbtn' id='m-slides' type='button'>Slides</button>"

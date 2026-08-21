@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   v3ListBusinessCases, v3AdminOverview, v3GetBrands, v3GetCreators,
-  v3CreateBusinessCase, v3ListOpportunityCandidates,
+  v3CreateBusinessCase, v3ListOpportunityCandidates, v3BusinessCaseDuplicatesCount,
 } from '../../lib/v3api';
 import {
   formatNairaV3, formatValueV3,
@@ -138,6 +138,7 @@ const V1AdminBusinessCases = () => {
   const [stage, setStage] = useState(validStages.includes(initialStage) ? initialStage : 'all');
   const [track, setTrack] = useState('all');
   const [error, setError] = useState(null);
+  const [duplicatesCount, setDuplicatesCount] = useState(0);
 
   // New BC modal
   const [newOpen, setNewOpen] = useState(false);
@@ -168,6 +169,9 @@ const V1AdminBusinessCases = () => {
 
   useEffect(() => {
     reload().catch((e) => setError(e.message));
+    v3BusinessCaseDuplicatesCount()
+      .then((r) => { if (r && typeof r.count === 'number') setDuplicatesCount(r.count); })
+      .catch(() => {});
   }, []);
 
   const openNew = async () => {
@@ -292,6 +296,22 @@ const V1AdminBusinessCases = () => {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate(adminRoute('/duplicates'))}
+            className="v3-btn-secondary relative"
+            data-testid="bc-duplicates-btn"
+            title="Review possible duplicate business cases"
+          >
+            <AlertOctagon className="w-3.5 h-3.5" /> Duplicates
+            {duplicatesCount > 0 && (
+              <span
+                className="ml-1 min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#B54A37] text-white text-[10px] font-semibold flex items-center justify-center leading-none"
+                data-testid="bc-duplicates-count"
+              >
+                {duplicatesCount > 9 ? '9+' : duplicatesCount}
+              </span>
+            )}
+          </button>
           <button onClick={() => navigate(adminRoute('/brand-communications'))} className="v3-btn-secondary" data-testid="bc-brand-comments" title="Open brand comments and messages">
             <MessageSquare className="w-3.5 h-3.5" /> Brand comments
           </button>
