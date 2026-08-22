@@ -6706,11 +6706,32 @@ def make_v3_router(db):
         sections: Optional[List[Dict[str, Any]]] = None
         reviewer: str = "admin"
 
+    def alignment_snapshot_locked(snap: Dict[str, Any]) -> bool:
+        """A snapshot signed off by BOTH parties is final and cannot be edited.
+
+        Client rule (Aug 2026): once the brand has approved it and admin has
+        approved it, the document both sides agreed on must stay exactly as
+        agreed. Either approval alone still allows edits - only the pair locks
+        it. Enforced here rather than only in the UI, so the rule holds no
+        matter which client calls the API.
+        """
+        if not snap:
+            return False
+        brand_ok = bool(snap.get("brand_approved") or snap.get("brand_approved_at"))
+        admin_ok = bool(snap.get("approved_at")) or str(snap.get("status") or "").lower() == "approved"
+        return brand_ok and admin_ok
+
     @router.patch("/alignment-snapshots/{snapshot_id}")
     async def update_alignment_snapshot(snapshot_id: str, payload: AlignmentUpdatePayload):
         snap = await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
         if not snap:
             raise HTTPException(404, "Alignment Snapshot not found")
+        if alignment_snapshot_locked(snap):
+            raise HTTPException(
+                409,
+                "This Alignment Snapshot is approved by both the brand and TASCK, so it is locked. "
+                "Generate a new snapshot if the project has changed.",
+            )
         updates = {"last_edited_at": _now_iso(), "last_edited_by": payload.reviewer}
         if payload.title is not None:
             updates["title"] = payload.title
@@ -11213,6 +11234,22 @@ def make_v3_router(db):
                                   "updated_at": _now_iso()}})
                     return
                 now = _now_iso()
+                # Tie the brief to THIS project explicitly rather than trusting
+                # the model to name it. Admin renames the business case, and the
+                # brief must follow that name so a creator can tell which
+                # project a brief belongs to.
+                case_title = _clean_document_text(case.get("title") or "", "").strip()
+                brand_label = str(brand.get("company") or brand.get("name") or "").strip()
+                if case_title:
+                    model_title = str(brief.get("title") or "").strip()
+                    if case_title.lower() not in model_title.lower():
+                        prefix = f"{brand_label} " if brand_label and brand_label.lower() not in case_title.lower() else ""
+                        brief["title"] = f"{prefix}Creator Role Brief: {case_title}".strip().upper()
+                brief["business_case_id"] = bc_id
+                brief["business_case_title"] = case_title
+                brief["brand_name"] = brand_label
+                if scoped_snapshot_id:
+                    brief["alignment_snapshot_id"] = scoped_snapshot_id
                 # Store on the snapshot (segmented) so each snapshot keeps its
                 # own brief, and mirror onto case.plan for back-compat.
                 if scoped_snapshot_id:

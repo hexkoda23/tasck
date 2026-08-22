@@ -563,13 +563,13 @@ const BrandCommentCard = ({ comment, index }) => {
   );
 };
 
-const TextInput = ({ label, value, onChange, rows = 1 }) => (
+const TextInput = ({ label, value, onChange, rows = 1, disabled = false }) => (
   <label className="space-y-1">
     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}</span>
     {rows > 1 ? (
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={rows} className="w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" />
+      <textarea value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} rows={rows} className="w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] disabled:bg-[#F4F2ED] disabled:text-[#8A8A8A] disabled:cursor-not-allowed" />
     ) : (
-      <input value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px]" />
+      <input value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] disabled:bg-[#F4F2ED] disabled:text-[#8A8A8A] disabled:cursor-not-allowed" />
     )}
   </label>
 );
@@ -2073,7 +2073,7 @@ export const V3BusinessCaseConnectReschedule = () => {
   );
 };
 
-const AlignmentSectionEditor = ({ section, index, onChange }) => {
+const AlignmentSectionEditor = ({ section, index, onChange, readOnly = false }) => {
   const update = (patch) => onChange({ ...section, ...patch });
   const columns = Array.isArray(section.columns) && section.columns.length
     ? section.columns
@@ -2090,6 +2090,7 @@ const AlignmentSectionEditor = ({ section, index, onChange }) => {
   const addRow = () => update({ columns, rows: [...rows.map((row) => (Array.isArray(row) ? row : Object.values(row || {}))), columns.map(() => '')] });
 
   return (
+    <fieldset disabled={readOnly} className="contents">
     <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-4 shadow-sm" data-testid={`alignment-section-${index}`}>
       <div className="grid grid-cols-[38px_1fr] gap-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E8F3ED] text-[12px] font-semibold text-[#1F4A3A]">
@@ -2258,10 +2259,11 @@ const AlignmentSectionEditor = ({ section, index, onChange }) => {
         </div>
       </div>
     </div>
+    </fieldset>
   );
 };
 
-const AlignmentQuestionEditor = ({ section, index, onChange }) => {
+const AlignmentQuestionEditor = ({ section, index, onChange, readOnly = false }) => {
   const questions = alignmentQuestionsFromSection(section);
   const updateQuestions = (nextQuestions) => onChange({
     ...section,
@@ -2276,6 +2278,7 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
   const removeQuestion = (questionIndex) => updateQuestions(questions.filter((_, idx) => idx !== questionIndex));
 
   return (
+    <fieldset disabled={readOnly} className="contents">
     <div className="rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-4 shadow-sm" data-testid={`alignment-question-section-${index}`}>
       <div className="grid grid-cols-[38px_1fr] gap-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#E8F3ED] text-[12px] font-semibold text-[#1F4A3A]">
@@ -2327,6 +2330,7 @@ const AlignmentQuestionEditor = ({ section, index, onChange }) => {
         </div>
       </div>
     </div>
+    </fieldset>
   );
 };
 export const V3BusinessCaseFrameSnapshot = () => {
@@ -2471,8 +2475,20 @@ export const V3BusinessCaseFrameSnapshot = () => {
     }
   };
 
+  // Approved by BOTH the brand and TASCK => final. The server enforces this
+  // too (409 on PATCH); this just stops the admin typing into a document that
+  // can no longer be saved.
+  const snapshotLocked = Boolean(
+    (activeSnapshot?.brand_approved || activeSnapshot?.brand_approved_at)
+    && (activeSnapshot?.approved_at || String(activeSnapshot?.status || '').toLowerCase() === 'approved')
+  );
+
   const saveEdits = async () => {
     setNotice(null);
+    if (snapshotLocked) {
+      setNotice('This Alignment Snapshot is approved by both the brand and TASCK, so it is locked.');
+      return;
+    }
     try {
       await persistDraft();
       setNotice('Alignment Snapshot edits saved.');
@@ -2827,26 +2843,36 @@ export const V3BusinessCaseFrameSnapshot = () => {
               </div>
             )}
             <div className="rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-4">
-              <TextInput label="Snapshot title" value={activeSnapshot?.title || ''} onChange={(value) => setDraft({ ...(activeSnapshot || {}), title: value })} />
+              {snapshotLocked && (
+                <div className="mb-3 rounded-lg border border-[#C7D7CF] bg-[#EAF4EE] px-3 py-2 text-[12px] text-[#1F4A3A]" data-testid="alignment-locked-notice">
+                  <span className="font-semibold">Locked.</span> The brand and TASCK have both approved this Alignment Snapshot, so it stays exactly as agreed. Generate a new snapshot if the project has changed.
+                </div>
+              )}
+              <TextInput label="Snapshot title" value={activeSnapshot?.title || ''} disabled={snapshotLocked} onChange={(value) => setDraft({ ...(activeSnapshot || {}), title: value })} />
               <div className="mt-3 flex flex-wrap gap-2">
-                <button onClick={saveEdits} className="v3-btn-primary" data-testid="alignment-save-edits-btn"><Save className="w-3.5 h-3.5" /> Save edits</button>
+                <button onClick={saveEdits} disabled={snapshotLocked} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed" data-testid="alignment-save-edits-btn"><Save className="w-3.5 h-3.5" /> Save edits</button>
               </div>
             </div>
 
+            {/* A locked snapshot drops the onChange handlers, so the agreed
+                document is read-only rather than accepting edits that the
+                server would then reject. */}
             {(activeSnapshot?.sections || []).map((section, index) => (
               isAlignmentQuestionSection(section) ? (
                 <AlignmentQuestionEditor
                   key={`${section.heading || 'questions'}-${index}`}
                   section={section}
                   index={index}
-                  onChange={(nextSection) => updateSection(index, nextSection)}
+                  readOnly={snapshotLocked}
+                  onChange={snapshotLocked ? () => {} : (nextSection) => updateSection(index, nextSection)}
                 />
               ) : (
                 <AlignmentSectionEditor
                   key={`${section.heading || 'section'}-${index}`}
                   section={section}
                   index={index}
-                  onChange={(nextSection) => updateSection(index, nextSection)}
+                  readOnly={snapshotLocked}
+                  onChange={snapshotLocked ? () => {} : (nextSection) => updateSection(index, nextSection)}
                 />
               )
             ))}

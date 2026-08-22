@@ -712,7 +712,12 @@ const V1AdminCRMBrandDetail = () => {
     setMoving(true);
     setNotice('');
     try {
-      const customTitle = forceNew ? newProjectTitle.trim() : '';
+      // Send whatever name the admin typed, on BOTH paths. This used to be
+      // gated on forceNew, so on the normal "start project" path the title was
+      // dropped and the backend fell back to its generated
+      // "<Brand> - Business Case Frame" - which is why every project under a
+      // brand read the same.
+      const customTitle = newProjectTitle.trim();
       const payload = { force_new: forceNew, title: customTitle || undefined };
       const result = target === 'frame'
         ? await v3MoveBrandToFrame(brand.id, payload)
