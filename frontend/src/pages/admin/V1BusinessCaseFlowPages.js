@@ -1788,6 +1788,14 @@ export const V3BusinessCaseConnectSchedule = () => {
             {analysisPopup.status === 'running' && (
               <p className="mt-1 text-[11px] text-[#6E6657]">Please keep this page open while TASCK runs the analysis.</p>
             )}
+            {analysisPopup.status === 'failed' && analysisPopup.error && (
+              <p
+                className="mt-2 max-h-32 overflow-y-auto break-words rounded-[6px] bg-[#FBEAE5] px-3 py-2 text-[11px] leading-5 text-[#7A2F22]"
+                data-testid="connect-analysis-popup-error"
+              >
+                {analysisPopup.error}
+              </p>
+            )}
 
             {(analysisPopup.status === 'complete' || analysisPopup.status === 'failed') && (
               <div className="mt-4 flex justify-end gap-2">

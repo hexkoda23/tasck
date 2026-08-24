@@ -849,6 +849,78 @@ async def _emergent_chat(api_key: str, session_id: str, system_prompt: str,
     )
 
 
+async def _run_ai_provider_chain(order: List[Any], problem_with: Any,
+                                 failures: List[str], label: str) -> Optional[Dict[str, Any]]:
+    """Try each provider in turn and return the first usable payload.
+
+    `problem_with(result)` returns a short reason when a payload cannot be
+    used, or None when it is good.
+
+    Every provider that does not deliver appends its REAL reason to `failures`:
+    a missing key by name, an SDK import error, the HTTP status AND body, a
+    timeout, a truncation, a short payload. The job runner puts that in front
+    of the admin.
+
+    This replaced four copies of the same loop that logged the reason at
+    warning level and then reported "Check ANTHROPIC_API_KEY / TASCK_AI_PROVIDER"
+    to the user no matter what had actually gone wrong. In production the real
+    answer was `400 You have reached your specified API usage limits` from a
+    capped Anthropic key - invisible for as long as the generic message stood.
+    """
+    for call in order:
+        name = getattr(call, "__name__", "?").replace("_call_", "")
+        try:
+            result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
+            if not isinstance(result, dict):
+                failures.append(f"{name}: empty response")
+                continue
+            problem = problem_with(result)
+            if not problem:
+                return result
+            failures.append(f"{name}: {problem}")
+            logger.warning("%s via %s: %s", label, name, problem)
+        except asyncio.TimeoutError:
+            failures.append(f"{name}: timed out")
+            logger.warning("%s via %s timed out", label, name)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{name}: {exc}")
+            logger.warning("%s via %s failed: %s", label, name, exc)
+    return None
+
+
+def _anthropic_json_call(anthropic_key: Optional[str], model: str, system_prompt: str,
+                         user_message: str, *, max_tokens: int, temperature: float,
+                         timeout: int = 180) -> Dict[str, Any]:
+    """One Anthropic Messages call that explains itself when it fails.
+
+    `raise_for_status()` used to collapse the response body into a bare
+    "400 Client Error", discarding the only sentence that said what was wrong.
+    """
+    if not anthropic_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+    response = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"},
+        json={"model": model, "max_tokens": max_tokens, "temperature": temperature,
+              "system": system_prompt,
+              "messages": [{"role": "user", "content": user_message}]},
+        timeout=timeout,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"anthropic:{model} HTTP {response.status_code}: "
+                           f"{(response.text or '')[:200]}")
+    data = response.json()
+    text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+    if data.get("stop_reason") == "max_tokens":
+        raise RuntimeError(f"anthropic:{model} hit max_tokens - the JSON was truncated")
+    parsed = _parse_json_object(text)
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"anthropic:{model} returned no JSON object ({len(text or '')} chars)")
+    parsed["analysis_source"] = f"anthropic:{model}"
+    return parsed
+
+
 # ============================================================================
 # Brand About - LLM-cleaned brand description from raw web scrape
 # ============================================================================
@@ -1708,12 +1780,14 @@ async def _call_opportunity_detection_tool(
     brand: Dict[str, Any],
     case: Dict[str, Any],
     corpus: str,
+    failures: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Claude reads every Connect source and returns discrete opportunities.
     Returns None when unavailable so the caller can fall back."""
     if not (corpus or "").strip():
         return None
 
+    failures = failures if failures is not None else []
     system_prompt = _opportunity_detection_system_prompt()
     user_message = _opportunity_detection_user_message(brand, case, corpus)
     emergent_key = os.getenv("EMERGENT_LLM_KEY")
@@ -1722,7 +1796,7 @@ async def _call_opportunity_detection_tool(
 
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
-            return None
+            raise RuntimeError("EMERGENT_LLM_KEY is not set")
         provider = os.getenv("OPPORTUNITY_EMERGENT_PROVIDER") or "gemini"
         model = os.getenv("OPPORTUNITY_EMERGENT_MODEL") or "gemini-2.5-flash"
         # Worker thread, not the event loop - see _emergent_chat.
@@ -1732,46 +1806,23 @@ async def _call_opportunity_detection_tool(
         if isinstance(parsed, dict):
             parsed["analysis_source"] = f"emergent:{provider}/{model}"
             return parsed
-        return None
+        raise RuntimeError(f"emergent:{provider}/{model} returned no JSON object "
+                           f"({len(text or '')} chars)")
 
     def _call_http_model() -> Optional[Dict[str, Any]]:
-        if not anthropic_key:
-            return None
         model = os.getenv("OPPORTUNITY_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": anthropic_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": 4000,
-                "temperature": 0.1,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_message}],
-            },
-            timeout=90,
-        )
-        response.raise_for_status()
-        data = response.json()
-        text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
-        parsed = _parse_json_object(text)
-        if isinstance(parsed, dict):
-            parsed["analysis_source"] = f"anthropic:{model}"
-            return parsed
-        return None
+        # 4000 was enough for two or three opportunities and silently truncated
+        # a busy corpus into unparseable JSON.
+        return _anthropic_json_call(anthropic_key, model, system_prompt, user_message,
+                                    max_tokens=16000, temperature=0.1)
+
+    def _problem_with(result: Dict[str, Any]) -> Optional[str]:
+        if isinstance(result.get("opportunities"), list):
+            return None
+        return "the reply carried no opportunities list"
 
     order = [_call_http_model, _call_emergent] if _prefer_anthropic else [_call_emergent, _call_http_model]
-    for call in order:
-        try:
-            result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
-            if isinstance(result, dict) and isinstance(result.get("opportunities"), list):
-                return result
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Opportunity detection via %s failed: %s", getattr(call, "__name__", "?"), exc)
-    return None
+    return await _run_ai_provider_chain(order, _problem_with, failures, "Opportunity detection")
 
 
 # ---------------------------------------------------------------------------
@@ -1915,7 +1966,9 @@ Write the Creative Brief for this brand in the exact template shape.
 
 
 async def _call_creative_brief_tool(brand: Dict[str, Any], case: Dict[str, Any], snapshot: Dict[str, Any],
-                                    selector: Dict[str, Any], creators: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+                                    selector: Dict[str, Any], creators: List[Dict[str, Any]],
+                                    failures: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    failures = failures if failures is not None else []
     system_prompt = _creative_brief_system_prompt()
     user_message = _creative_brief_user_message(brand, case, snapshot, selector, creators)
     emergent_key = os.getenv("EMERGENT_LLM_KEY")
@@ -1924,7 +1977,7 @@ async def _call_creative_brief_tool(brand: Dict[str, Any], case: Dict[str, Any],
 
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
-            return None
+            raise RuntimeError("EMERGENT_LLM_KEY is not set")
         provider = os.getenv("CREATIVE_BRIEF_EMERGENT_PROVIDER") or "gemini"
         model = os.getenv("CREATIVE_BRIEF_EMERGENT_MODEL") or "gemini-2.5-flash"
         # Worker thread, not the event loop - see _emergent_chat.
@@ -1934,38 +1987,24 @@ async def _call_creative_brief_tool(brand: Dict[str, Any], case: Dict[str, Any],
         if isinstance(parsed, dict):
             parsed["analysis_source"] = f"emergent:{provider}/{model}"
             return parsed
-        return None
+        raise RuntimeError(f"emergent:{provider}/{model} returned no JSON object "
+                           f"({len(text or '')} chars)")
 
     def _call_http_model() -> Optional[Dict[str, Any]]:
-        if not anthropic_key:
-            return None
         model = os.getenv("CREATIVE_BRIEF_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": model, "max_tokens": 4000, "temperature": 0.4,
-                  "system": system_prompt,
-                  "messages": [{"role": "user", "content": user_message}]},
-            timeout=90,
-        )
-        response.raise_for_status()
-        data = response.json()
-        text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
-        parsed = _parse_json_object(text)
-        if isinstance(parsed, dict):
-            parsed["analysis_source"] = f"anthropic:{model}"
-            return parsed
+        # A full brief runs long; 4000 truncated the JSON on the wordier ones.
+        return _anthropic_json_call(anthropic_key, model, system_prompt, user_message,
+                                    max_tokens=16000, temperature=0.4)
+
+    def _problem_with(result: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(result.get("sections"), list):
+            return "the reply carried no sections list"
+        if not result.get("title"):
+            return "the reply carried no title"
         return None
 
     order = [_call_http_model, _call_emergent] if _prefer_anthropic else [_call_emergent, _call_http_model]
-    for call in order:
-        try:
-            result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
-            if isinstance(result, dict) and isinstance(result.get("sections"), list) and result.get("title"):
-                return result
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Creative brief generation via %s failed: %s", getattr(call, "__name__", "?"), exc)
-    return None
+    return await _run_ai_provider_chain(order, _problem_with, failures, "Creative brief generation")
 
 
 # ---------------------------------------------------------------------------
@@ -2270,65 +2309,30 @@ async def _call_pitch_deck_tool(brand: Dict[str, Any], case: Dict[str, Any], sna
                            f"({len(text or '')} chars)")
 
     def _call_http_model() -> Optional[Dict[str, Any]]:
-        if not anthropic_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not set")
         model = os.getenv("PITCH_DECK_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
-        response = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            # 4500 was too tight: a filled 16-slide payload measured ~10 KB of
-            # JSON (~3.2k tokens) on a real brand, so any deck with a few extra
-            # risk rows or creators was truncated mid-JSON, parsed to nothing,
-            # and surfaced as "generation failed". You only pay for tokens
-            # actually produced, so raising the ceiling costs nothing.
-            json={"model": model, "max_tokens": 16000, "temperature": 0.3,
-                  "system": system_prompt,
-                  "messages": [{"role": "user", "content": user_message}]},
-            timeout=180,
-        )
-        if response.status_code >= 400:
-            raise RuntimeError(f"anthropic:{model} HTTP {response.status_code}: "
-                               f"{(response.text or '')[:200]}")
-        data = response.json()
-        text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
-        if data.get("stop_reason") == "max_tokens":
-            raise RuntimeError(f"anthropic:{model} hit max_tokens - the deck JSON was truncated")
-        parsed = _parse_json_object(text)
-        if isinstance(parsed, dict):
-            parsed["analysis_source"] = f"anthropic:{model}"
-            return parsed
-        raise RuntimeError(f"anthropic:{model} returned no JSON object ({len(text or '')} chars)")
+        # 4500 was too tight: a filled 16-slide payload measured ~10 KB of JSON
+        # (~3.2k tokens) on a real brand, so any deck with a few extra risk rows
+        # or creators was truncated mid-JSON, parsed to nothing, and surfaced as
+        # "generation failed". You only pay for tokens actually produced.
+        return _anthropic_json_call(anthropic_key, model, system_prompt, user_message,
+                                    max_tokens=16000, temperature=0.3)
+
+    def _problem_with(result: Dict[str, Any]) -> Optional[str]:
+        sections = result.get("sections")
+        slides = result.get("slides") if isinstance(result.get("slides"), dict) else {}
+        # Current prompt returns the 16-slide payload only; older prompts
+        # returned a 10-section list. Accept either, and synthesize the
+        # sections list from slides so the .docx renderer keeps working.
+        if not (isinstance(sections, list) and len(sections) >= 8) and len(slides) >= 10:
+            result["sections"] = _pitch_sections_from_slides(slides)
+            sections = result["sections"]
+        if isinstance(sections, list) and len(sections) >= 8:
+            return None
+        return (f"incomplete payload (sections="
+                f"{len(sections) if isinstance(sections, list) else 0}, slides={len(slides)})")
 
     order = [_call_http_model, _call_emergent] if _prefer_anthropic else [_call_emergent, _call_http_model]
-    for call in order:
-        name = getattr(call, "__name__", "?").replace("_call_", "")
-        try:
-            result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
-            if not isinstance(result, dict):
-                failures.append(f"{name}: empty response")
-                continue
-            sections = result.get("sections")
-            slides = result.get("slides") if isinstance(result.get("slides"), dict) else {}
-            # Current prompt returns the 16-slide payload only; older prompts
-            # returned a 10-section list. Accept either, and synthesize the
-            # sections list from slides so the .docx renderer keeps working.
-            if not (isinstance(sections, list) and len(sections) >= 8) and len(slides) >= 10:
-                result["sections"] = _pitch_sections_from_slides(slides)
-                sections = result["sections"]
-            if isinstance(sections, list) and len(sections) >= 8:
-                return result
-            detail = (f"{name}: incomplete payload "
-                      f"(sections={len(sections) if isinstance(sections, list) else 0}, slides={len(slides)})")
-            failures.append(detail)
-            logger.warning("Pitch deck generation via %s returned an incomplete payload (sections=%s, slides=%s)",
-                           name, len(sections) if isinstance(sections, list) else 0, len(slides))
-        except asyncio.TimeoutError:
-            failures.append(f"{name}: timed out")
-            logger.warning("Pitch deck generation via %s timed out", name)
-        except Exception as exc:  # noqa: BLE001
-            failures.append(f"{name}: {exc}")
-            logger.warning("Pitch deck generation via %s failed: %s", name, exc)
-    return None
+    return await _run_ai_provider_chain(order, _problem_with, failures, "Pitch deck generation")
 
 
 async def _call_brainstorm_analysis_tool(
@@ -11317,12 +11321,18 @@ def make_v3_router(db):
                     {"$set": {"status": "running", "progress": 30,
                               "message": "Claude is writing the brief in the approved TASCK template…",
                               "updated_at": _now_iso()}})
-                brief = await _call_creative_brief_tool(brand, case, snapshot, selector, creators)
+                failures: List[str] = []
+                brief = await _call_creative_brief_tool(brand, case, snapshot, selector,
+                                                        creators, failures=failures)
                 if not brief:
+                    # Name the provider's actual complaint rather than pointing
+                    # the admin at an env var that is usually fine.
+                    detail = " | ".join(failures) or "no AI provider is configured"
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": "The AI could not write the brief. Check ANTHROPIC_API_KEY / TASCK_AI_PROVIDER and retry.",
+                                  "message": f"The AI could not write the brief - {detail}",
+                                  "error": detail[:500],
                                   "updated_at": _now_iso()}})
                     return
                 now = _now_iso()
@@ -14530,12 +14540,18 @@ def make_v3_router(db):
                               "message": "Claude is splitting the conversations into distinct opportunities…",
                               "updated_at": _now_iso()}},
                 )
-                result = await _call_opportunity_detection_tool(brand, case, corpus)
+                failures: List[str] = []
+                result = await _call_opportunity_detection_tool(brand, case, corpus,
+                                                                failures=failures)
                 if not result:
+                    # Name the provider's actual complaint. "Check your API key"
+                    # was wrong most of the time and hid the real cause.
+                    detail = " | ".join(failures) or "no AI provider is configured"
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": "The AI could not analyse the conversations. Check ANTHROPIC_API_KEY / TASCK_AI_PROVIDER and try again.",
+                                  "message": f"The AI could not analyse the conversations - {detail}",
+                                  "error": detail[:500],
                                   "updated_at": _now_iso()}},
                     )
                     return
