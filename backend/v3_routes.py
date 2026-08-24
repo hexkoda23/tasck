@@ -11,18 +11,20 @@ Stage advancement rules:
   deliver -> closed : Closure checklist complete (final report + feedback)
 """
 from fastapi import APIRouter, HTTPException, Header, Depends, Body, UploadFile, File
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import StreamingResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone, timedelta as _td
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from io import BytesIO
+from collections import OrderedDict
 from pathlib import Path
 from dotenv import load_dotenv
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 import asyncio
 import html
+import threading
 import smtplib
 import ssl
 from email.message import EmailMessage
@@ -762,6 +764,92 @@ def _resolve_ai_provider(per_feature_env_var: str) -> bool:
 
 
 # ============================================================================
+# Emergent LLM bridge - keeps the SDK off the request event loop
+# ============================================================================
+#
+# Why this exists (Aug 2026 outage):
+# `from emergentintegrations.llm.chat import LlmChat` pulls in litellm, which
+# is a very heavy import. Doing that lazily inside a route handler blocked the
+# single uvicorn worker for seconds and spiked RSS hard enough to get the pod
+# OOM-killed - the gateway then had no origin to talk to and Cloudflare
+# answered every request (not just the AI ones) with a 520 "origin returned an
+# empty/unparseable response" page. The Pitch Deck was the most visible
+# casualty because it is the heaviest LLM call in the product.
+#
+# Two rules now hold for every emergent call:
+#   1. The import happens exactly once, in a worker thread, behind a lock, and
+#      the failure is remembered instead of being retried on every request.
+#   2. The chat call itself runs in a worker thread with its own event loop,
+#      so a synchronous HTTP client inside the SDK can no longer freeze the
+#      server for the duration of a 60-second generation.
+# ============================================================================
+
+_EMERGENT_LOCK = threading.Lock()
+_EMERGENT_CACHE: Dict[str, Any] = {"loaded": False, "chat": None, "user_message": None, "error": None}
+
+
+def _load_emergent_sync() -> Tuple[Any, Any, Optional[str]]:
+    """Import the emergent SDK once and cache it (or cache why it failed).
+
+    Returns (LlmChat, UserMessage, error_message). Never raises - callers get
+    a human-readable reason they can put in front of an admin.
+    """
+    with _EMERGENT_LOCK:
+        if not _EMERGENT_CACHE["loaded"]:
+            try:
+                from emergentintegrations.llm.chat import LlmChat, UserMessage
+                _EMERGENT_CACHE["chat"] = LlmChat
+                _EMERGENT_CACHE["user_message"] = UserMessage
+            except Exception as exc:  # noqa: BLE001
+                _EMERGENT_CACHE["error"] = f"emergentintegrations unavailable: {type(exc).__name__}: {exc}"
+                logger.warning("Emergent SDK import failed: %s", exc)
+            _EMERGENT_CACHE["loaded"] = True
+        return _EMERGENT_CACHE["chat"], _EMERGENT_CACHE["user_message"], _EMERGENT_CACHE["error"]
+
+
+def _emergent_chat_sync(api_key: str, session_id: str, system_prompt: str,
+                        provider: str, model: str, user_message: str) -> str:
+    """Run one emergent chat turn to completion on the calling thread.
+
+    `send_message` is a coroutine, so this drives it on a private event loop -
+    the caller is a worker thread, never the server's loop.
+    """
+    LlmChat, UserMessage, err = _load_emergent_sync()
+    if err or LlmChat is None or UserMessage is None:
+        raise RuntimeError(err or "emergentintegrations unavailable")
+    chat = LlmChat(api_key=api_key, session_id=session_id,
+                   system_message=system_prompt).with_model(provider, model)
+    result = chat.send_message(UserMessage(text=user_message))
+    if asyncio.iscoroutine(result):
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(result)
+        finally:
+            try:
+                loop.close()
+            except Exception:  # noqa: BLE001
+                pass
+    return _response_to_text(result)
+
+
+async def _emergent_chat(api_key: str, session_id: str, system_prompt: str,
+                         provider: str, model: str, user_message: str,
+                         timeout: float = 180.0) -> str:
+    """Await one emergent chat turn without ever occupying the event loop.
+
+    Raises on failure so the caller can report the real reason rather than a
+    generic "the AI could not do it".
+    """
+    if not api_key:
+        raise RuntimeError("EMERGENT_LLM_KEY is not set")
+    return await asyncio.wait_for(
+        asyncio.to_thread(_emergent_chat_sync, api_key, session_id, system_prompt,
+                          provider, model, user_message),
+        timeout=timeout,
+    )
+
+
+# ============================================================================
 # Brand About - LLM-cleaned brand description from raw web scrape
 # ============================================================================
 #
@@ -854,16 +942,12 @@ async def _call_brand_about_tool(
         if not emergent_key:
             return None
         try:
-            from emergentintegrations.llm.chat import LlmChat, UserMessage
             provider = os.getenv("BRAND_ABOUT_EMERGENT_PROVIDER") or "gemini"
             model = os.getenv("BRAND_ABOUT_EMERGENT_MODEL") or "gemini-2.5-flash"
-            chat = LlmChat(
-                api_key=emergent_key,
-                session_id=f"brand-about-{uuid.uuid4()}",
-                system_message=system_prompt,
-            ).with_model(provider, model)
-            response = await chat.send_message(UserMessage(text=user_message))
-            parsed = _parse_json_object(_response_to_text(response))
+            # Worker thread, not the event loop - see _emergent_chat.
+            text = await _emergent_chat(emergent_key, f"brand-about-{uuid.uuid4()}", system_prompt,
+                                        provider, model, user_message)
+            parsed = _parse_json_object(text)
             if isinstance(parsed, dict):
                 text = str(parsed.get("about") or "").strip()
                 return text or None
@@ -1082,16 +1166,12 @@ async def _call_alignment_analysis_tool(
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
             return None
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_PROVIDER") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_PROVIDER") or "gemini"
         model = os.getenv("ALIGNMENT_ANALYZER_EMERGENT_MODEL") or os.getenv("OPPORTUNITY_SCANNER_EMERGENT_MODEL") or "gemini-2.5-flash"
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"alignment-analyzer-{uuid.uuid4()}",
-            system_message=system_prompt,
-        ).with_model(provider, model)
-        response = await chat.send_message(UserMessage(text=user_message))
-        parsed = _parse_json_object(_response_to_text(response))
+        # Worker thread, not the event loop - see _emergent_chat.
+        text = await _emergent_chat(emergent_key, f"alignment-analyzer-{uuid.uuid4()}", system_prompt,
+                                    provider, model, user_message)
+        parsed = _parse_json_object(text)
         return _normalise_alignment_tool_result({**parsed, "analysis_source": f"emergent:{provider}/{model}"})
 
     try:
@@ -1296,16 +1376,12 @@ async def _call_creator_match_tool(
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
             return None
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("CREATOR_MATCH_EMERGENT_PROVIDER") or "gemini"
         model = os.getenv("CREATOR_MATCH_EMERGENT_MODEL") or "gemini-2.5-flash"
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"creator-match-{uuid.uuid4()}",
-            system_message=system_prompt,
-        ).with_model(provider, model)
-        response = await chat.send_message(UserMessage(text=user_message))
-        parsed = _parse_json_object(_response_to_text(response))
+        # Worker thread, not the event loop - see _emergent_chat.
+        text = await _emergent_chat(emergent_key, f"creator-match-{uuid.uuid4()}", system_prompt,
+                                    provider, model, user_message)
+        parsed = _parse_json_object(text)
         if isinstance(parsed, dict):
             parsed["analysis_source"] = f"emergent:{provider}/{model}"
             return parsed
@@ -1647,16 +1723,12 @@ async def _call_opportunity_detection_tool(
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
             return None
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("OPPORTUNITY_EMERGENT_PROVIDER") or "gemini"
         model = os.getenv("OPPORTUNITY_EMERGENT_MODEL") or "gemini-2.5-flash"
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"opportunities-{uuid.uuid4()}",
-            system_message=system_prompt,
-        ).with_model(provider, model)
-        response = await chat.send_message(UserMessage(text=user_message))
-        parsed = _parse_json_object(_response_to_text(response))
+        # Worker thread, not the event loop - see _emergent_chat.
+        text = await _emergent_chat(emergent_key, f"opportunities-{uuid.uuid4()}", system_prompt,
+                                    provider, model, user_message)
+        parsed = _parse_json_object(text)
         if isinstance(parsed, dict):
             parsed["analysis_source"] = f"emergent:{provider}/{model}"
             return parsed
@@ -1853,13 +1925,12 @@ async def _call_creative_brief_tool(brand: Dict[str, Any], case: Dict[str, Any],
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
             return None
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("CREATIVE_BRIEF_EMERGENT_PROVIDER") or "gemini"
         model = os.getenv("CREATIVE_BRIEF_EMERGENT_MODEL") or "gemini-2.5-flash"
-        chat = LlmChat(api_key=emergent_key, session_id=f"brief-{uuid.uuid4()}",
-                       system_message=system_prompt).with_model(provider, model)
-        response = await chat.send_message(UserMessage(text=user_message))
-        parsed = _parse_json_object(_response_to_text(response))
+        # Worker thread, not the event loop - see _emergent_chat.
+        text = await _emergent_chat(emergent_key, f"brief-{uuid.uuid4()}", system_prompt,
+                                    provider, model, user_message)
+        parsed = _parse_json_object(text)
         if isinstance(parsed, dict):
             parsed["analysis_source"] = f"emergent:{provider}/{model}"
             return parsed
@@ -2165,7 +2236,17 @@ Write the full ten-section Pitch Deck for this brand.
 
 
 async def _call_pitch_deck_tool(brand: Dict[str, Any], case: Dict[str, Any], snapshot: Dict[str, Any],
-                                selector: Dict[str, Any], creators: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+                                selector: Dict[str, Any], creators: List[Dict[str, Any]],
+                                failures: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    """Ask the configured LLM for the 16-slide Pitch Deck payload.
+
+    `failures` is an out-parameter: every provider that was tried and did not
+    produce a usable deck appends the REAL reason (missing key, SDK import
+    error, HTTP status, timeout, short payload). The job then shows the admin
+    what actually went wrong instead of a blanket "check your API key" - that
+    generic message sent us chasing the wrong thing for a week.
+    """
+    failures = failures if failures is not None else []
     system_prompt = _pitch_deck_system_prompt()
     user_message = _pitch_deck_user_message(brand, case, snapshot, selector, creators)
     emergent_key = os.getenv("EMERGENT_LLM_KEY")
@@ -2174,45 +2255,57 @@ async def _call_pitch_deck_tool(brand: Dict[str, Any], case: Dict[str, Any], sna
 
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
-            return None
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+            raise RuntimeError("EMERGENT_LLM_KEY is not set")
         provider = os.getenv("PITCH_DECK_EMERGENT_PROVIDER") or "gemini"
         model = os.getenv("PITCH_DECK_EMERGENT_MODEL") or "gemini-2.5-flash"
-        chat = LlmChat(api_key=emergent_key, session_id=f"pitch-{uuid.uuid4()}",
-                       system_message=system_prompt).with_model(provider, model)
-        response = await chat.send_message(UserMessage(text=user_message))
-        parsed = _parse_json_object(_response_to_text(response))
+        # Runs in a worker thread - a 60s generation must never block the
+        # event loop, or every other request 520s while the deck is written.
+        text = await _emergent_chat(emergent_key, f"pitch-{uuid.uuid4()}", system_prompt,
+                                    provider, model, user_message, timeout=240.0)
+        parsed = _parse_json_object(text)
         if isinstance(parsed, dict):
             parsed["analysis_source"] = f"emergent:{provider}/{model}"
             return parsed
-        return None
+        raise RuntimeError(f"emergent:{provider}/{model} returned no JSON object "
+                           f"({len(text or '')} chars)")
 
     def _call_http_model() -> Optional[Dict[str, Any]]:
         if not anthropic_key:
-            return None
+            raise RuntimeError("ANTHROPIC_API_KEY is not set")
         model = os.getenv("PITCH_DECK_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
         response = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": model, "max_tokens": 4500, "temperature": 0.3,
+            # 4500 was too tight: a filled 16-slide payload measured ~10 KB of
+            # JSON (~3.2k tokens) on a real brand, so any deck with a few extra
+            # risk rows or creators was truncated mid-JSON, parsed to nothing,
+            # and surfaced as "generation failed". You only pay for tokens
+            # actually produced, so raising the ceiling costs nothing.
+            json={"model": model, "max_tokens": 16000, "temperature": 0.3,
                   "system": system_prompt,
                   "messages": [{"role": "user", "content": user_message}]},
-            timeout=90,
+            timeout=180,
         )
-        response.raise_for_status()
+        if response.status_code >= 400:
+            raise RuntimeError(f"anthropic:{model} HTTP {response.status_code}: "
+                               f"{(response.text or '')[:200]}")
         data = response.json()
         text = "\n".join([part.get("text", "") for part in data.get("content", []) if part.get("type") == "text"])
+        if data.get("stop_reason") == "max_tokens":
+            raise RuntimeError(f"anthropic:{model} hit max_tokens - the deck JSON was truncated")
         parsed = _parse_json_object(text)
         if isinstance(parsed, dict):
             parsed["analysis_source"] = f"anthropic:{model}"
             return parsed
-        return None
+        raise RuntimeError(f"anthropic:{model} returned no JSON object ({len(text or '')} chars)")
 
     order = [_call_http_model, _call_emergent] if _prefer_anthropic else [_call_emergent, _call_http_model]
     for call in order:
+        name = getattr(call, "__name__", "?").replace("_call_", "")
         try:
             result = await call() if asyncio.iscoroutinefunction(call) else await asyncio.to_thread(call)
             if not isinstance(result, dict):
+                failures.append(f"{name}: empty response")
                 continue
             sections = result.get("sections")
             slides = result.get("slides") if isinstance(result.get("slides"), dict) else {}
@@ -2224,11 +2317,17 @@ async def _call_pitch_deck_tool(brand: Dict[str, Any], case: Dict[str, Any], sna
                 sections = result["sections"]
             if isinstance(sections, list) and len(sections) >= 8:
                 return result
+            detail = (f"{name}: incomplete payload "
+                      f"(sections={len(sections) if isinstance(sections, list) else 0}, slides={len(slides)})")
+            failures.append(detail)
             logger.warning("Pitch deck generation via %s returned an incomplete payload (sections=%s, slides=%s)",
-                           getattr(call, "__name__", "?"),
-                           len(sections) if isinstance(sections, list) else 0, len(slides))
+                           name, len(sections) if isinstance(sections, list) else 0, len(slides))
+        except asyncio.TimeoutError:
+            failures.append(f"{name}: timed out")
+            logger.warning("Pitch deck generation via %s timed out", name)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Pitch deck generation via %s failed: %s", getattr(call, "__name__", "?"), exc)
+            failures.append(f"{name}: {exc}")
+            logger.warning("Pitch deck generation via %s failed: %s", name, exc)
     return None
 
 
@@ -2251,16 +2350,12 @@ async def _call_brainstorm_analysis_tool(
     async def _call_emergent() -> Optional[Dict[str, Any]]:
         if not emergent_key:
             return None
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
         provider = os.getenv("BRAINSTORM_EMERGENT_PROVIDER") or "gemini"
         model = os.getenv("BRAINSTORM_EMERGENT_MODEL") or "gemini-2.5-flash"
-        chat = LlmChat(
-            api_key=emergent_key,
-            session_id=f"brainstorm-{uuid.uuid4()}",
-            system_message=system_prompt,
-        ).with_model(provider, model)
-        response = await chat.send_message(UserMessage(text=user_message))
-        parsed = _parse_json_object(_response_to_text(response))
+        # Worker thread, not the event loop - see _emergent_chat.
+        text = await _emergent_chat(emergent_key, f"brainstorm-{uuid.uuid4()}", system_prompt,
+                                    provider, model, user_message)
+        parsed = _parse_json_object(text)
         if isinstance(parsed, dict):
             parsed["analysis_source"] = f"emergent:{provider}/{model}"
             return parsed
@@ -5649,18 +5744,15 @@ def make_v3_router(db):
         emergent_key = os.getenv("EMERGENT_LLM_KEY")
         if emergent_key:
             try:
-                from emergentintegrations.llm.chat import LlmChat, UserMessage
                 model = os.getenv("IMPORT_EXTRACT_EMERGENT_MODEL") or "gemini-2.5-flash"
-                chat = LlmChat(
-                    api_key=emergent_key,
-                    session_id=f"import-extract-{uuid.uuid4()}",
-                    system_message=_IMPORT_EXTRACT_SYSTEM,
-                ).with_model("gemini", model)
-                response = await asyncio.wait_for(
-                    chat.send_message(UserMessage(text=f"Document filename: {file.filename}\n\nDocument text:\n{excerpt}")),
+                # Worker thread, not the event loop - see _emergent_chat.
+                text_out = await _emergent_chat(
+                    emergent_key, f"import-extract-{uuid.uuid4()}", _IMPORT_EXTRACT_SYSTEM,
+                    "gemini", model,
+                    f"Document filename: {file.filename}\n\nDocument text:\n{excerpt}",
                     timeout=60,
                 )
-                fields = _parse_json_object(_response_to_text(response)) or {}
+                fields = _parse_json_object(text_out) or {}
                 analysis_source = f"emergent:gemini/{model}"
             except Exception as exc:
                 logging.warning("Import extract LLM failed: %s", exc)
@@ -11586,12 +11678,18 @@ def make_v3_router(db):
                     {"$set": {"status": "running", "progress": 30,
                               "message": "Claude is writing all ten Pitch Deck sections…",
                               "updated_at": _now_iso()}})
-                result = await _call_pitch_deck_tool(brand, case, snapshot, selector, creators)
+                failures: List[str] = []
+                result = await _call_pitch_deck_tool(brand, case, snapshot, selector, creators,
+                                                     failures=failures)
                 if not result:
+                    # Show the provider's actual complaint. "Check your API key"
+                    # was wrong most of the time and hid the real cause.
+                    detail = " | ".join(failures) or "no AI provider is configured"
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": "The AI could not write the Pitch Deck. Check ANTHROPIC_API_KEY / TASCK_AI_PROVIDER and retry.",
+                                  "message": f"The AI could not write the Pitch Deck - {detail}",
+                                  "error": detail[:500],
                                   "updated_at": _now_iso()}})
                     return
                 now = _now_iso()
@@ -11960,6 +12058,29 @@ def make_v3_router(db):
         await db.v3_pitch_decks.update_one({"id": deck_id}, {"$push": {"brand_comments": comment}})
         return {"ok": True, "comment": comment}
 
+    # A rendered deck is ~1.5 MB of HTML (mostly inlined base64 artwork) and
+    # the same document is fetched over and over: the admin preview iframe,
+    # the brand portal embed, the download button and the print-to-PDF view
+    # all hit this one route. Rebuilding and re-encoding that string per
+    # request pushed the worker's RSS hard enough to get the pod killed, and
+    # a dead origin is exactly what Cloudflare reports as a 520. Keep the last
+    # few renders keyed on the deck's own `updated_at` so a repeat view is a
+    # dict lookup, and drop the cache the moment the deck changes.
+    _FLIPBOOK_CACHE: "OrderedDict[str, bytes]" = OrderedDict()
+    _FLIPBOOK_CACHE_MAX = 4
+
+    def _flipbook_cache_get(key: str) -> Optional[bytes]:
+        payload = _FLIPBOOK_CACHE.get(key)
+        if payload is not None:
+            _FLIPBOOK_CACHE.move_to_end(key)
+        return payload
+
+    def _flipbook_cache_put(key: str, payload: bytes) -> None:
+        _FLIPBOOK_CACHE[key] = payload
+        _FLIPBOOK_CACHE.move_to_end(key)
+        while len(_FLIPBOOK_CACHE) > _FLIPBOOK_CACHE_MAX:
+            _FLIPBOOK_CACHE.popitem(last=False)
+
     @router.get("/pitch-decks/{deck_id}/flipbook")
     async def pitch_deck_flipbook(deck_id: str, download: int = 0, view: str = "flip", source: str = "brand"):
         """The Pitch Deck as a standalone single-file HTML deck.
@@ -11987,22 +12108,57 @@ def make_v3_router(db):
         # entirely for those.
         api_base = ""
         deck_source = "download" if download else (source or "brand")
-        if deck_has_template_content(deck):
-            html_out = deck_document_html(deck, brand, logo_uri=_email_logo_data_uri(),
-                                          mode=view, api_base=api_base, source=deck_source)
-        else:
-            html_out = pitch_deck_flipbook_html(deck, brand, api_base=api_base, source=deck_source)
-        headers = {}
+        mode = "slides" if str(view).lower() == "slides" else "flip"
+        cache_key = "|".join([
+            str(deck_id), str(deck.get("updated_at") or deck.get("generated_at") or ""),
+            mode, deck_source, str(brand.get("id") or ""),
+        ])
+
+        payload = _flipbook_cache_get(cache_key)
+        if payload is None:
+            def _render() -> bytes:
+                if deck_has_template_content(deck):
+                    html_out = deck_document_html(deck, brand, logo_uri=_email_logo_data_uri(),
+                                                  mode=mode, api_base=api_base, source=deck_source)
+                else:
+                    html_out = pitch_deck_flipbook_html(deck, brand, api_base=api_base, source=deck_source)
+                return html_out.encode("utf-8")
+
+            try:
+                # Off the event loop: a megabyte of string building should not
+                # stall the job-progress polls happening at the same time.
+                payload = await asyncio.to_thread(_render)
+            except Exception as exc:  # noqa: BLE001
+                # A template error must not close the connection mid-response -
+                # that reaches the browser as an unexplained gateway error
+                # inside the preview iframe. Say what broke instead.
+                logger.exception("Pitch deck flipbook render failed for %s", deck_id)
+                return HTMLResponse(
+                    "<!doctype html><meta charset='utf-8'>"
+                    "<div style=\"font:14px system-ui;padding:32px;color:#7a2020\">"
+                    "<h2 style='margin:0 0 8px'>This deck could not be rendered.</h2>"
+                    f"<p>{html.escape(str(exc))[:400]}</p>"
+                    "<p>Regenerate the Pitch Deck, or contact support with this message.</p></div>",
+                    status_code=500,
+                )
+            _flipbook_cache_put(cache_key, payload)
+
+        headers = {"Cache-Control": "private, max-age=60"}
         if download:
             headers["Content-Disposition"] = f'attachment; filename="{flipbook_filename(deck)}"'
-        return StreamingResponse(BytesIO(html_out.encode("utf-8")), media_type="text/html; charset=utf-8", headers=headers)
+        # A plain Response carries a real Content-Length. The old
+        # StreamingResponse(BytesIO(...)) sent this megabyte chunked and made
+        # an extra in-memory copy of the whole document for no benefit.
+        return Response(content=payload, media_type="text/html; charset=utf-8", headers=headers)
 
     @router.get("/pitch-decks/{deck_id}/docx")
     async def download_pitch_deck_docx(deck_id: str):
         deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
         if not deck:
             raise HTTPException(404, "Pitch Deck not found")
-        data = pitch_deck_docx_bytes(deck)
+        # Zipping the .docx is CPU-bound and the package runs to ~600 KB, so
+        # it goes to a worker thread rather than stalling the event loop.
+        data = await asyncio.to_thread(pitch_deck_docx_bytes, deck)
         # Same human-readable name the emailed attachment uses, rather than
         # an underscore-mangled one, so downloads and emails agree.
         case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0}) or {}
@@ -12010,8 +12166,8 @@ def make_v3_router(db):
         filename = pitch_deck_filename(deck, brand)
         from urllib.parse import quote
         ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "pitch-deck.docx"
-        return StreamingResponse(
-            BytesIO(data),
+        return Response(
+            content=data,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"},
         )
