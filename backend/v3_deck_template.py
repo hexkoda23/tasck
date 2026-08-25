@@ -65,7 +65,10 @@ def _slide(kind: str, index: int, total: int, body: str, *, bg: str = "") -> str
         f'<section class="slide s-{theme}{photo}" data-kind="{kind}" '
         f'data-index="{index}"{style}>'
         + ('<div class="s-scrim"></div>' if bg else "")
-        + f'<div class="s-inner">{body}</div>'
+        # .s-fit is the fixed 16:9 window; .s-inner lays out at 1/--fit of it
+        # and is scaled back down, so long AI copy shrinks to fit instead of
+        # running past the bottom edge and being clipped. See fitSlide().
+        + f'<div class="s-fit"><div class="s-inner">{body}</div></div>'
         f'<div class="s-foot"><span>tasck.org</span><span>{index:02d} / {total:02d}</span></div>'
         "</section>"
     )
@@ -559,8 +562,14 @@ body{background:#0A1018;font-family:'Play',Verdana,Geneva,sans-serif;color:#fff;
 .s-photo{background-size:cover;background-position:center}
 .s-scrim{position:absolute;inset:0;background:linear-gradient(180deg,
   rgba(2,13,30,.45) 0%,rgba(2,13,30,.72) 55%,rgba(2,13,30,.94) 100%);z-index:1}
-.s-inner{position:relative;z-index:2;flex:1;display:flex;flex-direction:column;
-  padding:5cqw 5.5cqw 3cqw}
+.s-fit{position:relative;z-index:2;flex:1;min-height:0;overflow:hidden}
+/* Laid out at 1/--fit of the window, then scaled back down by --fit. Sizes
+   stay in cqw, so shrinking --fit is exactly "make the copy smaller relative
+   to the slide" - the slide keeps its 16:9 frame and nothing is cut off. */
+.s-inner{position:absolute;top:0;left:0;
+  width:calc(100% / var(--fit,1));height:calc(100% / var(--fit,1));
+  transform:scale(var(--fit,1));transform-origin:top left;
+  display:flex;flex-direction:column;padding:5cqw 5.5cqw 3cqw}
 .s-foot{position:relative;z-index:2;display:flex;justify-content:space-between;
   padding:0 5.5cqw 2.6cqw;font-size:1.5cqw;letter-spacing:.12em;opacity:.5;text-transform:uppercase}
 .s-light .s-foot{opacity:.45}
@@ -719,6 +728,10 @@ body.mode-flip .deck .slide.live-2{border-radius:0 6px 6px 0;box-shadow:inset 22
 body.mode-flip .deck.turning .slide.live-2{animation:turn .42s ease-in both;transform-origin:left center}
 @keyframes turn{from{transform:rotateY(0)}to{transform:rotateY(-88deg)}}
 
+/* Used for a single frame while every slide is measured for auto-fit. */
+body.measuring .deck{display:block!important;width:100%!important}
+body.measuring .deck .slide{display:flex!important}
+
 .nav{display:flex;align-items:center;gap:18px;color:#8FA0B8;
   font:600 12px/1 'Play',Verdana,sans-serif;letter-spacing:.12em;text-transform:uppercase}
 .nav button{background:none;border:0;color:#cfd8e6;font-size:26px;cursor:pointer;line-height:1;padding:0 6px}
@@ -740,6 +753,110 @@ VIEWER_JS = """
   var counter=document.getElementById('count');
   var prev=document.getElementById('prev'), next=document.getElementById('next');
   function step(){ return mode==='flip'?2:1; }
+  // ---- auto-fit ---------------------------------------------------------
+  // Slides are a fixed 16:9 frame with overflow:hidden, but the copy is
+  // written by the AI and its length varies per brand. Anything past the
+  // bottom edge used to be silently cut off mid-sentence. Measure every slide
+  // and shrink the ones that need it.
+  var MIN_FIT=0.5;
+  // Frames whose clipping is deliberate - portraits and the logo badge crop to
+  // their aspect ratio by design and must not drag the whole slide smaller.
+  var CROPS_ON_PURPOSE='.badge,.persona-shot,.cshot,.s-scrim';
+  function clipsItsContent(el){
+    var o=getComputedStyle(el).overflowY;
+    return o==='hidden'||o==='auto'||o==='scroll';
+  }
+  // The boxes that can actually cut text off, collected once per slide.
+  //
+  // Looking at .s-inner alone is not enough: inner panels (the metric columns
+  // on Campaign Projections, for one) set min-height:0 and clip their own
+  // content, so the outer box measures clean while text is being cut off two
+  // levels down.
+  //
+  // Only a clipping box can lose content: an overflow:visible element just
+  // spills into its parent, and that spill is already counted at the first
+  // ancestor that clips. Counting it anyway made a line-height:1 headline look
+  // like an overflow and shrank a slide that was never in trouble.
+  //
+  // getComputedStyle is the expensive call here and the answer never changes
+  // with --fit, so the list is built once and the fit loop below re-reads
+  // geometry only. Doing it per pass took tens of seconds on a 16-slide deck.
+  function clipBoxes(inner){
+    var out=[inner];   // clipped by .s-fit, the 16:9 window
+    var nodes=inner.querySelectorAll('*');
+    for(var i=0;i<nodes.length;i++){
+      var el=nodes[i];
+      if(el.tagName==='IMG'||el.closest(CROPS_ON_PURPOSE)) continue;
+      if(clipsItsContent(el)) out.push(el);
+    }
+    return out;
+  }
+  // How far past its box the worst offender runs, as a ratio.
+  function overflowRatio(boxes){
+    var worst=1;
+    for(var i=0;i<boxes.length;i++){
+      var room=boxes[i].clientHeight;
+      if(room>8&&boxes[i].scrollHeight>room+2){
+        var r=boxes[i].scrollHeight/room;
+        if(r>worst) worst=r;
+      }
+    }
+    return worst;
+  }
+  // Find the LARGEST scale that still fits, by bisection.
+  //
+  // Scaling down does more than shrink type: the layout box grows by 1/fit, so
+  // lines rewrap shorter and columns gain height. That makes the improvement
+  // better than linear, and dividing straight through by the overflow ratio
+  // overshoots into needlessly tiny text. Bisecting keeps the copy as large as
+  // the slide can actually hold.
+  function fitSlide(sec){
+    var inner=sec&&sec.querySelector('.s-inner');
+    if(!inner||!inner.clientHeight) return;
+    var boxes=clipBoxes(inner);
+    function fitsAt(f){
+      sec.style.setProperty('--fit',String(f));
+      return overflowRatio(boxes)<=1.001;
+    }
+    if(fitsAt(1)) return;                 // nothing to do
+    if(!fitsAt(MIN_FIT)) return;          // as small as we are willing to go
+    var lo=MIN_FIT, hi=1;                 // lo fits, hi does not
+    for(var i=0;i<6;i++){
+      var mid=(lo+hi)/2;
+      if(fitsAt(mid)) lo=mid; else hi=mid;
+    }
+    // Bisection stops at the largest size that fits *within tolerance*, which
+    // can leave a line resting on the boundary. Take a hair off so nothing
+    // sits flush against the edge after rounding.
+    sec.style.setProperty('--fit',String(lo*0.995));
+  }
+  // Fit every slide in one hidden pass.
+  //
+  // A display:none slide has no dimensions, so it cannot be measured while
+  // hidden. `body.measuring` lays them all out for the length of this function
+  // and the class is gone before the frame paints, so nothing flickers.
+  //
+  // Measuring once is enough for BOTH modes: every size on a slide is in cqw,
+  // so the layout is identical at any container width and a fit computed at
+  // one width holds at the other. It is also what makes printing correct -
+  // beforeprint fires while the slides are still hidden, so a pass that only
+  // looked at visible slides printed the clipped version.
+  function fitAll(){
+    body.classList.add('measuring');
+    try{ for(var i=0;i<slides.length;i++) fitSlide(slides[i]); }
+    finally{ body.classList.remove('measuring'); }
+  }
+  fitAll();
+  // Re-measure once the webfont lands - 'Play' is wider than the fallback, so
+  // a fit computed against Verdana would be too optimistic.
+  if(document.fonts&&document.fonts.ready){
+    document.fonts.ready.then(fitAll).catch(function(){});
+  }
+  var rt=null;
+  window.addEventListener('resize',function(){
+    clearTimeout(rt); rt=setTimeout(fitAll,160);
+  });
+  window.addEventListener('beforeprint',fitAll);
   function render(){
     slides.forEach(function(s){ s.classList.remove('live','live-2'); });
     slides[at].classList.add('live');
