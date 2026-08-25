@@ -3899,6 +3899,23 @@ export const V3BusinessCasePlanBrief = () => {
   const [templateBrief, setTemplateBrief] = useState(null);
   const [generatingBrief, setGeneratingBrief] = useState(false);
   const [briefProgress, setBriefProgress] = useState('');
+  // Brief generation popup - mirrors the Pitch Deck page: the backend job
+  // reports real progress (5 -> 30 -> 100), so this is a genuine 0-100% bar.
+  const [genPopup, setGenPopup] = useState({ open: false, progress: 0, status: 'running', message: '' });
+  const genTickRef = useRef(null);
+  const stopGenTick = () => { if (genTickRef.current) { clearInterval(genTickRef.current); genTickRef.current = null; } };
+  const startGenTick = () => {
+    stopGenTick();
+    // Keeps the bar moving between the job's coarse server milestones.
+    genTickRef.current = setInterval(() => {
+      setGenPopup((prev) => {
+        if (!prev.open || prev.status !== 'running') return prev;
+        const next = prev.progress < 92 ? prev.progress + (prev.progress < 30 ? 3 : 1) : 92;
+        return { ...prev, progress: next };
+      });
+    }, 600);
+  };
+  useEffect(() => () => stopGenTick(), []);
 
   // Brand contact (kept available for other flows).
   const brand = getBrand(bundle);
@@ -3918,17 +3935,48 @@ export const V3BusinessCasePlanBrief = () => {
   const generateTemplateBrief = async () => {
     setGeneratingBrief(true);
     setBriefProgress('Queued: writing the Creative Brief…');
+    setGenPopup({ open: true, progress: 4, status: 'running', message: 'Claude is writing the brief in the approved TASCK template…' });
+    startGenTick();
     try {
-      const result = await v3GenerateCreativeBrief(id, (job) => setBriefProgress(job?.message || ''), snapshotId);
+      const result = await v3GenerateCreativeBrief(id, (job) => {
+        setBriefProgress(job?.message || '');
+        // The job reports coarse milestones (5 -> 30 -> 100); the tick keeps
+        // creeping between them so the bar never looks stuck.
+        const serverProgress = Math.max(0, Math.min(100, Number(job?.progress) || 0));
+        setGenPopup((prev) => prev.open ? {
+          ...prev,
+          progress: Math.max(prev.progress, serverProgress),
+          message: job?.message || prev.message,
+        } : prev);
+      }, snapshotId);
+      stopGenTick();
       setTemplateBrief(result?.brief || null);
+      setGenPopup({ open: true, progress: 100, status: 'complete', message: 'Creative Brief ready in the approved TASCK template.' });
       toast.success('Creative Brief written in the TASCK template.');
+      setTimeout(() => setGenPopup((prev) => ({ ...prev, open: false })), 1600);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || e?.message || 'Could not generate the Creative Brief.');
+      stopGenTick();
+      const msg = e?.response?.data?.detail || e?.message || 'Could not generate the Creative Brief.';
+      setGenPopup({ open: true, progress: 100, status: 'failed', message: msg });
+      toast.error(msg);
     } finally {
       setGeneratingBrief(false);
       setBriefProgress('');
     }
   };
+
+  // Auto-write: the brief drafts itself the moment the page opens, so the
+  // admin lands on a finished document instead of an empty state. Fires once,
+  // only after the case has loaded and only when no brief exists yet.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (autoRanRef.current) return;
+    if (!bundle?.business_case?.id) return;
+    if (templateBrief || bundle?.business_case?.plan?.generated_brief) { autoRanRef.current = true; return; }
+    autoRanRef.current = true;
+    generateTemplateBrief().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bundle?.business_case?.id, bundle?.business_case?.plan?.generated_brief]);
 
   // Top-level "Send to creator" card (mirrors the Pitch Deck page): admin can
   // type or change the recipient email, then email the Creative Brief (.docx)
@@ -4260,6 +4308,42 @@ export const V3BusinessCasePlanBrief = () => {
           </div>
         </div>
       )}
+      {genPopup.open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4" data-testid="brief-gen-popup">
+          <div className="w-full max-w-md rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${genPopup.status === 'failed' ? 'bg-[#FBEAE5] text-[#B54A37]' : 'bg-[#E8F3ED] text-[#1F4A3A]'}`}>
+                {genPopup.status === 'complete' ? <CheckCircle2 className="h-4 w-4" /> : genPopup.status === 'failed' ? <X className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
+              </span>
+              <h3 className="text-[16px] font-semibold text-[#1A1A1A]" data-testid="brief-gen-popup-title">
+                {genPopup.status === 'complete' ? 'Creative Brief ready' : genPopup.status === 'failed' ? 'Generation failed' : 'Drafting Creative Brief'}
+              </h3>
+              <span className="ml-auto text-[15px] font-semibold text-[#1F4A3A] tabular-nums" data-testid="brief-gen-popup-percent">{genPopup.progress}%</span>
+            </div>
+            <div className="h-2 w-full rounded-full bg-[#EDE9E0] overflow-hidden ring-1 ring-inset ring-[#D7CBB8]">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ease-out ${genPopup.status === 'failed' ? 'bg-[#B54A37]' : 'bg-[#1F4A3A]'}`}
+                style={{ width: `${Math.max(2, genPopup.progress)}%` }}
+                data-testid="brief-gen-popup-bar"
+              />
+            </div>
+            <p className="mt-3 text-[13px] leading-6 text-[#4F3E2F]" data-testid="brief-gen-popup-message">
+              {genPopup.message || 'Claude is writing the brief in the approved TASCK template…'}
+            </p>
+            {genPopup.status === 'running' && (
+              <p className="mt-1 text-[11px] text-[#6E6657]">
+                Please keep this page open - this window will close automatically when it reaches 100%.
+              </p>
+            )}
+            {genPopup.status === 'failed' && (
+              <div className="mt-4 flex justify-end">
+                <button type="button" onClick={() => setGenPopup((prev) => ({ ...prev, open: false }))} className="v3-btn-primary" data-testid="brief-gen-popup-close">OK</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Pitch Deck and Creative Brief are siblings. The ENTRY ORDER from the
           Creator Match Scanner decides this button: if the Brief was opened
           first, this links to the Pitch Deck; if the Pitch Deck came first,

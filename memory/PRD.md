@@ -1435,3 +1435,9 @@ User sent a FlipHTML5 screen recording: "make sure the flip book flow is like th
 3. Creative brief always editable .docx: audited all five paths (case docx w/ and w/o creator, saved-brief docx, preview-docx, POST /creative-briefs attachment, /creative-brief/send attachment) - all serve the Word/Google-Docs mime type. "Copy link" and WhatsApp share now point at the per-creator 4-page preview instead of the old mock creator-portal page.
 
 Testing: iteration_37.json - 13/13 backend pytest (`backend/tests/test_flipbook_email_docx_iter37.py`) plus Playwright drag/click/keyboard/mode/print checks on both renderers. No open issues.
+
+## 2026-06-25 (c) - Creative Brief page: auto-draft with progress popup
+User: "when the creative page is open just like other pages it should show a pop up page showing loading and drafting creative brief... say Claude is writing the brief in the approved TASCK template... then once its ready it should reach 100% and display the creative brief."
+- `V3BusinessCasePlanBrief` (V1BusinessCaseFlowPages.js) now mirrors the Pitch Deck page: on page open, if the case has no brief yet, generation starts automatically and a modal (data-testid `brief-gen-popup`) shows "Drafting Creative Brief" with a live 0-100% bar and the message "Claude is writing the brief in the approved TASCK template…" (message comes from the backend job itself).
+- The simulated tick keeps creeping (cap 92%) between the job's coarse milestones (5 -> 30 -> 100) so the bar never looks stuck; on completion it snaps to 100% / "Creative Brief ready", holds 1.6s, closes and the 4-page brief renders. Failure keeps the popup with the error and an OK button.
+- Verified live on two cases (bc-f211533491, bc-dd35a269d6): popup at 4% -> climbing -> closes -> brief displayed.
