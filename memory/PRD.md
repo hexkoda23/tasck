@@ -1403,3 +1403,21 @@ One contact email can own MULTIPLE brand portal accounts (one per brand, e.g. ke
 - 2026-06: Fixed f-string backslash SyntaxError in v3_deck_template.py line 132 (flipbook rendering 500 error). Verified flipbook returns 200.
 
 - 2026-06 (bugfix batch): 1) Fixed mojibake "â€”" on V1RoleSelector (UTF-8 em dash). 2) Fixed "recipient <nil>" SMTP 553: added _clean_email() validator in v3_routes.py applied to _deliver_email_now, _fallback_creator_email, alignment/pitch-deck send recipient chains, creative-brief/send; CreativeBriefCreate now accepts creator_contact_email (typed override was previously DROPPED by backend); frontend send() no longer falls back to creator name/phone/handle, blocks with "Add an email" popup. 3) Fixed Pitch Deck "Generation failed": root cause was validity check requiring legacy sections>=8 while current 16-slide prompt returns slides-only -> added _pitch_sections_from_slides() converter, accepts slides payload, synthesizes sections for docx. Verified e2e: generation completes (emergent:anthropic/claude-sonnet-4-5 via failover), flipbook 200, docx 200. 4) v3GeneratePitchDeck: 120s kickoff timeout + poll tolerates 4 transient failures.
+
+## 2026-06-25 - Creative Brief locked to the approved fixed 4-page template
+User uploaded the reference PDF (WE.YAN Merchant Ambassador brief) and asked that EVERY creative brief look exactly like it - same length, contents and wordings in both preview and the downloaded Google Docs/.docx file - specific per business case and per creator.
+User choices: one brief per business case with the creator's name woven in on send; keep the generic boilerplate sentences verbatim; neutral section title "Creator Benefits (Limited Access)"; preview as visible A4 page cards; footer contact details unchanged.
+
+Implemented (backend `/app/backend/v3_routes.py`):
+- AI now fills ONLY variable slots (`opportunity_paragraphs`, `opportunity_bullets`, `role_paragraphs`, `core_narrative`, `pillars`, 4 `workstreams` x 3 bullets, `content_approach_bullets`, 8 `benefits`, 5 `success_metrics`, 4 `commercial_incentive_triggers`) with strict word budgets; `build_creative_brief_document()` assembles the canonical 9-section skeleton so shape/length can never drift.
+- Fixed boilerplate constants: "All content must reinforce one clear story:", "Your content should bring these four pillars to life:", "Content is not one-off, it is a series designed to:", "Your creativity is key, but every piece of content should move your audience to act.", "Hybrid structure:", "Fixed base fee", "Performance-based incentives (approx. 50%) tied to:", and the closing rate-card line.
+- Page boundaries mirror the reference PDF: p1 Opportunity/Your Role/Core Narrative, p2 What You'll Do, p3 Content Approach/Creator Benefits/Success Metrics, p4 Commercial Model/Next Steps. `_docx_page_break()` inserts 3 hard breaks; the HTML preview renders 4 A4 page cards (`data-testid=cb-page-1..4`) each with the TASCK logo header + contact-strip footer (base64 data URIs) and a Print / Save as PDF button.
+- `personalize_creative_brief()` adds "Prepared for: {creator}" and a named closing line; `creative_brief_plain_text()` flattens the doc for the creator portal + email body. Preview and .docx accept `?creator_id=`.
+- Per-creator send/download now render the SAME templated brief (`POST /creative-briefs` no longer needs `brief_text`; `/creative-briefs/{id}/docx`, `/creative-brief/send`, `/creative-briefs/preview-docx` all prefer the generated brief, falling back to legacy free text).
+
+Frontend (`V1BusinessCaseFlowPages.js`, `v3api.js`):
+- Studio template card now renders paragraphs / bullets / numbered workstreams + Duration (previously only legacy fields).
+- Per-creator cards lost the free-text textarea; they show "Preview 4-page brief" (per-creator preview URL) and Download/Send using the templated document. Recipient inputs no longer prefill the junk value "nil".
+
+Testing: iteration_36.json - backend 15/15 pytest (`/app/backend/tests/test_creative_brief_template.py`), frontend flows 100%. Live AI regeneration verified: exact 9 sections with exact element counts, preview 4 pages, docx 3 page breaks.
+NOTE: user must REDEPLOY for production (thcodemo.space) to pick this up.

@@ -393,8 +393,15 @@ export const v3GenerateCreativeBrief = async (bcId, onProgress, snapshotId) => {
   }
   throw new Error('Brief generation timed out. Please retry.');
 };
-export const v3TemplateBriefDocxUrl = (bcId, snapshotId) => `${V3}/business-cases/${bcId}/creative-brief/docx${snapshotId ? `?alignment_snapshot_id=${encodeURIComponent(snapshotId)}` : ''}`;
-export const v3TemplateBriefPreviewUrl = (bcId, snapshotId) => `${V3}/business-cases/${bcId}/creative-brief/preview${snapshotId ? `?alignment_snapshot_id=${encodeURIComponent(snapshotId)}` : ''}`;
+const briefQuery = (snapshotId, creatorId) => {
+  const params = new URLSearchParams();
+  if (snapshotId) params.set('alignment_snapshot_id', snapshotId);
+  if (creatorId) params.set('creator_id', creatorId);
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+};
+export const v3TemplateBriefDocxUrl = (bcId, snapshotId, creatorId) => `${V3}/business-cases/${bcId}/creative-brief/docx${briefQuery(snapshotId, creatorId)}`;
+export const v3TemplateBriefPreviewUrl = (bcId, snapshotId, creatorId) => `${V3}/business-cases/${bcId}/creative-brief/preview${briefQuery(snapshotId, creatorId)}`;
 
 // --- Pitch Deck: ten AI-written sections, brand-facing -------------------
 export const v3GetPitchDeck = (bcId, snapshotId) => v3.get(`/business-cases/${bcId}/pitch-deck`, {

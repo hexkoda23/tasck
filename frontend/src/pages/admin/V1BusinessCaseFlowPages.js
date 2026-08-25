@@ -112,7 +112,6 @@ import {
   v3SkipBrainstormTranscript,
   v3ContractPdfUrl,
   v3AlignmentDocxUrl,
-  v3CreativeBriefDocxUrl,
   v3TemplateBriefDocxUrl,
   v3TemplateBriefPreviewUrl,
   v3GeneratePitchDeck,
@@ -186,7 +185,6 @@ import {
   v3UpdateStrategySnapshot,
 } from '../../lib/v3api';
 import { formatNairaV3 } from '../../lib/v3data';
-import { generateCreatorBriefDraft, briefIsReady } from '../../lib/creatorBrief';
 
 const brainstormingSections = [
   ['Campaign core idea', ['big idea', 'campaign angle', 'cultural insight', 'audience truth']],
@@ -3894,7 +3892,6 @@ export const V3BusinessCasePlanBrief = () => {
   const [creators, setCreators] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [manualCreatorId, setManualCreatorId] = useState('');
-  const [briefs, setBriefs] = useState({});
   const [briefEmails, setBriefEmails] = useState({});
   const [sentBriefs, setSentBriefs] = useState({});
   const [sendPopup, setSendPopup] = useState(null);
@@ -3940,7 +3937,7 @@ export const V3BusinessCasePlanBrief = () => {
   // Derive the default recipient inline (from creators/selectedIds, both
   // declared above) so we avoid any temporal-dead-zone ordering issues.
   const firstSelectedCreator = selectedIds.map((cid) => creators.find((c) => c.id === cid)).filter(Boolean)[0];
-  const defaultRecipient = creatorContact(firstSelectedCreator) || brandEmail;
+  const defaultRecipient = creatorEmail(firstSelectedCreator) || brandEmail;
   const [recipientEmail, setRecipientEmail] = useState(defaultRecipient);
   useEffect(() => {
     if (defaultRecipient && !recipientEmail) setRecipientEmail(defaultRecipient);
@@ -3958,15 +3955,12 @@ export const V3BusinessCasePlanBrief = () => {
       return;
     }
     const subject = templateBrief?.title || `Creative Brief - ${getCase(bundle).title || 'Creative Brief'}`;
-    const briefText = (templateBrief?.sections || [])
-      .map((s) => `${s.heading || ''}\n${(s.lines || []).map((l) => `${l.label || ''}: ${l.value || ''}`).join('\n')}\n${(s.checkboxes || []).map((c) => `☐ ${c}`).join('  ')}\n${s.intro || ''}\n${s.primary_label || ''} ${s.primary_value || ''}\n${(s.assumptions || []).join('\n')}\n${s.note || ''}`)
-      .join('\n\n');
     setSendPopup({ title: 'Sending', message: `Sending the Creative Brief to ${recipient}…`, tone: 'pending' });
     try {
       const result = await v3SendCreativeBriefToEmail(id, {
         recipient_email: recipient,
         subject,
-        brief_text: briefText,
+        alignment_snapshot_id: snapshotId || undefined,
       });
       const status = result?.email?.status || 'queued';
       if (status === 'sent') {
@@ -4002,50 +3996,15 @@ export const V3BusinessCasePlanBrief = () => {
   const allBriefsSent = selectedCreators.length > 0 && selectedCreators.every((creator) => sentBriefs[creator.id]);
   // Sibling document: the Pitch Deck. Approved (by admin or brand) counts as done.
   const pitchDeckDone = bundle?.pitch_deck?.status === 'approved' || bundle?.business_case?.plan?.pitch_deck_status === 'approved';
-  const planningFields = bundle?.brainstorm_round?.planning_fields || null;
-  // Auto-drafts, keyed by creator id, exactly as this page last wrote them.
-  // A draft that still matches its entry here has not been touched by the
-  // admin, so it is safe to rewrite when better project data arrives.
-  const autoDraftsRef = useRef({});
-  useEffect(() => {
-    const activeCreators = selectedIds.map((creatorId) => creators.find((creator) => creator.id === creatorId)).filter(Boolean);
-    if (!activeCreators.length) return;
-    // The bundle loads asynchronously. Drafting before it lands produced a
-    // brief full of placeholders - "Brand", "Business Case Project", "TTA
-    // project lead" - which the old `if (!next[creator.id])` guard then kept
-    // forever, because a draft already existed.
-    if (!briefIsReady(bundle)) return;
-    setBriefs((current) => {
-      const next = { ...current };
-      let changed = false;
-      activeCreators.forEach((creator) => {
-        const existing = next[creator.id];
-        const untouched = existing === undefined || existing === autoDraftsRef.current[creator.id];
-        if (!untouched) return;   // the admin edited this one - leave it alone
-        const draft = generateCreatorBriefDraft(bundle, creator, planningFields || {});
-        if (draft === existing) return;
-        autoDraftsRef.current[creator.id] = draft;
-        next[creator.id] = draft;
-        changed = true;
-      });
-      return changed ? next : current;
-    });
-  }, [bundle, creators, planningFields, selectedIds]);
   const addCreator = () => {
     if (!manualCreatorId) return;
     setSelectedIds((current) => (current.includes(manualCreatorId) ? current : [...current, manualCreatorId]));
   };
-  const generateAll = () => {
-    const next = {};
-    selectedCreators.forEach((creator) => {
-      const draft = generateCreatorBriefDraft(bundle, creator, planningFields || {});
-      autoDraftsRef.current[creator.id] = draft;
-      next[creator.id] = draft;
-    });
-    setBriefs(next);
-    setNotice('AI generated a draft brief for every selected creator.');
-  };
   const send = async (creator) => {
+    if (!templateBrief) {
+      setSendPopup({ title: 'Generate first', message: 'Generate the TASCK Creative Brief above, then send it to each creator.', tone: 'warning' });
+      return;
+    }
     const overrideEmail = isRealEmail((briefEmails[creator.id] || '').trim());
     const recipient = overrideEmail || creatorEmail(creator);
     if (!recipient) {
@@ -4054,9 +4013,10 @@ export const V3BusinessCasePlanBrief = () => {
     }
     setNotice(`Sending creative brief to ${creatorName(creator)}...`);
     setSendPopup({ title: 'Sending', message: `Sending creative brief to ${recipient}...`, tone: 'pending' });
-    const brief = briefs[creator.id] || generateCreatorBriefDraft(bundle, creator, planningFields || {});
     try {
-      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, brief_text: brief, creator_contact_email: recipient, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
+      // The backend renders the same fixed 4-page brief for this business
+      // case, addressed to this creator - no per-creator free text.
+      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, creator_contact_email: recipient, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
       setSentBriefs((current) => ({ ...current, [creator.id]: doc }));
       const status = doc?.email?.status || doc?.email_status || 'queued';
       const sentTo = doc?.email?.to || doc?.creator_contact_email || overrideEmail || creatorContact(creator) || creatorName(creator);
@@ -4084,43 +4044,15 @@ export const V3BusinessCasePlanBrief = () => {
     }
     navigator.clipboard.writeText(link).then(() => setNotice(`Creator brief link copied for ${creatorName(creator)}.`)).catch(() => setNotice(`Creator brief link: ${link}`));
   };
-  const downloadGoogleDoc = async (creator) => {
-    // Prefer the saved-brief DOCX endpoint - that's the fully-templated file
-    // (TASCK banner + watermark + contact footer + embedded fonts) served by
-    // the backend against a persisted brief row.
-    const savedBrief = sentBriefs[creator.id];
-    if (savedBrief?.id) {
-      window.open(v3CreativeBriefDocxUrl(savedBrief.id), '_blank');
-      setNotice('Creative brief Google Docs-compatible document opened for download.');
+  const downloadGoogleDoc = (creator) => {
+    // One brief per business case, addressed to this creator: the same
+    // templated .docx the preview shows (TASCK banner, footer, 4 pages).
+    if (!templateBrief) {
+      setNotice('Generate the TASCK Creative Brief above first, then download it per creator.');
       return;
     }
-    // Unsaved draft: previously we opened a plain HTML print window here,
-    // which the brand received as a bare Chrome tab with no design. Instead,
-    // render the templated .docx via the new preview endpoint so an admin
-    // downloading a draft gets the identical TASCK-templated file.
-    const draftText = briefs[creator.id] || '';
-    const subject = `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title || ''}`.trim();
-    try {
-      const resp = await fetch(`${(process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '')}/api/v3/business-cases/${id}/creative-briefs/preview-docx`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subject, brief_text: draftText, creator_id: creator.id, creator_name: creatorName(creator) }),
-      });
-      if (!resp.ok) throw new Error(`Preview download failed: ${resp.status}`);
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const safe = (creatorName(creator) || 'Creator').replace(/[^A-Za-z0-9_-]+/g, '_');
-      a.download = `TASCK_Creative_Brief_${safe}.docx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setNotice('Templated creative brief downloaded. Open it in Word or Google Docs.');
-    } catch (e) {
-      setNotice(e?.message || 'Could not download the templated creative brief. Try sending the brief first, then download.');
-    }
+    window.open(v3TemplateBriefDocxUrl(id, snapshotId, creator.id), '_blank');
+    setNotice(`Creative brief (.docx) downloaded for ${creatorName(creator)}. Open it in Word or Google Docs.`);
   };
   const shareWhatsApp = (creator) => {
     const text = `${getCase(bundle).title || 'Creative Brief'}\n${creatorBriefLink(id, creator.id)}`;
@@ -4179,9 +4111,27 @@ export const V3BusinessCasePlanBrief = () => {
           <TtaLetterhead title={templateBrief.title || 'TTA – Creative Alignment Brief (Creator Version)'}>
             <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1 font-['Century_Gothic','Century Gothic',sans-serif]" data-testid="brief-template-preview">
               {templateBrief.subtitle && <p className="text-[11px] font-semibold text-[#6E6657] mb-1">{templateBrief.subtitle}</p>}
+              {templateBrief.duration && <p className="text-[12px] font-semibold text-[#1F1B18] mb-1">Duration: {templateBrief.duration}</p>}
               {(templateBrief.sections || []).map((section, index) => (
                 <div key={index} className="border-t border-[#F1ECDF] pt-3">
                   <p className="text-[14px] font-bold text-[#0C343D] mb-1.5">{section.heading}</p>
+                  {(section.paragraphs || []).map((text, i) => (
+                    <p key={`p${i}`} className="text-[12px] text-[#1F1B18] leading-6 mb-1.5 text-justify">{text}</p>
+                  ))}
+                  {(section.bullets || []).map((text, i) => (
+                    <p key={`b${i}`} className="text-[12px] text-[#1F1B18] pl-3 leading-5">● {text}</p>
+                  ))}
+                  {(section.groups || []).map((group, gi) => (
+                    <div key={`g${gi}`} className="mt-1.5">
+                      {group.title && <p className="text-[12px] font-semibold text-[#1F1B18]">{group.title}</p>}
+                      {(group.bullets || []).map((text, i) => (
+                        <p key={`gb${i}`} className="text-[12px] text-[#1F1B18] pl-3 leading-5">● {text}</p>
+                      ))}
+                      {(group.sub_bullets || []).map((text, i) => (
+                        <p key={`gs${i}`} className="text-[12px] text-[#1F1B18] pl-7 leading-5">○ {text}</p>
+                      ))}
+                    </div>
+                  ))}
                   {(section.lines || []).map((line, i) => (
                     <p key={i} className="text-[12px] text-[#1F1B18] leading-5">
                       <span className="text-[#6E6657]">{line.label}:</span> {line.value || 'To be confirmed'}
@@ -4234,7 +4184,10 @@ export const V3BusinessCasePlanBrief = () => {
         </InfoCard>
       )}
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
-      <InfoCard title="Selected creator briefs" action={<button onClick={generateAll} className="v3-btn-primary" data-testid="brief-generate-all-btn"><Sparkles className="w-3.5 h-3.5" /> Generate AI briefs</button>}>
+      <InfoCard title="Selected creator briefs">
+        <p className="mb-3 text-[12px] text-[#6E6657]">
+          One brief per business case in the approved 4-page template - each creator gets that same document with their name on it.
+        </p>
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end">
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Add another creator</span>
@@ -4258,15 +4211,23 @@ export const V3BusinessCasePlanBrief = () => {
                   </div>
                   <button onClick={() => setSelectedIds((current) => current.filter((value) => value !== creator.id))} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove ${creatorName(creator)}`}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
-                <TtaLetterhead title="TTA – Creative Alignment Brief (Creator Version)" className="!max-w-none">
-                  <div className="font-['Century_Gothic','Century Gothic',sans-serif]">
-                    {templateBrief?.subtitle && <p className="text-[11px] font-semibold text-[#6E6657] mb-2">{templateBrief.subtitle}</p>}
-                    <textarea value={briefs[creator.id] || ''} onChange={(e) => setBriefs({ ...briefs, [creator.id]: e.target.value })} rows={16} className="w-full rounded-lg border border-[#E8E4DB] bg-white p-3 text-[13px] leading-relaxed focus:outline-none focus:border-[#1F4A3A]" data-testid={`brief-editor-${creator.id}`} />
-                  </div>
-                </TtaLetterhead>
+                <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">
+                  <p className="text-[12px] text-[#4F3E2F]">
+                    {templateBrief
+                      ? <>This creator receives the same 4-page TASCK Creative Brief for <span className="font-semibold">{getCase(bundle).title || 'this project'}</span>, addressed to <span className="font-semibold">{creatorName(creator)}</span>.</>
+                      : 'Generate the TASCK Creative Brief above - every creator receives that same 4-page document, addressed to them.'}
+                  </p>
+                  {templateBrief && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <a href={v3TemplateBriefPreviewUrl(id, snapshotId, creator.id)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid={`brief-preview-${creator.id}`}>
+                        <ExternalLink className="w-3.5 h-3.5" /> Preview 4-page brief
+                      </a>
+                    </div>
+                  )}
+                </div>
                 <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
                   <input
-                    value={briefEmails[creator.id] ?? creatorContact(creator) ?? ''}
+                    value={briefEmails[creator.id] ?? creatorEmail(creator) ?? ''}
                     onChange={(e) => setBriefEmails({ ...briefEmails, [creator.id]: e.target.value })}
                     placeholder="creator@email.com"
                     className="flex-1 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"

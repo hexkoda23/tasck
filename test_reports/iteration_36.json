@@ -1,0 +1,34 @@
+{
+  "summary": "Verified the locked 4-page canonical Creative Brief template end-to-end: pytest of 15 assertions covering (a) fixed 9-section shape and element counts (5 opportunity bullets, 4 pillars, 4×3 workstreams, 4 approach bullets, 8 benefits, 5 metrics, 2 commercial bullets + 4 sub-bullets), (b) all fixed boilerplate sentences appearing verbatim in preview HTML and DOCX, (c) HTML preview returns exactly 4 cb-page-{1..4} cards with correct heading distribution (Opportunity/Role/Core Narrative → p1, What You'll Do → p2, Content Approach/Benefits/Success Metrics → p3, Commercial/Next Steps → p4) plus Print/Save-as-PDF button and TASCK logo/footer images on each page, (d) creator_id personalisation adds 'Prepared for: {name}' and rewrites the closing line to '{name}, if you're interested…' while the base URL has neither, (e) DOCX has exactly 3 hard page breaks and matches preview content, (f) POST /creative-briefs without brief_text succeeds, stores flattened structured text, and attaches the 4-page docx, (g) POST /business-cases/{id}/creative-brief/send with no brief_text succeeds using the generated brief, (h) legacy free-text brief on a business case without a generated brief still returns a valid docx via GET /creative-briefs/{id}/docx, (i) generate + poll job returns status=completed and repopulates plan.generated_brief. Frontend UI verified in Creative Brief Studio at /admin/business-cases/bc-f211533491/frame/brief: template card renders paragraphs/bullets/numbered workstream groups with Duration line, brief-open-preview + brief-download-docx buttons carry correct URLs, creator-brief-card has NO textarea, 'Preview 4-page brief' link (data-testid brief-preview-{creator_id}) present. Opening the preview URL in browser confirms 4 visible A4 page cards and Print button.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Creative Brief Studio", "issues": ["Recipient input on 'Send to Creator' card and per-creator card default to the literal string 'nil' when the creator has no contact_email (creator-9c51ad8660 MI has no email in the dataset). The backend correctly rejects invalid emails, but a placeholder like an empty field or 'Add creator email' would be clearer than a false-positive 'nil'."]},
+      {"screen": "Multiple admin pages (pre-existing)", "issues": ["React hydration warnings from ve-dynamic <span> wrappers being injected as children of <select>/<option>. Pre-existing infra noise unrelated to this iteration."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_creative_brief_template.py",
+    "/app/test_reports/pytest/iter36_results.xml"
+  ],
+  "action_items": [
+    "Optional UX: replace literal 'nil' recipient default with empty field / placeholder when creator has no contact email."
+  ],
+  "critical_code_review_comments": [
+    "v3_routes.py is now ~19,811 lines — still needs to be split by feature area per the >700 line guideline (creative-brief, alignment-snapshot, pitch-deck, duplicates, messaging routers).",
+    "personalize_creative_brief lowercases the first letter of CB_CLOSING_LINE with `CB_CLOSING_LINE[0].lower() + CB_CLOSING_LINE[1:]` — works for 'If' → 'if' but is fragile if the constant ever starts with a non-alphabetic char; consider str.uncapitalize helper.",
+    "The generate endpoint's background _runner writes the brief to BOTH the alignment snapshot AND case.plan; there is no cleanup if the two get out of sync (e.g., regenerate on one snapshot leaves case.plan pointing at a different snapshot's brief). Consider a single source of truth or explicit reconciliation.",
+    "download_creative_brief_docx / creative_brief_html both re-run personalize on every request — cheap now but the fixed template ships identical HTML except for two personalised strings; could be memoised per (bc_id, creator_id) if scale grows.",
+    "creative-brief/send accepts optional brief_text but ignores it whenever a generated brief exists. Fine per product spec but not documented in the endpoint docstring; add a note that generated brief wins over any admin-provided free-text."
+  ],
+  "updated_files": ["/app/backend/tests/test_creative_brief_template.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% of tested flows"},
+  "test_credentials": "V1 admin via POST /api/auth/demo-login {role:'admin'} + localStorage seed (per /app/memory/test_credentials.md).",
+  "seed_data_creation": "Created 2 TEST_-prefixed creative briefs on bc-f211533491 (Kiekie) and a second BC (legacy free-text). Triggered one regenerate of the canonical brief on bc-f211533491 (analysis_source stayed emergent:anthropic/claude-sonnet-4-5). One SMTP send attempt to test+brand@example.com (email row inserted, delivery status inconsequential).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression file: /app/backend/tests/test_creative_brief_template.py (15 tests, all pass). Key IDs: bc-f211533491 (NASCO), creator-9c51ad8660 (MI, no email), creator-0ffe5398f1 (Kiekie). Note the generate job endpoint returns {ok, job:{status,...}} — not a flat status. Preview page split is checked via regex on data-testid='cb-page-N' anchors. Legacy regression test dynamically discovers a business case without generated_brief; if all BCs get briefs generated it will pytest.skip that single assertion.",
+  "rca of the issue": "No bugs found in the new template locking feature. One first-run failure of the pytest suite was a self-inflicted race: my test_generate_and_poll test regenerates the brief and the module-scoped brief_doc fixture had already cached a moment when the brief was momentarily absent during a prior manual regenerate. Re-running after brief settled produced 15/15. Also fixed test to read `body['job']['status']` (not flat `status`)."
+}

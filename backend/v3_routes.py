@@ -35,6 +35,7 @@ import re
 import requests
 import smtplib
 import uuid
+import base64
 import zipfile
 
 from v3_seed import get_v3_seed_data
@@ -1832,97 +1833,230 @@ async def _call_opportunity_detection_tool(
 # line - but every sentence tailored to THIS brand from the alignment snapshot,
 # marketing intelligence, and Creator Selector data.
 # ---------------------------------------------------------------------------
+# The brief is a FIXED 4-page document: same sections, same section order, same
+# boilerplate sentences and the same length every time - only the brand and
+# campaign specifics change. The AI therefore writes ONLY the variable slots
+# below; `build_creative_brief_document` assembles the canonical skeleton
+# around them, so preview and .docx can never drift in shape or length.
+CB_HEADING_OPPORTUNITY = "The Opportunity"
+CB_HEADING_ROLE = "Your Role"
+CB_HEADING_NARRATIVE = "Core Narrative (Non-Negotiable)"
+CB_HEADING_DO = "What You'll Do"
+CB_HEADING_APPROACH = "Content Approach"
+CB_HEADING_BENEFITS = "Creator Benefits (Limited Access)"
+CB_HEADING_METRICS = "Success Metrics"
+CB_HEADING_COMMERCIAL = "Commercial Model"
+CB_HEADING_NEXT = "Next Steps"
+
+# Sections that start a fresh page - the same four page boundaries as the
+# client's approved reference PDF.
+CREATIVE_BRIEF_PAGE_STARTS = (CB_HEADING_DO, CB_HEADING_APPROACH, CB_HEADING_COMMERCIAL)
+
+CB_NARRATIVE_LEAD = "All content must reinforce one clear story:"
+CB_PILLAR_LEAD = "Your content should bring these four pillars to life:"
+CB_APPROACH_LEAD = "Content is not one-off, it is a series designed to:"
+CB_APPROACH_NOTE = "Your creativity is key, but every piece of content should move your audience to act."
+CB_COMMERCIAL_LEAD = "Hybrid structure:"
+CB_COMMERCIAL_BASE = "Fixed base fee"
+CB_COMMERCIAL_INCENTIVE = "Performance-based incentives (approx. 50%) tied to:"
+CB_CLOSING_LINE = ("If you're interested, reply with your rate card or let us know a good time "
+                   "to connect - we'll take it from there.")
+
+
+def _cb_clamp_words(value: Any, max_words: int) -> str:
+    words = str(value or "").replace("*", "").split()
+    if not words:
+        return ""
+    if len(words) <= max_words:
+        return " ".join(words)
+    text = " ".join(words[:max_words]).rstrip(",;:- ")
+    if not text.endswith((".", "!", "?")):
+        text += "."
+    return text
+
+
+def _cb_items(value: Any, count: int, max_words: int) -> List[str]:
+    items: List[str] = []
+    for raw in (value if isinstance(value, list) else []):
+        cleaned = _cb_clamp_words(raw, max_words).rstrip(".")
+        if cleaned:
+            items.append(cleaned)
+        if len(items) == count:
+            break
+    return items
+
+
 def _creative_brief_system_prompt() -> str:
     return """
-You are TASCK's senior brief writer. Write a CREATOR ROLE BRIEF in the agency's
-approved house style - the same rhythm, tone and section order as the WE.YAN
-Merchant Ambassador and Sabi Sweat Retreat briefs - but every sentence written
-for THIS brand, project and creator.
+You are TASCK's senior brief writer. You are filling the variable slots of the
+agency's FIXED creator brief template - the same document shape every time.
 
 Voice: polished Nigerian business English. Address the creator directly as
-"you". Confident, warm, concrete. Short paragraphs. No agency jargon, no filler
-like "in today's fast-paced world".
-
-Length matters: this is a real working document, not a summary. Write a full,
-substantial brief. The opportunity and role sections should each run to a
-proper paragraph or two, and every bullet list should be specific to this
-campaign rather than generic.
+"you". Confident, warm, concrete. No agency jargon, no filler like "in today's
+fast-paced world", no markdown syntax anywhere.
 
 Ground every claim in the data provided. Never invent product features, fee
 figures, percentages, dates or benefit programmes that are not in the inputs.
 Where a commercial detail is genuinely unknown, keep it directional ("to be
 confirmed after brand approval") instead of inventing a number.
 
+Word budgets are strict - the finished document must land on exactly four
+pages, so respect every count and length below.
+
 Return JSON only, no markdown fences, in EXACTLY this shape:
 
 {
-  "title": "string - e.g. 'WE.YAN CREATIVE BRIEF: MERCHANT AMBASSADOR' or 'CREATOR ROLE BRIEF: SABI SWEAT RETREAT'. Upper case, names this brand and the creator's role.",
-  "duration": "string - e.g. '6 Months' or 'August - October 2026'. Use the project timeline; 'To be confirmed' if unknown.",
-  "sections": [
-    {
-      "heading": "The Opportunity",
-      "paragraphs": ["2-4 substantial paragraphs introducing the brand and what it actually does, written for a creator who may not know it."],
-      "bullets": ["optional - what the platform/product gives its users, if that helps the creator understand it"]
-    },
-    {
-      "heading": "Your Role",
-      "paragraphs": ["What this creator is actually being asked to be - not just 'promote'. Make the distinction concrete."]
-    },
-    {
-      "heading": "Core Narrative (Non-Negotiable)",
-      "paragraphs": ["The one story every piece of content must reinforce."],
-      "bullets": ["The pillars that story rests on, each written as 'Pillar - what it means in practice'"]
-    },
-    {
-      "heading": "Objective",
-      "bullets": ["The measurable things this campaign exists to achieve."]
-    },
-    {
-      "heading": "What You'll Do",
-      "groups": [
-        {"title": "1. A concrete workstream", "bullets": ["specific action", "specific action"]},
-        {"title": "2. Another workstream", "bullets": ["specific action"]}
-      ]
-    },
-    {
-      "heading": "Content Approach",
-      "paragraphs": ["How the content should work as a series rather than one-offs."],
-      "bullets": ["What each piece should drive the audience to do"]
-    },
-    {
-      "heading": "Creator Benefits",
-      "bullets": ["What the creator actually gets - only what the inputs support"]
-    },
-    {
-      "heading": "Success Metrics",
-      "paragraphs": ["optional one-liner framing, e.g. 'This is a performance-led partnership.'"],
-      "bullets": ["The metrics this partnership is judged on"],
-      "note": "optional - e.g. 'Primary KPI: Direct conversions (sales)'"
-    },
-    {
-      "heading": "Commercial Model",
-      "paragraphs": ["How the deal is structured, directionally."],
-      "bullets": ["Components of the structure, if applicable"]
-    },
-    {
-      "heading": "Next Steps",
-      "paragraphs": ["A short, warm close inviting the creator to confirm interest or share a rate card."]
-    }
-  ]
+  "title": "UPPER CASE. Pattern: '<BRAND> CREATIVE BRIEF: <ROLE>' - e.g. 'WE.YAN CREATIVE BRIEF: MERCHANT AMBASSADOR'.",
+  "duration": "e.g. '6 Months' or 'August - October 2026'. Use the project timeline; 'To be confirmed' if unknown.",
+  "opportunity_paragraphs": [
+    "Paragraph 1, 35-45 words: what this brand is and what it actually does, for a creator who may not know it.",
+    "Paragraph 2, 20-30 words: why it matters to this creator's audience, ending in a colon to introduce the bullets."
+  ],
+  "opportunity_bullets": ["exactly 5 items, 2-6 words each - what the product or platform gives its users"],
+  "role_paragraphs": [
+    "Paragraph 1, 35-45 words: what this creator is being asked to BE, not just 'promote'.",
+    "Paragraph 2, 25-35 words: how that shows up in their content and their relationship with their audience."
+  ],
+  "core_narrative": "One sentence, max 18 words - the single story every piece of content must reinforce.",
+  "pillars": ["exactly 4 items, each 'Pillar - what it means in practice', max 14 words"],
+  "workstreams": [
+    {"title": "Short workstream name, max 6 words, no numbering", "bullets": ["exactly 3 bullets, 4-10 words each"]},
+    {"title": "second workstream", "bullets": ["3 bullets"]},
+    {"title": "third workstream", "bullets": ["3 bullets"]},
+    {"title": "fourth workstream", "bullets": ["3 bullets"]}
+  ],
+  "content_approach_bullets": ["exactly 4 items, 2-6 words each - what the content series must drive"],
+  "benefits": ["exactly 8 items, 2-7 words each - what this creator actually gets"],
+  "success_metrics": ["exactly 5 items, 2-6 words each - how this partnership is judged"],
+  "commercial_incentive_triggers": ["exactly 4 items, 2-5 words each - the performance triggers the incentive is tied to"]
 }
 
 Rules:
-- Use ONLY the headings listed above, in that order. Drop any section that this
-  project genuinely has no material for rather than padding it - a brief with
-  eight strong sections beats ten with filler.
-- "Core Narrative (Non-Negotiable)" suits product/platform campaigns; an events
-  or ticketing campaign may not need it. Use judgement.
-- Every section needs either paragraphs, bullets or groups. Never emit an empty
-  section.
-- Do not number the section headings. Only the "What You'll Do" group titles
-  carry numbers.
-- No markdown syntax anywhere in the strings - no asterisks, no hashes.
+- Emit every key. Never fewer items than the stated count.
+- Keep bullets as clipped noun phrases, not sentences. No trailing full stops
+  on bullets.
+- Workstream titles carry no numbers - the template numbers them.
+- Do not write any section headings, closing lines or sign-offs: the template
+  supplies those.
 """.strip()
+
+
+def build_creative_brief_document(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Assemble the canonical fixed 4-page brief from the AI's variable slots.
+
+    Every brief that leaves TASCK has this exact shape, section order, boiler-
+    plate wording and length - only the brand/campaign specifics differ."""
+    sections: List[Dict[str, Any]] = []
+
+    opportunity_paras = [_cb_clamp_words(p, 55) for p in (payload.get("opportunity_paragraphs") or [])][:2]
+    sections.append({
+        "heading": CB_HEADING_OPPORTUNITY,
+        "paragraphs": [p for p in opportunity_paras if p],
+        "bullets": _cb_items(payload.get("opportunity_bullets"), 5, 8),
+    })
+
+    role_paras = [_cb_clamp_words(p, 50) for p in (payload.get("role_paragraphs") or [])][:2]
+    sections.append({"heading": CB_HEADING_ROLE, "paragraphs": [p for p in role_paras if p]})
+
+    narrative = _cb_clamp_words(payload.get("core_narrative"), 22)
+    sections.append({
+        "heading": CB_HEADING_NARRATIVE,
+        "paragraphs": [CB_NARRATIVE_LEAD] + ([narrative] if narrative else []) + [CB_PILLAR_LEAD],
+        "bullets": _cb_items(payload.get("pillars"), 4, 16),
+    })
+
+    groups: List[Dict[str, Any]] = []
+    for index, group in enumerate((payload.get("workstreams") or [])[:4], start=1):
+        if not isinstance(group, dict):
+            continue
+        title = _cb_clamp_words(group.get("title"), 8).rstrip(".")
+        groups.append({
+            "title": f"{index}. {title}" if title else f"{index}.",
+            "bullets": _cb_items(group.get("bullets"), 3, 12),
+        })
+    sections.append({"heading": CB_HEADING_DO, "groups": groups})
+
+    sections.append({
+        "heading": CB_HEADING_APPROACH,
+        "paragraphs": [CB_APPROACH_LEAD],
+        "bullets": _cb_items(payload.get("content_approach_bullets"), 4, 8),
+        "note": CB_APPROACH_NOTE,
+    })
+    sections.append({"heading": CB_HEADING_BENEFITS,
+                     "bullets": _cb_items(payload.get("benefits"), 8, 9)})
+    sections.append({"heading": CB_HEADING_METRICS,
+                     "bullets": _cb_items(payload.get("success_metrics"), 5, 8)})
+    sections.append({
+        "heading": CB_HEADING_COMMERCIAL,
+        "paragraphs": [CB_COMMERCIAL_LEAD],
+        "bullets": [CB_COMMERCIAL_BASE, CB_COMMERCIAL_INCENTIVE],
+        "groups": [{"title": "", "sub_bullets": _cb_items(payload.get("commercial_incentive_triggers"), 4, 7)}],
+    })
+    sections.append({"heading": CB_HEADING_NEXT, "paragraphs": [CB_CLOSING_LINE]})
+
+    return {
+        "title": str(payload.get("title") or "CREATIVE BRIEF").strip(),
+        "duration": str(payload.get("duration") or "To be confirmed").strip(),
+        "sections": sections,
+        "analysis_source": payload.get("analysis_source"),
+    }
+
+
+def personalize_creative_brief(brief: Dict[str, Any], creator_name: str = "") -> Dict[str, Any]:
+    """Weave the creator's name into the fixed brief without changing its shape:
+    a 'Prepared for' line under the duration and a named closing line."""
+    name = str(creator_name or "").strip()
+    if not name or not isinstance(brief, dict):
+        return brief
+    out = dict(brief)
+    out["prepared_for"] = name
+    sections: List[Dict[str, Any]] = []
+    for section in brief.get("sections") or []:
+        if isinstance(section, dict) and str(section.get("heading") or "").strip() == CB_HEADING_NEXT:
+            closing = f"{name}, {CB_CLOSING_LINE[0].lower()}{CB_CLOSING_LINE[1:]}"
+            section = {**section, "paragraphs": [closing]}
+        sections.append(section)
+    out["sections"] = sections
+    return out
+
+
+def creative_brief_plain_text(brief: Dict[str, Any]) -> str:
+    """Flatten the structured brief to plain text (creator portal + email body)
+    so every surface shows the same content as the document."""
+    lines: List[str] = []
+    title = str((brief or {}).get("title") or "").strip()
+    if title:
+        lines.append(title)
+    duration = str((brief or {}).get("duration") or "").strip()
+    if duration:
+        lines.append(f"Duration: {duration}")
+    if (brief or {}).get("prepared_for"):
+        lines.append(f"Prepared for: {brief['prepared_for']}")
+    for section in (brief or {}).get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        lines.append("")
+        heading = str(section.get("heading") or "").strip()
+        if heading:
+            lines.append(f"{heading}:")
+        for para in section.get("paragraphs") or []:
+            if str(para).strip():
+                lines.append(str(para).strip())
+        for item in section.get("bullets") or []:
+            if str(item).strip():
+                lines.append(f"- {item}")
+        for group in section.get("groups") or []:
+            if not isinstance(group, dict):
+                continue
+            if str(group.get("title") or "").strip():
+                lines.append(str(group["title"]).strip())
+            for item in group.get("bullets") or []:
+                lines.append(f"- {item}")
+            for item in group.get("sub_bullets") or []:
+                lines.append(f"  - {item}")
+        if str(section.get("note") or "").strip():
+            lines.append(str(section["note"]).strip())
+    return "\n".join(lines).strip()
 
 
 def _creative_brief_user_message(brand: Dict[str, Any], case: Dict[str, Any], snapshot: Dict[str, Any],
@@ -1961,7 +2095,8 @@ CREATOR SELECTOR DATA:
 
 SELECTED CREATORS THIS BRIEF GOES TO: {creator_names}
 
-Write the Creative Brief for this brand in the exact template shape.
+Fill the fixed template's variable slots for this brand and project. Respect
+every item count and word budget.
 """.strip()
 
 
@@ -1997,14 +2132,17 @@ async def _call_creative_brief_tool(brand: Dict[str, Any], case: Dict[str, Any],
                                     max_tokens=16000, temperature=0.4)
 
     def _problem_with(result: Dict[str, Any]) -> Optional[str]:
-        if not isinstance(result.get("sections"), list):
-            return "the reply carried no sections list"
         if not result.get("title"):
             return "the reply carried no title"
+        if not isinstance(result.get("opportunity_paragraphs"), list) or not result["opportunity_paragraphs"]:
+            return "the reply carried no opportunity paragraphs"
+        if not isinstance(result.get("workstreams"), list) or len(result["workstreams"]) < 3:
+            return "the reply carried fewer than three workstreams"
         return None
 
     order = [_call_http_model, _call_emergent] if _prefer_anthropic else [_call_emergent, _call_http_model]
-    return await _run_ai_provider_chain(order, _problem_with, failures, "Creative brief generation")
+    raw = await _run_ai_provider_chain(order, _problem_with, failures, "Creative brief generation")
+    return build_creative_brief_document(raw) if raw else None
 
 
 # ---------------------------------------------------------------------------
@@ -6990,6 +7128,11 @@ def make_v3_router(db):
             "</w:r></w:p>"
         )
 
+    def _docx_page_break() -> str:
+        # Hard page break - used to hold the Creative Brief to its fixed four
+        # pages, at the same boundaries as the client's reference PDF.
+        return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+
     def _docx_hr() -> str:
         # Thin grey horizontal rule between sections, exactly as the template.
         return (
@@ -8161,7 +8304,7 @@ def make_v3_router(db):
     class CreativeBriefCreate(BaseModel):
         business_case_id: str
         creator_id: str
-        brief_text: str
+        brief_text: str = ""
         subject: Optional[str] = None
         creator_contact_email: Optional[str] = None
 
@@ -11115,7 +11258,7 @@ def make_v3_router(db):
         except Exception:
             return _read_template_asset('tasck_logo.png') or b''
 
-    def creative_brief_docx_bytes(brief: Dict[str, Any]) -> bytes:
+    def creative_brief_docx_bytes(brief: Dict[str, Any], creator_name: str = "") -> bytes:
         """Render the Creative Alignment Brief on the TTA letterhead template
         (banner + faint decorative-curves watermark + contact-strip footer).
         Headings render in Bebas Neue light-blue; body copy stays Century
@@ -11157,18 +11300,24 @@ def make_v3_router(db):
 
         blocks: List[str] = []
 
+        brief = personalize_creative_brief(brief, creator_name)
+
         # ---- Title + duration -------------------------------------------------
         title = str(brief.get("title") or "CREATOR ROLE BRIEF").strip()
         blocks.append(head(title, size=TITLE_SIZE, before=0, after=60))
         duration = str(brief.get("duration") or "").strip()
         if duration:
-            blocks.append(para(f"Duration: {duration}", bold=True, after=200))
+            blocks.append(para(f"Duration: {duration}", bold=True, after=60))
         elif brief.get("subtitle"):
-            blocks.append(para(str(brief["subtitle"]), bold=True, italic=True, after=200))
+            blocks.append(para(str(brief["subtitle"]), bold=True, italic=True, after=60))
+        if brief.get("prepared_for"):
+            blocks.append(para(f"Prepared for: {brief['prepared_for']}", bold=True, after=200))
 
         # ---- Sections ---------------------------------------------------------
         for section in brief.get("sections", []) or []:
             heading = str(section.get("heading") or "").strip()
+            if heading in CREATIVE_BRIEF_PAGE_STARTS:
+                blocks.append(_docx_page_break())
             if heading:
                 blocks.append(head(heading))
 
@@ -11275,6 +11424,16 @@ def make_v3_router(db):
             blocks.append({"heading": "Next Steps", "paragraphs": [
                 f"{creator_name}, kindly review this brief and confirm your interest so we can move forward."]})
         return {"title": heading_title, "duration": "", "sections": blocks}
+
+    async def _load_generated_brief(case: Dict[str, Any], snapshot_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The case's Creative Brief in the fixed 4-page template - snapshot
+        scoped first, then the case-level mirror."""
+        snap_id = snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
+        if snap_id:
+            snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0}) or {}
+            if snap.get("generated_brief"):
+                return snap["generated_brief"]
+        return (case.get("plan") or {}).get("generated_brief")
 
     @router.post("/business-cases/{bc_id}/ai/creative-brief/generate")
     async def generate_creative_brief(bc_id: str, alignment_snapshot_id: Optional[str] = None):
@@ -11393,38 +11552,40 @@ def make_v3_router(db):
         return {"ok": True, "job": job}
 
     @router.get("/business-cases/{bc_id}/creative-brief/docx")
-    async def download_creative_brief_docx(bc_id: str, alignment_snapshot_id: Optional[str] = None):
+    async def download_creative_brief_docx(bc_id: str, alignment_snapshot_id: Optional[str] = None,
+                                           creator_id: Optional[str] = None):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        brief = None
-        snap_id = alignment_snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
-        if snap_id:
-            snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0}) or {}
-            brief = snap.get("generated_brief")
-        if not brief:
-            brief = (case.get("plan") or {}).get("generated_brief")
+        brief = await _load_generated_brief(case, alignment_snapshot_id)
         if not brief:
             raise HTTPException(404, "No generated Creative Brief on this Business Case yet.")
-        data = creative_brief_docx_bytes(brief)
+        creator_name = ""
+        if creator_id:
+            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) or {}
+            creator_name = creator.get("name") or ""
+        data = creative_brief_docx_bytes(brief, creator_name=creator_name)
         filename = re.sub(r"[^A-Za-z0-9]+", "_", str(brief.get("title") or "Creative_Brief"))[:60] or "Creative_Brief"
+        if creator_name:
+            filename = f"{filename}_{re.sub(r'[^A-Za-z0-9]+', '_', creator_name)}"[:80]
         return StreamingResponse(
             BytesIO(data),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers={"Content-Disposition": f'attachment; filename="{filename}.docx"'},
         )
 
-    def creative_brief_html(brief: Dict[str, Any]) -> str:
-        """Render the Creative Alignment Brief as a standalone printable HTML
-        page. Same content model as ``creative_brief_docx_bytes`` - the two
-        rendering paths stay in sync so brand reviewers see the same wording
-        online that they'd get in the downloaded .docx.
+    def creative_brief_html(brief: Dict[str, Any], creator_name: str = "") -> str:
+        """Render the Creative Brief as four printable A4 pages - the same fixed
+        template as the .docx download (TASCK logo header, contact-strip footer,
+        identical section order, wording and page boundaries), so the browser
+        preview and the downloaded/Google Docs copy always match.
 
         Anyone with the URL can open this in a browser - no Google, no
         install. A print button hooks into ``window.print()`` so the page
         also works as a lightweight PDF export.
         """
         CHECKBOX = "\u2610"
+        brief = personalize_creative_brief(brief, creator_name)
 
         def esc(value: Any) -> str:
             return html.escape("" if value is None else str(value))
@@ -11437,9 +11598,17 @@ def make_v3_router(db):
             parts.append(f'<p class="cb-duration"><strong>Duration:</strong> {esc(duration)}</p>')
         elif brief.get("subtitle"):
             parts.append(f'<p class="cb-subtitle">{esc(str(brief["subtitle"]))}</p>')
+        if brief.get("prepared_for"):
+            parts.append(f'<p class="cb-duration"><strong>Prepared for:</strong> {esc(brief["prepared_for"])}</p>')
+
+        # Page boundaries mirror the .docx exactly.
+        pages: List[List[str]] = [parts]
 
         for section in brief.get("sections", []) or []:
             heading = str(section.get("heading") or "").strip()
+            if heading in CREATIVE_BRIEF_PAGE_STARTS:
+                pages.append([])
+            parts = pages[-1]
             parts.append('<section class="cb-section">')
             if heading:
                 parts.append(f'<h2 class="cb-heading">{esc(heading)}</h2>')
@@ -11528,7 +11697,26 @@ def make_v3_router(db):
                 parts.append(f'<p class="cb-line">{esc(sig["date_label"])}</p>')
             parts.append('</section>')
 
-        body = "\n".join(parts)
+        logo_uri = ""
+        try:
+            logo_uri = "data:image/png;base64," + "".join(_TASCK_LOGO_PNG_B64.split())
+        except Exception:  # noqa: BLE001
+            logo_uri = ""
+        footer_bytes = _read_template_asset("footer_contact.png")
+        footer_uri = ("data:image/png;base64," + base64.b64encode(footer_bytes).decode("ascii")) if footer_bytes else ""
+
+        page_html: List[str] = []
+        total = len(pages)
+        logo_img = '<img src="' + logo_uri + '" alt="TASCK" />' if logo_uri else ""
+        footer_img = '<img src="' + footer_uri + '" alt="" />' if footer_uri else ""
+        for index, page in enumerate(pages, start=1):
+            header = '<header class="cb-head">' + logo_img + '</header>'
+            footer = '<footer class="cb-foot">' + footer_img + '</footer>'
+            page_html.append(
+                f'<article class="cb-page" data-page="{index}" data-testid="cb-page-{index}">'
+                f'{header}<div class="cb-body">{"".join(page)}</div>{footer}</article>'
+            )
+        body = "\n".join(page_html)
         return f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -11546,14 +11734,19 @@ def make_v3_router(db):
     .cb-toolbar .cb-brand {{ font-family: 'Bebas Neue', sans-serif; letter-spacing: .12em; font-size: 20px; }}
     .cb-toolbar button {{ background: #FFF; color: #1F4A3A; border: 0; padding: 8px 16px; border-radius: 999px; font-weight: 600; cursor: pointer; letter-spacing: .04em; }}
     .cb-toolbar button:hover {{ background: #EEE7D6; }}
-    .cb-paper {{ background: #FFF; max-width: 820px; margin: 24px auto; padding: 56px 64px; box-shadow: 0 2px 24px rgba(0,0,0,.08); border-radius: 6px; }}
-    .cb-title {{ color: #000; font-weight: 700; font-size: 26px; line-height: 1.3; margin: 0 0 8px; }}
-    .cb-subtitle {{ font-weight: 700; font-style: italic; margin: 0 0 32px; font-size: 13px; color: #4F3E2F; }}
-    .cb-section {{ margin: 0 0 24px; }}
-    .cb-heading {{ color: #000; font-weight: 700; font-size: 16px; margin: 26px 0 10px; }}
+    .cb-page {{ background: #FFF; width: 794px; min-height: 1123px; margin: 24px auto; padding: 48px 64px 28px; box-shadow: 0 2px 24px rgba(0,0,0,.10); display: flex; flex-direction: column; }}
+    .cb-head {{ display: flex; justify-content: flex-end; margin-bottom: 18px; }}
+    .cb-head img {{ width: 78px; height: 78px; }}
+    .cb-body {{ flex: 1 1 auto; }}
+    .cb-foot {{ margin-top: 26px; text-align: center; }}
+    .cb-foot img {{ width: 100%; max-width: 620px; }}
+    .cb-title {{ color: #000; font-weight: 700; font-size: 24px; line-height: 1.3; margin: 0 0 8px; }}
+    .cb-subtitle {{ font-weight: 700; font-style: italic; margin: 0 0 24px; font-size: 13px; color: #4F3E2F; }}
+    .cb-section {{ margin: 0 0 20px; }}
+    .cb-heading {{ color: #000; font-weight: 700; font-size: 16px; margin: 22px 0 10px; }}
     .cb-line, .cb-checkboxes, .cb-bullet, .cb-hint {{ font-size: 14px; line-height: 1.5; margin: 0 0 6px; }}
     /* Match the .docx: justified body copy at 1.5 spacing. */
-    .cb-duration {{ font-size: 14px; line-height: 1.5; margin: 0 0 18px; }}
+    .cb-duration {{ font-size: 14px; line-height: 1.5; margin: 0 0 8px; }}
     .cb-para {{ font-size: 14px; line-height: 1.5; text-align: justify; margin: 0 0 12px; }}
     .cb-group {{ font-size: 14px; line-height: 1.5; font-weight: 700; margin: 14px 0 6px; }}
     .cb-list {{ font-size: 14px; line-height: 1.5; margin: 0 0 12px; padding-left: 22px; }}
@@ -11565,41 +11758,41 @@ def make_v3_router(db):
     .cb-box {{ white-space: nowrap; }}
     .cb-signature {{ margin-top: 40px; padding-top: 16px; border-top: 1px solid #E8E4DB; }}
     @media print {{
+      @page {{ size: A4; margin: 0; }}
       body {{ background: #FFF; }}
       .cb-toolbar {{ display: none; }}
-      .cb-paper {{ box-shadow: none; margin: 0; padding: 24px; max-width: none; }}
+      .cb-page {{ box-shadow: none; margin: 0; width: auto; min-height: 100vh; padding: 32px 46px 20px; break-after: page; page-break-after: always; }}
+      .cb-page:last-child {{ break-after: auto; page-break-after: auto; }}
     }}
   </style>
 </head>
 <body>
   <div class=\"cb-toolbar\">
-    <span class=\"cb-brand\">TASCK · Creative Brief Preview</span>
+    <span class=\"cb-brand\">TASCK · Creative Brief Preview · {total} pages</span>
     <button type=\"button\" onclick=\"window.print()\">Print / Save as PDF</button>
   </div>
-  <article class=\"cb-paper\">{body}</article>
+  {body}
 </body>
 </html>"""
 
     @router.get("/business-cases/{bc_id}/creative-brief/preview")
-    async def preview_creative_brief_html(bc_id: str, alignment_snapshot_id: Optional[str] = None):
-        """Public browser preview of the Creative Brief. Same content as the
-        .docx download, rendered as a printable HTML page. Brand reviewers can
-        open the URL directly in any browser - no Google, no install."""
+    async def preview_creative_brief_html(bc_id: str, alignment_snapshot_id: Optional[str] = None,
+                                          creator_id: Optional[str] = None):
+        """Public browser preview of the Creative Brief - the same fixed four
+        pages the .docx download carries, rendered as printable A4 pages."""
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        brief = None
-        snap_id = alignment_snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
-        if snap_id:
-            snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0}) or {}
-            brief = snap.get("generated_brief")
-        if not brief:
-            brief = (case.get("plan") or {}).get("generated_brief")
+        brief = await _load_generated_brief(case, alignment_snapshot_id)
         if not brief:
             raise HTTPException(404, "No generated Creative Brief on this Business Case yet.")
+        creator_name = ""
+        if creator_id:
+            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) or {}
+            creator_name = creator.get("name") or ""
         # Serve inline (Content-Type text/html) so the browser opens the page
         # in the current tab instead of downloading it.
-        return HTMLResponse(content=creative_brief_html(brief))
+        return HTMLResponse(content=creative_brief_html(brief, creator_name=creator_name))
 
 
     # ------------------------------------------------------------------
@@ -12194,6 +12387,18 @@ def make_v3_router(db):
         project_title = _clean_document_text(case.get("title") or "Creative Brief", "Creative Brief")
         cb_id = f"cb-{uuid.uuid4().hex[:8]}"
         creator_email = _clean_email(payload.creator_contact_email) or _fallback_creator_email(creator)
+        # Every creator gets the SAME fixed 4-page brief for this business case,
+        # with their name woven in. The free-text draft is only a fallback for
+        # cases where the templated brief has not been generated yet.
+        creator_display = creator.get("name") or ""
+        generated = await _load_generated_brief(case)
+        subject_line = payload.subject or f"Creative Brief - {project_title}"
+        if generated:
+            brief_doc = personalize_creative_brief(generated, creator_display)
+            brief_text = creative_brief_plain_text(brief_doc)
+        else:
+            brief_doc = creative_brief_from_raw_text(subject_line, payload.brief_text, creator_name=creator_display)
+            brief_text = payload.brief_text
         doc = {
             "id": cb_id,
             "business_case_id": payload.business_case_id,
@@ -12201,8 +12406,8 @@ def make_v3_router(db):
             "sent_at": _now_iso(),
             "responded_at": None,
             "status": "sent",
-            "subject": payload.subject or f"Creative Brief - {project_title}",
-            "brief_text": payload.brief_text,
+            "subject": subject_line,
+            "brief_text": brief_text,
             "creator_contact_email": creator_email,
             "reminder_count": 0,
             "last_reminded_at": None,
@@ -12248,7 +12453,7 @@ def make_v3_router(db):
                 f"Access code: {creator_account.get('temporary_password') or 'Use your current TASCK access code'}\n\n"
                 "Please log in, review the brief, and respond with your interest, fee expectation, conditions, and availability.\n\n"
                 "Creative Brief:\n"
-                f"{payload.brief_text}"
+                f"{brief_text}"
             ),
             kind="creative_brief",
             brand_id=case["brand_id"],
@@ -12260,7 +12465,7 @@ def make_v3_router(db):
                 "title": doc["subject"],
                 "filename": f"{cb_id}-creative-brief.docx",
                 "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "content": creative_brief_docx_bytes(creative_brief_from_raw_text(doc["subject"], payload.brief_text, creator_name=creator.get("name") or "")),
+                "content": creative_brief_docx_bytes(brief_doc, creator_name=creator_display),
             }],
         )
         doc["email"] = email
@@ -12295,11 +12500,15 @@ def make_v3_router(db):
             raise HTTPException(400, "A valid recipient email address is required.")
         subject = str(payload.get("subject") or f"Creative Brief - {case.get('title') or 'Creative Brief'}").strip()
         brief_text = str(payload.get("brief_text") or "").strip()
-        if not brief_text:
-            raise HTTPException(400, "brief_text is required - generate the Creative Brief first")
-        docx_bytes = creative_brief_docx_bytes(
-            creative_brief_from_raw_text(subject, brief_text, creator_name="")
-        )
+        creator_name = str(payload.get("creator_name") or "").strip()
+        generated = await _load_generated_brief(case, payload.get("alignment_snapshot_id"))
+        if generated:
+            brief_doc = generated
+        elif brief_text:
+            brief_doc = creative_brief_from_raw_text(subject, brief_text, creator_name=creator_name)
+        else:
+            raise HTTPException(400, "Generate the Creative Brief first")
+        docx_bytes = creative_brief_docx_bytes(brief_doc, creator_name=creator_name)
         email = await queue_email(
             to=recipient,
             subject=subject,
@@ -12359,11 +12568,15 @@ def make_v3_router(db):
         if not brief:
             raise HTTPException(404, "Creative Brief not found")
         creator = await db.v3_creators.find_one({"id": brief.get("creator_id")}, {"_id": 0}) or {}
-        docx_bytes = creative_brief_docx_bytes(creative_brief_from_raw_text(
+        case = await db.v3_business_cases.find_one({"id": brief.get("business_case_id")}, {"_id": 0}) or {}
+        creator_name = creator.get("name") or ""
+        generated = await _load_generated_brief(case) if case else None
+        brief_doc = generated or creative_brief_from_raw_text(
             brief.get("subject") or "Creative Brief",
             brief.get("brief_text") or "",
-            creator_name=creator.get("name") or "",
-        ))
+            creator_name=creator_name,
+        )
+        docx_bytes = creative_brief_docx_bytes(brief_doc, creator_name=creator_name)
         return StreamingResponse(
             BytesIO(docx_bytes),
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -12392,11 +12605,14 @@ def make_v3_router(db):
         if not creator_name and payload.creator_id:
             creator = await db.v3_creators.find_one({"id": payload.creator_id}, {"_id": 0}) or {}
             creator_name = creator.get("name") or ""
-        docx_bytes = creative_brief_docx_bytes(creative_brief_from_raw_text(
-            payload.subject or "Creative Brief",
-            payload.brief_text or "",
+        docx_bytes = creative_brief_docx_bytes(
+            await _load_generated_brief(case) or creative_brief_from_raw_text(
+                payload.subject or "Creative Brief",
+                payload.brief_text or "",
+                creator_name=creator_name,
+            ),
             creator_name=creator_name,
-        ))
+        )
         safe_name = "".join(ch for ch in (creator_name or "Creator") if ch.isalnum() or ch in ("-", "_")) or "Creator"
         return StreamingResponse(
             BytesIO(docx_bytes),
