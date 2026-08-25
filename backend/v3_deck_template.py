@@ -23,7 +23,18 @@ from __future__ import annotations
 
 import html as _html
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# The page-curl engine, inlined so a downloaded deck flips offline too.
+_PAGEFLIP_JS_PATH = Path(__file__).resolve().parent / "static" / "pageflip" / "page-flip.browser.js"
+
+
+def _pageflip_js() -> str:
+    try:
+        return _PAGEFLIP_JS_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 SLIDE_ORDER = [
     "cover", "about", "context", "problem", "objective", "market", "solution",
@@ -718,32 +729,46 @@ VIEWER_CSS = """
 .deck .slide{display:none;border-radius:6px;box-shadow:0 18px 60px rgba(0,0,0,.5)}
 .deck .slide.live{display:flex}
 
-/* flip mode - two pages side by side, with a turn */
-body.mode-flip .deck{width:min(96vw,calc((100vh - 16vh) * 32 / 9));
-  display:grid;grid-template-columns:1fr 1fr;gap:0;perspective:2400px}
-body.mode-flip .deck .slide{display:none;border-radius:0}
-body.mode-flip .deck .slide.live,body.mode-flip .deck .slide.live-2{display:flex}
-body.mode-flip .deck .slide.live{border-radius:6px 0 0 6px;box-shadow:inset -22px 0 34px -26px #000}
-body.mode-flip .deck .slide.live-2{border-radius:0 6px 6px 0;box-shadow:inset 22px 0 34px -26px #000}
-body.mode-flip .deck.turning .slide.live-2{animation:turn .42s ease-in both;transform-origin:left center}
-/* Cover and back cover stand alone, so the frame narrows to one page. */
-body.mode-flip .deck.single{grid-template-columns:1fr;
-  width:min(94vw,calc((100vh - 16vh) * 16 / 9))}
-body.mode-flip .deck.single .slide.live{border-radius:6px;box-shadow:0 18px 60px rgba(0,0,0,.5)}
-@keyframes turn{from{transform:rotateY(0)}to{transform:rotateY(-88deg)}}
+/* flip mode - a real page-curl book (StPageFlip), the reference behaviour:
+   grab the corner and drag, or click either side of the spine. */
+body.mode-flip .deck{display:none}
+#book-wrap{position:relative;width:min(94vw,calc((100vh - 20vh) * 32 / 9));margin:0 auto;
+  transition:transform .6s cubic-bezier(.4,.1,.2,1)}
+/* Cover and back cover stand alone on one half of the spread - shift the
+   book so the single page reads centred, exactly like a real book opening. */
+#book-wrap.at-start{transform:translateX(-25%)}
+#book-wrap.at-end{transform:translateX(25%)}
+#book-wrap[hidden]{display:none}
+#book{width:100%}
+.sheet{width:100%;height:100%;background:#050B15;overflow:hidden}
+.sheet .slide{width:100%;height:100%;border-radius:0;box-shadow:none}
+.stf__parent{margin:0 auto}
 
 /* Used for a single frame while every slide is measured for auto-fit. */
 body.measuring .deck{display:block!important;width:100%!important}
 body.measuring .deck .slide{display:flex!important}
+
+/* Corner-curl affordance: the "grab me" cue. Decorative only - pointer
+   events fall through to the curl engine underneath. */
+.curl-hint{position:absolute;right:0;bottom:0;width:clamp(30px,3.4vw,52px);
+  height:clamp(30px,3.4vw,52px);z-index:25;pointer-events:none;
+  transition:width .28s ease,height .28s ease,opacity .25s ease;
+  background:linear-gradient(315deg,rgba(255,255,255,.92) 0%,rgba(226,231,240,.82) 42%,rgba(120,132,150,.28) 60%,rgba(0,0,0,0) 61%);
+  box-shadow:-6px -6px 14px rgba(0,0,0,.35);
+  clip-path:polygon(100% 0,100% 100%,0 100%);
+  animation:curl-breathe 3.4s ease-in-out infinite}
+#book-wrap:hover .curl-hint{width:clamp(46px,5vw,76px);height:clamp(46px,5vw,76px);animation:none}
+.curl-hint.hidden{opacity:0}
+@keyframes curl-breathe{0%,100%{transform:translate(0,0)}50%{transform:translate(-3px,-3px)}}
 
 .nav{display:flex;align-items:center;gap:18px;color:#8FA0B8;
   font:600 12px/1 'Play',Verdana,sans-serif;letter-spacing:.12em;text-transform:uppercase}
 .nav button{background:none;border:0;color:#cfd8e6;font-size:26px;cursor:pointer;line-height:1;padding:0 6px}
 .nav button:disabled{opacity:.25;cursor:default}
 @media print{
-  .toolbar,.nav{display:none}
+  .toolbar,.nav,#book-wrap{display:none!important}
   .stage{display:block;padding:0}
-  .deck{width:100%}
+  .deck{width:100%;display:block!important}
   .deck .slide,body.mode-flip .deck .slide{display:flex!important;page-break-after:always;
     border-radius:0;box-shadow:none}
 }
@@ -860,81 +885,8 @@ VIEWER_JS = """
     clearTimeout(rt); rt=setTimeout(fitAll,160);
   });
   window.addEventListener('beforeprint',fitAll);
-  // A real book opens on the cover alone and closes on the back cover alone;
-  // only the interior pages fall into spreads. Pairing straight through from
-  // page one left the back cover glued to page 15, which is not how a book
-  // closes.
-  function buildSpreads(n){
-    var out=[];
-    if(!n) return out;
-    out.push([0]);                       // front cover, on its own
-    for(var i=1;i<n-1;i+=2){
-      if(i+1<=n-2) out.push([i,i+1]); else out.push([i]);
-    }
-    if(n>1) out.push([n-1]);             // back cover, on its own
-    return out;
-  }
-  var spreads=buildSpreads(slides.length);
-  function spreadIndexFor(i){
-    for(var k=0;k<spreads.length;k++){ if(spreads[k].indexOf(i)!==-1) return k; }
-    return 0;
-  }
-  // `at` stays the index of the leading slide on screen, so mode switches and
-  // the analytics hook below keep working off one number.
-  function currentPages(){ return mode==='flip'?spreads[spreadIndexFor(at)]:[at]; }
-  function render(){
-    slides.forEach(function(s){ s.classList.remove('live','live-2'); });
-    var pages=currentPages();
-    slides[pages[0]].classList.add('live');
-    if(mode==='flip'&&pages.length>1) slides[pages[1]].classList.add('live-2');
-    // One page in a two-page frame would sit in the left half with a gap
-    // beside it; `single` narrows the deck to one page and centres it.
-    deck.classList.toggle('single',mode==='flip'&&pages.length===1);
-    var shown=pages.length>1?(pages[0]+1)+'-'+(pages[1]+1):(pages[0]+1);
-    counter.textContent=shown+' / '+slides.length;
-    if(mode==='flip'){
-      var k=spreadIndexFor(at);
-      prev.disabled=k<=0; next.disabled=k>=spreads.length-1;
-    } else {
-      prev.disabled=at<=0; next.disabled=at>=slides.length-1;
-    }
-  }
-  function go(dir){
-    if(mode==='flip'){
-      var k=spreadIndexFor(at)+dir;
-      if(k<0||k>=spreads.length) return;
-      if(dir>0){ deck.classList.add('turning');
-        setTimeout(function(){ deck.classList.remove('turning'); },420); }
-      at=spreads[k][0];
-    } else {
-      var n=at+dir;
-      if(n<0||n>slides.length-1) return;
-      at=n;
-    }
-    render();
-  }
-  prev.onclick=function(){go(-1)}; next.onclick=function(){go(1)};
-  document.addEventListener('keydown',function(e){
-    if(e.key==='ArrowRight'||e.key===' ') go(1);
-    if(e.key==='ArrowLeft') go(-1);
-  });
-  var x0=null;
-  deck.addEventListener('touchstart',function(e){x0=e.touches[0].clientX},{passive:true});
-  deck.addEventListener('touchend',function(e){
-    if(x0===null) return; var dx=e.changedTouches[0].clientX-x0;
-    if(Math.abs(dx)>40) go(dx<0?1:-1); x0=null;
-  },{passive:true});
-  function setMode(m){
-    mode=m; body.classList.toggle('mode-flip',m==='flip');
-    document.getElementById('m-flip').classList.toggle('on',m==='flip');
-    document.getElementById('m-slides').classList.toggle('on',m==='slides');
-    if(m==='flip') at=spreads[spreadIndexFor(at)][0];
-    render();
-  }
-  document.getElementById('m-flip').onclick=function(){setMode('flip')};
-  document.getElementById('m-slides').onclick=function(){setMode('slides')};
-  setMode(mode);
-  // Deck analytics: log the open + count page turns per session.
+  // ---- analytics -------------------------------------------------------
+  var track=function(){};
   try{
     var meta=document.getElementById('deck-analytics');
     if(meta){
@@ -948,26 +900,125 @@ VIEWER_JS = """
           sid='sess-'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
           try{ sessionStorage.setItem('tasck-deck-'+deckId, sid); }catch(_){}
         }
-        var url=base+'/api/v3/pitch-decks/'+encodeURIComponent(deckId)+'/analytics/view';
         try{
-          fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
-            body:JSON.stringify({session_id:sid,source:src})}).catch(function(){});
+          fetch(base+'/api/v3/pitch-decks/'+encodeURIComponent(deckId)+'/analytics/view',
+            {method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
+             body:JSON.stringify({session_id:sid,source:src})}).catch(function(){});
         }catch(_){}
-        var origGo=go;
-        go=function(dir){
-          var prev=at; origGo(dir);
-          if(at!==prev){
-            try{
-              fetch(base+'/api/v3/pitch-decks/'+encodeURIComponent(deckId)+'/analytics/turn',
-                {method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
-                 body:JSON.stringify({session_id:sid,page:at+1})}).catch(function(){});
-            }catch(_){}
-          }
+        track=function(page){
+          try{
+            fetch(base+'/api/v3/pitch-decks/'+encodeURIComponent(deckId)+'/analytics/turn',
+              {method:'POST',headers:{'Content-Type':'application/json'},keepalive:true,
+               body:JSON.stringify({session_id:sid,page:page})}).catch(function(){});
+          }catch(_){}
         };
-        prev.onclick=function(){go(-1)}; next.onclick=function(){go(1)};
       }
     }
   }catch(_){ }
+
+  // ---- slides mode -----------------------------------------------------
+  function render(){
+    slides.forEach(function(s){ s.classList.remove('live','live-2'); });
+    slides[at].classList.add('live');
+    counter.textContent=(at+1)+' / '+slides.length;
+    prev.disabled=at<=0; next.disabled=at>=slides.length-1;
+  }
+  function go(dir){
+    var n=at+dir;
+    if(n<0||n>slides.length-1) return;
+    at=n; render(); track(at+1);
+  }
+
+  // ---- flip mode: real page-curl book ----------------------------------
+  // Grab the corner and drag, or click either side of the spine - the same
+  // feel as the reference flipbook. StPageFlip draws the curl and shadows.
+  var pf=null;
+  var bookWrap=document.getElementById('book-wrap');
+  var book=document.getElementById('book');
+  var hint=document.getElementById('curl-hint');
+  function syncFlip(idx){
+    var total=slides.length;
+    counter.textContent=(idx+1)+' / '+total;
+    prev.disabled=idx<=0; next.disabled=idx>=total-1;
+    if(hint) hint.classList.toggle('hidden', idx>=total-1);
+    if(bookWrap){
+      bookWrap.classList.toggle('at-start', idx<=0);
+      bookWrap.classList.toggle('at-end', idx>=total-1);
+    }
+  }
+  function buildBook(){
+    if(pf||!window.St||!book) return false;
+    slides.forEach(function(s){
+      var sheet=document.createElement('div');
+      sheet.className='sheet';
+      sheet.appendChild(s.cloneNode(true));
+      book.appendChild(sheet);
+    });
+    pf=new St.PageFlip(book,{
+      width:960, height:540, size:'stretch',
+      minWidth:320, maxWidth:1200, minHeight:180, maxHeight:675,
+      showCover:true, maxShadowOpacity:0.5,
+      flippingTime:550, swipeDistance:12,
+      mobileScrollSupport:true, useMouseEvents:true, disableFlipByClick:true
+    });
+    pf.loadFromHTML(book.querySelectorAll('.sheet'));
+    pf.on('flip',function(e){ at=e.data; syncFlip(e.data); track(e.data+1); });
+    pf.on('changeState',function(e){
+      if(hint) hint.classList.toggle('hidden', e.data!=='read');
+    });
+    var dx0=0, dy0=0;
+    bookWrap.addEventListener('mousedown',function(e){ dx0=e.clientX; dy0=e.clientY; });
+    bookWrap.addEventListener('click',function(e){
+      if(e.target.closest('button')) return;
+      if(Math.abs(e.clientX-dx0)>6||Math.abs(e.clientY-dy0)>6) return;
+      var r=(document.querySelector('.stf__parent')||book).getBoundingClientRect();
+      if(e.clientX>r.left+r.width/2) pf.flipNext(); else pf.flipPrev();
+    });
+    return true;
+  }
+  prev.onclick=function(){ if(mode==='flip'&&pf) pf.flipPrev(); else go(-1); };
+  next.onclick=function(){ if(mode==='flip'&&pf) pf.flipNext(); else go(1); };
+  document.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'||e.key===' '){ if(mode==='flip'&&pf) pf.flipNext(); else go(1); }
+    if(e.key==='ArrowLeft'){ if(mode==='flip'&&pf) pf.flipPrev(); else go(-1); }
+  });
+  var x0=null;
+  document.querySelector('.stage').addEventListener('touchstart',function(e){x0=e.touches[0].clientX},{passive:true});
+  document.querySelector('.stage').addEventListener('touchend',function(e){
+    if(x0===null||mode==='flip') { x0=null; return; }
+    var dx=e.changedTouches[0].clientX-x0;
+    if(Math.abs(dx)>40) go(dx<0?1:-1);
+    x0=null;
+  },{passive:true});
+  function setMode(m){
+    if(m==='flip'&&!pf&&!buildBook()) m='slides';   // library missing: stay on slides
+    mode=m;
+    body.classList.toggle('mode-flip',m==='flip');
+    document.getElementById('m-flip').classList.toggle('on',m==='flip');
+    document.getElementById('m-slides').classList.toggle('on',m==='slides');
+    if(bookWrap) bookWrap.hidden=(m!=='flip');
+    if(m==='flip'){
+      pf.flip(at);
+      syncFlip(pf.getCurrentPageIndex());
+    } else {
+      render();
+    }
+  }
+  document.getElementById('m-flip').onclick=function(){setMode('flip')};
+  document.getElementById('m-slides').onclick=function(){setMode('slides')};
+  (function(){
+    var fs=document.getElementById('m-full');
+    if(!fs) return;
+    function label(){ fs.textContent=document.fullscreenElement?'Exit full':'Fullscreen'; }
+    fs.onclick=function(){
+      if(document.fullscreenElement){ document.exitFullscreen(); return; }
+      var el=document.documentElement;
+      if(el.requestFullscreen) el.requestFullscreen().catch(function(){});
+    };
+    document.addEventListener('fullscreenchange',label);
+    label();
+  })();
+  setMode(mode);
 })();
 """
 
@@ -1000,10 +1051,15 @@ def deck_document_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = N
         "<div class='toolbar'>"
         "<button class='tbtn' id='m-flip' type='button'>Flip book</button>"
         "<button class='tbtn' id='m-slides' type='button'>Slides</button>"
+        "<button class='tbtn' id='m-full' type='button'>Fullscreen</button>"
         "</div>"
-        f"<div class='stage'><div class='deck'>{pages}</div>"
+        "<div class='stage'>"
+        "<div class='book-wrap' id='book-wrap' hidden><div id='book'></div>"
+        "<div class='curl-hint' id='curl-hint' aria-hidden='true'></div></div>"
+        f"<div class='deck'>{pages}</div>"
         "<div class='nav'><button id='prev' type='button' aria-label='Previous'>&#10094;</button>"
         "<span id='count'></span>"
         "<button id='next' type='button' aria-label='Next'>&#10095;</button></div></div>"
+        f"<script>{_pageflip_js()}</script>"
         f"<script>{VIEWER_JS}</script></body></html>"
     )

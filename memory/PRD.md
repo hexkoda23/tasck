@@ -1421,3 +1421,17 @@ Frontend (`V1BusinessCaseFlowPages.js`, `v3api.js`):
 
 Testing: iteration_36.json - backend 15/15 pytest (`/app/backend/tests/test_creative_brief_template.py`), frontend flows 100%. Live AI regeneration verified: exact 9 sections with exact element counts, preview 4 pages, docx 3 page breaks.
 NOTE: user must REDEPLOY for production (thcodemo.space) to pick this up.
+
+## 2026-06-25 (b) - Flipbook page-turn flow, email logo, brief always .docx
+User sent a FlipHTML5 screen recording: "make sure the flip book flow is like this... also in the email sent to brands the tasck logo image is broken... and creative brief should always be in google docs format so it can be edited."
+
+1. Pitch deck flipbook - real page-curl in BOTH renderers:
+   - Root cause found: decks carrying the structured 16-slide payload render through `v3_deck_template.deck_document_html`, whose "flip" mode was only a CSS `rotateY(-88deg)` animation - no drag, no curl. Replaced with StPageFlip (library inlined so downloaded decks flip offline): `buildBook()` clones each slide into a `.sheet`, `showCover:true`, cover/back-cover shifted 25% so single pages read centred, click either side of the spine, arrows + keyboard, analytics `track()` shared by both modes, Slides mode and print (all 16 slides, book hidden) intact.
+   - Legacy `v3_flipbook.py`: same affordances added.
+   - Both: permanent bottom-corner curl hint that lifts on hover and hides while the engine draws its own fold, `flippingTime` 750 -> 550, `swipeDistance` 12, fullscreen button, "N / total" counter.
+   - Vendored `static/pageflip/page-flip.browser.js` patched at `stopMove`: a turn now commits at ~30% drag instead of requiring the page be dragged past the spine (this was the "hard to flip" complaint).
+   - Admin preview iframe now allows fullscreen.
+2. Email logo: banner keeps the inline CID image (verified MIME shape multipart/alternative > [text/plain, multipart/related > [text/html, image/jpeg, Content-ID <tasck-logo>]]) and now always renders the "THE TASCK AGENCY." wordmark beside it, so a client that blocks images shows a proper banner instead of a broken icon. No data: URIs in outgoing HTML. PRODUCTION STILL SHOWS THE OLD BROKEN LOGO UNTIL THE USER REDEPLOYS.
+3. Creative brief always editable .docx: audited all five paths (case docx w/ and w/o creator, saved-brief docx, preview-docx, POST /creative-briefs attachment, /creative-brief/send attachment) - all serve the Word/Google-Docs mime type. "Copy link" and WhatsApp share now point at the per-creator 4-page preview instead of the old mock creator-portal page.
+
+Testing: iteration_37.json - 13/13 backend pytest (`backend/tests/test_flipbook_email_docx_iter37.py`) plus Playwright drag/click/keyboard/mode/print checks on both renderers. No open issues.

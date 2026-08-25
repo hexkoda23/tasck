@@ -1150,7 +1150,7 @@ body{
 /* The book block is two pages wide. When the cover (right half) or back cover
    (left half) is shown alone, glide the block sideways so the single page sits
    centered - exactly like the reference viewer. */
-.book-wrap{width:min(1020px,82vw); transition:transform .8s cubic-bezier(.4,.1,.2,1);}
+.book-wrap{position:relative; width:min(1020px,82vw); transition:transform .8s cubic-bezier(.4,.1,.2,1);}
 .viewport.at-start .book-wrap{transform:translateX(-25%);}
 .viewport.at-end .book-wrap{transform:translateX(25%);}
 
@@ -1265,6 +1265,28 @@ body{
 .corner.first{left:8px;} .corner.last{right:8px;}
 .indicator{font-size:12.5px; color:#bdbdc6; letter-spacing:.05em; user-select:none;}
 
+/* ---- Corner-curl affordance -----------------------------------------
+   A permanently visible lifted corner on the right-hand page, exactly the
+   "grab me" cue the reference flipbook uses. Purely decorative: pointer
+   events pass straight through to the page-curl engine underneath. */
+.curl-hint{position:absolute; right:0; bottom:0; width:clamp(34px,4.2vw,58px);
+  height:clamp(34px,4.2vw,58px); z-index:25; pointer-events:none;
+  transition:width .28s ease, height .28s ease, opacity .25s ease;
+  background:linear-gradient(315deg, rgba(255,255,255,.92) 0%, rgba(226,231,240,.82) 42%, rgba(120,132,150,.28) 60%, rgba(0,0,0,0) 61%);
+  box-shadow:-6px -6px 14px rgba(0,0,0,.35);
+  clip-path:polygon(100% 0, 100% 100%, 0 100%);
+  animation:curl-breathe 3.4s ease-in-out infinite;}
+.book-wrap:hover .curl-hint{width:clamp(52px,6.4vw,88px); height:clamp(52px,6.4vw,88px); animation:none;}
+.curl-hint.hidden{opacity:0;}
+@keyframes curl-breathe{
+  0%,100%{transform:translate(0,0);}
+  50%{transform:translate(-3px,-3px);}
+}
+.curl-tip{position:absolute; right:0; bottom:calc(100% + 10px); white-space:nowrap;
+  font-family:'Bebas Neue FB','Bebas Neue',sans-serif; letter-spacing:.16em; font-size:11px;
+  text-transform:uppercase; color:#9aa6b8; opacity:0; transition:opacity .25s ease;}
+.book-wrap:hover .curl-tip{opacity:1;}
+
 /* ---- Utility bar (Download PDF) ---- */
 .util{position:fixed; top:16px; right:16px; z-index:60; display:flex; gap:8px;}
 .util .btn{background:rgba(12,22,38,.85); backdrop-filter:blur(8px); color:#EAF0F9;
@@ -1330,11 +1352,15 @@ body{
 <body>
 <meta id="deck-analytics" data-deck-id="__DECK_ID__" data-api-base="__API_BASE__" data-source="__SOURCE__">
 <div class="util no-print">
+  <button class="btn" id="fullscreen" data-testid="flipbook-fullscreen">Fullscreen</button>
   <button class="btn" id="print-pdf" data-testid="flipbook-download-pdf">Download PDF</button>
 </div>
 <div class="viewport at-start" id="viewport">
   <button class="side prev" id="prev" aria-label="Previous page">&#8249;</button>
-  <div class="book-wrap"><div id="book">__SHEETS__</div></div>
+  <div class="book-wrap">
+    <div id="book">__SHEETS__</div>
+    <div class="curl-hint" id="curl-hint" aria-hidden="true"><span class="curl-tip">Drag or click to turn</span></div>
+  </div>
   <button class="side next" id="next" aria-label="Next page">&#8250;</button>
   <button class="corner first" id="first" aria-label="First page">&#171;</button>
   <button class="corner last" id="last" aria-label="Last page">&#187;</button>
@@ -1349,8 +1375,12 @@ var pf = new St.PageFlip(document.getElementById('book'), {
   minWidth: 280, maxWidth: 740,
   minHeight: 390, maxHeight: 1030,
   showCover: true,
-  maxShadowOpacity: 0.45,
-  flippingTime: 750,
+  maxShadowOpacity: 0.5,
+  // Snappier than the library default so turning feels light, and a short
+  // swipe is enough to commit the turn (see the patched stopMove threshold
+  // in static/pageflip/page-flip.browser.js).
+  flippingTime: 550,
+  swipeDistance: 12,
   mobileScrollSupport: true,
   useMouseEvents: true,
   disableFlipByClick: true
@@ -1379,9 +1409,17 @@ function sync(idx){
   document.getElementById('first').disabled = atStart;
   document.getElementById('next').disabled = atEnd;
   document.getElementById('last').disabled = atEnd;
-  document.getElementById('indicator').textContent =
-    atStart ? 'Cover' : (atEnd ? 'Back cover' : 'Page ' + idx + ' of ' + (total - 2));
+  var label = atStart ? 'Cover' : (atEnd ? 'Back cover' : 'Page ' + idx + ' of ' + (total - 2));
+  document.getElementById('indicator').textContent = label + '  ·  ' + (idx + 1) + ' / ' + total;
+  var hint = document.getElementById('curl-hint');
+  if (hint) hint.classList.toggle('hidden', atEnd);
 }
+// The decorative corner curl must vanish while the engine is drawing its own
+// fold, otherwise two curls overlap on the same corner.
+pf.on('changeState', function(e){
+  var hint = document.getElementById('curl-hint');
+  if (hint) hint.classList.toggle('hidden', e.data !== 'read');
+});
 pf.on('flip', function(e){ sync(e.data); });
 // Deck analytics: log the open + count page turns per session.
 (function(){
@@ -1438,6 +1476,20 @@ sync(0);
 // Download PDF: fires the browser's native print flow. Print CSS flattens
 // every sheet to A4 pages so "Save as PDF" produces a real, multi-page deck.
 document.getElementById('print-pdf').onclick = function(){ window.print(); };
+// Fullscreen: the reference flipbook opens edge-to-edge, so the whole stage
+// (book + controls) goes fullscreen rather than the book element alone.
+(function(){
+  var btn = document.getElementById('fullscreen');
+  if (!btn) return;
+  function label(){ btn.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen'; }
+  btn.onclick = function(){
+    if (document.fullscreenElement) { document.exitFullscreen(); return; }
+    var el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(function(){});
+  };
+  document.addEventListener('fullscreenchange', label);
+  label();
+})();
 // Auto-print when the flipbook is opened with ?print=1 (admin "Download PDF").
 if (/[?&]print=1(?:&|$)/.test(window.location.search)) {
   setTimeout(function(){ window.print(); }, 400);

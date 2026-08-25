@@ -2994,8 +2994,13 @@ def make_v3_router(db):
                 f'width="{_EMAIL_LOGO_PX}" height="{_EMAIL_LOGO_PX}" '
                 f'style="display:inline-block;width:{_EMAIL_LOGO_PX}px;height:{_EMAIL_LOGO_PX}px;'
                 'vertical-align:middle;border:0;outline:none;text-decoration:none;" />'
-                if logo_uri else 'TASCK'
+                if logo_uri else ''
             )
+            # Wordmark always renders, so a client that blocks or fails the
+            # image still shows a proper TASCK banner instead of a broken icon.
+            + '<span style="display:inline-block;vertical-align:middle;'
+              'margin-left:14px;line-height:1.1;letter-spacing:.16em;'
+              'font-size:18px;color:#FFFFFF;">THE TASCK AGENCY.</span>'
             + '</div>'
             f'<div style="padding:24px;font-family:{body_stack};color:#1A1A1A;'
             f'font-size:14px;line-height:1.6;">{body_html}'

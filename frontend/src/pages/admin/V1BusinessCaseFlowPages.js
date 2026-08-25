@@ -939,7 +939,6 @@ const creatorContact = (creator) => cleanV1Text(
 );
 const selectedCreatorQuery = (ids) => encodeURIComponent(ids.join(','));
 
-const creatorBriefLink = (businessCaseId, creatorId) => `${window.location.origin}/creator/briefs/${businessCaseId}?creator=${encodeURIComponent(creatorId)}`;
 
 const briefPrintHtml = (title, body) => `<!doctype html><html><head><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;color:#1A1A1A;margin:48px;line-height:1.55}h1{font-size:24px}pre{white-space:pre-wrap;font-family:Arial,sans-serif;font-size:13px}</style></head><body><h1>${escapeHtml(title)}</h1><pre>${escapeHtml(body)}</pre></body></html>`;
 
@@ -4037,7 +4036,9 @@ export const V3BusinessCasePlanBrief = () => {
     }
   };
   const copyLink = (creator) => {
-    const link = creatorBriefLink(id, creator.id);
+    // Share the live 4-page brief preview for THIS creator, not the generic
+    // portal page - the recipient sees the real document instantly.
+    const link = v3TemplateBriefPreviewUrl(id, snapshotId, creator.id);
     if (!navigator.clipboard) {
       setNotice(`Creator brief link: ${link}`);
       return;
@@ -4055,7 +4056,7 @@ export const V3BusinessCasePlanBrief = () => {
     setNotice(`Creative brief (.docx) downloaded for ${creatorName(creator)}. Open it in Word or Google Docs.`);
   };
   const shareWhatsApp = (creator) => {
-    const text = `${getCase(bundle).title || 'Creative Brief'}\n${creatorBriefLink(id, creator.id)}`;
+    const text = `${getCase(bundle).title || 'Creative Brief'}\n${v3TemplateBriefPreviewUrl(id, snapshotId, creator.id)}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
   return (
@@ -5004,7 +5005,9 @@ export const V3BusinessCasePitchDeck = () => {
               src={v3PitchDeckFlipbookUrl(deck.id)}
               className="flex-1 w-full border-0 bg-transparent"
               data-testid="pitch-flipbook-iframe"
-              sandbox="allow-scripts allow-same-origin"
+              allow="fullscreen"
+              allowFullScreen
+              sandbox="allow-scripts allow-same-origin allow-modals allow-popups"
             />
           </div>
         </div>
