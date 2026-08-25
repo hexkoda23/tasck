@@ -186,6 +186,7 @@ import {
   v3UpdateStrategySnapshot,
 } from '../../lib/v3api';
 import { formatNairaV3 } from '../../lib/v3data';
+import { generateCreatorBriefDraft, briefIsReady } from '../../lib/creatorBrief';
 
 const brainstormingSections = [
   ['Campaign core idea', ['big idea', 'campaign angle', 'cultural insight', 'audience truth']],
@@ -941,85 +942,6 @@ const creatorContact = (creator) => cleanV1Text(
 const selectedCreatorQuery = (ids) => encodeURIComponent(ids.join(','));
 
 const creatorBriefLink = (businessCaseId, creatorId) => `${window.location.origin}/creator/briefs/${businessCaseId}?creator=${encodeURIComponent(creatorId)}`;
-
-const generateCreatorBriefDraft = (bundle, creator, planningFields = {}) => {
-  const bc = getCase(bundle);
-  const brand = getBrand(bundle);
-  const alignment = bundle?.alignment_snapshot || {};
-  const marketing = bc.connect?.marketing_intelligence || alignment.marketing_intelligence || {};
-  const projectTitle = bc.title || 'Business Case Project';
-  const brandName = brandDisplayName(brand);
-  const leadName = bc.relationship_manager_name || brand.relationship_manager_name || 'TTA project lead';
-  const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-  const planningValue = (label, fallback) => String(planningFields[label] || fallback || '').trim();
-  // Per Chioma's feedback: drop the AI-style parenthetical helpers like
-  // "(Creator Version)", "(summary)", "(Signal Only)", instruction phrases
-  // like "Describe responsibility, not outputs" / "No schedules. No
-  // milestones." / "No breakdown required at this stage.", and meta lines
-  // like "Internal name: ...". Keep the substantive structure that the
-  // creator actually fills in.
-  return [
-    'TTA - Creative Alignment Brief',
-    '',
-    '1. Project Reference',
-    `Brand / Organisation: ${brandName}`,
-    `Project working title: ${projectTitle}`,
-    `TTA project lead: ${leadName}`,
-    `Date shared with creator: ${today}`,
-    `Creator: ${creatorName(creator)}`,
-    `Creator contact: ${creatorContact(creator) || 'To be confirmed'}`,
-    '',
-    '2. Context',
-    `Brand objective: ${planningValue('Campaign core idea', marketing.key_marketing_focus || bc.stated_intent || `Position ${brandName} with a credible creator-led cultural idea that supports the approved business case.`)}`,
-    `Why this project is happening now: ${planningValue('Audience and behavior', marketing.current_marketing_challenge || marketing.primary_target_audience || 'The brand is preparing a creator partnership and needs pricing/fit confirmation before final scope approval.')}`,
-    '',
-    '3. Role of the Creative',
-    'The creative would act as:',
-    '- Public-facing lead',
-    '- Conceptual lead',
-    '- Talent & cultural translator',
-    '- Executional partner',
-    `Primary responsibility: ${planningValue('Creator direction', `${creatorName(creator)} should help translate the brand opportunity through ${creatorSpecialty(creator)} while keeping the idea credible to their audience.`)}`,
-    '',
-    '4. Expected Scope',
-    'This engagement may include:',
-    '- Content creation',
-    '- Appearances / representation',
-    '- Concept contribution',
-    '- Performance / activation involvement',
-    '- Other',
-    `Scope signal from planning: ${planningValue('Content/deliverables idea log', 'Creator involvement is being explored for planning and pricing alignment only.')}`,
-    '- Specific deliverables are not yet defined',
-    '- Final scope is subject to brand approval',
-    '',
-    '5. Indicative Timeline',
-    `Proposed engagement period: ${planningValue('Timeline inference', marketing.timeline || 'To be confirmed after brand approval and creator availability check.')}`,
-    'Known timing constraints: Confirm availability, blackout dates, production constraints, and any campaign launch windows.',
-    '',
-    '6. Working Assumptions',
-    '- TTA will coordinate engagement and act as administrative lead',
-    '- Contracts issued through TTA',
-    '- Payment processed through TTA',
-    '- Reporting and brand liaison handled by TTA',
-    '',
-    '7. Fee Indication Request',
-    `Fee for engagement: ${planningValue('Budget planning', 'Creator to propose a fee range or fixed fee for the engagement signal above.')}`,
-    'Fee basis: Project based / Time based / Retainer style',
-    'What fee covers: Please state what your indication includes, including content, appearances, concept contribution, usage, exclusivity, production support, or management fees where relevant.',
-    '',
-    '8. Availability & Conditions',
-    'Are you available within proposed period? Yes / Conditional / No',
-    `Conditions/exclusions: ${planningValue('Risks and assumptions', 'Please share category conflicts, usage limits, exclusivity restrictions, production requirements, travel constraints, or anything that would affect the final scope.')}`,
-    '',
-    '9. Confirmation',
-    '[ ] I understand this is for planning and pricing alignment only',
-    '[ ] I understand this is not a confirmed booking',
-    '[ ] I am open to proceeding subject to final scope and budget approval',
-    '',
-    'Name:',
-    'Date:',
-  ].join('\n');
-};
 
 const briefPrintHtml = (title, body) => `<!doctype html><html><head><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;color:#1A1A1A;margin:48px;line-height:1.55}h1{font-size:24px}pre{white-space:pre-wrap;font-family:Arial,sans-serif;font-size:13px}</style></head><body><h1>${escapeHtml(title)}</h1><pre>${escapeHtml(body)}</pre></body></html>`;
 
@@ -4081,17 +4003,30 @@ export const V3BusinessCasePlanBrief = () => {
   // Sibling document: the Pitch Deck. Approved (by admin or brand) counts as done.
   const pitchDeckDone = bundle?.pitch_deck?.status === 'approved' || bundle?.business_case?.plan?.pitch_deck_status === 'approved';
   const planningFields = bundle?.brainstorm_round?.planning_fields || null;
+  // Auto-drafts, keyed by creator id, exactly as this page last wrote them.
+  // A draft that still matches its entry here has not been touched by the
+  // admin, so it is safe to rewrite when better project data arrives.
+  const autoDraftsRef = useRef({});
   useEffect(() => {
     const activeCreators = selectedIds.map((creatorId) => creators.find((creator) => creator.id === creatorId)).filter(Boolean);
     if (!activeCreators.length) return;
+    // The bundle loads asynchronously. Drafting before it lands produced a
+    // brief full of placeholders - "Brand", "Business Case Project", "TTA
+    // project lead" - which the old `if (!next[creator.id])` guard then kept
+    // forever, because a draft already existed.
+    if (!briefIsReady(bundle)) return;
     setBriefs((current) => {
       const next = { ...current };
       let changed = false;
       activeCreators.forEach((creator) => {
-        if (!next[creator.id]) {
-          next[creator.id] = generateCreatorBriefDraft(bundle, creator, planningFields || {});
-          changed = true;
-        }
+        const existing = next[creator.id];
+        const untouched = existing === undefined || existing === autoDraftsRef.current[creator.id];
+        if (!untouched) return;   // the admin edited this one - leave it alone
+        const draft = generateCreatorBriefDraft(bundle, creator, planningFields || {});
+        if (draft === existing) return;
+        autoDraftsRef.current[creator.id] = draft;
+        next[creator.id] = draft;
+        changed = true;
       });
       return changed ? next : current;
     });
@@ -4103,7 +4038,9 @@ export const V3BusinessCasePlanBrief = () => {
   const generateAll = () => {
     const next = {};
     selectedCreators.forEach((creator) => {
-      next[creator.id] = generateCreatorBriefDraft(bundle, creator, planningFields || {});
+      const draft = generateCreatorBriefDraft(bundle, creator, planningFields || {});
+      autoDraftsRef.current[creator.id] = draft;
+      next[creator.id] = draft;
     });
     setBriefs(next);
     setNotice('AI generated a draft brief for every selected creator.');

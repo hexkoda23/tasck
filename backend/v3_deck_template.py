@@ -726,6 +726,10 @@ body.mode-flip .deck .slide.live,body.mode-flip .deck .slide.live-2{display:flex
 body.mode-flip .deck .slide.live{border-radius:6px 0 0 6px;box-shadow:inset -22px 0 34px -26px #000}
 body.mode-flip .deck .slide.live-2{border-radius:0 6px 6px 0;box-shadow:inset 22px 0 34px -26px #000}
 body.mode-flip .deck.turning .slide.live-2{animation:turn .42s ease-in both;transform-origin:left center}
+/* Cover and back cover stand alone, so the frame narrows to one page. */
+body.mode-flip .deck.single{grid-template-columns:1fr;
+  width:min(94vw,calc((100vh - 16vh) * 16 / 9))}
+body.mode-flip .deck.single .slide.live{border-radius:6px;box-shadow:0 18px 60px rgba(0,0,0,.5)}
 @keyframes turn{from{transform:rotateY(0)}to{transform:rotateY(-88deg)}}
 
 /* Used for a single frame while every slide is measured for auto-fit. */
@@ -752,7 +756,6 @@ VIEWER_JS = """
   var at=0, mode=(body.dataset.mode==='flip')?'flip':'slides';
   var counter=document.getElementById('count');
   var prev=document.getElementById('prev'), next=document.getElementById('next');
-  function step(){ return mode==='flip'?2:1; }
   // ---- auto-fit ---------------------------------------------------------
   // Slides are a fixed 16:9 frame with overflow:hidden, but the copy is
   // written by the AI and its length varies per brand. Anything past the
@@ -857,20 +860,58 @@ VIEWER_JS = """
     clearTimeout(rt); rt=setTimeout(fitAll,160);
   });
   window.addEventListener('beforeprint',fitAll);
+  // A real book opens on the cover alone and closes on the back cover alone;
+  // only the interior pages fall into spreads. Pairing straight through from
+  // page one left the back cover glued to page 15, which is not how a book
+  // closes.
+  function buildSpreads(n){
+    var out=[];
+    if(!n) return out;
+    out.push([0]);                       // front cover, on its own
+    for(var i=1;i<n-1;i+=2){
+      if(i+1<=n-2) out.push([i,i+1]); else out.push([i]);
+    }
+    if(n>1) out.push([n-1]);             // back cover, on its own
+    return out;
+  }
+  var spreads=buildSpreads(slides.length);
+  function spreadIndexFor(i){
+    for(var k=0;k<spreads.length;k++){ if(spreads[k].indexOf(i)!==-1) return k; }
+    return 0;
+  }
+  // `at` stays the index of the leading slide on screen, so mode switches and
+  // the analytics hook below keep working off one number.
+  function currentPages(){ return mode==='flip'?spreads[spreadIndexFor(at)]:[at]; }
   function render(){
     slides.forEach(function(s){ s.classList.remove('live','live-2'); });
-    slides[at].classList.add('live');
-    if(mode==='flip'&&slides[at+1]) slides[at+1].classList.add('live-2');
-    var shown=mode==='flip'&&slides[at+1]?(at+1)+'-'+(at+2):(at+1);
+    var pages=currentPages();
+    slides[pages[0]].classList.add('live');
+    if(mode==='flip'&&pages.length>1) slides[pages[1]].classList.add('live-2');
+    // One page in a two-page frame would sit in the left half with a gap
+    // beside it; `single` narrows the deck to one page and centres it.
+    deck.classList.toggle('single',mode==='flip'&&pages.length===1);
+    var shown=pages.length>1?(pages[0]+1)+'-'+(pages[1]+1):(pages[0]+1);
     counter.textContent=shown+' / '+slides.length;
-    prev.disabled=at<=0; next.disabled=at+step()>=slides.length+ (mode==='flip'?1:0) && at+step()>slides.length-1;
+    if(mode==='flip'){
+      var k=spreadIndexFor(at);
+      prev.disabled=k<=0; next.disabled=k>=spreads.length-1;
+    } else {
+      prev.disabled=at<=0; next.disabled=at>=slides.length-1;
+    }
   }
   function go(dir){
-    var n=at+dir*step();
-    if(n<0||n>slides.length-1) return;
-    if(mode==='flip'&&dir>0){ deck.classList.add('turning');
-      setTimeout(function(){ deck.classList.remove('turning'); },420); }
-    at=n; render();
+    if(mode==='flip'){
+      var k=spreadIndexFor(at)+dir;
+      if(k<0||k>=spreads.length) return;
+      if(dir>0){ deck.classList.add('turning');
+        setTimeout(function(){ deck.classList.remove('turning'); },420); }
+      at=spreads[k][0];
+    } else {
+      var n=at+dir;
+      if(n<0||n>slides.length-1) return;
+      at=n;
+    }
+    render();
   }
   prev.onclick=function(){go(-1)}; next.onclick=function(){go(1)};
   document.addEventListener('keydown',function(e){
@@ -887,7 +928,7 @@ VIEWER_JS = """
     mode=m; body.classList.toggle('mode-flip',m==='flip');
     document.getElementById('m-flip').classList.toggle('on',m==='flip');
     document.getElementById('m-slides').classList.toggle('on',m==='slides');
-    if(m==='flip'&&at%2===1) at=at-1;
+    if(m==='flip') at=spreads[spreadIndexFor(at)][0];
     render();
   }
   document.getElementById('m-flip').onclick=function(){setMode('flip')};

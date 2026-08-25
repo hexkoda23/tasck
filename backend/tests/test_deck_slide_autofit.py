@@ -130,3 +130,28 @@ def test_fit_never_collapses_a_slide_to_nothing():
     floor = re.search(r"var MIN_FIT=([0-9.]+);", html)
     assert floor, "the fit pass must keep a floor"
     assert 0.4 <= float(floor.group(1)) <= 0.75
+
+# --------------------------------------------------------------------------
+# Flip book pagination
+# --------------------------------------------------------------------------
+
+def test_flip_book_opens_and_closes_on_a_single_page():
+    """A real book shows its cover alone and its back cover alone.
+
+    Pairing straight through from page one glued the back cover to page 15,
+    which is not how a book closes.
+    """
+    html = deck_document_html(_wordy_deck(), {"company": "Fit Test"})
+
+    assert "function buildSpreads(" in html
+    assert "out.push([0]);" in html          # front cover, on its own
+    assert "out.push([n-1]);" in html        # back cover, on its own
+    # One page in a two-page frame would sit in the left half with a gap.
+    assert "deck.classList.toggle('single'" in html
+    assert "body.mode-flip .deck.single{grid-template-columns:1fr;" in html
+
+
+def test_slide_view_still_steps_through_every_page():
+    """Spreads are a flip-book concept; the slide view stays one-at-a-time."""
+    html = deck_document_html(_wordy_deck(), {"company": "Fit Test"})
+    assert "return mode==='flip'?spreads[spreadIndexFor(at)]:[at];" in html
