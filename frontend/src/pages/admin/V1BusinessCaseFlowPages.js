@@ -1513,7 +1513,7 @@ export const V3BusinessCaseConnectSchedule = () => {
           if (fallbackRec) setAnalysisResult(fallbackRec);
           await reload();
           const errorMsg = job.error || job.message || 'unknown error';
-          setSaveNotice(`Claude analysis failed - showing safe fallback. (${errorMsg})`);
+          setSaveNotice(`AI analysis failed - showing safe fallback. (${errorMsg})`);
           setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: errorMsg, message: 'Analysis failed. A safe fallback is shown below.' }));
           return;
         }
@@ -3325,7 +3325,7 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
   return (
     <FlowShell
       title="Creator Selector & Transcript Analysis"
-      subtitle="Run the creator selection session using the suggested questions, then upload the transcript here. Claude will analyse it and fill the entire Creator Selector for you to review."
+      subtitle="Run the creator selection session using the suggested questions, then upload the transcript here. AI will analyse it and fill the entire Creator Selector for you to review."
     >
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
 
@@ -3537,7 +3537,7 @@ export const V3BusinessCasePlanBrainstorm = () => {
   const selector = round.creator_selector || {};
 
   return (
-    <FlowShell title="The TTA Creator Selector" subtitle="Review and edit the Creator Selector. If you uploaded a transcript, email, or WhatsApp conversation, these fields were auto-filled by Claude - check each one before continuing.">
+    <FlowShell title="The TTA Creator Selector" subtitle="Review and edit the Creator Selector. If you uploaded a transcript, email, or WhatsApp conversation, these fields were auto-filled by AI - check each one before continuing.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="brainstorm-notice">{notice}</div>}
 
       {/* The eight Creator Selector fields (client-specified). Each has its own
@@ -3707,7 +3707,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
     if (!analysisSource) return '';
     if (analysisSource === 'deterministic_keyword_overlap') return 'Deterministic keyword fallback (no LLM key configured or the LLM did not respond in time).';
     if (analysisSource.startsWith('emergent:')) return `LLM ranking via Emergent (${analysisSource.replace('emergent:', '')}) - evidence-cited.`;
-    if (analysisSource.startsWith('anthropic:')) return `LLM ranking via Anthropic Claude (${analysisSource.replace('anthropic:', '')}) - evidence-cited.`;
+    if (analysisSource.startsWith('anthropic:')) return `AI ranking (${analysisSource.replace('anthropic:', '')}) - evidence-cited.`;
     if (analysisSource.startsWith('openai:')) return `LLM ranking via OpenAI (${analysisSource.replace('openai:', '')}) - evidence-cited.`;
     return `Ranking source: ${analysisSource}.`;
   })();
@@ -3935,7 +3935,7 @@ export const V3BusinessCasePlanBrief = () => {
   const generateTemplateBrief = async () => {
     setGeneratingBrief(true);
     setBriefProgress('Queued: writing the Creative Brief…');
-    setGenPopup({ open: true, progress: 4, status: 'running', message: 'Claude is writing the brief in the approved TASCK template…' });
+    setGenPopup({ open: true, progress: 4, status: 'running', message: 'AI is writing the brief in the approved TASCK template…' });
     startGenTick();
     try {
       const result = await v3GenerateCreativeBrief(id, (job) => {
@@ -4328,7 +4328,7 @@ export const V3BusinessCasePlanBrief = () => {
               />
             </div>
             <p className="mt-3 text-[13px] leading-6 text-[#4F3E2F]" data-testid="brief-gen-popup-message">
-              {genPopup.message || 'Claude is writing the brief in the approved TASCK template…'}
+              {genPopup.message || 'AI is writing the brief in the approved TASCK template…'}
             </p>
             {genPopup.status === 'running' && (
               <p className="mt-1 text-[11px] text-[#6E6657]">

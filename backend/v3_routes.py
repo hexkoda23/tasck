@@ -11483,7 +11483,7 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "Claude is writing the brief in the approved TASCK template…",
+                              "message": "AI is writing the brief in the approved TASCK template…",
                               "updated_at": _now_iso()}})
                 failures: List[str] = []
                 brief = await _call_creative_brief_tool(brand, case, snapshot, selector,
@@ -11884,7 +11884,7 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "Claude is writing all ten Pitch Deck sections…",
+                              "message": "AI is writing all ten Pitch Deck sections…",
                               "updated_at": _now_iso()}})
                 failures: List[str] = []
                 result = await _call_pitch_deck_tool(brand, case, snapshot, selector, creators,
@@ -14758,7 +14758,7 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "Claude is splitting the conversations into distinct opportunities…",
+                              "message": "AI is splitting the conversations into distinct opportunities…",
                               "updated_at": _now_iso()}},
                 )
                 failures: List[str] = []
@@ -15289,7 +15289,7 @@ def make_v3_router(db):
             try:
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"status": "running", "progress": 25, "message": "Running Claude alignment analysis…", "updated_at": _now_iso()}},
+                    {"$set": {"status": "running", "progress": 25, "message": "Running AI alignment analysis…", "updated_at": _now_iso()}},
                 )
                 result = await _run_alignment_analysis(bc_id, meetings, case, brand, combined_text, meeting_dates)
                 # Alignment recommendation is stored - now split the same
