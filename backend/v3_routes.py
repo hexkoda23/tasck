@@ -2835,6 +2835,48 @@ def make_v3_router(db):
 
     router.migrate_snapshot_segmentation = migrate_snapshot_segmentation
 
+    async def repair_brand_document_visibility():
+        """Re-publish documents that were sent to a brand but lost their stamp.
+
+        The send endpoints used to wipe `sent_to_brand_at` whenever SMTP
+        returned anything other than "sent" (queued, failed), which left the
+        brand portal insisting "No Alignment Snapshot has been sent to this
+        brand yet" even though admin had sent it. The endpoints no longer do
+        that; this heals the rows written before the fix. Only documents with
+        hard evidence of a send are touched - a mail attempt (`last_email_*`)
+        or an explicit publish - so drafts are never exposed.
+        """
+        repaired = {"alignment": 0, "strategy": 0}
+        targets = (
+            ("alignment", db.v3_alignment_snapshots),
+            ("strategy", db.v3_creative_snapshots),
+        )
+        for label, coll in targets:
+            rows = await coll.find(
+                {"sent_to_brand_at": None,
+                 "$or": [
+                     {"last_email_status": {"$exists": True, "$nin": [None, ""]}},
+                     {"published_to_brand_page_at": {"$exists": True, "$ne": None}},
+                     {"status": {"$in": ["queued", "failed", "sending", "sent"]}},
+                 ]},
+                {"_id": 0, "id": 1, "published_to_brand_page_at": 1, "shared_at": 1,
+                 "updated_at": 1, "generated_at": 1},
+            ).to_list(500)
+            for row in rows:
+                stamp = (row.get("published_to_brand_page_at") or row.get("shared_at")
+                         or row.get("updated_at") or row.get("generated_at") or _now_iso())
+                await coll.update_one(
+                    {"id": row["id"]},
+                    {"$set": {"status": "sent_to_brand", "sent_to_brand_at": stamp}})
+                repaired[label] += 1
+        if repaired["alignment"] or repaired["strategy"]:
+            logger.info("Brand visibility repair: alignment=%s strategy=%s",
+                        repaired["alignment"], repaired["strategy"])
+        return repaired
+
+    router.repair_brand_document_visibility = repair_brand_document_visibility
+
+
     def _smtp_flag(name: str, default: bool) -> bool:
         value = os.getenv(name)
         if value is None:
@@ -7938,12 +7980,18 @@ def make_v3_router(db):
             }],
         )
         delivery_status = email.get("status") or "queued"
-        snapshot_status = "sent_to_brand" if delivery_status == "sent" else delivery_status
+        # Sharing with the brand is NOT conditional on SMTP. Admin clicked
+        # "Send to brand", so the snapshot stays published (status
+        # `sent_to_brand`, `sent_to_brand_at` stamped above) even when the mail
+        # is only queued or bounces. Previously a non-"sent" delivery reset
+        # `sent_to_brand_at` to None, which made the brand portal show
+        # "No Alignment Snapshot has been sent to this brand yet" forever.
+        # Email outcome is tracked separately in last_email_*.
         await db.v3_alignment_snapshots.update_one(
             {"id": snap["id"]},
             {"$set": {
-                "status": snapshot_status,
-                "sent_to_brand_at": email.get("sent_at") if delivery_status == "sent" else None,
+                "status": "sent_to_brand",
+                "sent_to_brand_at": snap.get("sent_to_brand_at") or email.get("sent_at") or sent_at,
                 "last_email_status": delivery_status,
                 "last_email_error": email.get("delivery_error") or "",
             }},
@@ -7951,13 +7999,13 @@ def make_v3_router(db):
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {
-                "frame.alignment_snapshot_status": snapshot_status,
+                "frame.alignment_snapshot_status": "sent_to_brand",
                 "frame.alignment_email_status": delivery_status,
                 "frame.alignment_email_error": email.get("delivery_error") or "",
                 "updated_at": _now_iso(),
             }},
         )
-        return {"ok": delivery_status == "sent", "sent_at": email.get("sent_at"), "email": email}
+        return {"ok": delivery_status == "sent", "sent_at": email.get("sent_at") or sent_at, "email": email}
 
     class AlignmentCommentPayload(BaseModel):
         section_index: int
@@ -12736,13 +12784,14 @@ def make_v3_router(db):
             }],
         )
         delivery_status = email.get("status") or "queued"
-        snapshot_status = "sent_to_brand" if delivery_status == "sent" else delivery_status
+        # Same rule as the Alignment Snapshot: the brand portal reveals the doc
+        # because admin sent it, not because SMTP succeeded.
         await db.v3_creative_snapshots.update_one(
             {"id": snap["id"]},
             {"$set": {
-                "status": snapshot_status,
-                "shared_at": email.get("sent_at") if delivery_status == "sent" else sent_at,
-                "sent_to_brand_at": email.get("sent_at") if delivery_status == "sent" else None,
+                "status": "sent_to_brand",
+                "shared_at": email.get("sent_at") or sent_at,
+                "sent_to_brand_at": snap.get("sent_to_brand_at") or email.get("sent_at") or sent_at,
                 "last_email_status": delivery_status,
                 "last_email_error": email.get("delivery_error") or "",
             }},
@@ -12750,13 +12799,13 @@ def make_v3_router(db):
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {"$set": {
-                "plan.creative_snapshot_status": snapshot_status,
+                "plan.creative_snapshot_status": "sent_to_brand",
                 "plan.creative_snapshot_email_status": delivery_status,
                 "plan.creative_snapshot_email_error": email.get("delivery_error") or "",
                 "updated_at": _now_iso(),
             }, "$push": {"timeline": {"at": sent_at, "event": "strategy_snapshot_sent_to_brand", "snapshot_id": snap["id"], "email_status": delivery_status}}},
         )
-        return {"ok": delivery_status == "sent", "sent_at": email.get("sent_at"), "email": email}
+        return {"ok": delivery_status == "sent", "sent_at": email.get("sent_at") or sent_at, "email": email}
 
     class StrategySnapshotCommentPayload(BaseModel):
         section_index: int

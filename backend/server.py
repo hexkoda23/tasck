@@ -95,6 +95,12 @@ async def startup_event():
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Snapshot segmentation migration skipped or failed: {exc}")
         try:
+            repair = getattr(v3_router, "repair_brand_document_visibility", None)
+            if repair:
+                await repair()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Brand document visibility repair skipped or failed: {exc}")
+        try:
             await WorkbookImporter.import_all(db)
             logger.info("Workbook import completed.")
         except Exception as exc:  # noqa: BLE001

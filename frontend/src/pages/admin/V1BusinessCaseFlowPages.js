@@ -2494,13 +2494,13 @@ export const V3BusinessCaseFrameSnapshot = () => {
       } else if (status === 'delivery_failed') {
         setSendPopup({
           title: 'Email not delivered',
-          message: deliveryError || 'The SMTP server rejected the message. Check the SMTP credentials on the backend and retry.',
+          message: `${deliveryError || 'The SMTP server rejected the message.'} The Alignment Snapshot is still live on the brand page, so ${deliveredRecipient || 'the brand'} can see it by logging in - only the email failed.`,
           tone: 'warning',
         });
       } else {
         setSendPopup({
           title: 'Email queued',
-          message: deliveryError || `Alignment Snapshot queued for ${deliveredRecipient}. SMTP delivery is not configured yet on this environment.`,
+          message: `${deliveryError || `Alignment Snapshot queued for ${deliveredRecipient}.`} It is already live on the brand page, so the brand can review it now even before the email lands.`,
           tone: 'warning',
         });
       }
