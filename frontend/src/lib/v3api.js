@@ -178,10 +178,34 @@ export const v3ListBrainstorms = (bcId, alignmentSnapshotId) => v3.get('/brainst
 }).then(r => r.data);
 // Brainstorm transcript upload + AI fill of the entire TTA Snapshot Brainstorm.
 export const v3BrainstormSuggestedQuestions = (bcId) => v3.get(`/business-cases/${bcId}/brainstorm/suggested-questions`).then(r => r.data);
-export const v3AnalyzeBrainstormTranscript = (bcId, transcript, alignmentSnapshotId) =>
-  v3.post(`/business-cases/${bcId}/brainstorm/analyze-transcript`,
-    alignmentSnapshotId ? { transcript, alignment_snapshot_id: alignmentSnapshotId } : { transcript }
+// Long AI job (a full transcript takes 30-90s, past the edge-proxy limit),
+// so this kicks off a background job and polls it.
+export const v3AnalyzeBrainstormTranscript = async (bcId, transcript, alignmentSnapshotId, onProgress) => {
+  const started = await v3.post(`/business-cases/${bcId}/brainstorm/analyze-transcript`,
+    alignmentSnapshotId ? { transcript, alignment_snapshot_id: alignmentSnapshotId } : { transcript },
+    { timeout: 120000 }
   ).then(r => r.data);
+  const jobId = started?.job_id;
+  if (!jobId) return started;   // future-proof: a sync response passes straight through
+  let pollFailures = 0;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    let job;
+    try {
+      ({ job } = await v3.get(`/business-cases/${bcId}/brainstorm/analyze-transcript/jobs/${jobId}`).then(r => r.data));
+    } catch (e) {
+      // Tolerate transient gateway blips rather than failing the whole run.
+      pollFailures += 1;
+      if (pollFailures > 6) throw e;
+      continue;
+    }
+    pollFailures = 0;
+    if (typeof onProgress === 'function' && job?.message) onProgress(job);
+    if (job?.status === 'completed') return { ok: true, analysis_source: job.analysis_source, brainstorm_round: job.brainstorm_round };
+    if (job?.status === 'failed') throw new Error(job?.message || 'Transcript analysis failed.');
+  }
+  throw new Error('Transcript analysis timed out. Please retry.');
+};
 export const v3SkipBrainstormTranscript = (bcId) => v3.post(`/business-cases/${bcId}/brainstorm/skip-transcript`).then(r => r.data);
 export const v3ContractPdfUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/pdf`;
 export const v3AlignmentDocxUrl = (snapshotId) => `${BACKEND_URL}/api/v3/alignment-snapshots/${snapshotId}/docx`;

@@ -13400,7 +13400,13 @@ def make_v3_router(db):
         """Read the brainstorm-session transcript with the LLM and fill the
         entire TTA Snapshot Brainstorm for the Alignment Snapshot in scope.
         Every snapshot on a Business Case keeps its own Creator Selector, so
-        we find-or-create scoped to `(business_case_id, alignment_snapshot_id)`."""
+        we find-or-create scoped to `(business_case_id, alignment_snapshot_id)`.
+
+        Runs as a background job: a long transcript takes the model well past
+        the 100s edge-proxy limit, which surfaced to admins as a Cloudflare
+        "origin returned an invalid or incomplete response" error even though
+        the analysis was still running. The client polls the job instead.
+        """
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
@@ -13418,65 +13424,107 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
         mi = _marketing_intelligence_from_case(case)
 
-        analyzed = await _call_brainstorm_analysis_tool(brand, case, mi, transcript)
-        if not isinstance(analyzed, dict):
-            raise HTTPException(
-                502,
-                "The AI analysis did not return a usable result. Confirm ANTHROPIC_API_KEY (or EMERGENT_LLM_KEY) is set, then try again.",
-            )
+        job_id = f"selector-job-{uuid.uuid4().hex[:10]}"
+        await db.v3_analysis_jobs.insert_one({
+            "id": job_id, "business_case_id": bc_id, "kind": "creator_selector",
+            "status": "pending", "progress": 5,
+            "message": "Queued: reading the Creator Selector transcript…",
+            "created_at": _now_iso(), "updated_at": _now_iso(), "error": None,
+        })
 
-        analysis_source = str(analyzed.get("analysis_source") or "llm")
+        async def _runner():
+            try:
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "running", "progress": 30,
+                              "message": "AI is reading the transcript and filling the TTA Creator Selector…",
+                              "updated_at": _now_iso()}})
+                analyzed = await _call_brainstorm_analysis_tool(brand, case, mi, transcript)
+                if not isinstance(analyzed, dict):
+                    await db.v3_analysis_jobs.update_one(
+                        {"id": job_id},
+                        {"$set": {"status": "failed", "progress": 100,
+                                  "message": "The AI analysis did not return a usable result. Please retry.",
+                                  "error": "empty_analysis", "updated_at": _now_iso()}})
+                    return
 
-        # Find or create the round scoped to this snapshot. A brand with
-        # multiple snapshots ends up with one Creator Selector per snapshot.
-        existing = await db.v3_brainstorm_rounds.find_one(
-            {"business_case_id": bc_id, "alignment_snapshot_id": snapshot_id}, {"_id": 0}
-        )
-        if not existing:
-            created = await create_brainstorm(BrainstormCreate(
-                business_case_id=bc_id,
-                alignment_snapshot_id=snapshot_id,
-                scored_creators=[],
-            ))
-            round_id = created["id"]
-            existing = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0}) or created
-        round_id = existing["id"]
+                analysis_source = str(analyzed.get("analysis_source") or "llm")
 
-        # Merge analyzed fields onto the round, preserving the scaffolding
-        # (scored_creators, phases, strategy_mapping) that the round already has.
-        def _section(key: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
-            val = analyzed.get(key)
-            if isinstance(val, dict):
-                merged = dict(existing.get(key) or fallback)
-                merged.update({k: v for k, v in val.items() if v is not None})
-                return merged
-            return existing.get(key) or fallback
+                # Find or create the round scoped to this snapshot. A brand with
+                # multiple snapshots ends up with one Creator Selector per snapshot.
+                existing = await db.v3_brainstorm_rounds.find_one(
+                    {"business_case_id": bc_id, "alignment_snapshot_id": snapshot_id}, {"_id": 0}
+                )
+                if not existing:
+                    created = await create_brainstorm(BrainstormCreate(
+                        business_case_id=bc_id,
+                        alignment_snapshot_id=snapshot_id,
+                        scored_creators=[],
+                    ))
+                    round_id = created["id"]
+                    existing = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0}) or created
+                round_id = existing["id"]
 
-        updates: Dict[str, Any] = {
-            # The headline output: the eight Creator Selector fields shown on
-            # the TTA Creator Selector page.
-            "creator_selector": _section("creator_selector", _creator_selector_default()),
-            "pre_work": _section("pre_work", {}),
-            "phase_0_focus_group": _section("phase_0_focus_group", {}),
-            "phase_1_problem": _section("phase_1_problem", {}),
-            "phase_2_archetype": _section("phase_2_archetype", {}),
-            "phase_5_execution": _section("phase_5_execution", {}),
-            "phase_6_commercial": _section("phase_6_commercial", {}),
-            "phase_7_recommendation": _section("phase_7_recommendation", {}),
-            "snapshot_summary": _section("snapshot_summary", _brainstorm_snapshot_summary_default()),
-            "transcript": transcript,
-            "transcript_analyzed_at": _now_iso(),
-            "transcript_analysis_source": analysis_source,
-            "status": "in_progress",
-            "updated_at": _now_iso(),
-        }
-        await db.v3_brainstorm_rounds.update_one({"id": round_id}, {"$set": updates})
-        await db.v3_business_cases.update_one(
-            {"id": bc_id},
-            {"$set": {"plan.brainstorm_round_id": round_id, "plan.brainstorm_transcript_analyzed_at": _now_iso(), "updated_at": _now_iso()}},
-        )
-        result = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0})
-        return {"ok": True, "analysis_source": analysis_source, "brainstorm_round": result}
+                # Merge analyzed fields onto the round, preserving the scaffolding
+                # (scored_creators, phases, strategy_mapping) that the round already has.
+                def _section(key: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
+                    val = analyzed.get(key)
+                    if isinstance(val, dict):
+                        merged = dict(existing.get(key) or fallback)
+                        merged.update({k: v for k, v in val.items() if v is not None})
+                        return merged
+                    return existing.get(key) or fallback
+
+                updates: Dict[str, Any] = {
+                    # The headline output: the eight Creator Selector fields shown on
+                    # the TTA Creator Selector page.
+                    "creator_selector": _section("creator_selector", _creator_selector_default()),
+                    "pre_work": _section("pre_work", {}),
+                    "phase_0_focus_group": _section("phase_0_focus_group", {}),
+                    "phase_1_problem": _section("phase_1_problem", {}),
+                    "phase_2_archetype": _section("phase_2_archetype", {}),
+                    "phase_5_execution": _section("phase_5_execution", {}),
+                    "phase_6_commercial": _section("phase_6_commercial", {}),
+                    "phase_7_recommendation": _section("phase_7_recommendation", {}),
+                    "snapshot_summary": _section("snapshot_summary", _brainstorm_snapshot_summary_default()),
+                    "transcript": transcript,
+                    "transcript_analyzed_at": _now_iso(),
+                    "transcript_analysis_source": analysis_source,
+                    "status": "in_progress",
+                    "updated_at": _now_iso(),
+                }
+                await db.v3_brainstorm_rounds.update_one({"id": round_id}, {"$set": updates})
+                await db.v3_business_cases.update_one(
+                    {"id": bc_id},
+                    {"$set": {"plan.brainstorm_round_id": round_id, "plan.brainstorm_transcript_analyzed_at": _now_iso(), "updated_at": _now_iso()}},
+                )
+                result = await db.v3_brainstorm_rounds.find_one({"id": round_id}, {"_id": 0})
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "completed", "progress": 100,
+                              "message": "Creator Selector filled from the transcript.",
+                              "analysis_source": analysis_source,
+                              "brainstorm_round": result,
+                              "updated_at": _now_iso()}})
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Creator Selector transcript job failed for %s: %s", bc_id, exc)
+                await db.v3_analysis_jobs.update_one(
+                    {"id": job_id},
+                    {"$set": {"status": "failed", "progress": 100,
+                              "message": "Transcript analysis failed. Please retry.",
+                              "error": str(exc)[:500], "updated_at": _now_iso()}})
+
+        asyncio.create_task(_runner())
+        return {"ok": True, "mode": "background_job", "job_id": job_id,
+                "alignment_snapshot_id": snapshot_id}
+
+    @router.get("/business-cases/{bc_id}/brainstorm/analyze-transcript/jobs/{job_id}")
+    async def get_brainstorm_transcript_job(bc_id: str, job_id: str):
+        job = await db.v3_analysis_jobs.find_one({"id": job_id, "business_case_id": bc_id}, {"_id": 0})
+        if not job:
+            raise HTTPException(404, "Transcript analysis job not found")
+        job = await _reap_stale_job(job)
+        return {"ok": True, "job": job}
 
     @router.post("/business-cases/{bc_id}/brainstorm/skip-transcript")
     async def skip_brainstorm_transcript(bc_id: str):

@@ -3294,7 +3294,8 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
     setAnalyzing(true);
     setPopup({ status: 'running', message: 'Reading the transcript and filling the TTA Creator Selector…' });
     try {
-      await v3AnalyzeBrainstormTranscript(id, transcript.trim(), activeSnapshotId);
+      await v3AnalyzeBrainstormTranscript(id, transcript.trim(), activeSnapshotId,
+        (job) => setPopup({ status: 'running', message: job?.message || 'Reading the transcript…' }));
       setPopup({ status: 'complete', message: 'Creator Selector filled from the transcript. Opening it to review and edit.' });
       setTimeout(() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`)), 800);
     } catch (e) {

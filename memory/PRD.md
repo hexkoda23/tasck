@@ -1450,3 +1450,13 @@ Fix:
 - Added `repair_brand_document_visibility()` (v3_routes.py, wired into the startup hydration in server.py): re-stamps alignment + strategy snapshots that lost `sent_to_brand_at` but carry hard evidence of a send (`last_email_status`, `published_to_brand_page_at`, or status queued/failed/sending/sent). Idempotent, never exposes drafts. Production heals itself on the next deploy.
 - Admin popup copy for queued/failed email now states the document is already live on the brand page.
 Verified live: simulated the broken state on as-fb23d899 -> restart repaired it -> brand portal (Zestora Foods Ltd session) renders the snapshot with comment boxes and download.
+
+## 2026-06-25 (e) - BUG: Creator Selector transcript analysis died with a Cloudflare error
+Report (production): "Analysis failed - The origin web server returned an invalid or incomplete response to Cloudflare."
+Root cause: `POST /business-cases/{id}/brainstorm/analyze-transcript` ran the LLM analysis SYNCHRONOUSLY. A full session transcript takes 30-90s+, which exceeds the edge proxy's response window, so Cloudflare killed the connection and the admin saw a 502-style error even though the analysis was still running server-side (and sometimes did finish, invisibly).
+Fix: converted it to the same background-job pattern as the Creative Brief / Pitch Deck / Alignment analysis:
+- POST validates (case, transcript length, active snapshot) and returns `{job_id}` in ~0.3s; the LLM work and all round/case writes happen in an `asyncio` runner writing progress onto `v3_analysis_jobs` (kind `creator_selector`), covered by the existing `_reap_stale_job` orphan reaper.
+- New GET `/business-cases/{id}/brainstorm/analyze-transcript/jobs/{job_id}`.
+- `v3AnalyzeBrainstormTranscript` now polls (2.5s interval, 120 attempts, tolerates 6 transient gateway blips) and streams the job message into the existing "Analyzing transcript" popup.
+Verified live: kickoff 0.27s, job completed in ~35s, all 8 Creator Selector fields filled, and the UI popup ran through "AI is reading the transcript and filling the TTA Creator Selector…" -> "Creator Selector filled" -> auto-navigated to the filled Creator Selector.
+Audit: no other long AI call remains synchronous (import-extract is a single 60s-capped call; opportunity detection runs inside a job runner).
