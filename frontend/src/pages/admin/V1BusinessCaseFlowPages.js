@@ -154,6 +154,7 @@ import {
   v3GetBusinessCase,
   v3TouchBusinessCase,
   v3UpdateBusinessCaseValue,
+  v3CreateCreator,
   v3GetCreators,
   v3ListMeetings,
   v3ListBriefs,
@@ -3622,7 +3623,6 @@ export const V3BusinessCasePlanCreatorScan = () => {
     v3GetCreators().then((rows) => {
       const list = Array.isArray(rows) ? rows : [];
       setCreators(list);
-      setManualCreatorId(list[0]?.id || '');
     }).catch(() => setCreators([]));
   }, []);
   // Whenever the case loads/reloads, sync the local selection from the case
@@ -3655,6 +3655,90 @@ export const V3BusinessCasePlanCreatorScan = () => {
     persistSelectedIds(next);
     return next;
   });
+  // ---- Manual creator picker popup -------------------------------------
+  // "Add creator" opens a form instead of silently adding whatever the
+  // dropdown happened to be showing. Two modes:
+  //   existing - a creator was chosen in the dropdown; show their details for
+  //              confirmation and just add the id (no write).
+  //   new      - nothing chosen (or the database is empty); the admin fills
+  //              the form, we create the creator, then select it. The brief
+  //              and pitch deck resolve creators by id out of the database,
+  //              so a picked creator has to exist there.
+  const blankCreatorForm = {
+    name: '', genre: '', tier: 'rising', location: 'Lagos', email: '', phone: '',
+    rate_card: '', manager_name: '', manager_email: '', audience: '',
+    platforms: '', categories: '', notes: '',
+  };
+  const formFromCreator = (creator) => ({
+    ...blankCreatorForm,
+    name: creatorName(creator),
+    genre: creatorSpecialty(creator),
+    tier: creator?.tier || 'rising',
+    location: creator?.location || '',
+    email: creator?.email || '',
+    phone: creator?.phone || '',
+    rate_card: creator?.rate_card || '',
+    manager_name: creator?.manager_name || '',
+    manager_email: creator?.manager_email || '',
+    audience: creator?.audience || '',
+    platforms: (creator?.platforms || []).join(', '),
+    categories: (creator?.categories || []).join(', '),
+    notes: creator?.notes || '',
+  });
+  const [addPopup, setAddPopup] = useState(null);
+  const openAddCreator = () => {
+    const existing = creatorById(manualCreatorId);
+    setAddPopup(existing
+      ? { mode: 'existing', creatorId: existing.id, form: formFromCreator(existing), saving: false, error: '' }
+      : { mode: 'new', creatorId: null, form: { ...blankCreatorForm }, saving: false, error: '' });
+  };
+  const setAddField = (field, value) => setAddPopup((prev) => (
+    prev ? { ...prev, form: { ...prev.form, [field]: value }, error: '' } : prev
+  ));
+  // Comma-separated text -> the string[] the API expects.
+  const toList = (value) => String(value || '').split(',').map((part) => part.trim()).filter(Boolean);
+  const submitAddCreator = async () => {
+    if (!addPopup || addPopup.saving) return;
+    if (addPopup.mode === 'existing') {
+      addCreator(addPopup.creatorId);
+      setAddPopup(null);
+      return;
+    }
+    const form = addPopup.form;
+    const name = form.name.trim();
+    const genre = form.genre.trim();
+    if (!name) { setAddPopup((prev) => ({ ...prev, error: 'Creator name is required.' })); return; }
+    if (!genre) { setAddPopup((prev) => ({ ...prev, error: 'Specialty / genre is required.' })); return; }
+    setAddPopup((prev) => ({ ...prev, saving: true, error: '' }));
+    try {
+      const created = await v3CreateCreator({
+        name,
+        genre,
+        tier: form.tier || 'rising',
+        location: form.location.trim() || 'Lagos',
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        rate_card: form.rate_card.trim() || 'TBD',
+        manager_name: form.manager_name.trim() || null,
+        manager_email: form.manager_email.trim() || null,
+        audience: form.audience.trim() || null,
+        platforms: toList(form.platforms),
+        categories: toList(form.categories),
+        notes: form.notes.trim() || null,
+        source: 'manual_creator_picker',
+      });
+      if (!created?.id) throw new Error('The creator was not created.');
+      setCreators((current) => [...current, created]);
+      // Back to "No creators selected" so the next click opens a blank form -
+      // the usual case here is onboarding several creators in a row.
+      setManualCreatorId('');
+      addCreator(created.id);
+      setAddPopup(null);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e?.message || 'The creator could not be added.';
+      setAddPopup((prev) => (prev ? { ...prev, saving: false, error: String(msg) } : prev));
+    }
+  };
   // analysisSource records which engine produced the current matches.
   // Possible values:
   //   "emergent:gemini/..." | "anthropic:claude-..." | "openai:..."
@@ -3750,11 +3834,19 @@ export const V3BusinessCasePlanCreatorScan = () => {
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Creator database</span>
             <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="creator-manual-select">
+              {/* Always present, so the field is never blank and the picker
+                  still works when the creator database is empty. */}
+              <option value="">No creators selected</option>
               {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} - {creatorSpecialty(creator)}</option>)}
             </select>
           </label>
-          <button onClick={() => addCreator(manualCreatorId)} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
+          <button onClick={openAddCreator} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
         </div>
+        <p className="mt-2 text-[11px] text-[#6E6657]">
+          {creatorById(manualCreatorId)
+            ? 'Opens the creator’s details so you can confirm them before adding to the shortlist.'
+            : 'Nothing selected, so this opens a blank form - fill it in to create the creator and add them to the shortlist.'}
+        </p>
       </InfoCard>
       {(namedMatches.length > 0 || namedUnmatched.length > 0) && (
         <InfoCard title={`From your Creator Selector (${namedMatches.length} matched)`}>
@@ -3851,6 +3943,101 @@ export const V3BusinessCasePlanCreatorScan = () => {
           </div>
         )}
       </InfoCard>
+
+      {addPopup && (() => {
+        const readOnly = addPopup.mode === 'existing';
+        const field = (label, key, { type = 'text', placeholder = '', required = false, span = 1 } = {}) => (
+          <label className={`space-y-1 ${span === 2 ? 'sm:col-span-2' : ''}`}>
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}{required && <span className="text-[#B54A37]"> *</span>}</span>
+            <input
+              type={type}
+              value={addPopup.form[key]}
+              placeholder={placeholder}
+              readOnly={readOnly}
+              disabled={addPopup.saving}
+              onChange={(e) => setAddField(key, e.target.value)}
+              className={`w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] ${readOnly ? 'bg-[#FBFAF7] text-[#6E6657]' : 'bg-white'}`}
+              data-testid={`creator-add-field-${key}`}
+            />
+          </label>
+        );
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 py-8" data-testid="creator-add-popup">
+            <div className="w-full max-w-2xl max-h-full overflow-y-auto rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EFF5F1] text-[#1F4A3A]"><UserRound className="h-4 w-4" /></span>
+                <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }} data-testid="creator-add-popup-title">
+                  {readOnly ? 'Confirm creator' : 'Add a creator'}
+                </h3>
+                <button type="button" onClick={() => setAddPopup(null)} disabled={addPopup.saving} className="ml-auto rounded-md p-1.5 text-[#6E6657] hover:bg-[#F4F2EC]" aria-label="Close" data-testid="creator-add-popup-close"><X className="h-4 w-4" /></button>
+              </div>
+              <p className="mb-4 text-[12px] text-[#6E6657]">
+                {readOnly
+                  ? 'These details come from the creator database. Confirm to add them to your shortlist.'
+                  : 'Fill in the creator’s details. They are saved to the creator database and added to your shortlist, so the Creator Brief and Pitch Deck can resolve them.'}
+              </p>
+              {addPopup.error && (
+                <div className="mb-3 rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="creator-add-popup-error">{addPopup.error}</div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {field('Creator name', 'name', { required: true, placeholder: 'e.g. Amaka Okafor' })}
+                {field('Specialty / genre', 'genre', { required: true, placeholder: 'e.g. Food reviewer' })}
+                <label className="space-y-1">
+                  <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Tier</span>
+                  <select
+                    value={addPopup.form.tier}
+                    disabled={readOnly || addPopup.saving}
+                    onChange={(e) => setAddField('tier', e.target.value)}
+                    className={`w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] ${readOnly ? 'bg-[#FBFAF7] text-[#6E6657]' : 'bg-white'}`}
+                    data-testid="creator-add-field-tier"
+                  >
+                    <option value="rising">Rising</option>
+                    <option value="established">Established</option>
+                    <option value="premium">Premium</option>
+                  </select>
+                </label>
+                {field('Location', 'location', { placeholder: 'e.g. Lagos' })}
+                {field('Email', 'email', { type: 'email', placeholder: 'creator@example.com' })}
+                {field('Phone', 'phone', { placeholder: '+234 ...' })}
+                {field('Rate card', 'rate_card', { placeholder: 'e.g. ₦2,500,000 per campaign' })}
+                {field('Audience', 'audience', { placeholder: 'e.g. 18-34 urban Nigeria' })}
+                {field('Manager name', 'manager_name')}
+                {field('Manager email', 'manager_email', { type: 'email' })}
+                {field('Platforms (comma separated)', 'platforms', { placeholder: 'Instagram, TikTok', span: 2 })}
+                {field('Categories (comma separated)', 'categories', { placeholder: 'Food, Lifestyle', span: 2 })}
+                <label className="space-y-1 sm:col-span-2">
+                  <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Notes</span>
+                  <textarea
+                    rows={3}
+                    value={addPopup.form.notes}
+                    readOnly={readOnly}
+                    disabled={addPopup.saving}
+                    onChange={(e) => setAddField('notes', e.target.value)}
+                    className={`w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] ${readOnly ? 'bg-[#FBFAF7] text-[#6E6657]' : 'bg-white'}`}
+                    data-testid="creator-add-field-notes"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                {readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setAddPopup({ mode: 'new', creatorId: null, form: { ...blankCreatorForm }, saving: false, error: '' })}
+                    className="mr-auto text-[12px] text-[#1F4A3A] underline"
+                    data-testid="creator-add-popup-switch-new"
+                  >
+                    Add a different creator instead
+                  </button>
+                )}
+                <button type="button" onClick={() => setAddPopup(null)} disabled={addPopup.saving} className="v3-btn-secondary" data-testid="creator-add-popup-cancel">Cancel</button>
+                <button type="button" onClick={submitAddCreator} disabled={addPopup.saving} className="v3-btn-primary" data-testid="creator-add-popup-submit">
+                  {addPopup.saving ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Adding...</> : <><Plus className="w-3.5 h-3.5" /> {readOnly ? 'Add to shortlist' : 'Create and add'}</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {scanPopup.open && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="creator-scan-popup">
