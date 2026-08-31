@@ -44,22 +44,25 @@ v3_router = make_v3_router(db)
 # ==================== SEED DATABASE ====================
 
 async def seed_database():
-    """Seed the database with demo data"""
+    """Seed the account records the platform needs in order to authenticate.
+
+    `/api/auth/demo-login` is the only login path for the V1 app and resolves
+    users straight out of `users`, so an empty collection means nobody can sign
+    in. Only accounts are seeded here.
+
+    No brand or campaign data is created. The fictional brands, deals,
+    projects, opportunities, tasks, activities, copilot recommendations,
+    messages and wallet transactions that used to be inserted on every boot
+    have been removed - brands and their project data are now entered by the
+    client through the CRM, or imported from the CRM workbook by
+    v3_workbook_import.WorkbookImporter.
+    """
     data = get_seed_data()
-    
+
     collections = [
         ("users", data["staff"] + data["super_creatives"] + data["creatives"] + [data["admin"]] + data["brand_contacts"]),
-        ("brands", data["brands"]),
-        ("deals", data["deals"]),
-        ("projects", data["projects"]),
-        ("opportunities", data["opportunities"]),
-        ("tasks", data["tasks"]),
-        ("activities", data["activities"]),
-        ("copilot_recommendations", data["copilot_recommendations"]),
-        ("messages", data["messages"]),
-        ("wallet_transactions", data["wallet_transactions"])
     ]
-    
+
     for collection_name, docs in collections:
         collection = db[collection_name]
         count = await collection.count_documents({})
@@ -105,16 +108,10 @@ async def startup_event():
             logger.info("Workbook import completed.")
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Workbook import skipped or failed: {exc}")
-        try:
-            # Restore the four demo Brand Portal accounts (Coca-Cola, MTN,
-            # Nigerian Breweries, Test Brand) on every boot. Idempotent - if
-            # they already exist we just refresh identity + website so the
-            # CRM logo pipeline never regresses after `clear-v3-demo-data`.
-            from seed_demo_brand_accounts import seed_demo_brand_accounts
-            count = await seed_demo_brand_accounts(db)
-            logger.info(f"Seeded {count} demo brand portal accounts.")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"Demo brand account seed skipped or failed: {exc}")
+        # The four demo Brand Portal accounts (Coca-Cola, MTN, Nigerian
+        # Breweries, Test Brand) used to be recreated here on every boot.
+        # That seeding has been removed so the database stays clean; brand
+        # portal accounts are now issued from the CRM against real brands.
         logger.info("Background hydration completed.")
 
     asyncio.create_task(_hydrate())
