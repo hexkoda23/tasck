@@ -132,26 +132,35 @@ def test_fit_never_collapses_a_slide_to_nothing():
     assert 0.4 <= float(floor.group(1)) <= 0.75
 
 # --------------------------------------------------------------------------
-# Flip book pagination
+# Flip book
 # --------------------------------------------------------------------------
 
-def test_flip_book_opens_and_closes_on_a_single_page():
-    """A real book shows its cover alone and its back cover alone.
+def test_flip_book_shows_its_covers_alone():
+    """A real book opens on its cover alone and closes on its back cover alone.
 
-    Pairing straight through from page one glued the back cover to page 15,
-    which is not how a book closes.
+    The page-curl book gets this from StPageFlip's `showCover`; pairing straight
+    through from page one would glue the back cover to page 15.
+    """
+    html = deck_document_html(_wordy_deck(), {"company": "Fit Test"})
+    assert "showCover:true" in html.replace(" ", "")
+
+
+def test_book_pages_inherit_the_measured_fit():
+    """The book renders CLONES of the slides, taken once at build time.
+
+    Without a sync the clones keep whatever fit was current when they were
+    cloned - the pre-webfont pass - so the book and the slide view disagree,
+    and every later re-fit (fonts, resize, print) never reaches the book.
     """
     html = deck_document_html(_wordy_deck(), {"company": "Fit Test"})
 
-    assert "function buildSpreads(" in html
-    assert "out.push([0]);" in html          # front cover, on its own
-    assert "out.push([n-1]);" in html        # back cover, on its own
-    # One page in a two-page frame would sit in the left half with a gap.
-    assert "deck.classList.toggle('single'" in html
-    assert "body.mode-flip .deck.single{grid-template-columns:1fr;" in html
+    assert "function syncBookFit()" in html
+    assert "sheets[i].style.setProperty('--fit'" in html
+    # Called after each measurement pass, and again when the book is built.
+    assert html.count("syncBookFit();") >= 2
 
 
-def test_slide_view_still_steps_through_every_page():
+def test_slide_view_still_steps_one_page_at_a_time():
     """Spreads are a flip-book concept; the slide view stays one-at-a-time."""
     html = deck_document_html(_wordy_deck(), {"company": "Fit Test"})
-    assert "return mode==='flip'?spreads[spreadIndexFor(at)]:[at];" in html
+    assert "counter.textContent=(at+1)+' / '+slides.length;" in html

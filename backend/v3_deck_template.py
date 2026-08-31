@@ -869,14 +869,26 @@ VIEWER_JS = """
   // one width holds at the other. It is also what makes printing correct -
   // beforeprint fires while the slides are still hidden, so a pass that only
   // looked at visible slides printed the clipped version.
+  // The flip book renders CLONES of these slides (see buildBook), taken once
+  // at build time. Without this the clones keep whatever fit was current when
+  // they were cloned - which is the pre-webfont pass - so the book and the
+  // slide view disagree, and a later re-fit never reaches the book at all.
+  function syncBookFit(){
+    if(typeof book==='undefined'||!book) return;
+    var sheets=book.querySelectorAll('.sheet .slide');
+    for(var i=0;i<sheets.length&&i<slides.length;i++){
+      sheets[i].style.setProperty('--fit', slides[i].style.getPropertyValue('--fit')||'1');
+    }
+  }
   function fitAll(){
     body.classList.add('measuring');
     try{ for(var i=0;i<slides.length;i++) fitSlide(slides[i]); }
     finally{ body.classList.remove('measuring'); }
+    syncBookFit();
   }
   fitAll();
-  // Re-measure once the webfont lands - 'Play' is wider than the fallback, so
-  // a fit computed against Verdana would be too optimistic.
+  // Re-measure once the webfont lands - it has different metrics from the
+  // fallback, so a fit computed against Verdana is not the right one.
   if(document.fonts&&document.fonts.ready){
     document.fonts.ready.then(fitAll).catch(function(){});
   }
@@ -961,6 +973,7 @@ VIEWER_JS = """
       flippingTime:550, swipeDistance:12,
       mobileScrollSupport:true, useMouseEvents:true, disableFlipByClick:true
     });
+    syncBookFit();   // adopt the fits measured for the originals
     pf.loadFromHTML(book.querySelectorAll('.sheet'));
     pf.on('flip',function(e){ at=e.data; syncFlip(e.data); track(e.data+1); });
     pf.on('changeState',function(e){
