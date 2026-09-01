@@ -3836,7 +3836,6 @@ export const V3BusinessCasePlanCreatorScan = () => {
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
   return (
     <FlowShell title="Creator Match Scanner" subtitle="Run the scan to have the best-fit creators selected for you, add anyone else by hand, and prepare them for briefing." nextAction="Review the selected creators, untick any you do not want, then generate editable briefs.">
-      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Matching criteria">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[12px] text-[#4F3E2F]">
           <div className="rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3"><strong>Audience and market fit:</strong> The scan compares the brand audience, buyer behavior, target geography, and culture cues from the Alignment Snapshot against creator audience and category data.</div>
@@ -3962,6 +3961,12 @@ export const V3BusinessCasePlanCreatorScan = () => {
           })}
         </div>
       </InfoCard>
+      {/* Sits between the scan and the Selected creators card rather than at
+          the top of the page, so "select at least one creator" lands next to
+          the Open Creator Brief / Open Pitch Deck buttons that raise it - at
+          the top it was off screen by the time the admin reached them. Scan
+          failures surface here too, directly under the scan that failed. */}
+      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="creator-scan-notice">{notice}</div>}
       <InfoCard title="Selected creators" action={(
         <div className="flex flex-wrap justify-end gap-2">
           {/* Either can be opened first; approving one opens the other, and
