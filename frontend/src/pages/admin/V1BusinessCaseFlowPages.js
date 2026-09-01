@@ -3756,18 +3756,26 @@ export const V3BusinessCasePlanCreatorScan = () => {
     try {
       const data = await v3SuggestCreatorMatches(id);
       stopScanTick();
-      setMatches(Array.isArray(data?.matches) ? data.matches : []);
+      const scannedMatches = Array.isArray(data?.matches) ? data.matches : [];
+      setMatches(scannedMatches);
       setAnalysisSource(data?.analysis_source || '');
       // Creators the team NAMED in the Creator Selector "Creator Matches"
-      // field come back matched against the database - auto-select them so
-      // admin only has to confirm. The AI list below is additions on top.
+      // field come back matched against the database. The AI list below is
+      // additions on top for anyone the admin did not remember.
       const named = Array.isArray(data?.named_matches) ? data.named_matches : [];
       setNamedMatches(named);
       setNamedUnmatched(Array.isArray(data?.named_unmatched) ? data.named_unmatched : []);
-      if (named.length) {
+      // The scan IS the selection. Both the named picks and the ranked
+      // best-fit matches are selected here, so the admin never has to
+      // re-pick in the AI Database Scan list - they only untick what they
+      // do not want. `matches` is the scanner's ranked top set; the
+      // placeholder cards shown before a scan are not in it and are never
+      // auto-selected.
+      const autoSelect = [...named, ...scannedMatches];
+      if (autoSelect.length) {
         setSelectedIds((current) => {
           const next = [...current];
-          named.forEach((m) => {
+          autoSelect.forEach((m) => {
             const creatorId = m?.creator?.id;
             if (creatorId && !next.includes(creatorId)) next.push(creatorId);
           });
@@ -3775,8 +3783,8 @@ export const V3BusinessCasePlanCreatorScan = () => {
           return next;
         });
       }
-      const found = (data?.matches || []).length + (named || []).length;
-      setScanPopup({ open: true, progress: 100, status: 'complete', message: found ? `Found ${found} creator${found === 1 ? '' : 's'} matching accurately.` : 'Scan complete.' });
+      const found = scannedMatches.length + (named || []).length;
+      setScanPopup({ open: true, progress: 100, status: 'complete', message: found ? `Selected ${found} best-fit creator${found === 1 ? '' : 's'}.` : 'Scan complete.' });
       // Auto-close shortly after completion so the admin lands on the results.
       setTimeout(() => setScanPopup((prev) => ({ ...prev, open: false })), 1100);
     } catch (e) {
@@ -3796,6 +3804,15 @@ export const V3BusinessCasePlanCreatorScan = () => {
     if (analysisSource.startsWith('openai:')) return `LLM ranking via OpenAI (${analysisSource.replace('openai:', '')}) - evidence-cited.`;
     return `Ranking source: ${analysisSource}.`;
   })();
+  // A scan has produced ranked results. Until then the AI Database Scan list
+  // is only a preview of the database, so nothing there is auto-selected.
+  const scanned = matches.length > 0;
+  // The scan falls back to deterministic keyword overlap when no LLM key is
+  // configured or the model times out. Either way the picking is automatic -
+  // the label just says honestly which engine chose them.
+  const selectedByLabel = analysisSource === 'deterministic_keyword_overlap'
+    ? 'Auto-selected by the scan'
+    : 'Auto-selected by AI';
   const continueToBrief = () => {
     if (selectedIds.length === 0) {
       setNotice('Select at least one creator before generating briefs.');
@@ -3818,7 +3835,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
   };
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
   return (
-    <FlowShell title="Creator Match Scanner" subtitle="Scan creators, manually choose creatives from the full database, and prepare one or more creators for briefing." nextAction="Pick one or more creators, then generate editable briefs for each selected creator.">
+    <FlowShell title="Creator Match Scanner" subtitle="Run the scan to have the best-fit creators selected for you, add anyone else by hand, and prepare them for briefing." nextAction="Review the selected creators, untick any you do not want, then generate editable briefs.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Matching criteria">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[12px] text-[#4F3E2F]">
@@ -3894,13 +3911,18 @@ export const V3BusinessCasePlanCreatorScan = () => {
             {analysisSourceLabel}
           </p>
         )}
+        <p className="mb-3 text-[12px] text-[#6E6657]" data-testid="creator-ai-scan-intro">
+          {scanned
+            ? 'These are the best-fit creators the scan chose, already selected for you - untick any you do not want before continuing.'
+            : 'Run the scan to have the best-fit creators picked for you. The profiles below are a preview of the database, not a ranked result.'}
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {(matches.length ? matches : creators.slice(0, 8).map((creator) => ({ creator, score: creator.fit_score || creator.reliability || 70, reasons: [creatorSpecialty(creator)] }))).map((match) => {
+          {(scanned ? matches : creators.slice(0, 8).map((creator) => ({ creator, score: creator.fit_score || creator.reliability || 70, reasons: [creatorSpecialty(creator)] }))).map((match) => {
             const creator = match.creator || match;
             const score = match.score || creator.fit_score || creator.fitScore || 70;
             const selected = selectedIds.includes(creator.id);
             return (
-              <div key={creator.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3" data-testid="creator-match-card">
+              <div key={creator.id} className={`rounded-[8px] border p-3 ${selected ? 'border-[#1F4A3A] bg-[#EAF4EE]' : 'border-[#E8E4DB] bg-white'}`} data-testid="creator-match-card">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-[13px] text-[#1A1A1A]">{creatorName(creator)}</p>
@@ -3911,9 +3933,30 @@ export const V3BusinessCasePlanCreatorScan = () => {
                 <ul className="mt-2 list-disc space-y-1 pl-4 text-[12px] text-[#6E6657]">
                   {(match.reasons || [match.reason || 'Strong profile fit for admin review.']).slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}
                 </ul>
-                <button onClick={() => addCreator(creator.id)} className="v3-btn-secondary mt-3 text-[11px]" disabled={selected} data-testid={`creator-select-${creator.id}`}>
-                  <CheckCircle2 className="w-3.5 h-3.5" /> {selected ? 'Selected' : 'Select creator'}
-                </button>
+                {/* After a scan the picking is done for the admin - the only
+                    control left is removing one. The pre-scan preview cards
+                    keep the manual button. */}
+                {scanned ? (
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    {selected ? (
+                      <>
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#1F4A3A]" data-testid={`creator-auto-selected-${creator.id}`}>
+                          <CheckCircle2 className="w-3.5 h-3.5" /> {selectedByLabel}
+                        </span>
+                        <button onClick={() => removeCreator(creator.id)} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove ${creatorName(creator)}`} data-testid={`creator-remove-${creator.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-[11px] text-[#8A8A8A]">Removed from the shortlist</span>
+                        <button onClick={() => addCreator(creator.id)} className="v3-btn-secondary text-[11px]" data-testid={`creator-select-${creator.id}`}>Add back</button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <button onClick={() => addCreator(creator.id)} className="v3-btn-secondary mt-3 text-[11px]" disabled={selected} data-testid={`creator-select-${creator.id}`}>
+                    <CheckCircle2 className="w-3.5 h-3.5" /> {selected ? 'Selected' : 'Select creator'}
+                  </button>
+                )}
               </div>
             );
           })}
