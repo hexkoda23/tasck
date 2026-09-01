@@ -11,7 +11,6 @@ import V3Modal from '../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles, Users } from 'lucide-react';
 import { adminRoute, getAdminRouteBase, V1_ADMIN_ROUTE_BASE } from '../../lib/v3AdminRouteBase';
 import { BrandLogo } from '../../lib/brandLogo';
-import { RelationshipStageTag, relationshipStageOf } from '../../lib/relationshipStage';
 import { PriorityTag } from '../../lib/snapshotPriority';
 import { toast } from 'sonner';
 
@@ -66,7 +65,6 @@ const normaliseBrand = (b) => ({
   engagementTrack: b.engagement_track_default || 'paid',
   rmId: b.rm_id || b.relationship_manager?.id || 'rm-temi',
   relationshipManager: b.relationship_manager || { name: b.relationship_manager_name || 'Unassigned' },
-  relationshipStage: relationshipStageOf(b),
   nextAction: b.next_action || '',
   // Alignment Snapshot projects: the brand appears once PER project on the CRM
   // list, each with its own priority tag, so admin can pick one and continue.
@@ -407,8 +405,6 @@ const V1AdminCRM = () => {
                       >
                         {tp.label}
                       </span>
-                      {/* Where this brand stands in the relationship pipeline. */}
-                      <RelationshipStageTag stage={brand.relationshipStage} />
                     </div>
                     <p className="text-[12px] text-[#8A8A8A] mt-0.5">
                       {brand.primaryContact || 'No contact'} {brand.role ? `/ ${brand.role}` : ''}

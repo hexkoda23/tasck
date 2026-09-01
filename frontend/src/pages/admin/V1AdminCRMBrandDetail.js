@@ -30,7 +30,6 @@ import {
   v3ResendBrandCredentials,
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-import { RelationshipStageSelect, relationshipStageMeta, relationshipStageOf } from '../../lib/relationshipStage';
 import { PriorityTag as RelationshipPriorityTag } from '../../lib/snapshotPriority';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
 import { BrandLogo as SharedBrandLogo } from '../../lib/brandLogo';
@@ -772,20 +771,8 @@ const V1AdminCRMBrandDetail = () => {
           <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
         </button>
         <div className="flex-1" />
-        {/* Relationship stage. Saves to the brand record, so the tag updates
-            everywhere this brand appears (CRM list, business case pages). */}
-        <RelationshipStageSelect
-          brandId={id}
-          value={relationshipStageOf(brand)}
-          onChange={(next, error) => {
-            if (error) {
-              toast.error('Could not update the relationship stage.');
-              return;
-            }
-            toast.success(`Stage set to "${relationshipStageMeta(next).label}".`);
-            reloadData();
-          }}
-        />
+        {/* The relationship stage control used to sit here. Removed at the
+            client's request; the field itself is untouched on the record. */}
         <button
           type="button"
           onClick={() => setDeleteConfirmOpen(true)}

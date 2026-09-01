@@ -466,21 +466,28 @@ def _creator_mix(d: Dict[str, Any], i: int, n: int, logo: str) -> str:
         "</tr>"
         for r in _items(d, "rows")
     )
+    # Stacked, not side by side. The old two-column split gave a four-column
+    # table about three quarters of the width - names and reasons wrapped to
+    # ribbons - while "Why This Mix Works" ran down a narrow strip beside it,
+    # leaving a dead band under the table whenever there were few creators.
+    # Full-width table, prose flowing underneath in columns, nothing wasted.
     body = (
         f'<div class="s-head">{_kicker(_text(d, "kicker", "Talent Suggestions / Team"))}{logo}</div>'
         + _title(_text(d, "title", "Recommended Creator Mix"))
-        + '<div class="two-col cm-grid"><div>'
+        + '<div class="cm-stack">'
         '<table class="cmtable"><thead><tr>'
         "<th>Creator</th><th>Estimated Audience</th><th>Why They Fit</th><th>Campaign Role</th>"
         f"</tr></thead><tbody>{rows}</tbody></table>"
         + (f'<p class="cm-note">{esc(_text(d, "footnote"))}</p>' if _text(d, "footnote") else "")
-        + "</div><div>"
         + (
-            f'<p class="col-h c-orange">{esc(_text(d, "why_label", "Why This Mix Works"))}</p>'
+            '<div class="cm-why">'
+            + f'<p class="col-h c-orange">{esc(_text(d, "why_label", "Why This Mix Works"))}</p>'
+            + '<div class="cm-why-cols">'
             + "".join(f'<p class="p">{esc(p)}</p>' for p in _items(d, "why_works"))
+            + "</div></div>"
             if _items(d, "why_works") else ""
         )
-        + "</div></div>"
+        + "</div>"
     )
     return _slide("creator_mix", i, n, body)
 
@@ -758,6 +765,15 @@ ul{list-style:none}
 .cm-aud{font-weight:700}
 .cm-grid{grid-template-columns:1.55fr .45fr}
 .cm-note{font-size:1.35cqw;opacity:.7;margin-top:.8cqw;font-style:italic}
+/* Recommended Creator Mix: table across the full width, supporting copy
+   beneath it in balanced columns. The why-block takes the leftover height so
+   a short table does not leave a void, and a long one just squeezes the prose
+   rather than overflowing - .s-inner still scales the slide to fit. */
+.cm-stack{display:flex;flex-direction:column;flex:1;min-height:0;gap:.6cqw}
+.cm-stack .cmtable{margin-top:.8cqw}
+.cm-why{flex:1;min-height:0;margin-top:.6cqw}
+.cm-why-cols{columns:2;column-gap:2.6cqw}
+.cm-why-cols .p{margin:0 0 .7cqw;break-inside:avoid}
 
 /* budget */
 .bbar{display:flex;align-items:stretch;border-radius:.6cqw;overflow:hidden;margin:.8cqw 0 1.2cqw}

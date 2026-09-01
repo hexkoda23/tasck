@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-import { RelationshipStageSelect, relationshipStageMeta, relationshipStageOf } from '../../lib/relationshipStage';
 import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PrioritySelect } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
@@ -430,23 +429,9 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
           </button>
         )}
         <div className="flex-1" />
-        {/* Same relationship stage control as the CRM brand page - pinned to
-            every Business Case page so the brand's position is always visible
-            and editable. Advancing a stage updates it automatically too. */}
-        {flowBrand.id && (
-          <RelationshipStageSelect
-            brandId={flowBrand.id}
-            value={relationshipStageOf(flowBrand)}
-            onChange={(next, error) => {
-              if (error) {
-                toast.error('Could not update the relationship stage.');
-                return;
-              }
-              toast.success(`Stage set to "${relationshipStageMeta(next).label}".`);
-              reload();
-            }}
-          />
-        )}
+        {/* The relationship stage pill used to sit here. Removed at the
+            client's request - the stage is still tracked on the brand record
+            and still advances with the flow, it is just not surfaced. */}
       </div>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
