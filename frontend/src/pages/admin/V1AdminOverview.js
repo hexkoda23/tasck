@@ -51,11 +51,17 @@ const Empty = ({ children }) => <p className="px-5 py-6 text-[12px] text-[#8A8A8
 // is a max-height, so a short list still renders at its natural height with no
 // scrollbar and no dead space.
 //
+// Scroll chaining is left ON (default `overscroll-behavior: auto`). An earlier
+// version set `overscroll-contain`, which trapped the wheel inside the list:
+// once its last row was reached the page would not move until the cursor was
+// dragged off the card. Chaining hands the leftover scroll back to the page, so
+// the wheel keeps working wherever the pointer happens to sit.
+//
 // Nothing inside a List may own a tooltip: `overflow-y-auto` establishes a
 // clipping context and would cut the panel off. Tooltips live in card headers
 // and in the non-scrolling strips above these bodies.
 const List = ({ children, testId, className = '' }) => (
-  <div className={`max-h-[320px] overflow-y-auto overscroll-contain ${className}`} data-testid={testId}>
+  <div className={`max-h-[320px] overflow-y-auto ${className}`} data-testid={testId}>
     {children}
   </div>
 );

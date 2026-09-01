@@ -95,12 +95,20 @@ made elsewhere shows when the admin returns to the tab.
 
 ### Scrolling
 
-Every list body is wrapped in `List` (`max-h-[320px] overflow-y-auto
-overscroll-contain`), so a long card scrolls inside itself instead of pushing
-the page down and burying the cards below it. The cap is a max-height, so a
-short list still renders at its natural height with no scrollbar and no dead
-space. `overscroll-contain` stops a list reaching its end and then scrolling
-the page.
+Every list body is wrapped in `List` (`max-h-[320px] overflow-y-auto`), so a
+long card scrolls inside itself instead of pushing the page down and burying
+the cards below it. The cap is a max-height, so a short list still renders at
+its natural height with no scrollbar and no dead space.
+
+**Scroll chaining stays ON** — do not add `overscroll-contain` here. It was
+tried and reverted: it trapped the wheel inside a list, so once the last row
+was reached the page would not move until the cursor was dragged off the card.
+With the default `overscroll-behavior: auto` the leftover scroll is handed back
+to the page, and the wheel keeps working wherever the pointer sits. Verified
+with real wheel input at a fixed cursor position: the list fills to its end,
+then the page advances (0 → 500 → 1000 → 1265 of 1265) without moving the
+pointer. Passing over a further list lets that one take its own scroll first,
+which is standard nested-scroller behaviour.
 
 Card headers, the documents/workload column headers and the deadline bucket
 strip sit **outside** the scroll region, so they stay put while the rows move.
