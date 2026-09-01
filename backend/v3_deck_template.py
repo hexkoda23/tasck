@@ -110,11 +110,21 @@ def _ul(values: List[Any], cls: str = "b-list") -> str:
 def _cover(d: Dict[str, Any], i: int, n: int, brand_name: str, logo: str) -> str:
     title = _text(d, "title", brand_name or "Creator Campaign")
     accent = _text(d, "accent_word")
+    # The model is asked for accent_word as "the final word or two of the
+    # title", so it normally comes back ALREADY inside `title`. Appending it
+    # printed the word twice - "ZESTORA - TASTE THE CONVENIENCE" over a second
+    # highlighted "CONVENIENCE". Highlight it in place when the title already
+    # ends with it; only append when it genuinely is not there.
+    head, tail = title, accent
+    if accent:
+        cut = title.lower().rfind(accent.lower())
+        if cut >= 0 and cut + len(accent) >= len(title.rstrip()):
+            head, tail = title[:cut].rstrip(), title[cut:]
     body = (
         f'<div class="cov-top">{logo}</div>'
         '<div class="cov-body">'
-        f'<h1 class="cov-title">{esc(title)}'
-        + (f' <span class="acc">{esc(accent)}</span>' if accent else "")
+        f'<h1 class="cov-title">{esc(head)}'
+        + (f' <span class="acc">{esc(tail)}</span>' if tail else "")
         + "</h1>"
         + (f'<p class="cov-sub">{esc(_text(d, "subtitle"))}</p>' if _text(d, "subtitle") else "")
         + "</div>"
