@@ -241,25 +241,20 @@ def _market(d: Dict[str, Any], i: int, n: int, logo: str) -> str:
 # --------------------------------------------------------------------------
 # Slide 7 - solution / creator strategy (creator portraits)
 # --------------------------------------------------------------------------
-def _solution(d: Dict[str, Any], i: int, n: int, logo: str, creator_images: List[Dict[str, Any]]) -> str:
-    profiles = creator_images or _items(d, "profiles")
-    cards = ""
-    for prof in profiles[:4]:
-        img = _text(prof, "image")
-        cards += (
-            '<figure class="cshot">'
-            + (f'<img src="{esc(img)}" alt=""/>' if img else '<div class="cshot-blank"></div>')
-            + f'<figcaption>{esc(_text(prof, "name"))}'
-            + (f'<span>{esc(_text(prof, "handle"))}</span>' if _text(prof, "handle") else "")
-            + "</figcaption></figure>"
-        )
+def _solution(d: Dict[str, Any], i: int, n: int, logo: str) -> str:
+    """Creator strategy, words only.
+
+    The portraits used to sit in a small grid under the left column, which
+    squeezed the copy and capped the deck at four creators however many were
+    uploaded. They now get their own page (_solution_creators), so this one is
+    pure copy and the two columns use the full height.
+    """
     body = (
         f'<div class="s-head">{_kicker(_text(d, "kicker", "The Solution / Creator Strategy"))}{logo}</div>'
-        '<div class="two-col">'
+        '<div class="two-col two-col-fill">'
         "<div>"
         + _title(_text(d, "title"))
         + "".join(f'<p class="p">{esc(p)}</p>' for p in _items(d, "paragraphs"))
-        + (f'<div class="cgrid">{cards}</div>' if cards else "")
         + "</div><div>"
         + (
             f'<p class="col-h c-green">{esc(_text(d, "suggested_label", "Suggested Creator Profiles"))}</p>'
@@ -272,6 +267,45 @@ def _solution(d: Dict[str, Any], i: int, n: int, logo: str, creator_images: List
             if _items(d, "roles") else ""
         )
         + "</div></div>"
+    )
+    return _slide("solution", i, n, body)
+
+
+# --------------------------------------------------------------------------
+# Slide 7b - the creator portraits, one page to themselves
+# --------------------------------------------------------------------------
+def _solution_creators(d: Dict[str, Any], i: int, n: int, logo: str,
+                       creator_images: List[Dict[str, Any]]) -> str:
+    """Every uploaded creator portrait, filling the page.
+
+    The column count follows the number of images so a handful render large
+    and a full set of twelve still fits: the grid is sized in container units
+    and the cards flex to whatever height is left under the heading.
+    """
+    shots = [c for c in (creator_images or _items(d, "profiles")) if isinstance(c, dict)]
+    count = len(shots)
+    cols = 2 if count <= 2 else 3 if count <= 6 else 4
+    cards = ""
+    for prof in shots:
+        img = _text(prof, "image")
+        name = _text(prof, "name")
+        handle = _text(prof, "handle")
+        cards += (
+            '<figure class="cshot">'
+            + (f'<img src="{esc(img)}" alt=""/>' if img else '<div class="cshot-blank"></div>')
+            + (
+                f'<figcaption>{esc(name)}'
+                + (f'<span>{esc(handle)}</span>' if handle else "")
+                + "</figcaption>"
+                if name or handle else ""
+            )
+            + "</figure>"
+        )
+    heading = _text(d, "creators_title") or "The Creators"
+    body = (
+        f'<div class="s-head">{_kicker(_text(d, "kicker", "The Solution / Creator Strategy"))}{logo}</div>'
+        f'<h2 class="ct-title">{esc(heading)}</h2>'
+        f'<div class="cpage" style="--cpage-cols:{cols}">{cards}</div>'
     )
     return _slide("solution", i, n, body)
 
@@ -498,9 +532,12 @@ def deck_slides_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = Non
     contact = "hitusup@thetasck.com"
     site = "WWW.TASCK.ORG"
 
-    total = len(SLIDE_ORDER)
-    out: List[str] = []
-    for idx, kind in enumerate(SLIDE_ORDER, start=1):
+    # The rendered deck is not always one page per data slide: when creator
+    # portraits are present the solution slide splits into a text page and a
+    # portraits page, so build the page list first and number it afterwards.
+    # `total` has to come out right in the footer of every page.
+    renderers: List[Any] = []
+    for kind in SLIDE_ORDER:
         d = slides_data.get(kind) or {}
         if kind == "cover":
             if not _text(d, "title"):
@@ -508,37 +545,45 @@ def deck_slides_html(deck: Dict[str, Any], brand: Optional[Dict[str, Any]] = Non
             # A per-brand cover image uploaded by admin wins over the AI's.
             if deck.get("cover_image"):
                 d = {**d, "bg_image": deck["cover_image"]}
-            out.append(_cover(d, idx, total, brand_name, logo))
+            renderers.append(lambda i, n, d=d: _cover(d, i, n, brand_name, logo))
         elif kind == "about":
-            out.append(_about(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _about(d, i, n, logo))
         elif kind == "context":
-            out.append(_context(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _context(d, i, n, logo))
         elif kind == "problem":
-            out.append(_problem(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _problem(d, i, n, logo))
         elif kind == "objective":
-            out.append(_objective(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _objective(d, i, n, logo))
         elif kind == "market":
-            out.append(_market(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _market(d, i, n, logo))
         elif kind == "solution":
-            out.append(_solution(d, idx, total, logo, creator_images))
+            # Text page. The portraits move to their own page below so both
+            # have room - the combined page squeezed the copy and capped the
+            # grid at four images.
+            renderers.append(lambda i, n, d=d: _solution(d, i, n, logo))
+            if creator_images:
+                renderers.append(lambda i, n, d=d: _solution_creators(d, i, n, logo, creator_images))
         elif kind == "journey":
-            out.append(_journey(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _journey(d, i, n, logo))
         elif kind == "funnel":
-            out.append(_funnel(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _funnel(d, i, n, logo))
         elif kind == "projections":
-            out.append(_projections(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _projections(d, i, n, logo))
         elif kind == "risks":
-            out.append(_risks(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _risks(d, i, n, logo))
         elif kind == "budget":
-            out.append(_budget(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _budget(d, i, n, logo))
         elif kind == "creator_mix":
-            out.append(_creator_mix(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _creator_mix(d, i, n, logo))
         elif kind == "team":
-            out.append(_team(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _team(d, i, n, logo))
         elif kind == "closing":
-            out.append(_closing(d, idx, total, logo))
+            renderers.append(lambda i, n, d=d: _closing(d, i, n, logo))
         else:
-            out.append(_thank_you(d, idx, total, logo, contact, site))
+            renderers.append(lambda i, n, d=d: _thank_you(d, i, n, logo, contact, site))
+
+    total = len(renderers)
+    out: List[str] = [render(idx, total) for idx, render in enumerate(renderers, start=1)]
     return out
 
 
@@ -639,6 +684,21 @@ ul{list-style:none}
 
 /* creator portraits */
 .cgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:1cqw;margin-top:1.2cqw}
+/* Creator-strategy copy page: no portrait grid under the left column any
+   more, so both columns claim the full height instead of leaving a band of
+   dead space where the images used to sit. */
+.two-col-fill{align-items:start}
+.two-col-fill>div{display:flex;flex-direction:column;justify-content:flex-start;gap:1cqw}
+/* Creator portraits page. The card grid takes every pixel under the heading;
+   column count comes from --cpage-cols so four images render large and twelve
+   still fit. auto-rows + minmax keeps rows even however many land. */
+.ct-title{font-size:4cqw;line-height:1.05;font-weight:700;margin:.4cqw 0 1.4cqw}
+.cpage{display:grid;grid-template-columns:repeat(var(--cpage-cols,4),1fr);
+  gap:1.1cqw;flex:1;min-height:0;align-content:stretch;
+  grid-auto-rows:minmax(0,1fr)}
+.cpage .cshot{display:flex;flex-direction:column;min-height:0}
+.cpage .cshot img,.cpage .cshot-blank{flex:1;min-height:0;width:100%;height:100%;
+  aspect-ratio:auto;object-fit:cover}
 .cshot{border-radius:.6cqw;overflow:hidden;background:#0E1B2E;border:1px solid rgba(255,255,255,.1)}
 .cshot img,.cshot-blank{width:100%;aspect-ratio:4/5;object-fit:cover;display:block;background:#16253E}
 .cshot figcaption{padding:.55cqw .7cqw;font-size:1.35cqw;font-weight:700;display:flex;flex-direction:column}

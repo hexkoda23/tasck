@@ -7,6 +7,7 @@ import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PrioritySelect } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
+import PitchDeckSlideEditor from '../../components/admin/PitchDeckSlideEditor';
 import { TtaLetterhead } from '../../components/v1/TtaLetterhead';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
 
@@ -4729,11 +4730,36 @@ export const V3BusinessCasePitchDeck = () => {
     }));
   };
 
+  // Decks written on the 16-slide template carry `slides`; only pre-template
+  // decks fall back to the flat `sections` editor.
+  const hasSlides = Boolean(deck?.slides && typeof deck.slides === 'object' && Object.keys(deck.slides).length);
+
+  // Path-addressed write into the nested slides payload, cloning each node on
+  // the way down so React sees a new object and the inputs stay controlled.
+  const updateSlideValue = (path, value) => {
+    setDeck((current) => {
+      const next = { ...(current || {}) };
+      next.slides = Array.isArray(current?.slides) ? [...current.slides] : { ...(current?.slides || {}) };
+      let node = next.slides;
+      for (let i = 0; i < path.length - 1; i += 1) {
+        const key = path[i];
+        const child = node[key];
+        node[key] = Array.isArray(child) ? [...child] : { ...(child || {}) };
+        node = node[key];
+      }
+      node[path[path.length - 1]] = value;
+      return next;
+    });
+  };
+
   const persist = async () => {
     if (!deck?.id) return null;
     const saved = await v3UpdatePitchDeck(deck.id, {
       title: deck.title || '',
-      sections: deck.sections || [],
+      // Send `slides` when the deck has them: that is what the flip book and
+      // the slide view render, and the backend re-derives `sections` from it
+      // so the .docx stays in step. Older decks still save their sections.
+      ...(hasSlides ? { slides: deck.slides } : { sections: deck.sections || [] }),
       cover_option: deck.cover_option || 'photo_studio',
       reviewer: 'admin',
     });
@@ -4931,31 +4957,47 @@ export const V3BusinessCasePitchDeck = () => {
   // Preview + download both use the server-rendered flip book: one source of
   // truth, TASCK-blue design, and the brand fonts are EMBEDDED in the file so
   // it looks identical when a client opens it offline.
-  const openPreview = () => {
-    if (!deck?.id) return;
-    window.open(v3PitchDeckFlipbookUrl(deck.id), '_blank', 'noopener,noreferrer');
+  // Save first, then open. Previewing without saving showed the last SAVED
+  // deck, so an edit looked like it had not applied. The rendered HTML is also
+  // cached for 60s at the browser, so the deck's updated_at rides along as a
+  // cache buster. The stamp comes from the save's OWN response - `deck` in
+  // this closure still holds the pre-save updated_at, so reading it here would
+  // build a stale buster and defeat the point.
+  const withBust = (url, saved) => {
+    const stamp = encodeURIComponent(saved?.pitch_deck?.updated_at || deck?.updated_at || '');
+    return `${url}${url.includes('?') ? '&' : '?'}v=${stamp}`;
   };
+  const saveThenOpen = async (buildUrl) => {
+    if (!deck?.id) return;
+    let saved = null;
+    try {
+      saved = await persist();
+    } catch {
+      // Saving failed - still open, showing the last good copy rather than
+      // nothing, and the failed save has already toasted.
+    }
+    window.open(withBust(buildUrl(deck.id), saved), '_blank', 'noopener,noreferrer');
+  };
+  const openPreview = () => saveThenOpen(v3PitchDeckFlipbookUrl);
 
   // Slide view of the same deck. One document carries both presentations, so
   // this only decides which one opens first.
-  const openSlides = () => {
-    if (!deck?.id) return;
-    window.open(v3PitchDeckSlidesUrl(deck.id), '_blank', 'noopener,noreferrer');
-  };
+  const openSlides = () => saveThenOpen(v3PitchDeckSlidesUrl);
 
-  const downloadFlipbook = () => {
+  // Downloads go through the same save-first path: a file sent to a client
+  // must not be a version behind what the admin is looking at.
+  const downloadFlipbook = async () => {
     if (!deck?.id) return;
-    window.open(v3PitchDeckFlipbookUrl(deck.id, true), '_blank', 'noopener,noreferrer');
+    await saveThenOpen((deckId) => v3PitchDeckFlipbookUrl(deckId, true));
     toast.success('Flip book downloading - a single HTML file you can send to the client.');
   };
 
   // Client-side print-to-PDF: opens the flipbook with ?print=1 so it auto-
   // triggers the browser's Print dialog. Users choose "Save as PDF" to
   // download a proper multi-page PDF of the deck.
-  const downloadPdf = () => {
+  const downloadPdf = async () => {
     if (!deck?.id) return;
-    const url = `${v3PitchDeckFlipbookUrl(deck.id)}?print=1`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    await saveThenOpen((deckId) => `${v3PitchDeckFlipbookUrl(deckId)}?print=1`);
     toast.success('Preparing PDF - choose "Save as PDF" in the print dialog.');
   };
 
@@ -5053,17 +5095,21 @@ export const V3BusinessCasePitchDeck = () => {
                 })}
               </div>
             </div>
-            {(deck.sections || []).map((section, index) => (
-              <div key={index} className="v3-card p-4" data-testid={`pitch-section-${index}`}>
-                <p className="text-[12px] font-semibold text-[#1A1A1A] mb-2">{index + 1}. {section.heading}</p>
-                <textarea
-                  rows={4}
-                  value={section.content || ''}
-                  onChange={(e) => updateSection(index, e.target.value)}
-                  className="w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed"
-                />
-              </div>
-            ))}
+            {hasSlides ? (
+              <PitchDeckSlideEditor slides={deck.slides} onChange={updateSlideValue} />
+            ) : (
+              (deck.sections || []).map((section, index) => (
+                <div key={index} className="v3-card p-4" data-testid={`pitch-section-${index}`}>
+                  <p className="text-[12px] font-semibold text-[#1A1A1A] mb-2">{index + 1}. {section.heading}</p>
+                  <textarea
+                    rows={4}
+                    value={section.content || ''}
+                    onChange={(e) => updateSection(index, e.target.value)}
+                    className="w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed"
+                  />
+                </div>
+              ))
+            )}
           </div>
         )}
       </InfoCard>

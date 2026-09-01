@@ -12141,6 +12141,7 @@ def make_v3_router(db):
     class PitchDeckUpdate(BaseModel):
         title: Optional[str] = None
         sections: Optional[List[Dict[str, Any]]] = None
+        slides: Optional[Dict[str, Any]] = None
         cover_option: Optional[str] = None
         reviewer: str = "admin"
 
@@ -12152,7 +12153,24 @@ def make_v3_router(db):
         updates: Dict[str, Any] = {"updated_at": _now_iso(), "last_edited_by": payload.reviewer}
         if payload.title is not None:
             updates["title"] = payload.title
-        if payload.sections is not None:
+        if payload.slides is not None:
+            # `slides` is what the flip book and the slide view actually render.
+            # Merge per slide so a client sending one edited slide cannot drop
+            # the other fifteen, then re-derive `sections` from the result -
+            # sections is a flattened read-only view of slides that the .docx
+            # renderer reads, so editing the deck has to refresh it or the
+            # document and the deck drift apart.
+            merged = dict(deck.get("slides") or {})
+            for key, value in (payload.slides or {}).items():
+                if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                    merged[key] = {**merged[key], **value}
+                else:
+                    merged[key] = value
+            updates["slides"] = merged
+            derived = _pitch_sections_from_slides(merged)
+            if derived:
+                updates["sections"] = derived
+        elif payload.sections is not None:
             updates["sections"] = payload.sections
         if payload.cover_option is not None:
             allowed = {"photo_studio", "minimal_navy", "green_wash", "sunset"}
