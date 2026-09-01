@@ -1359,9 +1359,47 @@ async def _call_alignment_analysis_tool(
 # the deterministic ranking.
 # ============================================================================
 
+# Words that appear in nearly every creator profile, so they carry no signal
+# when deciding whether a requested creator TYPE matches a database record.
+_GENERIC_CREATOR_WORDS = {
+    "creator", "creators", "content", "people", "person", "account", "accounts",
+    "page", "pages", "user", "users", "profile", "profiles", "influencer",
+    "influencers", "talent", "talents",
+}
+
+
+def _match_tokens(text: Any) -> set:
+    """Significant, loosely-stemmed words used to compare a requested creator
+    type ("Food reviewers") against a database profile ("Food reviewer")."""
+    words = re.findall(r"[a-z]+", str(text or "").lower())
+    tokens = set()
+    for word in words:
+        if len(word) < 4 or word in _GENERIC_CREATOR_WORDS:
+            continue
+        # Crude singularisation so "reviewers" meets "reviewer".
+        tokens.add(word[:-1] if len(word) > 4 and word.endswith("s") else word)
+    return tokens
+
+
+def _creator_profile_text(cr: Dict[str, Any]) -> str:
+    return " ".join([
+        str(cr.get("name") or ""),
+        str(cr.get("genre") or ""),
+        str(cr.get("audience") or ""),
+        " ".join(cr.get("platforms") or []),
+        " ".join(cr.get("categories") or []),
+        str(cr.get("notes") or ""),
+        str(cr.get("tier") or ""),
+    ])
+
+
 def _creator_match_system_prompt() -> str:
     return """
 You are TASCK's Creator Match Analyst. Your job is to rank creators for a brand opportunity using ONLY the evidence in the brief and the creator profiles given. Do not invent facts or audiences. If a creator's fit is weak or unclear, say so in the reasons and lower the score.
+
+REQUESTED CREATOR TYPES take priority. The brief may list the kinds of creator the team wants ("Food reviewers", "Lifestyle creators", "Everyday-life storytellers"). These are descriptions of a TYPE of creator, not names to look up. Read each database profile - genre, categories, audience, platforms, notes - and decide which profiles genuinely belong to each requested type. A creator who fits one of the requested types should outrank a creator who is merely a good general fit for the brand.
+
+For every creator you return, set "matched_from" to the requested type it satisfies, copied EXACTLY as written in the brief. Use "" when the creator fits the brand well but none of the requested types. Never stretch a profile to fit a type it does not support - leaving a requested type with no creator is the correct answer when the database has nobody suitable.
 
 For each creator you decide to include, write 1 to 3 SHORT reasons that cite specific words from the brief (audience, channel, category, focus) and from the creator profile (categories, platforms, audience, genre). Each reason should be one sentence.
 
@@ -1376,7 +1414,7 @@ Score band guidance:
 Return JSON only, no markdown, with exactly this shape:
 {
   "matches": [
-    {"creator_id": "string (must match an id from the input)", "score": 0-100 integer, "reasons": ["string", ...], "risk_notes": ["string", ...]}
+    {"creator_id": "string (must match an id from the input)", "score": 0-100 integer, "matched_from": "the requested creator type this profile satisfies, copied exactly, or \"\"", "reasons": ["string", ...], "risk_notes": ["string", ...]}
   ]
 }
 
@@ -1384,7 +1422,7 @@ Sort matches descending by score. Return at most 8. Never include a creator_id t
 """.strip()
 
 
-def _creator_match_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi: Dict[str, Any], creators: List[Dict[str, Any]]) -> str:
+def _creator_match_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi: Dict[str, Any], creators: List[Dict[str, Any]], requested_types: Optional[List[str]] = None) -> str:
     def _safe(value: Any) -> str:
         text = "" if value is None else str(value).strip()
         return text or "(not captured)"
@@ -1405,13 +1443,26 @@ def _creator_match_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi:
             "categories": cr.get("categories") or [],
             "platforms": cr.get("platforms") or [],
             "audience": cr.get("audience") or "",
+            "notes": (str(cr.get("notes") or "")[:280]),
+            "tier": cr.get("tier") or "",
             "fit_score_baseline": cr.get("fit_score"),
             "reliability": cr.get("reliability"),
             "rate_card": cr.get("rate_card") or "TBD",
             "has_contact": bool(cr.get("manager_email") or cr.get("email")),
         })
 
+    wanted = [str(t).strip() for t in (requested_types or []) if str(t).strip()]
+    if wanted:
+        requested_block = (
+            "REQUESTED CREATOR TYPES (from the Creator Selector \"Creator Matches\" field)" + "\n"
+            + "\n".join(f"- {t}" for t in wanted)
+            + "\nMatch these against the profiles below and set matched_from accordingly." + "\n"
+        )
+    else:
+        requested_block = "REQUESTED CREATOR TYPES\n- (none given; rank on brand fit alone)\n"
+
     return f"""
+{requested_block}
 BRAND OPPORTUNITY
 - Brand: {_safe(brand.get("company") or brand.get("name") or case.get("brand_name"))}
 - Industry / category: {_safe(brand.get("category") or brand.get("industry") or brand.get("sector"))}
@@ -1434,12 +1485,13 @@ async def _call_creator_match_tool(
     case: Dict[str, Any],
     mi: Dict[str, Any],
     candidate_creators: List[Dict[str, Any]],
+    requested_types: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     if not candidate_creators:
         return None
 
     system_prompt = _creator_match_system_prompt()
-    user_message = _creator_match_user_message(brand, case, mi, candidate_creators)
+    user_message = _creator_match_user_message(brand, case, mi, candidate_creators, requested_types)
     emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("CREATOR_MATCH_EMERGENT_LLM_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
@@ -5069,6 +5121,17 @@ def make_v3_router(db):
             raise HTTPException(404, "Business case not found")
         mi = _marketing_intelligence_from_case(case)
         creators = await db.v3_creators.find(_approved_creator_query(), {"_id": 0}).to_list(500)
+
+        # The Creator Selector "Creator Matches" field. Lines are usually a
+        # TYPE of creator ("Food reviewers"), sometimes an actual name. Read it
+        # up front: it steers the deterministic preselection AND the LLM, so
+        # requested types decide which profiles reach the shortlist.
+        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
+        raw_named = str((round_doc.get("creator_selector") or {}).get("creator_matches") or "")
+        requested_types = [
+            part.strip() for part in re.split(r"[\n,;/]+", raw_named) if len(part.strip()) >= 3
+        ] if raw_named.strip() else []
+        requested_tokens = {t: _match_tokens(t) for t in requested_types}
         haystack = " ".join([
             str(mi.get("key_marketing_focus", "")),
             str(mi.get("primary_target_audience", "")),
@@ -5116,9 +5179,31 @@ def make_v3_router(db):
             if cr.get("manager_email") or cr.get("email"):
                 score += 2
                 reasons.append("Contact route is available for immediate brief send.")
+            # Requested creator TYPES outrank general brand fit: a profile whose
+            # genre/categories/audience carry the words of a requested line is
+            # what the team actually asked for.
+            matched_from = ""
+            profile_tokens = _match_tokens(_creator_profile_text(cr))
+            best_overlap = 0
+            for wanted_line, wanted_tokens in requested_tokens.items():
+                if not wanted_tokens:
+                    continue
+                overlap = len(wanted_tokens & profile_tokens)
+                # A multi-word type needs more than one word to agree. One
+                # shared role word is not membership: "Tech reviewer" overlaps
+                # "Food reviewers" on "reviewer" alone and is not a food creator.
+                if overlap < min(2, len(wanted_tokens)):
+                    continue
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    matched_from = wanted_line
+            if matched_from:
+                score += 10 + (5 * min(best_overlap, 3))
+                reasons.insert(0, f'Profile matches the requested creator type "{matched_from}".')
             deterministic_matches.append({
                 "creator": cr,
                 "score": min(score, 99),
+                "matched_from": matched_from,
                 "reasons": reasons or ["Strong general fit; admin should validate audience and fee conditions."],
                 "risk_notes": [] if cr.get("rate_card") != "TBD" else ["Rate card is not confirmed yet."],
             })
@@ -5140,7 +5225,7 @@ def make_v3_router(db):
                 llm_timeout_seconds = 20.0
             try:
                 llm_result = await asyncio.wait_for(
-                    _call_creator_match_tool(brand, case, mi, candidate_creators),
+                    _call_creator_match_tool(brand, case, mi, candidate_creators, requested_types),
                     timeout=llm_timeout_seconds,
                 )
             except asyncio.TimeoutError:
@@ -5167,9 +5252,26 @@ def make_v3_router(db):
                     # Always surface "Rate card TBD" as a baseline risk if applicable.
                     if cr.get("rate_card") == "TBD" and not any("rate card" in r.lower() for r in risk_notes):
                         risk_notes.append("Rate card is not confirmed yet.")
+                    # The model echoes the requested type it matched. Snap it
+                    # to the exact line the team wrote (case/spacing drift) and
+                    # drop anything it invented.
+                    claimed = str(item.get("matched_from") or "").strip()
+                    matched_from = ""
+                    if claimed:
+                        for line in requested_types:
+                            if line.lower() == claimed.lower():
+                                matched_from = line
+                                break
+                        else:
+                            claimed_tokens = _match_tokens(claimed)
+                            for line in requested_types:
+                                if claimed_tokens and claimed_tokens & requested_tokens.get(line, set()):
+                                    matched_from = line
+                                    break
                     hydrated.append({
                         "creator": cr,
                         "score": score,
+                        "matched_from": matched_from,
                         "reasons": reasons or ["LLM rank with no explicit reason - validate manually."],
                         "risk_notes": risk_notes,
                     })
@@ -5180,18 +5282,32 @@ def make_v3_router(db):
 
         final_matches = llm_matches if llm_matches is not None else deterministic_matches[:8]
 
+        # When the team has said WHICH creator types they want, the answer is
+        # those creators - not a top-8 padded with whoever else scores well on
+        # brand fit. Padding would auto-select creators nobody asked for. With
+        # no requested types the brand-fit ranking stands as before.
+        if requested_types:
+            typed = [m for m in final_matches if m.get("matched_from")]
+            if not typed:
+                # The model returned nothing tied to a requested type. Fall back
+                # to the deterministic type matches, taken from the FULL ranked
+                # list rather than its top 8 so a type match sitting just below
+                # the cut is not lost. If that is empty too, nothing in the
+                # database fits - named_unmatched says so rather than
+                # substituting creators nobody asked for.
+                typed = [m for m in deterministic_matches if m.get("matched_from")][:8]
+            final_matches = typed
+
         # Creators the team NAMED in the Creator Selector ("Creator Matches"
         # field). These are matched against the database by name so the scanner
         # can auto-select them - the AI suggestions below are additions on top
         # ("this creator from our database also matches") for anyone the admin
         # did not remember.
         named_matches: List[Dict[str, Any]] = []
-        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
-        raw_named = str((round_doc.get("creator_selector") or {}).get("creator_matches") or "")
-        if raw_named.strip():
+        if requested_types:
             def _norm(text: str) -> str:
                 return "".join(ch for ch in str(text or "").lower() if ch.isalnum())
-            wanted = [part.strip() for part in re.split(r"[\n,;/]+", raw_named) if len(part.strip()) >= 3]
+            wanted = requested_types
             matched_ids = set()
             for wanted_name in wanted:
                 wn = _norm(wanted_name)
@@ -5222,14 +5338,22 @@ def make_v3_router(db):
                 "updated_at": _now_iso(),
             }},
         )
-        # Keep the AI suggestions distinct from the named picks.
+        # Keep the exact-name picks distinct from the type matches.
         named_ids = {m["creator"].get("id") for m in named_matches}
+        type_matches = [m for m in final_matches if (m.get("creator") or {}).get("id") not in named_ids]
+
+        # A requested line is only "unmatched" when nothing answered it - not
+        # merely because no creator carries that literal name. A line like
+        # "Food reviewers" is satisfied by a profile matched to that type.
+        answered = {m.get("matched_from") for m in named_matches if m.get("matched_from")}
+        answered |= {m.get("matched_from") for m in type_matches if m.get("matched_from")}
+
         return {
             "business_case_id": bc_id,
-            "matches": [m for m in final_matches if (m.get("creator") or {}).get("id") not in named_ids],
+            "matches": type_matches,
             "named_matches": named_matches,
-            "named_unmatched": [w for w in ([part.strip() for part in re.split(r"[\n,;/]+", raw_named) if len(part.strip()) >= 3] if raw_named.strip() else [])
-                                 if not any(m.get("matched_from") == w for m in named_matches)],
+            "requested_types": requested_types,
+            "named_unmatched": [line for line in requested_types if line not in answered],
             "analysis_source": analysis_source,
         }
 
