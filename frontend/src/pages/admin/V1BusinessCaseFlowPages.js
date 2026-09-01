@@ -481,10 +481,23 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
   );
 };
 
+// Page 7 of the flip book lays the selected creators out as a fixed grid.
+// Mirrors _DECK_MAX_CREATOR_IMAGES in backend/v3_routes.py - the upload is
+// trimmed to this so the admin is told up front instead of collecting a
+// rejection per file.
+const DECK_MAX_CREATOR_IMAGES = 12;
+
+// The header wraps rather than squeezing the title: a card with a wide action
+// row (the Pitch Deck has eight buttons) used to compress the heading column
+// until short titles broke mid-phrase - "PITCH DECK" rendered as "PITCH" over
+// "DECK". `flex-wrap` drops the action to its own line when there is no room,
+// and `flex-shrink-0` keeps the title at its natural width instead of being
+// narrowed to fit beside it. `max-w-full` still lets a genuinely long title
+// wrap against the card edge, so nothing overflows on a phone.
 const InfoCard = ({ title, children, action }) => (
   <div className="v3-card p-5">
-    <div className="flex items-center justify-between gap-3 mb-3">
-      <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{title}</h2>
+    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+      <h2 className="max-w-full flex-shrink-0 text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{title}</h2>
       {action}
     </div>
     {children}
@@ -4812,6 +4825,27 @@ export const V3BusinessCasePitchDeck = () => {
 
   // ---- Deck imagery: per-brand cover art + page 7 creator portraits ----
   const [imageBusy, setImageBusy] = useState('');
+  // {done, total} while a multi-file creator upload is running, else null.
+  const [imageProgress, setImageProgress] = useState(null);
+
+  // Reload the case and copy the saved imagery back onto the local deck.
+  //
+  // The effect that hydrates `deck` from the bundle is guarded with `!deck`,
+  // so once the deck is in state it never takes another bundle - that guard
+  // protects section text the admin has typed but not saved yet. It also
+  // meant an uploaded image stayed invisible until a hard refresh. Copying
+  // just the two imagery fields keeps the guard's purpose (unsaved section
+  // edits survive) while letting the gallery reflect what was stored.
+  const refreshDeckImagery = async () => {
+    const refreshed = await reload();
+    const persisted = refreshed?.pitch_deck;
+    if (!persisted) return;
+    setDeck((current) => (current ? {
+      ...current,
+      cover_image: persisted.cover_image,
+      creator_images: persisted.creator_images,
+    } : persisted));
+  };
 
   const uploadCoverImage = async (file) => {
     if (!file || !deck?.id) return;
@@ -4819,7 +4853,7 @@ export const V3BusinessCasePitchDeck = () => {
     try {
       const dataUri = await v3ReadFileAsDataUri(file);
       await v3SetPitchDeckCoverImage(deck.id, dataUri);
-      await reload();
+      await refreshDeckImagery();
       toast.success('Cover image updated. It shows on page 1 of the flip book.');
     } catch (e) {
       toast.error(e?.response?.data?.detail || e?.message || 'Could not upload that cover image.');
@@ -4833,7 +4867,7 @@ export const V3BusinessCasePitchDeck = () => {
     setImageBusy('cover');
     try {
       await v3ClearPitchDeckCoverImage(deck.id);
-      await reload();
+      await refreshDeckImagery();
       toast.success('Cover image removed. The default TASCK cover is back.');
     } catch (e) {
       toast.error(e?.response?.data?.detail || e?.message || 'Could not remove the cover image.');
@@ -4842,20 +4876,48 @@ export const V3BusinessCasePitchDeck = () => {
     }
   };
 
-  const addCreatorImage = async (file) => {
-    if (!file || !deck?.id) return;
+  // Accepts a whole FileList so the picker can take several creators at once.
+  const addCreatorImages = async (fileList) => {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length || !deck?.id) return;
+    const room = DECK_MAX_CREATOR_IMAGES - (deck.creator_images || []).length;
+    if (room <= 0) {
+      toast.error(`Page 7 already holds ${DECK_MAX_CREATOR_IMAGES} creator images. Remove one before adding more.`);
+      return;
+    }
+    // Trim to what page 7 can still hold rather than firing uploads the
+    // backend would reject one by one.
+    const queued = files.slice(0, room);
+    const overflow = files.length - queued.length;
     setImageBusy('creator');
+    let added = 0;
     try {
-      const dataUri = await v3ReadFileAsDataUri(file);
-      // Filename (minus extension) seeds the caption; admin can rename after.
-      const guessedName = String(file.name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
-      await v3AddPitchDeckCreatorImage(deck.id, { image: dataUri, name: guessedName });
-      await reload();
-      toast.success('Creator image added to page 7.');
+      for (const file of queued) {
+        setImageProgress({ done: added, total: queued.length });
+        const dataUri = await v3ReadFileAsDataUri(file);
+        // Filename (minus extension) seeds the caption; admin can rename after.
+        const guessedName = String(file.name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+        // Sequential on purpose: the endpoint rewrites the whole
+        // `creator_images` array per call, so parallel uploads would
+        // overwrite each other and only the last one would survive.
+        await v3AddPitchDeckCreatorImage(deck.id, { image: dataUri, name: guessedName });
+        added += 1;
+      }
+      const addedLabel = `${added} creator image${added === 1 ? '' : 's'} added to page 7.`;
+      if (overflow > 0) {
+        toast.success(`${addedLabel} ${overflow} skipped - page 7 holds up to ${DECK_MAX_CREATOR_IMAGES}.`);
+      } else {
+        toast.success(addedLabel);
+      }
     } catch (e) {
-      toast.error(e?.response?.data?.detail || e?.message || 'Could not add that creator image.');
+      const detail = e?.response?.data?.detail || e?.message || 'Could not add that creator image.';
+      // Report what did land so a part-way failure is not read as "nothing happened".
+      toast.error(added ? `${added} of ${queued.length} added, then: ${detail}` : detail);
     } finally {
+      setImageProgress(null);
       setImageBusy('');
+      // Refresh once at the end - every upload that succeeded is already saved.
+      await refreshDeckImagery();
     }
   };
 
@@ -4864,7 +4926,7 @@ export const V3BusinessCasePitchDeck = () => {
     setImageBusy(imageId);
     try {
       await v3RemovePitchDeckCreatorImage(deck.id, imageId);
-      await reload();
+      await refreshDeckImagery();
       toast.success('Creator image removed.');
     } catch (e) {
       toast.error(e?.response?.data?.detail || e?.message || 'Could not remove that image.');
@@ -5084,17 +5146,21 @@ export const V3BusinessCasePitchDeck = () => {
               <div>
                 <p className="text-[12px] font-semibold text-[#1F1B18]">Page 7 - selected creators</p>
                 <p className="text-[11px] text-[#6E6657] mt-0.5">
-                  {(deck.creator_images || []).length} of 12 added. These render as a clean grid on page 7.
+                  {(deck.creator_images || []).length} of {DECK_MAX_CREATOR_IMAGES} added. Pick several at once. These render as a clean grid on page 7.
                 </p>
               </div>
-              <label className="v3-btn-secondary text-[11px] cursor-pointer">
+              <label className={`v3-btn-secondary text-[11px] ${imageBusy === 'creator' ? 'cursor-default opacity-70' : 'cursor-pointer'}`}>
                 <Upload className="w-3.5 h-3.5" />
-                {imageBusy === 'creator' ? 'Adding…' : 'Add creator image'}
+                {imageBusy === 'creator'
+                  ? (imageProgress ? `Adding ${imageProgress.done + 1} of ${imageProgress.total}…` : 'Adding…')
+                  : 'Add creator images'}
+                {/* `Array.from` before clearing the input: `e.target.files`
+                    is live, and resetting `value` empties it. */}
                 <input
-                  type="file" accept="image/*" className="hidden"
+                  type="file" accept="image/*" multiple className="hidden"
                   data-testid="pitch-creator-input"
                   disabled={imageBusy === 'creator'}
-                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; addCreatorImage(f); }}
+                  onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ''; addCreatorImages(files); }}
                 />
               </label>
             </div>
