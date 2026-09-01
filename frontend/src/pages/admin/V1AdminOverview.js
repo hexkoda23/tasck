@@ -1,223 +1,372 @@
 // ============================================================================
-// V1AdminOverview - CRM Performance Report
+// V1AdminOverview - agency-wide operational dashboard
 // ----------------------------------------------------------------------------
-// The admin Overview. Structure follows the TTA CRM Performance Report; the
-// presentation is the card layout from the client-dashboard reference - a
-// pipeline strip, headline tiles, then one titled card per subject.
+// Answers, top to bottom: where are our brands and projects -> what stage are
+// they in -> what needs attention -> what is pending -> what happened -> what
+// do we do next.
 //
-// Every figure is counted from the records by GET /api/v3/metrics/crm-report
-// (backend/v3_crm_report.py). Nothing here is illustrative: if a number cannot
-// be counted it is not shown, and each scorecard band carries the count it was
-// derived from so it can be checked rather than trusted.
+// Data: GET /api/v3/metrics/overview (backend/v3_overview.py), counted from
+// the live collections on every request. One request populates the whole page;
+// nothing here holds its own copy of CRM state, so every figure moves with the
+// workflow. Revalidates when the tab is refocused or made visible again, and
+// on demand - no polling.
+//
+// Every headline metric ships its own `breakdown`, which is what its tooltip
+// renders, so a tooltip cannot disagree with the number above it.
+//
+// Visual language is unchanged: same cards, borders, type scale, greens and
+// sand tones used across the V1 admin.
 // ============================================================================
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, BarChart3, CalendarCheck, Gauge, Sparkles, UserPlus, Users,
+  AlertTriangle, BarChart3, CalendarClock, CheckCircle2, ClipboardList, FileText,
+  History, Inbox, PauseCircle, RefreshCw, Sparkles, Users,
 } from 'lucide-react';
-import { v3CrmReport } from '../../lib/v3api';
+import { v3AdminOperationalOverview } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-import { formatNairaV3 } from '../../lib/v3data';
 
-/* ── shared shells ─────────────────────────────────────────────────────── */
+/* ── shells (same visual language as the rest of the V1 admin) ──────────── */
 
-const Card = ({ icon: Icon, title, subtitle, children, testId, tone = '#1F4A3A' }) => (
+const Card = ({ icon: Icon, title, subtitle, action, children, testId, tone = '#1F4A3A' }) => (
   <div className="rounded-[14px] border border-[#E8E4DB] bg-white overflow-hidden" data-testid={testId}>
     <div className="flex items-start gap-3 px-5 pt-5 pb-4">
       <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[10px] bg-[#F4F2EC]">
         <Icon className="h-4 w-4" style={{ color: tone }} strokeWidth={2} />
       </span>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <h2 className="text-[15px] font-semibold text-[#1A1A1A] leading-tight">{title}</h2>
         {subtitle && <p className="text-[12px] text-[#8A8A8A] mt-0.5">{subtitle}</p>}
       </div>
+      {action}
     </div>
     <div className="border-t border-[#F0EDE5]">{children}</div>
   </div>
 );
 
-const Empty = ({ children }) => <p className="px-5 py-5 text-[12px] text-[#8A8A8A]">{children}</p>;
-
-// Rows share one grid so columns line up without a table's visual weight.
-const Row = ({ children, cols, className = '' }) => (
-  <div className={`grid items-center gap-3 px-5 py-3 border-b border-[#F4F2EC] last:border-b-0 ${className}`}
-    style={{ gridTemplateColumns: cols }}>
-    {children}
-  </div>
-);
-
-const HeadRow = ({ labels, cols }) => (
-  <div className="grid gap-3 px-5 py-2 bg-[#FBFAF7] border-b border-[#F0EDE5]" style={{ gridTemplateColumns: cols }}>
-    {labels.map((l) => (
-      <span key={l} className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">{l}</span>
-    ))}
-  </div>
-);
+const Empty = ({ children }) => <p className="px-5 py-6 text-[12px] text-[#8A8A8A]">{children}</p>;
 
 const Meter = ({ pct, tone = '#1F4A3A' }) => (
-  <span className="inline-block h-1.5 w-full rounded-full bg-[#F0EDE5] overflow-hidden align-middle">
+  <span className="block h-1.5 w-full rounded-full bg-[#F0EDE5] overflow-hidden">
     <span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: tone }} />
   </span>
 );
 
-/* ── page ──────────────────────────────────────────────────────────────── */
-
-// Funnel colour ramp - deepens as a case advances, so the strip reads left to
-// right as progress rather than as five unrelated buckets.
-const STAGE_TONE = {
-  connect: '#B5AF9F', frame: '#C49B5F', plan: '#2E6FB7', deliver: '#1F4A3A', closed: '#14532D',
+/* ── tooltip ───────────────────────────────────────────────────────────────
+   Hover, focus and tap all open it; Escape closes. Small panel in the card
+   idiom, never a modal. Contents come from the metric's own breakdown, so it
+   updates whenever the metric does.                                         */
+const Tip = ({ items = [], children, className = '', align = 'left' }) => {
+  const [open, setOpen] = useState(false);
+  const has = items.length > 0;
+  if (!has) return <span className={className}>{children}</span>;
+  // A real <button> rather than a span with role/tabindex: native focus
+  // semantics are what make the keyboard path work, and every handler sits on
+  // the one element so hover, focus and tap cannot disagree.
+  return (
+    <span className={`relative inline-block ${className}`}>
+      <button
+        type="button"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onClick={() => setOpen((o) => !o)}
+        onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
+        aria-expanded={open}
+        className="block w-full text-left cursor-help rounded-[14px] outline-none focus-visible:ring-2 focus-visible:ring-[#1F4A3A]"
+      >
+        {children}
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          className={`absolute z-40 top-full mt-1.5 w-max max-w-[240px] rounded-[10px] border border-[#E8E4DB] bg-white p-2.5 shadow-lg ${align === 'right' ? 'right-0' : 'left-0'}`}
+        >
+          {items.map((b, i) => (
+            <span key={i} className="flex items-baseline justify-between gap-4 py-0.5">
+              <span className="text-[11px] text-[#6E6657]">{b.label}</span>
+              <span className="text-[11px] font-semibold text-[#1A1A1A]">{b.count}</span>
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
+  );
 };
+
+/* ── stat tile ─────────────────────────────────────────────────────────── */
+const Stat = ({ label, metric, tone = '#1F4A3A', onClick, testId }) => (
+  <Tip items={metric?.breakdown || []} className="w-full">
+    <span
+      onClick={onClick}
+      className={`block rounded-[14px] border border-[#E8E4DB] bg-white px-4 py-5 text-center ${onClick ? 'hover:border-[#B5AF9F] transition-colors' : ''}`}
+      data-testid={testId}
+    >
+      <span className="block text-[30px] font-bold leading-none" style={{ color: tone, fontFamily: "'JetBrains Mono', monospace" }}>
+        {metric?.value ?? 0}
+      </span>
+      <span className="mt-2 block text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold">{label}</span>
+    </span>
+  </Tip>
+);
+
+const HEALTH_TONE = (h) => {
+  const k = String(h || '').toLowerCase();
+  if (k.includes('risk') || k.includes('block')) return '#B54A37';
+  if (k.includes('attention') || k.includes('off')) return '#B07A2B';
+  if (k.includes('track') || k.includes('complete')) return '#1F7A72';
+  return '#8A8A8A';
+};
+
+/* ── page ──────────────────────────────────────────────────────────────── */
 
 const V1AdminOverview = () => {
   const navigate = useNavigate();
-  const [report, setReport] = useState(null);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
-  const fetched = useRef(false);
+  const lastFetch = useRef(0);
+  const started = useRef(false);
 
-  const load = () => {
-    setLoading(true);
+  const load = useCallback((quiet = false) => {
+    lastFetch.current = Date.now();
+    if (quiet) setRefreshing(true); else setLoading(true);
     setError(null);
-    v3CrmReport()
-      .then((data) => { setReport(data); setLoading(false); })
-      .catch(() => { setError('Could not load the CRM report.'); setLoading(false); });
-  };
+    return v3AdminOperationalOverview()
+      .then((payload) => { setData(payload); })
+      .catch(() => { if (!quiet) setError('Could not load the overview.'); })
+      .finally(() => { setLoading(false); setRefreshing(false); });
+  }, []);
 
   useEffect(() => {
-    if (fetched.current) return;
-    fetched.current = true;
+    if (started.current) return;
+    started.current = true;
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
+
+  // Revalidate when the admin comes back to the tab, so a stage change made in
+  // another tab (or on another page) is reflected without polling. Throttled so
+  // flicking between windows cannot spam the API.
+  useEffect(() => {
+    const revalidate = () => {
+      if (document.visibilityState === 'hidden') return;
+      if (Date.now() - lastFetch.current < 15000) return;
+      load(true);
+    };
+    window.addEventListener('focus', revalidate);
+    document.addEventListener('visibilitychange', revalidate);
+    return () => {
+      window.removeEventListener('focus', revalidate);
+      document.removeEventListener('visibilitychange', revalidate);
+    };
+  }, [load]);
 
   if (loading) {
     return (
       <div data-testid="v1-admin-overview" className="flex flex-col items-center justify-center py-24 gap-3">
         <div className="w-5 h-5 rounded-full border-2 border-[#1F4A3A] border-t-transparent animate-spin" />
-        <p className="text-[12px] text-[#8A8A8A]">Loading CRM report…</p>
+        <p className="text-[12px] text-[#8A8A8A]">Loading overview…</p>
       </div>
     );
   }
 
-  if (error || !report) {
+  if (error || !data) {
     return (
       <div data-testid="v1-admin-overview" className="flex flex-col items-center justify-center py-24 gap-2">
-        <p className="text-[13px] text-[#B54A37]">{error || 'Could not load the CRM report.'}</p>
-        <button onClick={load} className="text-[11px] text-[#1F4A3A] underline underline-offset-2">Try again</button>
+        <p className="text-[13px] text-[#B54A37]">{error || 'Could not load the overview.'}</p>
+        <button onClick={() => load()} className="text-[11px] text-[#1F4A3A] underline underline-offset-2">Try again</button>
       </div>
     );
   }
 
-  const { window: win, totals, glance, scorecard, new_partners: newPartners,
-          pipeline, pitch, engagements, team, watch } = report;
+  const { portfolio, pipeline, status, projects, projects_total: projectsTotal, workload,
+          documents, pending_items: pendingItems, deadlines, engagement, activity,
+          next_up: nextUp, inactive_days: inactiveDays } = data;
 
-  const funnel = pipeline.funnel || [];
-  const totalCases = funnel.reduce((n, f) => n + f.count, 0) || 1;
+  const go = (path) => navigate(adminRoute(path));
+  const openCase = (id) => id && go(`/business-cases/${id}`);
+  const maxPipeline = Math.max(1, ...pipeline.map((s) => s.count));
+  const noData = portfolio.active_brands.value === 0 && projectsTotal === 0 && portfolio.completed_projects.value === 0;
 
-  const tiles = [
-    { key: 'snapshots', label: 'Snapshots sent', value: glance.snapshots_sent, tone: '#1F4A3A' },
-    { key: 'partners', label: 'New partners', value: glance.new_partners, tone: '#2E6FB7' },
-    { key: 'engagements', label: 'Engagements delivered', value: glance.engagements_delivered, tone: '#1F4A3A' },
-    { key: 'completions', label: 'Full funnel completions', value: glance.full_funnel_completions, tone: '#C49B5F' },
-  ];
+  if (noData) {
+    return (
+      <div data-testid="v1-admin-overview">
+        <h1 className="text-[24px] font-bold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>Overview</h1>
+        <p className="text-[13px] text-[#6E6657] mt-1 mb-5">Nothing to report yet.</p>
+        <Card icon={Sparkles} title="No brands or projects" subtitle="Add a brand or import the CRM workbook to start tracking." testId="overview-empty">
+          <div className="px-5 py-6 flex flex-wrap gap-2">
+            <button onClick={() => go('/crm-brands')} className="v3-btn-primary text-[12px]">Go to CRM Brands</button>
+            <button onClick={() => go('/import-project')} className="v3-btn-secondary text-[12px]">Import a project</button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div data-testid="v1-admin-overview" className="space-y-4">
       {/* Header */}
-      <div>
-        <h1 className="text-[26px] font-bold text-[#1A1A1A] leading-tight" style={{ fontFamily: "'Fraunces', serif" }}>
-          CRM Performance Report
-        </h1>
-        <p className="text-[13px] text-[#6E6657] mt-1">
-          {win.label} · {totals.brands} brands in book · {totals.business_cases} business cases · {totals.team} relationship managers
-        </p>
-      </div>
-
-      {/* Pipeline strip - where the book actually sits */}
-      <Card icon={BarChart3} title="Pipeline" subtitle={`${totalCases} business cases across the funnel · ${formatNairaV3(pipeline.pipeline_value || 0)} tracked value`} testId="overview-pipeline">
-        <div className="px-5 py-5">
-          <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${funnel.length}, minmax(0, 1fr))` }} data-testid="overview-funnel">
-            {funnel.map((f) => (
-              <div key={f.stage} data-testid={`overview-funnel-${f.stage}`}>
-                <Meter pct={(f.count / totalCases) * 100} tone={STAGE_TONE[f.stage] || '#1F4A3A'} />
-                <p className="mt-2 text-[12px] font-semibold text-[#1A1A1A]">{f.label}</p>
-                <p className="text-[11px] text-[#8A8A8A]">
-                  {f.count} {f.count === 1 ? 'case' : 'cases'}{f.value ? ` · ${formatNairaV3(f.value)}` : ''}
-                </p>
-              </div>
-            ))}
-          </div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-[24px] font-bold text-[#1A1A1A] leading-tight" style={{ fontFamily: "'Fraunces', serif" }}>Overview</h1>
+          <p className="text-[13px] text-[#6E6657] mt-1">
+            Where every brand and project stands right now. Hover any figure to see what it is made of.
+          </p>
         </div>
-      </Card>
-
-      {/* Headline tiles for the window */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4" data-testid="overview-glance">
-        {tiles.map((t) => (
-          <div key={t.key} className="rounded-[14px] border border-[#E8E4DB] bg-white px-5 py-6 text-center" data-testid={`overview-glance-${t.key}`}>
-            <p className="text-[34px] font-bold leading-none" style={{ color: t.tone, fontFamily: "'JetBrains Mono', monospace" }}>{t.value}</p>
-            <p className="mt-2.5 text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold">{t.label}</p>
-          </div>
-        ))}
+        <button onClick={() => load(true)} className="v3-btn-secondary text-[11px]" data-testid="overview-refresh" disabled={refreshing}>
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} /> {refreshing ? 'Refreshing…' : 'Refresh'}
+        </button>
       </div>
 
-      {/* Scorecard */}
-      <Card icon={Gauge} title={`Scorecard · ${scorecard.overall}/10`}
-        subtitle="Four measured ratios. The line under each is the count it came from."
-        testId="overview-scorecard">
-        <div className="px-5 py-4 divide-y divide-[#F4F2EC]">
-          {(scorecard.bands || []).map((b) => (
-            <div key={b.key} className="py-2.5 first:pt-0 last:pb-0" data-testid={`overview-band-${b.key}`}>
-              <div className="flex items-baseline justify-between gap-3">
-                <p className="text-[13px] font-medium text-[#1A1A1A]">{b.label}</p>
-                <p className="text-[13px] font-semibold text-[#1A1A1A] flex-shrink-0" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
-                  {b.score}<span className="text-[11px] text-[#B5AF9F]">/10</span>
-                </p>
-              </div>
-              <div className="mt-1.5"><Meter pct={b.score * 10} /></div>
-              <p className="mt-1.5 text-[11px] text-[#8A8A8A]">{b.basis}</p>
+      {/* Portfolio */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3" data-testid="overview-portfolio">
+        <Stat label="Active brands" metric={portfolio.active_brands} onClick={() => go('/crm-brands')} testId="overview-stat-active-brands" />
+        <Stat label="Active projects" metric={portfolio.active_projects} tone="#2E6FB7" onClick={() => go('/business-cases')} testId="overview-stat-active-projects" />
+        <Stat label="Need attention" metric={portfolio.attention} tone="#B07A2B" onClick={() => go('/business-cases')} testId="overview-stat-attention" />
+        <Stat label="Pending actions" metric={portfolio.pending} tone="#B54A37" testId="overview-stat-pending" />
+        <Stat label="Completed" metric={portfolio.completed_projects} tone="#1F7A72" onClick={() => go('/business-cases')} testId="overview-stat-completed" />
+        <Stat label="Paused brands" metric={portfolio.paused_brands} tone="#8A8A8A" onClick={() => go('/crm-brands')} testId="overview-stat-paused" />
+      </div>
+
+      {/* Pipeline */}
+      <Card icon={BarChart3} title="Pipeline"
+        subtitle={`${projectsTotal} active ${projectsTotal === 1 ? 'project' : 'projects'} by workflow stage`}
+        testId="overview-pipeline">
+        <div className="px-5 py-5 grid gap-4 grid-cols-2 sm:grid-cols-4 xl:grid-cols-8" data-testid="overview-pipeline-stages">
+          {pipeline.map((s) => (
+            <div key={s.key} data-testid={`overview-stage-${s.key}`}>
+              <Meter pct={(s.count / maxPipeline) * 100} tone={s.key === 'closed' ? '#B5AF9F' : '#1F4A3A'} />
+              <p className="mt-2 text-[12px] font-semibold text-[#1A1A1A] leading-tight">{s.label}</p>
+              <p className="text-[11px] text-[#8A8A8A]">{s.count}</p>
             </div>
           ))}
         </div>
+        {status.length > 0 && (
+          <div className="border-t border-[#F0EDE5] px-5 py-3 flex flex-wrap gap-2" data-testid="overview-status">
+            {status.map((s) => (
+              <span key={s.key} className="rounded-full border border-[#E8E4DB] bg-[#FBFAF7] px-2.5 py-1 text-[11px]">
+                <span style={{ color: HEALTH_TONE(s.key) }}>●</span>{' '}
+                <span className="text-[#4F3E2F]">{s.label}</span>{' '}
+                <span className="font-semibold text-[#1A1A1A]">{s.count}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </Card>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {/* Brand book state */}
-        <Card icon={Activity} title="Brand book"
-          subtitle={`${pipeline.cooled} of ${totals.brands} resting or dormant rather than advancing`}
-          testId="overview-relationship">
-          {(pipeline.relationship || []).length === 0 ? (
-            <Empty>No brand carries a relationship stage yet.</Empty>
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        {/* Projects */}
+        <div className="xl:col-span-2">
+          <Card icon={ClipboardList} title="Projects"
+            subtitle="Attention first, then the quietest. Open any row."
+            action={projectsTotal > projects.length ? (
+              <button onClick={() => go('/business-cases')} className="v3-btn-secondary text-[11px] flex-shrink-0">
+                All {projectsTotal}
+              </button>
+            ) : null}
+            testId="overview-projects">
+            {projects.length === 0 ? (
+              <Empty>No active projects. Everything is closed or nothing has been created yet.</Empty>
+            ) : (
+              <div data-testid="overview-projects-list">
+                {projects.map((p) => (
+                  <button key={p.case_id} onClick={() => openCase(p.case_id)}
+                    className="w-full text-left px-5 py-3 border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] transition-colors"
+                    data-testid={`overview-project-${p.case_id}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[12px] text-[#8A8A8A] truncate">{p.brand}</p>
+                        <p className="text-[13px] text-[#1A1A1A] truncate">{p.title}</p>
+                        {p.next_action && <p className="text-[11px] text-[#6E6657] truncate mt-0.5">Next: {p.next_action}</p>}
+                      </div>
+                      <div className="flex-shrink-0 text-right w-[132px]">
+                        <p className="text-[11px] font-semibold text-[#1F4A3A]">{p.stage_label}</p>
+                        <div className="mt-1.5"><Meter pct={p.progress} /></div>
+                        <p className="mt-1 text-[10px] text-[#8A8A8A]">
+                          {p.needs_attention && <span className="text-[#B07A2B] font-semibold">Needs attention · </span>}
+                          {p.rm}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        {/* What's next */}
+        <Card icon={Sparkles} title="What's next" subtitle="Most blocking first" testId="overview-next">
+          {nextUp.length === 0 ? (
+            <Empty>Nothing outstanding. No unsigned contracts, no snapshots waiting and no quiet brands.</Empty>
           ) : (
-            <div data-testid="overview-relationship-list">
-              {pipeline.relationship.map((r) => (
-                <Row key={r.stage} cols="1fr 84px 40px">
-                  <span className="text-[12px] text-[#1A1A1A] truncate" title={r.label}>{r.label}</span>
-                  <Meter pct={(r.count / totals.brands) * 100} tone={['dormant', 'resting'].includes(r.stage) ? '#B5AF9F' : '#1F4A3A'} />
-                  <span className="text-[12px] font-semibold text-[#1A1A1A] text-right">{r.count}</span>
-                </Row>
+            <div data-testid="overview-next-list">
+              {nextUp.map((n, i) => (
+                <button key={i} onClick={() => go(n.href)}
+                  className="w-full text-left px-5 py-3 border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] transition-colors">
+                  <p className="text-[13px] text-[#1A1A1A]">{n.label}</p>
+                  <p className="text-[11px] text-[#8A8A8A] mt-0.5">{n.detail}</p>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {/* Pending actions */}
+        <Card icon={Inbox} title="Pending actions" tone="#B54A37"
+          subtitle="Waiting on a decision, a signature or a piece of work" testId="overview-pending">
+          {pendingItems.length === 0 ? (
+            <Empty>Nothing pending. Every document is approved and every contract is signed.</Empty>
+          ) : (
+            <div data-testid="overview-pending-list">
+              {pendingItems.map((p, i) => (
+                <button key={i} onClick={() => openCase(p.case_id)} disabled={!p.case_id}
+                  className={`w-full text-left px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0 ${p.case_id ? 'hover:bg-[#FBFAF7]' : ''}`}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-[12px] text-[#1A1A1A] truncate">{p.brand}</span>
+                    <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] flex-shrink-0">{p.kind}</span>
+                  </div>
+                  <p className="text-[11px] text-[#6E6657] truncate">{p.label}</p>
+                </button>
               ))}
             </div>
           )}
         </Card>
 
-        {/* New partners */}
-        <Card icon={UserPlus} title="New partners"
-          subtitle={`Brands entered in the last ${win.days} days`} testId="overview-new-partners">
-          {newPartners.length === 0 ? (
-            <Empty>No brands were added in this window.</Empty>
+        {/* Deadlines */}
+        <Card icon={CalendarClock} title="Deadlines" tone="#B07A2B"
+          subtitle="Scheduled meetings — the only dated commitments the CRM holds" testId="overview-deadlines">
+          {deadlines.total === 0 ? (
+            <Empty>Nothing scheduled. Meetings booked through the CRM appear here.</Empty>
           ) : (
             <>
-              <HeadRow labels={['Partner', 'Entered', 'Manager']} cols="1fr 96px 110px" />
-              <div data-testid="overview-new-partners-list">
-                {newPartners.map((p) => (
-                  <Row key={p.brand_id} cols="1fr 96px 110px">
-                    <button onClick={() => navigate(adminRoute(`/crm-brands/${p.brand_id}`))}
-                      className="text-left text-[12px] text-[#1F4A3A] hover:underline truncate" title={p.brand}>
-                      {p.brand}
-                    </button>
-                    <span className="text-[12px] text-[#6E6657] whitespace-nowrap">{p.date}</span>
-                    <span className="text-[12px] text-[#6E6657] truncate">{p.rm}</span>
-                  </Row>
+              <div className="grid grid-cols-5 divide-x divide-[#F0EDE5] border-b border-[#F0EDE5]" data-testid="overview-deadline-buckets">
+                {deadlines.buckets.map((b) => (
+                  <Tip key={b.key} items={b.items.map((i) => ({ label: `${i.brand} · ${i.when}`, count: '' }))}>
+                    <span className="block px-2 py-3 text-center" data-testid={`overview-deadline-${b.key}`}>
+                      <span className="block text-[18px] font-bold leading-none"
+                        style={{ color: b.key === 'overdue' && b.count ? '#B54A37' : '#1A1A1A', fontFamily: "'JetBrains Mono', monospace" }}>
+                        {b.count}
+                      </span>
+                      <span className="mt-1 block text-[10px] uppercase tracking-wider text-[#8A8A8A]">{b.label}</span>
+                    </span>
+                  </Tip>
+                ))}
+              </div>
+              <div>
+                {deadlines.buckets.flatMap((b) => b.items.map((i) => ({ ...i, bucket: b.label }))).slice(0, 6).map((i, idx) => (
+                  <button key={idx} onClick={() => openCase(i.case_id)} disabled={!i.case_id}
+                    className={`w-full text-left px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0 ${i.case_id ? 'hover:bg-[#FBFAF7]' : ''}`}>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-[12px] text-[#1A1A1A] truncate">{i.title}</span>
+                      <span className={`text-[11px] flex-shrink-0 ${i.days < 0 ? 'text-[#B54A37]' : 'text-[#6E6657]'}`}>{i.when}</span>
+                    </div>
+                    <p className="text-[11px] text-[#8A8A8A] truncate">{i.brand} · {i.bucket}</p>
+                  </button>
                 ))}
               </div>
             </>
@@ -225,118 +374,107 @@ const V1AdminOverview = () => {
         </Card>
       </div>
 
-      {/* Pitch materials & creator matching */}
-      <Card icon={Sparkles} title="Pitch materials & creator matching"
-        subtitle="What has been produced for brands, and who carries a matched shortlist."
-        testId="overview-pitch">
-        <div className="grid grid-cols-3 divide-x divide-[#F0EDE5] border-b border-[#F0EDE5]">
-          {[
-            ['Snapshots sent', pitch.snapshots_sent_total],
-            ['Pitch decks', pitch.decks],
-            ['Creative briefs', pitch.briefs],
-          ].map(([label, value]) => (
-            <div key={label} className="px-5 py-4 text-center">
-              <p className="text-[22px] font-bold text-[#1A1A1A] leading-none" style={{ fontFamily: "'JetBrains Mono', monospace" }}>{value}</p>
-              <p className="mt-1.5 text-[11px] text-[#8A8A8A]">{label}</p>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {/* Documents */}
+        <Card icon={FileText} title="Documents" subtitle="What exists and where each one has got to" testId="overview-documents">
+          {documents.length === 0 ? (
+            <Empty>No documents generated yet.</Empty>
+          ) : (
+            <div data-testid="overview-documents-list">
+              <div className="grid gap-3 px-5 py-2 bg-[#FBFAF7] border-b border-[#F0EDE5]" style={{ gridTemplateColumns: '1fr 58px 52px 62px 62px' }}>
+                {['Document', 'Total', 'Draft', 'Sent', 'Approved'].map((h) => (
+                  <span key={h} className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">{h}</span>
+                ))}
+              </div>
+              {documents.map((d) => (
+                <div key={d.key} className="grid gap-3 items-center px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0"
+                  style={{ gridTemplateColumns: '1fr 58px 52px 62px 62px' }}>
+                  <span className="text-[12px] text-[#1A1A1A] truncate">{d.label}</span>
+                  <span className="text-[12px] font-semibold text-[#1A1A1A]">{d.total}</span>
+                  <span className="text-[12px] text-[#6E6657]">{d.generated}</span>
+                  <span className="text-[12px] text-[#6E6657]">{d.sent}</span>
+                  <span className="text-[12px] text-[#1F7A72]">{d.approved}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        {(pitch.brands || []).length === 0 ? (
-          <Empty>No business case carries a selected creator yet. Run the Creator Match Scanner on a case to build a shortlist.</Empty>
-        ) : (
-          <div className="px-5 py-4">
-            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold mb-2.5">
-              Carrying creator matches · {pitch.cases_with_creators}
-            </p>
-            <div className="flex flex-wrap gap-2" data-testid="overview-matched-brands">
-              {pitch.brands.map((b) => (
-                <button key={b.brand_id} onClick={() => navigate(adminRoute(`/crm-brands/${b.brand_id}`))}
-                  className="rounded-full border border-[#CFE0D6] bg-[#EFF5F1] px-3 py-1 text-[11px] text-[#1F4A3A] hover:bg-[#E3EFE8] max-w-full truncate">
-                  {b.brand} <span className="text-[#6E6657]">· {b.creators}</span>
+          )}
+        </Card>
+
+        {/* Workload */}
+        <Card icon={Users} title="Workload" subtitle="Open projects, brands and tasks per manager" testId="overview-workload">
+          {workload.length === 0 ? (
+            <Empty>No relationship managers on record.</Empty>
+          ) : (
+            <div data-testid="overview-workload-list">
+              {workload.map((w) => (
+                <div key={w.rm_id || 'unassigned'} className="grid gap-3 items-center px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0"
+                  style={{ gridTemplateColumns: '1fr 46px 46px 46px 96px' }}>
+                  <span className={`text-[12px] truncate ${w.unassigned ? 'text-[#B07A2B] font-semibold' : 'text-[#1A1A1A]'}`}>{w.name}</span>
+                  <Tip items={[{ label: 'Open projects', count: w.cases }]}><span className="text-[12px] text-[#4F3E2F]">{w.cases}</span></Tip>
+                  <Tip items={[{ label: 'Brands owned', count: w.brands }]}><span className="text-[12px] text-[#4F3E2F]">{w.brands}</span></Tip>
+                  <Tip items={[{ label: 'Open tasks', count: w.tasks }]}><span className="text-[12px] text-[#4F3E2F]">{w.tasks}</span></Tip>
+                  <span className="flex items-center gap-2">
+                    <Meter pct={w.share} tone={w.share >= 55 ? '#C0703A' : '#1F4A3A'} />
+                    <span className="text-[11px] text-[#6E6657] w-8 text-right flex-shrink-0">{w.share}%</span>
+                  </span>
+                </div>
+              ))}
+              <div className="grid gap-3 px-5 py-2 bg-[#FBFAF7] border-t border-[#F0EDE5]" style={{ gridTemplateColumns: '1fr 46px 46px 46px 96px' }}>
+                {['', 'Proj', 'Brands', 'Tasks', 'Share'].map((h, i) => (
+                  <span key={i} className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">{h}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        {/* Engagement */}
+        <Card icon={PauseCircle} title="Quiet brands" tone="#8A8A8A"
+          subtitle={`No recorded activity in over ${inactiveDays} days`} testId="overview-engagement">
+          {engagement.inactive.length === 0 ? (
+            <Empty>Every brand has been touched in the last {inactiveDays} days.</Empty>
+          ) : (
+            <div data-testid="overview-engagement-list">
+              {engagement.inactive.map((b) => (
+                <button key={b.brand_id} onClick={() => go(`/crm-brands/${b.brand_id}`)}
+                  className="w-full text-left px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] transition-colors">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-[12px] text-[#1A1A1A] truncate">{b.brand}</span>
+                    <span className="text-[11px] text-[#6E6657] flex-shrink-0">{b.days}d quiet</span>
+                  </div>
+                </button>
+              ))}
+              {engagement.inactive_total > engagement.inactive.length && (
+                <p className="px-5 py-2 text-[11px] text-[#8A8A8A]">
+                  and {engagement.inactive_total - engagement.inactive.length} more of {engagement.tracked_brands} brands.
+                </p>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Recent activity */}
+        <Card icon={History} title="Recent activity" subtitle="Documents, contracts and projects, newest first" testId="overview-activity">
+          {activity.length === 0 ? (
+            <Empty>No dated records yet.</Empty>
+          ) : (
+            <div data-testid="overview-activity-list">
+              {activity.map((a, i) => (
+                <button key={i} onClick={() => openCase(a.case_id)} disabled={!a.case_id}
+                  className={`w-full text-left px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0 ${a.case_id ? 'hover:bg-[#FBFAF7]' : ''}`}>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-[12px] text-[#1A1A1A] truncate">{a.what}</span>
+                    <span className="text-[11px] text-[#8A8A8A] flex-shrink-0">{a.date}</span>
+                  </div>
+                  <p className="text-[11px] text-[#6E6657] truncate">{a.subject}</p>
                 </button>
               ))}
             </div>
-          </div>
-        )}
-      </Card>
-
-      {/* Live engagements */}
-      <Card icon={CalendarCheck} title="Live engagements"
-        subtitle={`Logged in the last ${win.days} days, and how each resolved`} testId="overview-engagements">
-        {engagements.length === 0 ? (
-          <Empty>No engagements were logged in this window.</Empty>
-        ) : (
-          <>
-            <HeadRow labels={['Engagement', 'Brand', 'Date', 'Outcome']} cols="1fr 180px 96px 96px" />
-            <div data-testid="overview-engagements-list">
-              {engagements.map((e, i) => {
-                const done = /complete|deliver|done/i.test(e.outcome);
-                const off = /declin|cancel|no.?show/i.test(e.outcome);
-                return (
-                  <Row key={i} cols="1fr 180px 96px 96px">
-                    <span className="text-[12px] text-[#1A1A1A] truncate" title={e.title}>{e.title}</span>
-                    <span className="text-[12px] text-[#6E6657] truncate">{e.brand || '—'}</span>
-                    <span className="text-[12px] text-[#6E6657] whitespace-nowrap">{e.date}</span>
-                    <span className="text-[11px] font-medium whitespace-nowrap"
-                      style={{ color: done ? '#1F7A72' : off ? '#B54A37' : '#8A6E2F' }}>
-                      {e.outcome}
-                    </span>
-                  </Row>
-                );
-              })}
-            </div>
-          </>
-        )}
-      </Card>
-
-      {/* Who did the work */}
-      <Card icon={Users} title="Who did the work"
-        subtitle="Brands, cases, meetings and sent snapshots attributed to each manager"
-        testId="overview-team">
-        {team.length === 0 ? (
-          <Empty>No relationship managers are on record yet.</Empty>
-        ) : (
-          <>
-            <HeadRow labels={['Manager', 'Brands', 'Cases', 'Meetings', 'Snapshots', 'Share']} cols="1fr 64px 64px 76px 80px 130px" />
-            <div data-testid="overview-team-list">
-              {team.map((t) => (
-                <Row key={t.name} cols="1fr 64px 64px 76px 80px 130px">
-                  <div className="min-w-0">
-                    <p className="text-[12px] font-semibold text-[#1A1A1A] truncate">{t.name}</p>
-                    <p className="text-[11px] text-[#8A8A8A] truncate">{t.role}</p>
-                  </div>
-                  <span className="text-[12px] text-[#4F3E2F]">{t.brands}</span>
-                  <span className="text-[12px] text-[#4F3E2F]">{t.cases}</span>
-                  <span className="text-[12px] text-[#4F3E2F]">{t.meetings}</span>
-                  <span className="text-[12px] text-[#4F3E2F]">{t.snapshots}</span>
-                  <span className="flex items-center gap-2">
-                    <Meter pct={t.share} tone={t.share >= 55 ? '#C0703A' : '#1F4A3A'} />
-                    <span className="text-[11px] text-[#6E6657] w-8 text-right flex-shrink-0">{t.share}%</span>
-                  </span>
-                </Row>
-              ))}
-            </div>
-          </>
-        )}
-      </Card>
-
-      {/* What to watch */}
-      <Card icon={AlertTriangle} title="What to watch" tone="#B07A2B"
-        subtitle="Conditions the records prove right now - each line is a count, not a judgement"
-        testId="overview-watch">
-        {watch.length === 0 ? (
-          <Empty>Nothing flagged. No unsent snapshots, no unassigned brands, and no case stalled in Framing.</Empty>
-        ) : (
-          <div data-testid="overview-watch-list">
-            {watch.map((w, i) => (
-              <div key={i} className="px-5 py-3 border-b border-[#F4F2EC] last:border-b-0">
-                <p className="text-[13px] text-[#1A1A1A]">{w.label}</p>
-                <p className="text-[11px] text-[#8A8A8A] mt-0.5">{w.detail}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+          )}
+        </Card>
+      </div>
     </div>
   );
 };

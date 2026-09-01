@@ -359,10 +359,12 @@ export const v3ReassignRM = (brandId, rmId) => v3.patch(`/brands/${brandId}/rm`,
 // Legacy reset helper removed; use the real workbook import instead
 
 // -------- Metrics --------
-// CRM Performance Report figures for the admin Overview. Every number is
-// counted from the records - see backend/v3_crm_report.py.
-export const v3CrmReport = (windowDays = 30) =>
-  v3.get('/metrics/crm-report', { params: { window_days: windowDays } }).then(r => r.data);
+// Agency-wide operational Overview. One request populates the whole page and
+// every figure is counted live from the CRM collections, so the dashboard
+// tracks the workflow rather than holding its own copy of it.
+// See backend/v3_overview.py.
+export const v3AdminOperationalOverview = (windowDays = 30) =>
+  v3.get('/metrics/overview', { params: { window_days: windowDays } }).then(r => r.data);
 
 export const v3AdminOverview = () => v3.get('/metrics/admin-overview').then(r => r.data);
 
