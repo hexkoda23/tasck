@@ -1474,3 +1474,17 @@ Code changes (data/startup only, no functional or UI change):
 - `cleanup_demo_data.py`: added `full_reset()`, `BUSINESS_COLLECTIONS`, `PRESERVED_NOTES` and a `--full` flag. `python cleanup_demo_data.py --dry-run --full` reports, without `--dry-run` it deletes. Idempotent.
 
 Verified: DB clean after cleanup AND after a restart (no workbook import line in the logs); all 5 role logins return 200; brands/business-cases/creators/projects/meetings all return []; Overview, CRM Brands, Business Cases and Messages render with zero JS errors; created a brand through the UI (detail page opened correctly) and started a project through "New Business Case" (landed on Connect / Business Call with the brand bound) - both verification records were then removed; orphan sweep across all 45 collections on brand_id/business_case_id/creator_id returns none.
+
+## 2026-09-01 (b) - Why production still showed demo data, and the fix
+The client reported thcodemo.space/admin still full of demo data after the cleanup. Root cause: `MONGO_URL=mongodb://localhost:27017` - every environment runs its OWN MongoDB inside its own container, so the preview cleanup could never reach the deployed database. The wipe had to travel with the code.
+
+Two marker-guarded passes were added to the startup hydration in `server.py` (markers live in `v3_system_meta`, so neither ever repeats):
+1. `WIPE_DEMO_DATA_ONCE` (set to `2026-09-01-client-clean` in backend/.env): on first boot with that value, runs `cleanup()` + `full_reset()` - a total wipe of brand/project data. Change the value to request another wipe later.
+2. Unconditional safety net `workbook-wipe:v1`: deletes only rows carrying `created_from_crm_template: True` (i.e. rows the CRM workbook importer wrote - a flag hand-entered records never have) plus the orphaned `brand_contact` logins. This clears a deployed environment even if its env vars are managed outside backend/.env. `v3_rms` and `v3_templates` are not in BUSINESS_COLLECTIONS, so staff and templates survive.
+`cleanup_demo_data.py` gained `workbook_reset(db, dry_run)` alongside `full_reset`.
+
+Verified in preview by simulating a production boot:
+- Planted demo brand/case/creator -> restart -> "Demo-data wipe ... removed 3 records", all gone, marker written.
+- Added a client brand -> restart -> "already applied - skipping", client brand survived (the wipe never repeats).
+- Cleared only the safety-net marker, planted 1 workbook-flagged brand + 1 client brand -> restart -> "Workbook-import wipe removed 1 records", the client brand untouched, staff intact.
+Preview remains: users 36, v3_admin_users 8, v3_rms 8, v3_templates 12, v3_system_meta 2 (markers). Brands/cases/creators return []; admin login 200.

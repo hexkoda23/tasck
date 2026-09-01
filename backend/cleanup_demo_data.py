@@ -200,6 +200,33 @@ async def full_reset(db, dry_run: bool) -> dict:
     return report
 
 
+async def workbook_reset(db, dry_run: bool) -> dict:
+    """Delete rows the CRM workbook importer created, and nothing else.
+
+    Every row it writes carries `created_from_crm_template: True`, a flag no
+    hand-entered or client-created record ever has - so this is safe to run
+    unconditionally on a database that already holds real data. Staff
+    (`v3_rms`) and the document templates are not in BUSINESS_COLLECTIONS and
+    are therefore untouched.
+    """
+    report: dict = {}
+    flag = {"created_from_crm_template": True}
+    for name in BUSINESS_COLLECTIONS:
+        n = await db[name].count_documents(flag)
+        if not n:
+            continue
+        report[name] = n
+        if not dry_run:
+            await db[name].delete_many(flag)
+    contact_filter = {"role": "brand_contact", **flag}
+    n = await db.v3_admin_users.count_documents(contact_filter)
+    if n:
+        report["v3_admin_users (brand_contact only)"] = n
+        if not dry_run:
+            await db.v3_admin_users.delete_many(contact_filter)
+    return report
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true",

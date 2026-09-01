@@ -82,6 +82,53 @@ async def startup_event():
     probe timeout and causing 'deployment failed to become ready'."""
 
     async def _hydrate():
+        # One-time demo-data wipe. Each environment has its own database, so a
+        # cleanup run in preview cannot reach production - this lets the wipe
+        # travel with a deploy. It runs once per token value: the marker in
+        # `v3_system_meta` means a later deploy (or restart) never repeats it,
+        # so the client's real data is safe. Change WIPE_DEMO_DATA_ONCE to a new
+        # value to request another wipe.
+        wipe_token = (os.environ.get("WIPE_DEMO_DATA_ONCE") or "").strip()
+        if wipe_token:
+            marker_id = f"demo-wipe:{wipe_token}"
+            try:
+                if await db.v3_system_meta.find_one({"id": marker_id}):
+                    logger.info("Demo-data wipe '%s' already applied - skipping.", wipe_token)
+                else:
+                    from cleanup_demo_data import cleanup as _seed_cleanup, full_reset as _full_reset
+                    report = await _seed_cleanup(db, False)
+                    report.update(await _full_reset(db, False))
+                    await db.v3_system_meta.insert_one({
+                        "id": marker_id,
+                        "applied_at": datetime.now(timezone.utc).isoformat(),
+                        "removed": report,
+                        "total_removed": sum(report.values()),
+                    })
+                    logger.warning("Demo-data wipe '%s' removed %s records: %s",
+                                   wipe_token, sum(report.values()), report)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Demo-data wipe failed: {exc}")
+        # Safety net, runs once regardless of environment variables: remove any
+        # row the CRM workbook importer wrote. Those rows all carry
+        # `created_from_crm_template: True`, a flag client-entered records never
+        # have, so this cannot touch real data. This is what clears a deployed
+        # environment whose env vars are managed outside backend/.env.
+        try:
+            if not await db.v3_system_meta.find_one({"id": "workbook-wipe:v1"}):
+                from cleanup_demo_data import workbook_reset as _workbook_reset
+                wb_report = await _workbook_reset(db, False)
+                await db.v3_system_meta.insert_one({
+                    "id": "workbook-wipe:v1",
+                    "applied_at": datetime.now(timezone.utc).isoformat(),
+                    "removed": wb_report,
+                    "total_removed": sum(wb_report.values()),
+                })
+                if wb_report:
+                    logger.warning("Workbook-import wipe removed %s records: %s",
+                                   sum(wb_report.values()), wb_report)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Workbook-import wipe failed: {exc}")
+
         try:
             await seed_database()
         except Exception as exc:  # noqa: BLE001
