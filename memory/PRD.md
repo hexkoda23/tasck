@@ -1460,3 +1460,17 @@ Fix: converted it to the same background-job pattern as the Creative Brief / Pit
 - `v3AnalyzeBrainstormTranscript` now polls (2.5s interval, 120 attempts, tolerates 6 transient gateway blips) and streams the job message into the existing "Analyzing transcript" popup.
 Verified live: kickoff 0.27s, job completed in ~35s, all 8 Creator Selector fields filled, and the UI popup ran through "AI is reading the transcript and filling the TTA Creator Selector…" -> "Creator Selector filled" -> auto-navigated to the filled Creator Selector.
 Audit: no other long AI call remains synchronous (import-extract is a single 60s-capped call; opportunity detection runs inside a job runner).
+
+## 2026-09-01 - Production cleanup: database wiped of all demo/test/seed CRM data
+NOTE: the codebase had been rolled back, so the earlier cleanup work (2026-06-25 f) was no longer present and the workbook importer had restored the data. Redone in this codebase state, without touching app functionality or UI.
+
+Deleted (231 rows): v3_brands 9 (8 CRM-workbook brands + the Zestora test brand), v3_business_cases 20, v3_creators 35, v3_projects 24, v3_meetings 14, v3_contacts 13, v3_contracts 11, v3_fees 11, v3_wallet 11, v3_tasks 10, v3_insights 6, v3_reports 5, v3_pitch_decks 2, v3_alignment_snapshots, v3_creative_briefs, v3_brand_accounts, v3_creator_accounts, v3_email_outbox, v3_analysis_jobs, v3_opportunity_candidates/scans, v3_interactions, v3_duplicate_dismissals, legacy v1/v2 collections, `feedback` 2, and the 11 `brand_contact` logins whose brands were removed.
+
+Preserved: `users` 36 (the only login source for /api/auth/demo-login - clearing it locks all five roles out), `v3_admin_users` 8 (1 super_admin + 7 relationship managers), `v3_rms` 8 (staff), `v3_templates` 12 (agency document templates = configuration). All 45 collections still exist; schema, indexes, app code, auth structure and configuration untouched.
+One judgement call: the single `role: brand` account (adenike@diageo-ng.com) is a demo account, but `demo_login` 404s for role=brand without it, so it was KEPT and only its stale pointer to the deleted demo brand was unset - zero orphan references remain.
+
+Code changes (data/startup only, no functional or UI change):
+- `server.py`: the CRM workbook importer no longer runs in the startup hydration - it was recreating the workbook brands and all derived records on every boot. Manual load remains available via `POST /api/v3/admin/import-crm-workbook`.
+- `cleanup_demo_data.py`: added `full_reset()`, `BUSINESS_COLLECTIONS`, `PRESERVED_NOTES` and a `--full` flag. `python cleanup_demo_data.py --dry-run --full` reports, without `--dry-run` it deletes. Idempotent.
+
+Verified: DB clean after cleanup AND after a restart (no workbook import line in the logs); all 5 role logins return 200; brands/business-cases/creators/projects/meetings all return []; Overview, CRM Brands, Business Cases and Messages render with zero JS errors; created a brand through the UI (detail page opened correctly) and started a project through "New Business Case" (landed on Connect / Business Call with the brand bound) - both verification records were then removed; orphan sweep across all 45 collections on brand_id/business_case_id/creator_id returns none.

@@ -1,5 +1,12 @@
 # TASCK OS — Test Credentials
 
+> **2026-09-01 — the database was wiped of all demo/test/seed CRM data.** Every
+> demo brand, project, creator, document and Brand Portal login is gone, and the
+> CRM workbook importer no longer runs on startup. Only account records remain
+> (`users` 36, `v3_admin_users` 8 staff, `v3_rms` 8, `v3_templates` 12). Any
+> brand/creator portal login below that referenced a demo brand no longer
+> exists — issue portal access from the CRM against a real brand instead.
+
 ## v3 Admin (`/v3/admin/*`)
 Admin routes are **unprotected** in preview/demo environment. No login required. Open any `/v3/admin/...` URL directly via `REACT_APP_BACKEND_URL` (see `/app/frontend/.env`).
 

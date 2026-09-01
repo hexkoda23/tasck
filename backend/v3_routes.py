@@ -27,13 +27,11 @@ import html
 import threading
 import smtplib
 import ssl
-from email.message import EmailMessage
 import json
 import logging
 import os
 import re
 import requests
-import smtplib
 import uuid
 import base64
 import zipfile
@@ -4346,7 +4344,6 @@ def make_v3_router(db):
             "lead_score": payload.lead_score,
             "last_interaction": "awaiting qualification",
             "engagement_track_default": payload.engagement_track_default,
-            "source": payload.source,
             "notes": payload.notes or "",
             "reschedule_count": 0,
             "created_at": _now_iso(),
@@ -7076,34 +7073,6 @@ def make_v3_router(db):
                 {"$set": {"frame.alignment_brand_viewed_at": _now_iso(), "updated_at": _now_iso()}},
             )
         return {"ok": True, "brand_viewed": True}
-
-        # If paid engagement, generate the Strategy Development Fee invoice.
-        updates: Dict[str, Any] = {
-            "frame.alignment_snapshot_status": "approved",
-            "frame.alignment_snapshot_approved_at": approved_at,
-            "updated_at": _now_iso(),
-        }
-        if case.get("engagement_track") == "paid":
-            inv_id = f"inv-{uuid.uuid4().hex[:8]}"
-            inv = {
-                "id": inv_id,
-                "business_case_id": bc_id,
-                "kind": "strategy_development_fee",
-                "amount": 4_000_000,
-                "status": "issued",
-                "issued_at": approved_at,
-                "paid_at": None,
-            }
-            await db.v3_invoices.insert_one({**inv})
-            updates["frame.strategy_development_fee_invoice_id"] = inv_id
-            updates["frame.strategy_development_fee_paid"] = False
-        else:
-            updates["frame.strategy_development_fee_invoice_id"] = None
-            updates["frame.strategy_development_fee_paid"] = False
-            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement - TTA absorbs strategy cost."
-
-        await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_approved", "by": payload.approver}}})
-        return {"ok": True, "approved_at": approved_at}
 
     class AlignmentUpdatePayload(BaseModel):
         title: Optional[str] = None
@@ -16499,7 +16468,7 @@ def make_v3_router(db):
         reviewed_by: str = "admin"
 
     @router.get("/opportunities")
-    async def list_opportunities():
+    async def list_tracker_opportunities():
         return await db.v3_opportunities.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
     @router.get("/opportunities/candidates")

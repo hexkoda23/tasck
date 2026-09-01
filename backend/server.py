@@ -18,7 +18,6 @@ from models import (
 )
 from seed_data import get_seed_data
 from v3_routes import make_v3_router
-from v3_workbook_import import WorkbookImporter
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -103,15 +102,15 @@ async def startup_event():
                 await repair()
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Brand document visibility repair skipped or failed: {exc}")
-        try:
-            await WorkbookImporter.import_all(db)
-            logger.info("Workbook import completed.")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"Workbook import skipped or failed: {exc}")
+        # The CRM workbook importer used to run here on every boot, which meant
+        # the workbook's brands, creators, projects and their derived records
+        # were recreated after any cleanup. The client is entering their own
+        # brands now, so nothing imports automatically. To load the workbook
+        # deliberately: POST /api/v3/admin/import-crm-workbook
         # The four demo Brand Portal accounts (Coca-Cola, MTN, Nigerian
-        # Breweries, Test Brand) used to be recreated here on every boot.
-        # That seeding has been removed so the database stays clean; brand
-        # portal accounts are now issued from the CRM against real brands.
+        # Breweries, Test Brand) used to be recreated here too. That seeding
+        # has been removed as well; portal accounts are issued from the CRM
+        # against real brands.
         logger.info("Background hydration completed.")
 
     asyncio.create_task(_hydrate())

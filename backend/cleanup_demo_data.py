@@ -142,10 +142,71 @@ async def cleanup(db, dry_run: bool) -> dict:
     return {name: len(ids) for name, ids in matched.items()}
 
 
+# ---------------------------------------------------------------------------
+# Full business-data reset
+# ---------------------------------------------------------------------------
+# Client cleanup, 2026-06-25: clear every brand and project record - including
+# the rows the CRM workbook importer used to recreate on each boot - so the CRM
+# starts empty for the client's real data. Accounts, staff and the agency
+# document templates are kept (see PRESERVED_NOTES).
+
+BUSINESS_COLLECTIONS = [
+    # v3 (current app)
+    "v3_brands", "v3_contacts", "v3_creators", "v3_business_cases", "v3_projects",
+    "v3_meetings", "v3_alignment_snapshots", "v3_creative_snapshots",
+    "v3_creative_briefs", "v3_pitch_decks", "v3_deck_views", "v3_contracts",
+    "v3_deliverables", "v3_invoices", "v3_final_reports", "v3_reports",
+    "v3_fees", "v3_wallet", "v3_tasks", "v3_insights", "v3_brainstorm_rounds",
+    "v3_brainstorm_analysis_jobs", "v3_analysis_jobs", "v3_interactions",
+    "v3_email_outbox", "v3_opportunities", "v3_opportunity_candidates",
+    "v3_opportunity_scans", "v3_duplicate_dismissals",
+    "v3_brand_accounts", "v3_creator_accounts",
+    # v1/v2 (legacy screens)
+    "brands", "deals", "projects", "opportunities", "tasks", "activities",
+    "messages", "copilot_recommendations", "wallet_transactions", "applications",
+    "contracts", "feedback",
+]
+
+# Kept deliberately. `users` is the login source for /api/auth/demo-login, so
+# clearing it locks every role out of the app; v3_rms are TASCK's own staff;
+# v3_templates are the agency's document templates (configuration, not data).
+PRESERVED_NOTES = {
+    "users": "authentication records (/api/auth/demo-login resolves these)",
+    "v3_rms": "TASCK staff / relationship managers",
+    "v3_templates": "agency document templates (configuration)",
+    "v3_admin_users": "staff and super_admin logins kept; brand_contact logins removed with their brands",
+}
+
+
+async def full_reset(db, dry_run: bool) -> dict:
+    """Empty every brand/project collection. Accounts and staff are preserved.
+
+    Idempotent. Returns {collection: rows_removed}."""
+    report: dict = {}
+    for name in BUSINESS_COLLECTIONS:
+        n = await db[name].count_documents({})
+        if not n:
+            continue
+        report[name] = n
+        if not dry_run:
+            await db[name].delete_many({})
+    # Brand-contact logins belong to brands that no longer exist; staff stay.
+    contact_filter = {"role": "brand_contact"}
+    n = await db.v3_admin_users.count_documents(contact_filter)
+    if n:
+        report["v3_admin_users (brand_contact only)"] = n
+        if not dry_run:
+            await db.v3_admin_users.delete_many(contact_filter)
+    return report
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true",
                         help="report what would be deleted without writing")
+    parser.add_argument("--full", action="store_true",
+                        help="also clear ALL brand/project data (workbook imports "
+                             "included). Accounts, staff and templates are kept.")
     parser.add_argument("--mongo-url", default=os.environ.get("MONGO_URL"))
     parser.add_argument("--db-name", default=os.environ.get("DB_NAME"))
     args = parser.parse_args()
@@ -159,6 +220,8 @@ async def main() -> None:
     print(f"{mode}  db={args.db_name}\n")
     try:
         report = await cleanup(db, args.dry_run)
+        if args.full:
+            report.update(await full_reset(db, args.dry_run))
     finally:
         client.close()
 
