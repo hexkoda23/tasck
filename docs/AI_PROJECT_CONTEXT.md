@@ -93,6 +93,28 @@ The client does not poll. It fetches once, then revalidates on `focus` and
 `visibilitychange` (throttled to 15s) and via the Refresh button, so a change
 made elsewhere shows when the admin returns to the tab.
 
+### Scrolling
+
+Every list body is wrapped in `List` (`max-h-[320px] overflow-y-auto
+overscroll-contain`), so a long card scrolls inside itself instead of pushing
+the page down and burying the cards below it. The cap is a max-height, so a
+short list still renders at its natural height with no scrollbar and no dead
+space. `overscroll-contain` stops a list reaching its end and then scrolling
+the page.
+
+Card headers, the documents/workload column headers and the deadline bucket
+strip sit **outside** the scroll region, so they stay put while the rows move.
+
+**Constraint: nothing inside a `List` may own a tooltip.** `overflow-y-auto`
+establishes a clipping context and would cut the panel off. This is why the
+three per-number tooltips in Workload were removed - they restated their own
+column headers ("Open projects: 5" under a column headed Proj) and were the
+only tooltips that sat inside a list. Tooltips now live only in card headers,
+stat tiles and the non-scrolling deadline strip.
+
+Measured on a page with four overflowing lists: 2957px expanded → 2142px with
+internal scrolling, a 28% shorter page.
+
 ### Tooltips
 
 `Tip` in `V1AdminOverview.js`. A native `<button>` carrying every handler —
@@ -141,7 +163,8 @@ Scenarios exercised: several projects across every stage; no pending actions;
 several overdue items; documents awaiting review; inactive brands; and a
 completely empty database (global empty state with CRM Brands / Import CTAs).
 Responsive checked at 375, 768 and 1440 — tiles reflow 2 → 3 → 6, no horizontal
-page scroll, tooltips stay inside the viewport.
+page scroll, tooltips stay inside the viewport, and the list bodies scroll
+internally at every width.
 
 Note when testing in a headless/unfocused browser: `document.hasFocus()` is
 false, so programmatic `.focus()` may not dispatch focus events. Dispatch

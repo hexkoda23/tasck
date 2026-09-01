@@ -46,6 +46,20 @@ const Card = ({ icon: Icon, title, subtitle, action, children, testId, tone = '#
 
 const Empty = ({ children }) => <p className="px-5 py-6 text-[12px] text-[#8A8A8A]">{children}</p>;
 
+// List bodies scroll inside their card rather than lengthening the page, so
+// every card stays reachable without scrolling past the one above it. The cap
+// is a max-height, so a short list still renders at its natural height with no
+// scrollbar and no dead space.
+//
+// Nothing inside a List may own a tooltip: `overflow-y-auto` establishes a
+// clipping context and would cut the panel off. Tooltips live in card headers
+// and in the non-scrolling strips above these bodies.
+const List = ({ children, testId, className = '' }) => (
+  <div className={`max-h-[320px] overflow-y-auto overscroll-contain ${className}`} data-testid={testId}>
+    {children}
+  </div>
+);
+
 const Meter = ({ pct, tone = '#1F4A3A' }) => (
   <span className="block h-1.5 w-full rounded-full bg-[#F0EDE5] overflow-hidden">
     <span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: tone }} />
@@ -270,7 +284,7 @@ const V1AdminOverview = () => {
             {projects.length === 0 ? (
               <Empty>No active projects. Everything is closed or nothing has been created yet.</Empty>
             ) : (
-              <div data-testid="overview-projects-list">
+              <List testId="overview-projects-list">
                 {projects.map((p) => (
                   <button key={p.case_id} onClick={() => openCase(p.case_id)}
                     className="w-full text-left px-5 py-3 border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] transition-colors"
@@ -292,7 +306,7 @@ const V1AdminOverview = () => {
                     </div>
                   </button>
                 ))}
-              </div>
+              </List>
             )}
           </Card>
         </div>
@@ -302,7 +316,7 @@ const V1AdminOverview = () => {
           {nextUp.length === 0 ? (
             <Empty>Nothing outstanding. No unsigned contracts, no snapshots waiting and no quiet brands.</Empty>
           ) : (
-            <div data-testid="overview-next-list">
+            <List testId="overview-next-list">
               {nextUp.map((n, i) => (
                 <button key={i} onClick={() => go(n.href)}
                   className="w-full text-left px-5 py-3 border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] transition-colors">
@@ -310,7 +324,7 @@ const V1AdminOverview = () => {
                   <p className="text-[11px] text-[#8A8A8A] mt-0.5">{n.detail}</p>
                 </button>
               ))}
-            </div>
+            </List>
           )}
         </Card>
       </div>
@@ -322,7 +336,7 @@ const V1AdminOverview = () => {
           {pendingItems.length === 0 ? (
             <Empty>Nothing pending. Every document is approved and every contract is signed.</Empty>
           ) : (
-            <div data-testid="overview-pending-list">
+            <List testId="overview-pending-list">
               {pendingItems.map((p, i) => (
                 <button key={i} onClick={() => openCase(p.case_id)} disabled={!p.case_id}
                   className={`w-full text-left px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0 ${p.case_id ? 'hover:bg-[#FBFAF7]' : ''}`}>
@@ -333,7 +347,7 @@ const V1AdminOverview = () => {
                   <p className="text-[11px] text-[#6E6657] truncate">{p.label}</p>
                 </button>
               ))}
-            </div>
+            </List>
           )}
         </Card>
 
@@ -357,8 +371,8 @@ const V1AdminOverview = () => {
                   </Tip>
                 ))}
               </div>
-              <div>
-                {deadlines.buckets.flatMap((b) => b.items.map((i) => ({ ...i, bucket: b.label }))).slice(0, 6).map((i, idx) => (
+              <List testId="overview-deadlines-list">
+                {deadlines.buckets.flatMap((b) => b.items.map((i) => ({ ...i, bucket: b.label }))).map((i, idx) => (
                   <button key={idx} onClick={() => openCase(i.case_id)} disabled={!i.case_id}
                     className={`w-full text-left px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0 ${i.case_id ? 'hover:bg-[#FBFAF7]' : ''}`}>
                     <div className="flex items-baseline justify-between gap-3">
@@ -368,7 +382,7 @@ const V1AdminOverview = () => {
                     <p className="text-[11px] text-[#8A8A8A] truncate">{i.brand} · {i.bucket}</p>
                   </button>
                 ))}
-              </div>
+              </List>
             </>
           )}
         </Card>
@@ -380,12 +394,13 @@ const V1AdminOverview = () => {
           {documents.length === 0 ? (
             <Empty>No documents generated yet.</Empty>
           ) : (
-            <div data-testid="overview-documents-list">
+            <>
               <div className="grid gap-3 px-5 py-2 bg-[#FBFAF7] border-b border-[#F0EDE5]" style={{ gridTemplateColumns: '1fr 58px 52px 62px 62px' }}>
                 {['Document', 'Total', 'Draft', 'Sent', 'Approved'].map((h) => (
                   <span key={h} className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">{h}</span>
                 ))}
               </div>
+              <List testId="overview-documents-list">
               {documents.map((d) => (
                 <div key={d.key} className="grid gap-3 items-center px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0"
                   style={{ gridTemplateColumns: '1fr 58px 52px 62px 62px' }}>
@@ -396,7 +411,8 @@ const V1AdminOverview = () => {
                   <span className="text-[12px] text-[#1F7A72]">{d.approved}</span>
                 </div>
               ))}
-            </div>
+              </List>
+            </>
           )}
         </Card>
 
@@ -405,26 +421,28 @@ const V1AdminOverview = () => {
           {workload.length === 0 ? (
             <Empty>No relationship managers on record.</Empty>
           ) : (
-            <div data-testid="overview-workload-list">
-              {workload.map((w) => (
-                <div key={w.rm_id || 'unassigned'} className="grid gap-3 items-center px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0"
-                  style={{ gridTemplateColumns: '1fr 46px 46px 46px 96px' }}>
-                  <span className={`text-[12px] truncate ${w.unassigned ? 'text-[#B07A2B] font-semibold' : 'text-[#1A1A1A]'}`}>{w.name}</span>
-                  <Tip items={[{ label: 'Open projects', count: w.cases }]}><span className="text-[12px] text-[#4F3E2F]">{w.cases}</span></Tip>
-                  <Tip items={[{ label: 'Brands owned', count: w.brands }]}><span className="text-[12px] text-[#4F3E2F]">{w.brands}</span></Tip>
-                  <Tip items={[{ label: 'Open tasks', count: w.tasks }]}><span className="text-[12px] text-[#4F3E2F]">{w.tasks}</span></Tip>
-                  <span className="flex items-center gap-2">
-                    <Meter pct={w.share} tone={w.share >= 55 ? '#C0703A' : '#1F4A3A'} />
-                    <span className="text-[11px] text-[#6E6657] w-8 text-right flex-shrink-0">{w.share}%</span>
-                  </span>
-                </div>
-              ))}
-              <div className="grid gap-3 px-5 py-2 bg-[#FBFAF7] border-t border-[#F0EDE5]" style={{ gridTemplateColumns: '1fr 46px 46px 46px 96px' }}>
-                {['', 'Proj', 'Brands', 'Tasks', 'Share'].map((h, i) => (
-                  <span key={i} className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">{h}</span>
+            <>
+              <div className="grid gap-3 px-5 py-2 bg-[#FBFAF7] border-b border-[#F0EDE5]" style={{ gridTemplateColumns: '1fr 46px 46px 46px 96px' }}>
+                {['Manager', 'Proj', 'Brands', 'Tasks', 'Share'].map((h) => (
+                  <span key={h} className="text-[10px] uppercase tracking-wider text-[#8A8A8A] font-semibold">{h}</span>
                 ))}
               </div>
-            </div>
+              <List testId="overview-workload-list">
+                {workload.map((w) => (
+                  <div key={w.rm_id || 'unassigned'} className="grid gap-3 items-center px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0"
+                    style={{ gridTemplateColumns: '1fr 46px 46px 46px 96px' }}>
+                    <span className={`text-[12px] truncate ${w.unassigned ? 'text-[#B07A2B] font-semibold' : 'text-[#1A1A1A]'}`}>{w.name}</span>
+                    <span className="text-[12px] text-[#4F3E2F]">{w.cases}</span>
+                    <span className="text-[12px] text-[#4F3E2F]">{w.brands}</span>
+                    <span className="text-[12px] text-[#4F3E2F]">{w.tasks}</span>
+                    <span className="flex items-center gap-2">
+                      <Meter pct={w.share} tone={w.share >= 55 ? '#C0703A' : '#1F4A3A'} />
+                      <span className="text-[11px] text-[#6E6657] w-8 text-right flex-shrink-0">{w.share}%</span>
+                    </span>
+                  </div>
+                ))}
+              </List>
+            </>
           )}
         </Card>
       </div>
@@ -436,7 +454,7 @@ const V1AdminOverview = () => {
           {engagement.inactive.length === 0 ? (
             <Empty>Every brand has been touched in the last {inactiveDays} days.</Empty>
           ) : (
-            <div data-testid="overview-engagement-list">
+            <List testId="overview-engagement-list">
               {engagement.inactive.map((b) => (
                 <button key={b.brand_id} onClick={() => go(`/crm-brands/${b.brand_id}`)}
                   className="w-full text-left px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] transition-colors">
@@ -451,7 +469,7 @@ const V1AdminOverview = () => {
                   and {engagement.inactive_total - engagement.inactive.length} more of {engagement.tracked_brands} brands.
                 </p>
               )}
-            </div>
+            </List>
           )}
         </Card>
 
@@ -460,7 +478,7 @@ const V1AdminOverview = () => {
           {activity.length === 0 ? (
             <Empty>No dated records yet.</Empty>
           ) : (
-            <div data-testid="overview-activity-list">
+            <List testId="overview-activity-list">
               {activity.map((a, i) => (
                 <button key={i} onClick={() => openCase(a.case_id)} disabled={!a.case_id}
                   className={`w-full text-left px-5 py-2.5 border-b border-[#F4F2EC] last:border-b-0 ${a.case_id ? 'hover:bg-[#FBFAF7]' : ''}`}>
@@ -471,7 +489,7 @@ const V1AdminOverview = () => {
                   <p className="text-[11px] text-[#6E6657] truncate">{a.subject}</p>
                 </button>
               ))}
-            </div>
+            </List>
           )}
         </Card>
       </div>
