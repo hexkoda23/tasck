@@ -348,36 +348,21 @@ const stepperConfig = (id, stage, pathname, bc = {}) => {
 export const businessCasePhasePath = (id, bc = {}) => {
   const stage = bc.stage || 'connect';
   if (stage === 'closed' || stage === 'reporting') return adminRoute(`/business-cases/${id}/reporting/final-report`);
-  // Backend `deliver` stage covers Planning -> Delivery -> Reporting in the
-  // Business Case area. Pick the right sub-page using existing case fields so
-  // clicking on a brand opens what the admin was actually working on, not
-  // always Planning:
-  // Gated by the same sub-phase completion flags as the stepper so clicking
-  // a brand never jumps past an incomplete phase:
-  //   - Reporting only once Delivery is completed.
-  //   - Delivery only once Planning is completed.
-  //   - Otherwise land on Planning.
+  // Once a case has reached Planning or beyond, the active page is that
+  // phase's own page. It used to walk BACKWARDS from here into the Framing
+  // sub-steps whenever a framing artifact was missing - a case sitting at
+  // Plan with no brainstorm yet opened the Creator Selector transcript page,
+  // which reads as being thrown back into the CRM rather than opened at the
+  // stage the row says the project is at. The Plan / Delivery / Reporting
+  // chips on the row still gate what is reachable, and the Framing steps stay
+  // linked from inside the flow.
   if (stage === 'deliver') {
     const plan = bc.plan || {};
-    const planningDone = Boolean(plan.planning_completed_at);
     const deliveryDone = Boolean(plan.delivery_completed_at) || Boolean(bc.reporting_started_at) || Boolean(bc.final_report_sent_at);
     if (deliveryDone) return adminRoute(`/business-cases/${id}/reporting/final-report`);
-    if (planningDone) return adminRoute(`/business-cases/${id}/delivery/deliverables`);
-    return adminRoute(`/business-cases/${id}/plan/planning`);
+    return adminRoute(`/business-cases/${id}/delivery/deliverables`);
   }
-  if (stage === 'plan') {
-    // Framing sub-steps 2..5 live on backend `plan` but UI shows them under /frame/*.
-    const plan = bc.plan || {};
-    // Brainstorm starts with the transcript-upload page; once the transcript
-    // has been analysed (or a round exists), go straight to the brainstorm form.
-    if (!plan.brainstorm_transcript_analyzed_at && !plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`);
-    if (!plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm`);
-    if (!Array.isArray(plan.selected_creator_ids) || plan.selected_creator_ids.length === 0) return adminRoute(`/business-cases/${id}/frame/creator-scan`);
-    if (!plan.creative_brief_id) return adminRoute(`/business-cases/${id}/frame/brief`);
-    // Strategy Snapshot step removed - once the brief exists, the flow moves
-    // straight into the Planning phase.
-    return adminRoute(`/business-cases/${id}/plan/planning`);
-  }
+  if (stage === 'plan') return adminRoute(`/business-cases/${id}/plan/planning`);
   if (stage === 'frame') {
     const frame = bc.frame || {};
     const status = frame.alignment_snapshot_status || frame.status || '';

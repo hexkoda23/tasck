@@ -19619,6 +19619,16 @@ Produce the opportunity card JSON.
     # ------------------------------------------------------------------------
     # METRICS / OVERVIEW
     # ------------------------------------------------------------------------
+    @router.get("/metrics/crm-report")
+    async def crm_report(window_days: int = 30):
+        """CRM Performance Report figures for the admin Overview.
+
+        Every number is counted from the records in Mongo - see
+        backend/v3_crm_report.py for how each one is derived.
+        """
+        from v3_crm_report import build_crm_report
+        return await build_crm_report(db, window_days=max(1, min(int(window_days or 30), 365)))
+
     @router.get("/metrics/admin-overview")
     async def admin_overview():
         cases = await db.v3_business_cases.find({}, {"_id": 0}).to_list(1000)
