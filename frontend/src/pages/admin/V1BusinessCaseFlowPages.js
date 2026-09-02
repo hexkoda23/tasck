@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
-import { PrioritySelect } from '../../lib/snapshotPriority';
+import { PriorityTag, PRIORITY_OPTIONS } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
 import PitchDeckSlideEditor from '../../components/admin/PitchDeckSlideEditor';
@@ -185,6 +185,7 @@ import {
   v3CompleteSubphase,
   v3UpdateSelectedCreators,
   v3UpdateStrategySnapshot,
+  v3SetSnapshotPriority,
 } from '../../lib/v3api';
 import { formatNairaV3 } from '../../lib/v3data';
 
@@ -1988,6 +1989,27 @@ export const V3BusinessCaseConnectReschedule = () => {
   );
 };
 
+// Priority is chosen in one place only: the Priority dropdown inside the
+// "Focus & Priority" section of the snapshot narrative. Everything else -
+// the tag at the top of the Alignment Snapshot page, the snapshot list, the
+// brand's copy - reads that choice rather than offering a second dropdown.
+// A section can hold several segments, so the snapshot takes the most urgent
+// of them: that is what tells TASCK when the work has to start.
+const PRIORITY_RANK = PRIORITY_OPTIONS.map((option) => option.value);
+
+const derivePriorityFromSections = (sections) => {
+  let best = -1;
+  (Array.isArray(sections) ? sections : []).forEach((section) => {
+    if (!section || section.type !== 'focus_priority') return;
+    (Array.isArray(section.segments) ? section.segments : []).forEach((segment) => {
+      const rank = PRIORITY_RANK.indexOf(String(segment?.priority || '').trim());
+      if (rank === -1) return;
+      if (best === -1 || rank < best) best = rank;
+    });
+  });
+  return best === -1 ? '' : PRIORITY_RANK[best];
+};
+
 const AlignmentSectionEditor = ({ section, index, onChange, readOnly = false }) => {
   const update = (patch) => onChange({ ...section, ...patch });
   const columns = Array.isArray(section.columns) && section.columns.length
@@ -2277,6 +2299,10 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const brandEmail = brand?.email || brand?.contact_email || brand?.primary_contact_email || '';
   const activeSnapshot = draft || snapshot;
   const hasSnapshot = Boolean(activeSnapshot?.title || activeSnapshot?.meta || activeSnapshot?.sections?.length);
+  // Live from the draft, so the tag at the top follows the Focus & Priority
+  // dropdown as it is changed. Falls back to whatever is stored for snapshots
+  // that carry no Focus & Priority section, or that the brand ranked itself.
+  const activePriority = derivePriorityFromSections(activeSnapshot?.sections) || snapshot?.priority || '';
   const preparingFrame = Boolean(location.state?.preparingFrame);
   // Brand comments on the alignment snapshot, shown right on this page so
   // admin sees and works on them without hunting for the admin-review page.
@@ -2338,6 +2364,17 @@ export const V3BusinessCaseFrameSnapshot = () => {
       reviewer: 'admin',
     });
     setDraft(cloneAlignmentSnapshot(saved));
+    // Keep the snapshot's own priority field in step with the Focus & Priority
+    // section, so the snapshot list, the brand's copy and the Overview all
+    // show what was chosen here without a second dropdown to maintain.
+    const derived = derivePriorityFromSections(saved?.sections || draft?.sections);
+    if (derived && derived !== saved?.priority) {
+      try {
+        await v3SetSnapshotPriority(draft.id, derived, 'admin');
+      } catch (e) {
+        toast.error('Saved, but the priority could not be recorded.');
+      }
+    }
     await reload();
     return saved;
   };
@@ -2595,9 +2632,8 @@ export const V3BusinessCaseFrameSnapshot = () => {
             {allSnapshots.map((snapshotItem) => {
               const isEditing = snapshot?.id === snapshotItem.id;
               return (
-                <React.Fragment>
+                <React.Fragment key={snapshotItem.id}>
                 <div
-                  key={snapshotItem.id}
                   role="button"
                   tabIndex={0}
                   onClick={() => setSelectedSnapshotId(snapshotItem.id)}
@@ -2621,21 +2657,9 @@ export const V3BusinessCaseFrameSnapshot = () => {
                       {snapshotItem.priority_set_by ? ` · ranked by ${snapshotItem.priority_set_by}` : ' · not ranked yet'}
                     </p>
                   </div>
-                  <div onClick={(e) => e.stopPropagation()}>
-                    <PrioritySelect
-                      snapshotId={snapshotItem.id}
-                      value={snapshotItem.priority}
-                      actor="admin"
-                      onChange={(next, error) => {
-                        if (error) {
-                          toast.error('Could not save the priority.');
-                          return;
-                        }
-                        toast.success('Priority updated.');
-                        reload();
-                      }}
-                    />
-                  </div>
+                  {/* Read-only: each snapshot's priority is set in its own
+                      Focus & Priority section, not from a dropdown here. */}
+                  <PriorityTag priority={isEditing ? (activePriority || snapshotItem.priority) : snapshotItem.priority} />
                 </div>
                 {/* Per-snapshot quick links: each snapshot owns its own Creator
                     Selector, Pitch Deck and Creative Brief, so deep-link into
@@ -2670,7 +2694,12 @@ export const V3BusinessCaseFrameSnapshot = () => {
         title="Alignment Snapshot"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
-            {snapshot?.id && <PrioritySelect snapshotId={snapshot.id} value={snapshot.priority} actor="admin" onChange={(next, error) => { if (error) { toast.error('Could not save the priority.'); return; } toast.success('Priority updated.'); reload(); }} />}
+            {/* Reflects the Priority chosen in the Focus & Priority section
+                below - the only place it is set. Not editable here. */}
+            {snapshot?.id && (activePriority
+              ? <PriorityTag priority={activePriority} className="self-center" />
+              : <span className="self-center text-[10px] uppercase tracking-wider text-[#8A8A8A]" data-testid="alignment-priority-unset">Priority not set</span>
+            )}
             <button data-testid="alignment-generate-btn" onClick={generateSnapshot} disabled={generating} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"><Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> {generating ? 'Generating…' : (hasSnapshot ? 'Regenerate Snapshot' : 'Generate Snapshot')}</button>
             <button data-testid="alignment-preview-btn" onClick={openPreview} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Preview</button>
             <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> {snapshot?.brand_approved ? 'Admin approve & continue' : 'Admin approve'}</button>

@@ -216,3 +216,43 @@ endpoint are untouched. The form is local state; nothing is persisted until
 The V3 admin's own `DateTimeInput` (`V3BusinessCaseFlowPages.js`) still uses
 the native input and was not touched. The identically-named `DateTimeInput` in
 `V1BusinessCaseFlowPages.js` is dead code - nothing renders it.
+
+---
+
+## Alignment Snapshot — one priority dropdown
+
+`V3BusinessCaseFrameSnapshot` in `frontend/src/pages/admin/V1BusinessCaseFlowPages.js`.
+
+The page used to ask for priority twice, from the same four-value vocabulary
+(`PRIORITY_OPTIONS`, mirrored in `backend/v3_routes.py`): once in the card
+header (`PrioritySelect`, writing `snapshot.priority`) and again in the
+Priority dropdown of the "Focus & Priority" section, which is part of the
+document itself.
+
+Now the section dropdown is the only control. The header renders a read-only
+`PriorityTag` — or a muted "Priority not set" — derived from the section by
+`derivePriorityFromSections()`.
+
+* **Derivation.** A Focus & Priority section holds one segment per focus area,
+  each with its own priority. The snapshot takes the **most urgent** of them
+  (lowest index in `PRIORITY_OPTIONS`), because that is what says when the work
+  has to start. Falls back to the stored `snapshot.priority` when the snapshot
+  carries no Focus & Priority section, or when the brand ranked it themselves.
+* **Live.** The tag reads the draft, so it follows the dropdown immediately,
+  before Save.
+* **Persistence.** `persistDraft()` syncs the derived value onto
+  `snapshot.priority` via `PATCH /alignment-snapshots/{id}/priority`
+  (`actor: 'admin'`) — only when it actually changed, so a repeat save sends no
+  redundant call. That keeps the snapshot list, the brand's copy and the
+  Overview agreeing without a second dropdown to maintain.
+* **Snapshot list.** When one Connect call produced several snapshots, each row
+  shows a read-only tag too; the row being edited follows the live draft value.
+
+Deliberately unchanged: the **brand portal** (`V1BrandDocuments.js`) keeps its
+own `PrioritySelect` — that is the brand ranking several opportunities against
+each other, not a second admin control. A brand ranking is overwritten the next
+time an admin saves that snapshot's sections.
+
+Also note: when a snapshot is locked (approved by both sides) the section
+editor is disabled, so priority can no longer be changed from this page at all.
+Previously the header dropdown stayed live.
