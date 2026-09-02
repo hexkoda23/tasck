@@ -7,6 +7,7 @@ import { PrioritySelect } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
 import PitchDeckSlideEditor from '../../components/admin/PitchDeckSlideEditor';
+import DateTimePickerField from '../../components/admin/DateTimePickerField';
 import { TtaLetterhead } from '../../components/v1/TtaLetterhead';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
 
@@ -1271,10 +1272,12 @@ export const V3BusinessCaseConnect = () => {
                   Brand email
                   <input value={meetingForm.contact_email} onChange={(e) => updateMeetingForm('contact_email', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" placeholder="brand@example.com" />
                 </label>
-                <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
-                  Meeting date and time
-                  <input type="datetime-local" value={_normaliseDateTimeLocal(meetingForm.scheduled_for)} onChange={(e) => updateMeetingForm('scheduled_for', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" />
-                </label>
+                <DateTimePickerField
+                  label="Meeting date and time"
+                  value={_normaliseDateTimeLocal(meetingForm.scheduled_for)}
+                  onChange={(next) => updateMeetingForm('scheduled_for', next)}
+                  testId="connect-meeting-scheduled-for"
+                />
                 <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
                   Meeting link
                   <input value={meetingForm.meeting_link} onChange={(e) => updateMeetingForm('meeting_link', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" placeholder="https://meet.google.com/..." />

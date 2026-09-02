@@ -177,3 +177,42 @@ internally at every width.
 Note when testing in a headless/unfocused browser: `document.hasFocus()` is
 false, so programmatic `.focus()` may not dispatch focus events. Dispatch
 `focusin` directly to exercise the keyboard path.
+
+---
+
+## Connect / Business Call — meeting date and time
+
+`frontend/src/components/admin/DateTimePickerField.jsx`, used by the "Send
+meeting schedule to brand" block in the Next steps card
+(`V1BusinessCaseConnectPage`).
+
+Replaces `<input type="datetime-local">`. Two problems with the native
+control: its picker only opens from the small calendar glyph, and Chrome's
+popup has no confirm button, so the only way to finish is to click somewhere
+else on the page.
+
+The replacement is a trigger button plus a popover calendar:
+
+* the whole field is the trigger - click, tap, Enter or Space anywhere in the
+  box opens the picker;
+* every choice is held in a **draft** (`draftDate` / `draftTime`) and written
+  out only when **OK** is pressed. Cancel, Escape and clicking outside all
+  discard it; **Clear** empties the field;
+* time is a native `<input type="time">` plus 9 AM / 12 PM / 3 PM / 6 PM
+  presets. Chip labels drop the `:00` so all four fit one row in the 280px
+  panel;
+* opening an empty field lands on today at 09:00, so the common case is one
+  click;
+* the day grid uses roving `tabIndex` - only the selected day is tabbable,
+  arrows move by day/week, PageUp/PageDown by month, and the view follows
+  across month boundaries;
+* the panel flips above the field when there is not enough room below.
+
+**The emitted value is unchanged**: the same `YYYY-MM-DDTHH:mm` string the
+native input produced, so `meetingForm.scheduled_for` and the send-email
+endpoint are untouched. The form is local state; nothing is persisted until
+"Send to brand email".
+
+The V3 admin's own `DateTimeInput` (`V3BusinessCaseFlowPages.js`) still uses
+the native input and was not touched. The identically-named `DateTimeInput` in
+`V1BusinessCaseFlowPages.js` is dead code - nothing renders it.
