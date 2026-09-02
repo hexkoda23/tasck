@@ -256,3 +256,109 @@ time an admin saves that snapshot's sections.
 Also note: when a snapshot is locked (approved by both sides) the section
 editor is disabled, so priority can no longer be changed from this page at all.
 Previously the header dropdown stayed live.
+
+---
+
+## Generated once, then saved - and a Next on every flow page
+
+Two problems in the admin business-case flow, fixed together.
+
+**Nothing said the work was already done.** Every page that generates something
+offered its Generate button forever, identically on a blank project and on one
+where the AI had already run. Admins re-ran generation they did not need,
+paying for it in AI calls and in overwritten edits.
+
+**Nothing carried you forward once it was.** A page's own primary action is
+also its way onward ("Promote to Frame", "Open Pitch Deck"), so once the work
+was finished the button was gone and the browser Back button was the only exit.
+
+### Telling "already generated" from "edited since"
+
+`content_fingerprint()` in `backend/v3_routes.py`, mirrored by
+`frontend/src/lib/contentFingerprint.js`. FNV-1a over UTF-16 code units,
+whitespace collapsed, per-text hashes sorted and joined - order-independent,
+and verified to agree across the two languages including non-BMP characters.
+
+Generation stamps the fingerprint of what it read; the page recomputes it from
+what is on screen. Equal means the stored artifact already covers exactly this
+text. Different means it was edited and the action comes back.
+
+Because the fingerprint is a sorted join of per-text hashes, a page can also
+test one conversation for membership and mark that card individually.
+
+| Stamp | Written by | Read by |
+| --- | --- | --- |
+| `connect.opportunities_fingerprint`, `connect.opportunities_detected_at` | opportunity detection (`detect-opportunities`) | Conversations & Transcripts |
+| `connect.analysis_fingerprint`, `connect.analyzed_at` | `connect/analyze-all` | the V3 admin's Connect Schedule |
+| `source_fingerprint` on the snapshot | Alignment Snapshot generation | Alignment Snapshot page |
+
+### Conversations & Transcripts (`V1ConnectSources.js`)
+
+Note this is the live page. The similarly-named `V3BusinessCaseConnectSchedule`
+in `V1BusinessCaseFlowPages.js` serves the **V3** admin only; it got the same
+treatment so the two surfaces do not diverge.
+
+* **Saved conversations** card under the panel - one small card per stored
+  conversation, green "Analysed and saved", amber "Edited since the last
+  analysis", or "Saved, not yet analysed".
+* Analysed and current, snapshots already generated: **no Analyze, no
+  Generate** - just the saved card and the footer Next.
+* Analysed and current, no snapshots yet: saved card plus **Review
+  opportunities**, the one step left.
+* Never analysed, or edited since: the Analyze action, headed "Re-analyze
+  conversations" when it is a rerun.
+
+### Alignment Snapshot
+
+Saved card at the top of the card body. `source_fingerprint` vs the case's
+`connect.analysis_fingerprint` decides: current hides **Generate/Regenerate**
+entirely, because regenerating would overwrite the admin's edits to reproduce
+the same document; diverged shows the amber card and brings Regenerate back,
+warning that edits will be replaced. A snapshot generated before this stamp
+existed carries no fingerprint and is treated as current rather than nagging.
+
+### Pitch Deck and Creative Brief
+
+No fingerprint exists for these yet - their sources are the snapshot and the
+creator selection rather than a single editable text - so they get the softer
+version: once the artifact is stored the primary Generate leaves the header and
+a demoted **Regenerate** lives inside the saved card. Not hidden, just no
+longer the loudest thing on the page. Add a source fingerprint at generation
+time to give them the same hard rule.
+
+### Footer navigation
+
+`frontend/src/lib/v1FlowSteps.js` holds the order; `FlowFooterNav` inside
+`FlowShell` renders Previous / Next at the bottom of **every** flow page, so
+this arrived everywhere at once rather than page by page.
+
+```
+Connect -> Conversations & Transcripts -> Alignment Snapshot ->
+Brainstorm Transcript -> Brainstorm -> Creator Selector -> Pitch Deck ->
+Creative Brief -> Planning -> Contract Studio -> Deliverables -> Final Report
+```
+
+`ASIDE_STEPS` covers pages beside the chain (Creator Briefing Call, the Connect
+detours, the waiting/review pages) - each names its own neighbours instead of
+taking a slot. Snapshot scope is preserved: on
+`/business-cases/:id/snapshot/:sid/frame/pitch-deck`, Next stays inside that
+snapshot for the steps that support it. Legacy `/plan/*` aliases resolve to
+their `/frame/*` twins. The first page has no Previous, the last no Next.
+
+### Verified
+
+Against a local stub of the API (no writes to the live demo database),
+switching between scenarios: analysed-no-snapshot, analysed-with-snapshot,
+edited, never-analysed, and stale-snapshot. In the edited scenario only the
+edited conversation flipped to amber - the two untouched transcripts stayed
+green - and the Analyze action returned as "Re-analyze conversations". Footer
+neighbours spot-checked on Connect, Brainstorm, Creator Selector, a
+snapshot-scoped Pitch Deck, Planning and Final Report (no Next, as the last
+step).
+
+### Also fixed in passing
+
+`ConversationsPanel` reported `{ count }` to a page that stored it as the count
+itself, so `conversationCount > 0` compared an object and the hint always read
+"Add and save at least one conversation" no matter how many were on file. It
+now reports `{ count, rows }` and the page reads `.count`.

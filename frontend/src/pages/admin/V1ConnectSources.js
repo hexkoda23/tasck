@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Mail, MessageCircle, FileText, Trash2, Upload, Sparkles, Merge, Check, X, Plus, CheckCircle2 } from 'lucide-react';
+import { Loader2, Mail, MessageCircle, FileText, Trash2, Upload, Sparkles, Merge, Check, X, Plus, CheckCircle2, PencilLine, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   v3ListConnectSources,
@@ -16,6 +16,8 @@ import {
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { FlowShell, saveConnectTranscriptSessions, useBusinessCaseBundle } from './V1BusinessCaseFlowPages';
+import SavedArtifactCard from '../../components/admin/SavedArtifactCard';
+import { contentFingerprint } from '../../lib/contentFingerprint';
 
 // The three things admin drips in over time. A Connect call is rarely the only
 // conversation - the real detail often lives in the WhatsApp thread or the
@@ -563,7 +565,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
       const merged = [...meetingRows, ...sourceRows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
       setRows(merged.length ? merged : [createConversationRow(0)]);
       setDirty(false);
-      if (typeof onChangedRef.current === 'function') onChangedRef.current({ count: merged.length });
+      if (typeof onChangedRef.current === 'function') onChangedRef.current({ count: merged.length, rows: merged });
     } catch (e) {
       // Non-fatal: show an empty editor rather than blocking the page.
       setRows([createConversationRow(0)]);
@@ -890,10 +892,48 @@ export const V1BusinessCaseConnectSchedulePage = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisPopup, setAnalysisPopup] = useState({ open: false, progress: 0, message: '', status: 'running' });
   const [hasContent, setHasContent] = useState(false);
-  const [conversationCount, setConversationCount] = useState(0);
+  // ConversationsPanel reports { count, rows } after every load/save. The rows
+  // are what this page fingerprints to answer "is the stored analysis still
+  // about this text?".
+  const [conversations, setConversations] = useState({ count: 0, rows: [] });
   const inFlightRef = useRef(false);
-  const stableSetConversationCount = useCallback(setConversationCount, []);
+  const stableSetConversations = useCallback(setConversations, []);
   const stableSetHasContent = useCallback(setHasContent, []);
+
+  const bc = bundle?.business_case || {};
+  const connect = bc.connect || {};
+  /*
+   * Generated-once state for this page.
+   *
+   * Opportunity detection stamps `connect.opportunities_fingerprint` with a
+   * fingerprint of every conversation it read. Recomputing it from the rows on
+   * screen says whether the stored analysis already covers exactly this text.
+   * Matching means the work is done and the Analyze button stays away; a
+   * difference means a conversation was edited or added and it needs running
+   * again.
+   */
+  const savedFingerprint = String(connect.opportunities_fingerprint || '');
+  const savedFingerprintParts = savedFingerprint ? savedFingerprint.split('-') : [];
+  const analyzedAt = connect.opportunities_detected_at || '';
+  const conversationRows = Array.isArray(conversations.rows) ? conversations.rows : [];
+  const conversationCount = Number(conversations.count) || 0;
+  const currentFingerprint = contentFingerprint(conversationRows.map((row) => row.content));
+  const hasAnalysis = Boolean(analyzedAt && savedFingerprint);
+  const analysisStale = hasAnalysis && currentFingerprint !== savedFingerprint;
+  const opportunityCount = (connect.opportunities || []).length;
+  // The Alignment Snapshots these opportunities produced. Once they exist this
+  // page has nothing left to trigger - the footer Next carries the admin on.
+  const snapshotGenerated = Boolean(
+    (Array.isArray(bundle?.alignment_snapshots) && bundle.alignment_snapshots.length)
+    || bundle?.alignment_snapshot?.id
+    || bc?.frame?.alignment_snapshot_id
+  );
+  const savedConversations = conversationRows
+    .filter((row) => row.backendId && String(row.content || '').trim())
+    .map((row) => ({
+      ...row,
+      analysed: savedFingerprintParts.includes(contentFingerprint([row.content])),
+    }));
 
   const go = (path) => navigate(adminRoute(path));
 
@@ -933,39 +973,104 @@ export const V1BusinessCaseConnectSchedulePage = () => {
       <ConversationsPanel
         businessCaseId={id}
         bundle={bundle}
-        onChanged={stableSetConversationCount}
+        onChanged={stableSetConversations}
         onContentChange={stableSetHasContent}
       />
 
-      <div className="v3-card p-5 mt-5" data-testid="connect-analyze-card">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Analyze conversations</h2>
-            <p className="text-[12px] text-[#6E6657] mt-1 max-w-2xl">
-              One click reads every saved transcript, email and WhatsApp chat, then splits them into separate
-              campaigns. After that you can merge any that are really the same job and move them into Alignment
-              Snapshots for the brand to rank.
-            </p>
-            <p className="text-[11px] text-[#8A8A8A] mt-1">
-              {conversationCount > 0
-                ? `${conversationCount} conversation(s) on file.`
-                : hasContent
-                  ? 'Save your conversations first so they are included in the analysis.'
-                  : 'Add and save at least one conversation above before analyzing.'}
-            </p>
+      {/* The receipt for what is already stored. Coming back to this page used
+          to show the same Analyze button as a blank project, with nothing to
+          say the work had been done. Each card carries whether the stored
+          analysis still covers that conversation's current text. */}
+      {savedConversations.length > 0 && (
+        <div className="v3-card p-5 mt-5" data-testid="connect-saved-conversations-card">
+          <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Saved conversations</h2>
+          <p className="text-[12px] text-[#6E6657] mt-1 mb-3">
+            Stored on this project. {hasAnalysis ? 'The ones marked analysed were read by the last analysis.' : 'Run the analysis below to read them.'}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2" data-testid="connect-saved-conversations">
+            {savedConversations.map((row) => (
+              <div
+                key={row.id}
+                className={`flex items-start gap-2 rounded-lg border p-3 ${row.analysed ? 'border-[#C7D7CF] bg-[#EAF4EE]' : 'border-[#E5C99A] bg-[#FBF4E4]'}`}
+                data-testid={`connect-saved-conversation-${row.id}`}
+                data-analysed={row.analysed ? 'true' : 'false'}
+              >
+                {row.analysed
+                  ? <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#1F4A3A]" />
+                  : <PencilLine className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#8A6E2F]" />}
+                <div className="min-w-0">
+                  <p className="truncate text-[12px] font-semibold text-[#1A1A1A]">{row.label || kindMeta(row.kind).label}</p>
+                  <p className={`mt-0.5 text-[11px] ${row.analysed ? 'text-[#4F6B5D]' : 'text-[#7A5A1E]'}`}>
+                    {row.analysed
+                      ? 'Analysed and saved'
+                      : (hasAnalysis ? 'Edited since the last analysis' : 'Saved, not yet analysed')}
+                    {row.date ? ' \u00b7 ' + row.date : ''}
+                  </p>
+                </div>
+              </div>
+            ))}
           </div>
-          <button
-            type="button"
-            onClick={runAnalyze}
-            disabled={analyzing}
-            className="v3-btn-primary inline-flex items-center gap-1.5 whitespace-nowrap"
-            data-testid="connect-analyze-btn"
-          >
-            {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {analyzing ? 'Analyzing…' : 'Analyze conversations'}
-          </button>
         </div>
-      </div>
+      )}
+
+      {/* Three states. Analysed and current with snapshots already generated:
+          nothing to press, the footer Next moves on. Analysed and current
+          without snapshots: the only thing left is reviewing the opportunities
+          and generating. Never analysed, or edited since: the Analyze action. */}
+      {hasAnalysis && !analysisStale ? (
+        <div className="mt-5" data-testid="connect-analyze-card">
+          <SavedArtifactCard
+            title="Conversation analysis"
+            savedAt={analyzedAt}
+            detail={snapshotGenerated
+              ? 'The Alignment Snapshot has been generated from it.'
+              : `${opportunityCount} opportunit${opportunityCount === 1 ? 'y' : 'ies'} found. Review them to generate the Alignment Snapshot.`}
+            action={snapshotGenerated ? null : (
+              <button
+                type="button"
+                onClick={() => go(`/business-cases/${id}/connect/opportunities`)}
+                className="v3-btn-primary text-[12px] whitespace-nowrap"
+                data-testid="connect-review-opportunities-btn"
+              >
+                Review opportunities <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+            testId="connect-analysis-saved-card"
+          />
+        </div>
+      ) : (
+        <div className="v3-card p-5 mt-5" data-testid="connect-analyze-card">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">
+                {analysisStale ? 'Re-analyze conversations' : 'Analyze conversations'}
+              </h2>
+              <p className="text-[12px] text-[#6E6657] mt-1 max-w-2xl">
+                {analysisStale
+                  ? 'A conversation has been edited or added since the last analysis. Run it again so the opportunities and the Alignment Snapshot are built from the current text.'
+                  : 'One click reads every saved transcript, email and WhatsApp chat, then splits them into separate campaigns. After that you can merge any that are really the same job and move them into Alignment Snapshots for the brand to rank.'}
+              </p>
+              <p className="text-[11px] text-[#8A8A8A] mt-1">
+                {conversationCount > 0
+                  ? `${conversationCount} conversation${conversationCount === 1 ? '' : 's'} on file.`
+                  : hasContent
+                    ? 'Save your conversations first so they are included in the analysis.'
+                    : 'Add and save at least one conversation above before analyzing.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={runAnalyze}
+              disabled={analyzing}
+              className="v3-btn-primary inline-flex items-center gap-1.5 whitespace-nowrap"
+              data-testid="connect-analyze-btn"
+            >
+              {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {analyzing ? 'Analyzing…' : (analysisStale ? 'Re-analyze conversations' : 'Analyze conversations')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {analysisPopup.open && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="connect-analysis-popup">

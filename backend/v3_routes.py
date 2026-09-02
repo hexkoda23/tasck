@@ -267,6 +267,36 @@ PRIORITY_COLORS = {
 DEFAULT_SNAPSHOT_PRIORITY = ""  # brand has not ranked it yet
 
 
+def content_fingerprint(texts) -> str:
+    """Order-independent fingerprint of a set of texts.
+
+    Stamped onto a record when something is generated from those texts, so the
+    admin page can tell whether what is on screen is still what the artifact
+    was built from: equal means "already generated from exactly this" and the
+    Generate button stays hidden; different means the text was edited and the
+    action comes back.
+
+    Mirrors frontend/src/lib/contentFingerprint.js - FNV-1a over UTF-16 code
+    units, whitespace collapsed, per-text hashes sorted. Not a security hash;
+    it only has to agree with the JavaScript implementation.
+    """
+    parts = []
+    for value in (texts if isinstance(texts, (list, tuple)) else [texts]):
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            continue
+        # Iterate UTF-16 code units so the hash matches charCodeAt() in JS.
+        h = 2166136261
+        raw = text.encode("utf-16-le", "surrogatepass")
+        for i in range(0, len(raw), 2):
+            unit = raw[i] | (raw[i + 1] << 8)
+            h ^= unit
+            h = (h * 16777619) & 0xFFFFFFFF
+        parts.append(format(h, "x"))
+    parts.sort()
+    return "-".join(parts)
+
+
 def focus_priority_narrative(segments, priority_options=None) -> str:
     """Build the Focus & Priority section narrative from the segments, grouped by
     priority (most urgent first, using the given priority order) so admin and
@@ -6929,6 +6959,12 @@ def make_v3_router(db):
                 {"heading": "Recommended Next Step", "type": "prose", "content": next_step},
             ],
             "scope_flags": scope_flags,
+            # What this snapshot was built from. The Alignment Snapshot page
+            # compares it against the case's current connect.analysis_fingerprint:
+            # equal means the snapshot already reflects the analysed
+            # conversations and Regenerate stays hidden; different means the
+            # transcripts were edited and re-analysed since, so it comes back.
+            "source_fingerprint": str(connect.get("analysis_fingerprint") or ""),
         }
         if opportunity:
             # Tie the snapshot to its opportunity and give the brand somewhere
@@ -14904,6 +14940,24 @@ def make_v3_router(db):
     # opportunities. Admin reviews them, merges any that are really the
     # same job, and then generates one Alignment Snapshot per survivor.
     # ------------------------------------------------------------------
+    async def _connect_evidence_fingerprint(bc_id: str) -> str:
+        """Fingerprint of the conversations, piece by piece.
+
+        Stamped when opportunity detection runs so the Conversations &
+        Transcripts page can tell whether the analysis it is showing was built
+        from the text currently on screen. Fingerprints the same units the page
+        holds - one per meeting transcript, one per uploaded source - so the
+        page can also mark an individual conversation as edited.
+        """
+        sources = await db.v3_connect_sources.find({"business_case_id": bc_id}, {"_id": 0}).to_list(500)
+        meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
+        texts = [s.get("content") for s in sources]
+        texts += [
+            m.get("transcript") for m in meetings
+            if (m.get("meeting_type") or m.get("type")) == "business_call"
+        ]
+        return content_fingerprint(texts)
+
     async def _all_connect_evidence(bc_id: str) -> str:
         """Uploaded sources + any meeting transcripts, as one corpus."""
         corpus, _rows = await _connect_source_corpus(bc_id)
@@ -15016,6 +15070,9 @@ def make_v3_router(db):
                         "connect.opportunities": opportunities,
                         "connect.opportunities_detected_at": now,
                         "connect.opportunities_source": result.get("analysis_source") or "llm",
+                        # What this ran on, so the page knows whether the stored
+                        # analysis still covers the conversations on screen.
+                        "connect.opportunities_fingerprint": await _connect_evidence_fingerprint(bc_id),
                         "updated_at": now,
                     },
                      "$push": {"timeline": {"at": now, "event": "opportunities_detected", "count": len(opportunities)}}},
@@ -15351,6 +15408,16 @@ def make_v3_router(db):
                 "connect.status_updated_at": now,
                 "connect.updated_at": now,
                 "connect.latest_meeting_date": ", ".join(meeting_dates) if meeting_dates else None,
+                # Stamp WHEN this ran and WHAT it ran on. The Conversations &
+                # Transcripts page compares the fingerprint of the transcripts
+                # it currently holds against this one: equal means the analysis
+                # is already stored for exactly this text, so the Analyze
+                # button stays hidden and the admin just moves on; different
+                # means a transcript was edited and it needs running again.
+                "connect.analyzed_at": now,
+                "connect.analysis_fingerprint": content_fingerprint(
+                    [m.get("transcript") for m in (meetings or [])]
+                ),
                 "updated_at": now,
             }}
         )

@@ -2,12 +2,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
+import { flowNeighbours, flowStepHref } from '../../lib/v1FlowSteps';
 import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PriorityTag, PRIORITY_OPTIONS } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
 import PitchDeckSlideEditor from '../../components/admin/PitchDeckSlideEditor';
 import DateTimePickerField from '../../components/admin/DateTimePickerField';
+import SavedArtifactCard from '../../components/admin/SavedArtifactCard';
+import { contentFingerprint } from '../../lib/contentFingerprint';
 import { TtaLetterhead } from '../../components/v1/TtaLetterhead';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
 
@@ -94,6 +97,7 @@ import {
   Hash,
   CircleDot,
   ExternalLink,
+  PencilLine,
 } from 'lucide-react';
 import {
   v3AcceptCreatorBriefing,
@@ -450,6 +454,50 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
         })}
       </div>
       {children}
+      <FlowFooterNav id={id} />
+    </div>
+  );
+};
+
+/*
+ * Previous / Next at the bottom of every flow page.
+ *
+ * A page's own primary action only appears while there is work outstanding -
+ * once a snapshot is generated or a deck is built, the button that used to
+ * carry you onward is gone, and coming back to a finished page left the
+ * browser Back button as the only way out. This footer is always there, so
+ * revisiting a completed page never means redoing it to move on.
+ */
+const FlowFooterNav = ({ id }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { prev, next, snapshotId } = flowNeighbours(location.pathname, id);
+  if (!prev && !next) return null;
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E8E4DB] pt-4"
+      data-testid="flow-footer-nav"
+    >
+      {prev ? (
+        <button
+          type="button"
+          onClick={() => navigate(flowStepHref(prev, id, snapshotId))}
+          className="v3-btn-secondary text-[12px]"
+          data-testid="flow-footer-prev"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" /> {prev.label}
+        </button>
+      ) : <span />}
+      {next && (
+        <button
+          type="button"
+          onClick={() => navigate(flowStepHref(next, id, snapshotId))}
+          className="v3-btn-primary text-[12px]"
+          data-testid="flow-footer-next"
+        >
+          Next: {next.label} <ArrowRight className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   );
 };
@@ -810,7 +858,7 @@ export const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, 
   return savedSessions;
 };
 
-const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel = 'Promote to Frame Regardless' }) => {
+const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel = 'Promote to Frame Regardless', hideActions = false }) => {
   if (!result) return null;
   const reasons = Array.isArray(result.reasons) ? result.reasons : [];
   const missing = Array.isArray(result.missing_context) ? result.missing_context : [];
@@ -845,14 +893,19 @@ const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel =
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 border-t border-[#E8E4DB] pt-4">
-        <button type="button" onClick={onReschedule} className="v3-btn-secondary flex items-center gap-1" data-testid="connect-schedule-another-call-btn">
-          <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
-        </button>
-        <button type="button" onClick={onPromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-regardless-btn">
-          <CheckCircle2 className="w-3.5 h-3.5" /> {promoteButtonLabel}
-        </button>
-      </div>
+      {/* Once this analysis has already produced an Alignment Snapshot there
+          is nothing to decide here any more, so the actions come off and the
+          admin moves on with the footer Next. */}
+      {!hideActions && (
+        <div className="flex flex-wrap gap-2 border-t border-[#E8E4DB] pt-4">
+          <button type="button" onClick={onReschedule} className="v3-btn-secondary flex items-center gap-1" data-testid="connect-schedule-another-call-btn">
+            <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
+          </button>
+          <button type="button" onClick={onPromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-regardless-btn">
+            <CheckCircle2 className="w-3.5 h-3.5" /> {promoteButtonLabel}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -1579,6 +1632,51 @@ export const V3BusinessCaseConnectSchedule = () => {
     }
   };
 
+  /*
+   * Has this text already been analysed, and is that analysis still current?
+   *
+   * The backend stamps `connect.analyzed_at` and `connect.analysis_fingerprint`
+   * (a fingerprint of the transcripts it ran on) every time analyze-all
+   * completes. Recomputing that fingerprint from the transcripts on screen
+   * answers both questions: equal means the stored analysis already covers
+   * exactly this text, so the Analyze button stays away; different means a
+   * transcript was edited or added and the work needs doing again.
+   */
+  const savedFingerprint = String(bc?.connect?.analysis_fingerprint || '');
+  const savedFingerprintParts = savedFingerprint ? savedFingerprint.split('-') : [];
+  const analyzedAt = bc?.connect?.analyzed_at || '';
+  const currentFingerprint = contentFingerprint(transcriptSessions.map((session) => session.content));
+  const hasAnalysis = Boolean(analysisResult && analyzedAt && savedFingerprint);
+  const analysisStale = hasAnalysis && currentFingerprint !== savedFingerprint;
+  // The Alignment Snapshot this analysis fed. Once it exists there is nothing
+  // left to trigger on this page.
+  const snapshotGenerated = Boolean(
+    bundle?.alignment_snapshot?.id
+    || (Array.isArray(bundle?.alignment_snapshots) && bundle.alignment_snapshots.length)
+    || bc?.frame?.alignment_snapshot_id
+  );
+  // Conversations already stored on the project, each marked with whether the
+  // stored analysis covers its current text.
+  const savedConversations = transcriptSessions
+    .filter((session) => session.meetingId && transcriptHasContent(session))
+    .map((session) => ({
+      ...session,
+      analysed: savedFingerprintParts.includes(contentFingerprint([session.content])),
+    }));
+
+  const analyzeButton = (
+    <button
+      type="button"
+      onClick={runCombinedAnalysis}
+      disabled={analyzing || saving || !transcriptSessions.some(transcriptHasContent)}
+      className="v3-btn-primary flex items-center gap-1.5"
+      data-testid="connect-analyze-all-btn"
+    >
+      {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+      {analyzing ? 'Analyzing all transcripts...' : (hasAnalysis ? 'Re-analyze transcripts' : 'Analyze All Transcripts')}
+    </button>
+  );
+
   const handlePromote = () => {
     setSaving(true);
     setSaveNotice('Opening Frame phase while TASCK prepares the Alignment Snapshot...');
@@ -1625,6 +1723,38 @@ export const V3BusinessCaseConnectSchedule = () => {
         />
       )}
 
+      {/* Conversations already stored on this project. Nothing here is an
+          action - it is the receipt, so returning to this page shows at a
+          glance what has been saved and analysed instead of leaving the admin
+          guessing whether they still have work to do. A card flips to
+          "Edited" the moment its text no longer matches what the stored
+          analysis was run on. */}
+      {savedConversations.length > 0 && (
+        <InfoCard title="Saved conversations">
+          <div className="grid gap-2 sm:grid-cols-2" data-testid="connect-saved-conversations">
+            {savedConversations.map((session) => (
+              <div
+                key={session.id}
+                className={`flex items-start gap-2 rounded-lg border p-3 ${session.analysed ? 'border-[#C7D7CF] bg-[#EAF4EE]' : 'border-[#E5C99A] bg-[#FBF4E4]'}`}
+                data-testid={`connect-saved-conversation-${session.id}`}
+                data-analysed={session.analysed ? 'true' : 'false'}
+              >
+                {session.analysed
+                  ? <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#1F4A3A]" />
+                  : <PencilLine className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#8A6E2F]" />}
+                <div className="min-w-0">
+                  <p className="truncate text-[12px] font-semibold text-[#1A1A1A]">{session.session || 'Session'}</p>
+                  <p className={`mt-0.5 text-[11px] ${session.analysed ? 'text-[#4F6B5D]' : 'text-[#7A5A1E]'}`}>
+                    {session.analysed ? 'Analysed and saved' : 'Edited since the last analysis'}
+                    {session.date ? ` · ${session.date}` : ''}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </InfoCard>
+      )}
+
       {/* Conversation sources: transcripts, email chains, WhatsApp threads.
           Added over time; all of them feed the opportunity analysis below. */}
       <ConnectSourcesPanel businessCaseId={id} />
@@ -1637,24 +1767,45 @@ export const V3BusinessCaseConnectSchedule = () => {
       />
 
       <InfoCard title="Combined AI Transcript Analysis">
-        <p className="text-[12px] text-[#6E6657] mb-4">
-          Analyze transcripts from all Connect meetings to extract marketing intelligence, verify readiness criteria, and generate the stage recommendation.
-        </p>
-        <button
-          type="button"
-          onClick={runCombinedAnalysis}
-          disabled={analyzing || saving || !transcriptSessions.some(transcriptHasContent)}
-          className="v3-btn-primary flex items-center gap-1.5"
-          data-testid="connect-analyze-all-btn"
-        >
-          {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-          {analyzing ? 'Analyzing all transcripts...' : 'Analyze All Transcripts'}
-        </button>
+        {/* Three states. Never analysed: offer it. Analysed and still current:
+            say so and offer nothing - generating the Alignment Snapshot is the
+            only thing left, and once that exists even that goes. Edited since:
+            the amber card brings the action back. */}
+        {hasAnalysis && !analysisStale ? (
+          <SavedArtifactCard
+            title="Conversation analysis"
+            savedAt={analyzedAt}
+            detail={snapshotGenerated
+              ? 'The Alignment Snapshot has been generated from it.'
+              : 'Generate the Alignment Snapshot below when you are ready.'}
+            testId="connect-analysis-saved-card"
+          />
+        ) : (
+          <>
+            <p className="text-[12px] text-[#6E6657] mb-4">
+              Analyze transcripts from all Connect meetings to extract marketing intelligence, verify readiness criteria, and generate the stage recommendation.
+            </p>
+            {analysisStale && (
+              <div className="mb-3">
+                <SavedArtifactCard
+                  title="Conversation analysis"
+                  savedAt={analyzedAt}
+                  stale
+                  staleMessage="A transcript has been edited or added since this analysis ran. Analyze again so the Alignment Snapshot is built from the current text."
+                  action={analyzeButton}
+                  testId="connect-analysis-saved-card"
+                />
+              </div>
+            )}
+            {!analysisStale && analyzeButton}
+          </>
+        )}
 
         <ConnectAnalysisResult
           result={analysisResult}
           onPromote={handlePromote}
           onReschedule={() => navigate(adminRoute(`/business-cases/${id}/connect/reschedule`))}
+          hideActions={hasAnalysis && !analysisStale && snapshotGenerated}
         />
       </InfoCard>
 
@@ -2303,6 +2454,24 @@ export const V3BusinessCaseFrameSnapshot = () => {
   // dropdown as it is changed. Falls back to whatever is stored for snapshots
   // that carry no Focus & Priority section, or that the brand ranked itself.
   const activePriority = derivePriorityFromSections(activeSnapshot?.sections) || snapshot?.priority || '';
+  /*
+   * Generated-once state. `source_fingerprint` is stamped on the snapshot at
+   * generation time from the case's connect.analysis_fingerprint, so comparing
+   * the two says whether this snapshot still reflects the analysed
+   * conversations. Matching means it is stored and current - the card says so
+   * and Regenerate is not offered, because regenerating would overwrite the
+   * admin's own edits for nothing. Once the transcripts are edited and
+   * re-analysed the fingerprints diverge and the action returns.
+   */
+  const snapshotSourceFingerprint = String(snapshot?.source_fingerprint || '');
+  const connectFingerprint = String(bundle?.business_case?.connect?.analysis_fingerprint || '');
+  const snapshotStale = Boolean(
+    hasSnapshot && snapshotSourceFingerprint && connectFingerprint
+    && snapshotSourceFingerprint !== connectFingerprint
+  );
+  // A snapshot generated before this stamp existed carries no fingerprint;
+  // treat it as current rather than nagging for a regenerate it may not need.
+  const snapshotCurrent = hasSnapshot && !snapshotStale;
   const preparingFrame = Boolean(location.state?.preparingFrame);
   // Brand comments on the alignment snapshot, shown right on this page so
   // admin sees and works on them without hunting for the admin-review page.
@@ -2700,12 +2869,31 @@ export const V3BusinessCaseFrameSnapshot = () => {
               ? <PriorityTag priority={activePriority} className="self-center" />
               : <span className="self-center text-[10px] uppercase tracking-wider text-[#8A8A8A]" data-testid="alignment-priority-unset">Priority not set</span>
             )}
-            <button data-testid="alignment-generate-btn" onClick={generateSnapshot} disabled={generating} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"><Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> {generating ? 'Generating…' : (hasSnapshot ? 'Regenerate Snapshot' : 'Generate Snapshot')}</button>
+            {/* Generate shows until there is a snapshot, and comes back only
+                when the conversations have been re-analysed since. A stored,
+                current snapshot offers nothing to press - regenerating would
+                overwrite the admin's edits and re-spend an AI call to produce
+                the same document. */}
+            {(!snapshotCurrent || generating) && (
+              <button data-testid="alignment-generate-btn" onClick={generateSnapshot} disabled={generating} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"><Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> {generating ? 'Generating…' : (hasSnapshot ? 'Regenerate Snapshot' : 'Generate Snapshot')}</button>
+            )}
             <button data-testid="alignment-preview-btn" onClick={openPreview} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Preview</button>
             <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> {snapshot?.brand_approved ? 'Admin approve & continue' : 'Admin approve'}</button>
           </div>
         )}
       >
+        {hasSnapshot && (
+          <div className="mb-3">
+            <SavedArtifactCard
+              title="Alignment Snapshot"
+              savedAt={snapshot?.generated_at || snapshot?.updated_at}
+              detail="Edit it below and Save - your edits are kept."
+              stale={snapshotStale}
+              staleMessage="The conversations have been re-analysed since this snapshot was generated. Use Regenerate Snapshot above to rebuild it from the current analysis - your edits to this document will be replaced."
+              testId="alignment-saved-card"
+            />
+          </div>
+        )}
         {notice && (
           <div data-testid="alignment-notice" className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]">
             {notice}{stage && stage !== 'frame' ? ` (Current stage: ${bundle?.business_case?.stage_label || stage})` : ''}
@@ -4335,16 +4523,20 @@ export const V3BusinessCasePlanBrief = () => {
         title="TASCK Creative Brief (approved template)"
         action={(
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={generateTemplateBrief}
-              disabled={generatingBrief}
-              className="v3-btn-primary text-[12px]"
-              data-testid="brief-generate-template-btn"
-            >
-              {generatingBrief ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {generatingBrief ? 'Writing…' : (templateBrief ? 'Regenerate brief' : 'Generate brief')}
-            </button>
+            {/* Same rule as the Pitch Deck: once the brief is stored the
+                primary Generate goes and Regenerate sits in the saved card. */}
+            {(!templateBrief || generatingBrief) && (
+              <button
+                type="button"
+                onClick={generateTemplateBrief}
+                disabled={generatingBrief}
+                className="v3-btn-primary text-[12px]"
+                data-testid="brief-generate-template-btn"
+              >
+                {generatingBrief ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {generatingBrief ? 'Writing…' : 'Generate brief'}
+              </button>
+            )}
             {templateBrief && (
               <>
                 <a
@@ -4365,6 +4557,21 @@ export const V3BusinessCasePlanBrief = () => {
           </div>
         )}
       >
+        {templateBrief && !generatingBrief && (
+          <div className="mb-3">
+            <SavedArtifactCard
+              title="Creative Brief"
+              savedAt={templateBrief.generated_at || templateBrief.updated_at}
+              detail="Download or send it below."
+              action={(
+                <button type="button" onClick={generateTemplateBrief} className="v3-btn-secondary text-[12px]" data-testid="brief-regenerate-btn">
+                  <Sparkles className="w-3.5 h-3.5" /> Regenerate
+                </button>
+              )}
+              testId="brief-saved-card"
+            />
+          </div>
+        )}
         {generatingBrief && briefProgress && (
           <p className="text-[12px] text-[#1F4A3A] mb-3 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {briefProgress}</p>
         )}
@@ -5029,10 +5236,16 @@ export const V3BusinessCasePitchDeck = () => {
         title="Pitch Deck"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={() => generate(0)} disabled={generating} className="v3-btn-primary text-[12px]" data-testid="pitch-generate-btn">
-              {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {generating ? 'Writing…' : (deck ? 'Regenerate' : 'Generate Pitch Deck')}
-            </button>
+            {/* Generate is the primary action only until a deck exists.
+                After that the deck is stored, the saved card below says so,
+                and Regenerate lives inside it - out of the way of an admin
+                who came back only to read or to move on. */}
+            {(!deck || generating) && (
+              <button onClick={() => generate(0)} disabled={generating} className="v3-btn-primary text-[12px]" data-testid="pitch-generate-btn">
+                {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {generating ? 'Writing…' : 'Generate Pitch Deck'}
+              </button>
+            )}
             {deck && (
               <>
                 <button onClick={saveEdits} disabled={saving} className="v3-btn-secondary text-[12px]" data-testid="pitch-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save edits'}</button>
@@ -5050,6 +5263,21 @@ export const V3BusinessCasePitchDeck = () => {
           </div>
         )}
       >
+        {deck && (
+          <div className="mb-3">
+            <SavedArtifactCard
+              title="Pitch Deck"
+              savedAt={deck.generated_at || deck.updated_at}
+              detail="Edit any section below and Save - your edits are kept."
+              action={(
+                <button onClick={() => generate(0)} disabled={generating} className="v3-btn-secondary text-[12px]" data-testid="pitch-regenerate-btn">
+                  {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Regenerate
+                </button>
+              )}
+              testId="pitch-saved-card"
+            />
+          </div>
+        )}
         {!deck && !generating && (
           <p className="text-[12px] text-[#6E6657]">
             Generates the ten-section Pitch Deck - About The Organisation, Context & Core Focus, The Problem, The
