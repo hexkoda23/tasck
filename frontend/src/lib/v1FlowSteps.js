@@ -39,7 +39,10 @@ export const FLOW_STEPS = [
  */
 const ASIDE_STEPS = {
   '/frame/creator-briefing-call': { label: 'Creator Briefing Call', prev: 'brief', next: 'planning' },
-  '/connect/opportunities': { label: 'Opportunities', prev: 'connect-schedule', next: 'snapshot' },
+  // The Opportunities page exists to turn opportunities into Alignment
+  // Snapshots, so it is a real gate; the rest are read-only detours the admin
+  // was sent to, and hiding Next on those would only strand them.
+  '/connect/opportunities': { label: 'Opportunities', prev: 'connect-schedule', next: 'snapshot', requires: 'snapshot' },
   '/connect/questions': { label: 'Connect Questions', prev: 'connect-schedule', next: 'snapshot' },
   '/connect/analysis': { label: 'Connect Analysis', prev: 'connect-schedule', next: 'snapshot' },
   '/connect/reschedule': { label: 'Reschedule', prev: 'connect-schedule', next: 'connect-schedule' },
@@ -104,4 +107,93 @@ export const flowNeighbours = (pathname, id) => {
     next: index < FLOW_STEPS.length - 1 ? FLOW_STEPS[index + 1] : null,
     snapshotId,
   };
+};
+
+/*
+ * Has the work on a step actually been done?
+ *
+ * Next is only offered once it has. A Next on every page regardless would let
+ * an admin walk the whole flow without generating anything, which is exactly
+ * the ordering the stage gating exists to enforce - the footer is there so a
+ * FINISHED page can be left again, not so an unfinished one can be skipped.
+ *
+ * Each rule reads the artifact the step is supposed to produce, from the same
+ * bundle every flow page already loads. Anything not listed has no artifact to
+ * check and is treated as passable.
+ */
+const STEP_DONE = {
+  // A conversation has been saved against the project - the Connect page's own
+  // CTA flips from "Add Transcript" to "Next" on the same condition.
+  connect: (bundle, bc) => Boolean(
+    (Array.isArray(bundle.meetings) && bundle.meetings.length)
+    || Number(bundle.connect_sources_count) > 0
+  ),
+  // The conversations have been analysed.
+  'connect-schedule': (bundle, bc) => Boolean(
+    bc.connect?.opportunities_detected_at || bc.connect?.analyzed_at
+  ),
+  snapshot: (bundle, bc) => Boolean(
+    bundle.alignment_snapshot?.id
+    || (Array.isArray(bundle.alignment_snapshots) && bundle.alignment_snapshots.length)
+    || bc.frame?.alignment_snapshot_id
+  ),
+  'brainstorm-transcript': (bundle, bc) => Boolean(
+    bc.plan?.brainstorm_transcript_analyzed_at || bundle.brainstorm_round?.id
+  ),
+  brainstorm: (bundle, bc) => Boolean(bundle.brainstorm_round?.id || bc.plan?.brainstorm_round_id),
+  'creator-scan': (bundle, bc) => Boolean(
+    (Array.isArray(bundle.selected_creator_ids) && bundle.selected_creator_ids.length)
+    || (Array.isArray(bc.plan?.selected_creator_ids) && bc.plan.selected_creator_ids.length)
+  ),
+  'pitch-deck': (bundle, bc) => Boolean(bundle.pitch_deck?.id || bc.plan?.pitch_deck_id),
+  brief: (bundle, bc) => Boolean(bundle.creative_brief?.id || bc.plan?.generated_brief),
+  // Planning is closed off explicitly; the stepper unlocks Delivery on the
+  // same flag.
+  planning: (bundle, bc) => Boolean(bc.plan?.planning_completed_at),
+  contracts: (bundle, bc) => Boolean(
+    bundle.contract?.id || (Array.isArray(bundle.contracts) && bundle.contracts.length)
+  ),
+  deliverables: (bundle, bc) => Boolean(
+    bc.plan?.delivery_completed_at
+    || bc.reporting_started_at
+    || (Array.isArray(bundle.deliverables) && bundle.deliverables.length)
+  ),
+};
+
+/* What the admin still has to do, shown where the Next button would be. */
+export const STEP_PENDING_HINT = {
+  connect: 'Save a conversation with this brand to continue.',
+  'connect-schedule': 'Analyze the conversations to continue.',
+  snapshot: 'Generate the Alignment Snapshot to continue.',
+  'brainstorm-transcript': 'Add and analyse the brainstorm transcript to continue.',
+  brainstorm: 'Run the brainstorm to continue.',
+  'creator-scan': 'Select at least one creator to continue.',
+  'pitch-deck': 'Generate the Pitch Deck to continue.',
+  brief: 'Generate the Creative Brief to continue.',
+  planning: 'Complete Planning to continue.',
+  contracts: 'Generate a contract to continue.',
+  deliverables: 'Add a deliverable, or complete Delivery, to continue.',
+};
+
+export const flowStepComplete = (stepKey, bundle) => {
+  const rule = STEP_DONE[stepKey];
+  if (!rule) return true;
+  if (!bundle) return false;
+  return Boolean(rule(bundle, bundle.business_case || {}));
+};
+
+/**
+ * The step whose completion gates Next on `pathname`. For a step in the chain
+ * that is the step itself; for a detour it is whatever that page names in
+ * `requires`, and detours that name nothing are not gated.
+ */
+export const flowGateKey = (pathname) => {
+  const raw = suffixOf(pathname);
+  const suffix = /^\/plan\/(brainstorm|creator-scan|brief|creator-briefing-call)$/.test(raw)
+    ? raw.replace('/plan/', '/frame/')
+    : raw;
+  const aside = ASIDE_STEPS[suffix];
+  if (aside) return aside.requires || null;
+  const step = FLOW_STEPS.find((entry) => entry.suffix === suffix);
+  return step ? step.key : null;
 };

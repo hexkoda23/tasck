@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-import { flowNeighbours, flowStepHref } from '../../lib/v1FlowSteps';
+import { flowNeighbours, flowStepHref, flowGateKey, flowStepComplete, STEP_PENDING_HINT } from '../../lib/v1FlowSteps';
 import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PriorityTag, PRIORITY_OPTIONS } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
@@ -454,7 +454,7 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
         })}
       </div>
       {children}
-      <FlowFooterNav id={id} />
+      <FlowFooterNav id={id} bundle={bundle} />
     </div>
   );
 };
@@ -465,18 +465,29 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
  * A page's own primary action only appears while there is work outstanding -
  * once a snapshot is generated or a deck is built, the button that used to
  * carry you onward is gone, and coming back to a finished page left the
- * browser Back button as the only way out. This footer is always there, so
- * revisiting a completed page never means redoing it to move on.
+ * browser Back button as the only way out. This footer fixes that.
+ *
+ * Next therefore appears only on a page whose work is DONE. Offering it
+ * everywhere would undo the ordering the whole flow depends on: an admin could
+ * walk from Connect to the Final Report without generating anything. Until the
+ * step is finished the button is not rendered at all, and a muted line says
+ * what finishes it, so its absence reads as a gate rather than a fault.
+ *
+ * Previous is never gated - going back is always safe.
  */
-const FlowFooterNav = ({ id }) => {
+const FlowFooterNav = ({ id, bundle }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { prev, next, snapshotId } = flowNeighbours(location.pathname, id);
   if (!prev && !next) return null;
+  const gateKey = flowGateKey(location.pathname);
+  const passed = gateKey === null ? true : flowStepComplete(gateKey, bundle);
+  const hint = gateKey ? STEP_PENDING_HINT[gateKey] : '';
   return (
     <div
       className="flex flex-wrap items-center justify-between gap-2 border-t border-[#E8E4DB] pt-4"
       data-testid="flow-footer-nav"
+      data-passed={passed ? 'true' : 'false'}
     >
       {prev ? (
         <button
@@ -488,7 +499,7 @@ const FlowFooterNav = ({ id }) => {
           <ArrowLeft className="w-3.5 h-3.5" /> {prev.label}
         </button>
       ) : <span />}
-      {next && (
+      {next && (passed ? (
         <button
           type="button"
           onClick={() => navigate(flowStepHref(next, id, snapshotId))}
@@ -497,7 +508,11 @@ const FlowFooterNav = ({ id }) => {
         >
           Next: {next.label} <ArrowRight className="w-3.5 h-3.5" />
         </button>
-      )}
+      ) : (
+        <p className="text-[11px] text-[#8A8A8A]" data-testid="flow-footer-next-locked">
+          {hint || 'Finish this step to continue.'}
+        </p>
+      ))}
     </div>
   );
 };

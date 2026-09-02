@@ -345,6 +345,42 @@ taking a slot. Snapshot scope is preserved: on
 snapshot for the steps that support it. Legacy `/plan/*` aliases resolve to
 their `/frame/*` twins. The first page has no Previous, the last no Next.
 
+**Next only appears on a page whose work is done.** The first cut put it on
+every page, which quietly removed the requirement to finish a step at all - an
+admin could walk Connect to Final Report generating nothing. The footer exists
+so a FINISHED page can be left again, not so an unfinished one can be skipped.
+
+`STEP_DONE` in `v1FlowSteps.js` holds one rule per step, each reading the
+artifact that step is supposed to produce out of the bundle every flow page
+already loads:
+
+| Step | Passed when |
+| --- | --- |
+| Connect | a meeting or connect source is saved |
+| Conversations & Transcripts | `connect.opportunities_detected_at` / `analyzed_at` |
+| Alignment Snapshot | a snapshot exists |
+| Brainstorm Transcript | `plan.brainstorm_transcript_analyzed_at`, or a round exists |
+| Brainstorm | a brainstorm round exists |
+| Creator Selector | `selected_creator_ids` is non-empty |
+| Pitch Deck | `pitch_deck.id` / `plan.pitch_deck_id` |
+| Creative Brief | `creative_brief.id` / `plan.generated_brief` |
+| Planning | `plan.planning_completed_at` |
+| Contract Studio | a contract exists |
+| Deliverables | `plan.delivery_completed_at`, `reporting_started_at`, or a deliverable |
+
+Until then the button is not rendered and `STEP_PENDING_HINT` puts a muted line
+in its place ("Generate the Pitch Deck to continue."), so the absence reads as
+a gate rather than a fault. **Previous is never gated** - going back is always
+safe. Detour pages are ungated except `/connect/opportunities`, which names
+`requires: 'snapshot'` because generating snapshots is its whole job.
+
+A step with no rule is treated as passable, so adding a page to `FLOW_STEPS`
+without a rule fails open rather than stranding anyone.
+
+Note this gates the *footer* only. A page's own onward buttons are unchanged -
+the Pitch Deck still offers "Open Creative Brief", because those two are
+siblings an admin may do in either order.
+
 ### Verified
 
 Against a local stub of the API (no writes to the live demo database),
@@ -355,6 +391,13 @@ green - and the Analyze action returned as "Re-analyze conversations". Footer
 neighbours spot-checked on Connect, Brainstorm, Creator Selector, a
 snapshot-scoped Pitch Deck, Planning and Final Report (no Next, as the last
 step).
+
+The gate was checked both ways on the same pages: with no analysis the
+Conversations page showed the hint and no button, and gained "Next: Alignment
+Snapshot" once analysed; the Alignment Snapshot page stayed locked until a
+snapshot existed, then offered Brainstorm Transcript. Creator Selector, Pitch
+Deck and Planning all showed their own hints with nothing generated, and the
+ungated `/frame/waiting-brand` detour kept its Next throughout.
 
 ### Also fixed in passing
 
