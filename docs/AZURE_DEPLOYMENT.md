@@ -22,10 +22,24 @@ Mongo connectivity. The 36 account records were seeded with
 `backend/seed_accounts.py` so sign-in could be tested; they are replaced by the
 production restore.
 
-Not yet verified (need secrets and data): AI generation (Anthropic key),
-opportunity scanning (SerpAPI key), email (SMTP), document generation (needs a
-business case with a snapshot). Run `infra/set-secrets.sh`, then
-`infra/deploy.sh --skip-build`, then exercise those flows.
+Configuration carried over on 2026-09-03: the four secrets (`anthropic-api-key`,
+`serpapi-api-key`, `smtp-username`, `smtp-password`) were imported into Key
+Vault from the previous deployment's local `backend/.env` with
+`infra/import-env-secrets.sh`; SMTP host/port/from and AI model/timeouts live
+in the git-ignored `infra/deploy.env` and are applied by `deploy.sh`.
+
+Feature verification with those values:
+
+| Feature | Result |
+| --- | --- |
+| Email (SMTP, STARTTLS) | Works: meeting email with .ics attachment reported `sent` |
+| Document generation | Works: templated Creative Brief DOCX (banner, watermark, footer, Century Gothic) |
+| AI generation (Claude) | Blocked: the carried-over `ANTHROPIC_API_KEY` returns HTTP 401 "API key is invalid". A valid key must be stored as Key Vault secret `anthropic-api-key` (`infra/set-secrets.sh`), then `infra/deploy.sh --skip-build`. |
+| Opportunity scanning (SerpAPI) | Blocked by the SerpAPI account, not Azure: Free plan, 250/250 monthly searches used, every call returns 429. Needs a plan upgrade or the monthly reset. |
+| PDF generation (ReportLab: contracts, final reports) | Not exercised yet - needs a contract or report record (after the production restore). |
+
+All temporary test records were deleted afterwards; the database holds only the
+36 seeded account records.
 
 ## Topology
 
