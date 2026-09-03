@@ -1395,7 +1395,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
       const data = await v3SuggestCreatorMatches(id);
       setMatches(Array.isArray(data?.matches) ? data.matches : []);
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.');
+      setNotice(e?.response?.data?.detail || e?.message || 'The creator scan could not run yet.');
     } finally {
       setScanning(false);
     }
@@ -1539,7 +1539,7 @@ export const V3BusinessCasePlanBrief = () => {
       next[creator.id] = draft;
     });
     setBriefs(next);
-    setNotice('AI generated a draft brief for every selected creator.');
+    setNotice('Drafted a brief for every selected creator.');
   };
   const send = async (creator) => {
     setNotice('');

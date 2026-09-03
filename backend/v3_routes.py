@@ -11660,7 +11660,7 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "AI is writing the brief in the approved TASCK template…",
+                              "message": "Writing the brief in the approved TASCK template…",
                               "updated_at": _now_iso()}})
                 failures: List[str] = []
                 brief = await _call_creative_brief_tool(brand, case, snapshot, selector,
@@ -11672,7 +11672,7 @@ def make_v3_router(db):
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"The AI could not write the brief - {detail}",
+                                  "message": f"Could not write the brief - {detail}",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}})
                     return
@@ -12061,7 +12061,7 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "AI is writing all ten Pitch Deck sections…",
+                              "message": "Writing all ten Pitch Deck sections…",
                               "updated_at": _now_iso()}})
                 failures: List[str] = []
                 result = await _call_pitch_deck_tool(brand, case, snapshot, selector, creators,
@@ -12073,7 +12073,7 @@ def make_v3_router(db):
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"The AI could not write the Pitch Deck - {detail}",
+                                  "message": f"Could not write the Pitch Deck - {detail}",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}})
                     return
@@ -13584,14 +13584,14 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "AI is reading the transcript and filling the TTA Creator Selector…",
+                              "message": "Reading the transcript and filling the TTA Creator Selector…",
                               "updated_at": _now_iso()}})
                 analyzed = await _call_brainstorm_analysis_tool(brand, case, mi, transcript)
                 if not isinstance(analyzed, dict):
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": "The AI analysis did not return a usable result. Please retry.",
+                                  "message": "The analysis did not return a usable result. Please retry.",
                                   "error": "empty_analysis", "updated_at": _now_iso()}})
                     return
 
@@ -15020,7 +15020,7 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "AI is splitting the conversations into distinct opportunities…",
+                              "message": "Splitting the conversations into distinct opportunities…",
                               "updated_at": _now_iso()}},
                 )
                 failures: List[str] = []
@@ -15033,7 +15033,7 @@ def make_v3_router(db):
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"The AI could not analyse the conversations - {detail}",
+                                  "message": f"Could not analyse the conversations - {detail}",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}},
                     )
@@ -15564,7 +15564,7 @@ def make_v3_router(db):
             try:
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"status": "running", "progress": 25, "message": "Running AI alignment analysis…", "updated_at": _now_iso()}},
+                    {"$set": {"status": "running", "progress": 25, "message": "Running alignment analysis…", "updated_at": _now_iso()}},
                 )
                 result = await _run_alignment_analysis(bc_id, meetings, case, brand, combined_text, meeting_dates)
                 # Alignment recommendation is stored - now split the same

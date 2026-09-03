@@ -269,9 +269,9 @@ export const OpportunitiesPanel = ({ businessCaseId, onGenerated, refreshToken }
       setDetectedAt(data?.detected_at || '');
       setSelected([]);
       const count = (data?.opportunities || []).length;
-      toast.success(count === 1 ? 'The AI found 1 opportunity.' : `The AI found ${count} opportunities.`);
+      toast.success(count === 1 ? 'Found 1 opportunity.' : `Found ${count} opportunities.`);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || e?.message || 'The AI could not analyse the conversations.');
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not analyse the conversations.');
     } finally {
       setDetecting(false);
       setDetectMessage('');
@@ -957,7 +957,7 @@ export const V1BusinessCaseConnectSchedulePage = () => {
         go(`/business-cases/${id}/connect/opportunities`);
       }, 700);
     } catch (e) {
-      const msg = e?.response?.data?.detail || e?.message || 'The AI could not analyze the conversations.';
+      const msg = e?.response?.data?.detail || e?.message || 'Could not analyze the conversations.';
       setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: msg, message: 'Analysis failed. You can retry from this page.' }));
     } finally {
       setAnalyzing(false);

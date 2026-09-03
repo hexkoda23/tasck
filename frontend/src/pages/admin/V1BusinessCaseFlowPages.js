@@ -1565,7 +1565,7 @@ export const V3BusinessCaseConnectSchedule = () => {
           // the OpportunitiesPanel to refetch so users don't stare at the
           // "No opportunities yet" empty state after a successful run.
           setOpportunitiesRefreshToken((prev) => prev + 1);
-          const base = 'AI analysis complete from the saved Connect transcripts.';
+          const base = 'Analysis complete from the saved Connect transcripts.';
           setSaveNotice(partialFailure ? `${base} (Warning: ${partialFailure})` : base);
           setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: 'Analysis complete. Check below for the analysed transcript.' }));
           return;
@@ -1575,7 +1575,7 @@ export const V3BusinessCaseConnectSchedule = () => {
           if (fallbackRec) setAnalysisResult(fallbackRec);
           await reload();
           const errorMsg = job.error || job.message || 'unknown error';
-          setSaveNotice(`AI analysis failed - showing safe fallback. (${errorMsg})`);
+          setSaveNotice(`Analysis failed - showing safe fallback. (${errorMsg})`);
           setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: errorMsg, message: 'Analysis failed. A safe fallback is shown below.' }));
           return;
         }
@@ -1618,9 +1618,9 @@ export const V3BusinessCaseConnectSchedule = () => {
 
       const res = await v3AnalyzeAllTranscripts(id);
       if (!res?.ok) {
-        setSaveNotice('AI analysis failed.');
+        setSaveNotice('Analysis failed.');
         stopProgressTick();
-        setAnalysisPopup((prev) => ({ ...prev, status: 'failed', error: 'AI analysis failed.', message: 'Analysis failed. Please retry.' }));
+        setAnalysisPopup((prev) => ({ ...prev, status: 'failed', error: 'Analysis failed.', message: 'Analysis failed. Please retry.' }));
         return;
       }
       // Background-job mode → poll until completed/failed
@@ -1634,14 +1634,14 @@ export const V3BusinessCaseConnectSchedule = () => {
       stopProgressTick();
       if (res.recommendation) setAnalysisResult(res.recommendation);
       setSaveNotice(() => {
-        const base = 'AI analysis complete from the saved Connect transcripts.';
+        const base = 'Analysis complete from the saved Connect transcripts.';
         return savedSessions.partialFailure ? `${base} (Warning: ${savedSessions.partialFailure})` : base;
       });
       setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: 'Analysis complete. Check below for the analysed transcript.' }));
       setOpportunitiesRefreshToken((prev) => prev + 1);
       await reload();
     } catch (e) {
-      const msg = e?.response?.data?.detail || e?.message || 'AI analysis failed.';
+      const msg = e?.response?.data?.detail || e?.message || 'Analysis failed.';
       setSaveNotice(msg);
       stopProgressTick();
       setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: msg, message: 'Analysis failed. Please retry.' }));
@@ -4013,7 +4013,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
       setTimeout(() => setScanPopup((prev) => ({ ...prev, open: false })), 1100);
     } catch (e) {
       stopScanTick();
-      const msg = e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.';
+      const msg = e?.response?.data?.detail || e?.message || 'The creator scan could not run yet.';
       setNotice(msg);
       setScanPopup({ open: true, progress: 100, status: 'failed', message: msg });
     } finally {
@@ -4022,10 +4022,10 @@ export const V3BusinessCasePlanCreatorScan = () => {
   };
   const analysisSourceLabel = (() => {
     if (!analysisSource) return '';
-    if (analysisSource === 'deterministic_keyword_overlap') return 'Deterministic keyword fallback (no LLM key configured or the LLM did not respond in time).';
-    if (analysisSource.startsWith('emergent:')) return `LLM ranking via Emergent (${analysisSource.replace('emergent:', '')}) - evidence-cited.`;
-    if (analysisSource.startsWith('anthropic:')) return `AI ranking (${analysisSource.replace('anthropic:', '')}) - evidence-cited.`;
-    if (analysisSource.startsWith('openai:')) return `LLM ranking via OpenAI (${analysisSource.replace('openai:', '')}) - evidence-cited.`;
+    if (analysisSource === 'deterministic_keyword_overlap') return 'Ranked on keyword overlap only - the ranking engine was unavailable or did not respond in time.';
+    if (analysisSource.startsWith('emergent:')) return `Ranked via Emergent (${analysisSource.replace('emergent:', '')}) - evidence-cited.`;
+    if (analysisSource.startsWith('anthropic:')) return `Ranked via Anthropic (${analysisSource.replace('anthropic:', '')}) - evidence-cited.`;
+    if (analysisSource.startsWith('openai:')) return `Ranked via OpenAI (${analysisSource.replace('openai:', '')}) - evidence-cited.`;
     return `Ranking source: ${analysisSource}.`;
   })();
   // Everything the match produced, in one list: creators whose NAME was typed
@@ -4361,7 +4361,7 @@ export const V3BusinessCasePlanBrief = () => {
   const generateTemplateBrief = async () => {
     setGeneratingBrief(true);
     setBriefProgress('Queued: writing the Creative Brief…');
-    setGenPopup({ open: true, progress: 4, status: 'running', message: 'AI is writing the brief in the approved TASCK template…' });
+    setGenPopup({ open: true, progress: 4, status: 'running', message: 'Writing the brief in the approved TASCK template…' });
     startGenTick();
     try {
       const result = await v3GenerateCreativeBrief(id, (job) => {
@@ -4773,7 +4773,7 @@ export const V3BusinessCasePlanBrief = () => {
               />
             </div>
             <p className="mt-3 text-[13px] leading-6 text-[#4F3E2F]" data-testid="brief-gen-popup-message">
-              {genPopup.message || 'AI is writing the brief in the approved TASCK template…'}
+              {genPopup.message || 'Writing the brief in the approved TASCK template…'}
             </p>
             {genPopup.status === 'running' && (
               <p className="mt-1 text-[11px] text-[#6E6657]">
