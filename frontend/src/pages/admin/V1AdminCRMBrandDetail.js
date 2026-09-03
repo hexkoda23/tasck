@@ -733,8 +733,22 @@ const V1AdminCRMBrandDetail = () => {
     }
   };
 
+  /*
+   * "Move to call page" means exactly that: open this brand's Connect page.
+   *
+   * It used to hand off to the continue-or-start-new dialog whenever the brand
+   * had an active case, which is how a brand past Connect stopped reaching the
+   * call page at all: Continue opens the case's CURRENT phase, and once the
+   * stage has moved on that is never Connect. But the Connect page stays valid
+   * for the life of a case - later calls, more transcripts - so a passed stage
+   * is no reason to withhold it.
+   *
+   * Safe to skip the dialog: with force_new false the endpoint is a lookup,
+   * returning the brand's active case untouched and only creating one when
+   * there is none, so this cannot pull a case's stage backwards. Starting a
+   * SEPARATE project is still offered by the dialog that opens on arrival.
+   */
   const moveToCallPage = async () => {
-    if (openProjectDecision()) return;
     await startBrandProject('connect', false);
   };
 
