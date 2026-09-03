@@ -1488,3 +1488,14 @@ Verified in preview by simulating a production boot:
 - Added a client brand -> restart -> "already applied - skipping", client brand survived (the wipe never repeats).
 - Cleared only the safety-net marker, planted 1 workbook-flagged brand + 1 client brand -> restart -> "Workbook-import wipe removed 1 records", the client brand untouched, staff intact.
 Preview remains: users 36, v3_admin_users 8, v3_rms 8, v3_templates 12, v3_system_meta 2 (markers). Brands/cases/creators return []; admin login 200.
+
+
+---
+
+## 2026-06-19 — Azure Migration Discovery Report (read-only)
+- Audited and extended `/app/TASCK_PRODUCTION_MIGRATION_MASTER_REPORT.md` (736 lines, 21 parts). No secrets present; no app/DB/DNS/deploy changes made.
+- Corrections on re-audit: (1) CORS is env-driven via `CORS_ORIGINS` merged with hardcoded defaults + `*.emergent(host|agent.com)` regex — no code change needed for a new Azure hostname (risk downgraded to YELLOW); (2) the container's supervised nginx only fronts Emergent code-server, not app traffic.
+- Azure target fixed by user decision: App Service for Containers (WEBSITES_PORT=8001, Always On, 1 instance) + Static Web Apps + ACR + Cosmos DB for MongoDB vCore + Key Vault + Front Door + Azure DNS + App Insights.
+- Added PART 21: operator-only read-only verification checklist (runtime, mongosh counts/indexes, mongodump pre-flight, env-var names, whois/dig DNS, openssl TLS, SPF/DKIM/DMARC).
+- Readiness: YELLOW CONDITIONAL. Open blockers: emergentintegrations/EMERGENT_LLM_KEY lock-in, no DB backup with mongod inside the app container, no production shell access, secrets committed to git, passwordless demo-login.
+- Backlog unchanged and still pending user verification: Brand Import Sheet edit flow.
