@@ -4020,13 +4020,14 @@ export const V3BusinessCasePlanCreatorScan = () => {
       setScanning(false);
     }
   };
+  // Which engine ran is not the admin's problem. The only distinction worth
+  // showing is whether the matches were ranked against the brief with cited
+  // evidence, or nothing ranked them and they fell back to keyword overlap.
+  // `analysisSource` still carries the provider and model for diagnostics.
   const analysisSourceLabel = (() => {
     if (!analysisSource) return '';
     if (analysisSource === 'deterministic_keyword_overlap') return 'Ranked on keyword overlap only - the ranking engine was unavailable or did not respond in time.';
-    if (analysisSource.startsWith('emergent:')) return `Ranked via Emergent (${analysisSource.replace('emergent:', '')}) - evidence-cited.`;
-    if (analysisSource.startsWith('anthropic:')) return `Ranked via Anthropic (${analysisSource.replace('anthropic:', '')}) - evidence-cited.`;
-    if (analysisSource.startsWith('openai:')) return `Ranked via OpenAI (${analysisSource.replace('openai:', '')}) - evidence-cited.`;
-    return `Ranking source: ${analysisSource}.`;
+    return 'Ranked - evidence-cited.';
   })();
   // Everything the match produced, in one list: creators whose NAME was typed
   // into the Creator Matches field first, then the profiles matched to the
