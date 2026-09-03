@@ -350,9 +350,10 @@ resource restoreJob 'Microsoft.App/jobs@2025-01-01' = {
           name: 'mongorestore'
           image: 'mongo:8.0'
           command: ['/bin/bash', '-c']
-          // DUMP_FILE / SOURCE_DB / TARGET_DB / DROP are supplied at start time.
+          // DUMP_FILE / SOURCE_DB / TARGET_DB / DROP / MODE are set with `az containerapp job update --set-env-vars` before each start
+          // (a start-time template override would drop the share mount).
           args: [
-            'set -euo pipefail; f=/restore/$DUMP_FILE; test -f "$f" || { echo "missing $f"; ls -la /restore; exit 1; }; echo "restoring $f: $SOURCE_DB -> $TARGET_DB (drop=$DROP)"; extra=""; [ "$DROP" = "true" ] && extra="--drop"; case "$f" in *.gz) gz="--gzip" ;; *) gz="" ;; esac; mongorestore --uri "$MONGO_URL" --archive="$f" $gz --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --nsInclude "$SOURCE_DB.*" --maintainInsertionOrder --numParallelCollections 2 --numInsertionWorkersPerCollection 2 $extra; echo "restore finished"'
+            'set -euo pipefail; f=/restore/$DUMP_FILE; if [ "$MODE" = "dump" ]; then echo "dumping $SOURCE_DB -> $f"; mongodump --uri "$MONGO_URL" --db "$SOURCE_DB" --archive="$f" --gzip; ls -la "$f"; echo "dump finished"; exit 0; fi; test -f "$f" || { echo "missing $f"; ls -la /restore; exit 1; }; echo "restoring $f: $SOURCE_DB -> $TARGET_DB (drop=$DROP)"; extra=""; [ "$DROP" = "true" ] && extra="--drop"; case "$f" in *.gz) gz="--gzip" ;; *) gz="" ;; esac; mongorestore --uri "$MONGO_URL" --archive="$f" $gz --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --nsInclude "$SOURCE_DB.*" --maintainInsertionOrder --numParallelCollections 2 --numInsertionWorkersPerCollection 2 $extra; echo "restore finished"'
           ]
           env: [
             { name: 'MONGO_URL', secretRef: 'mongo-url' }
@@ -360,6 +361,7 @@ resource restoreJob 'Microsoft.App/jobs@2025-01-01' = {
             { name: 'SOURCE_DB', value: 'test_database' }
             { name: 'TARGET_DB', value: dbName }
             { name: 'DROP', value: 'false' }
+            { name: 'MODE', value: 'restore' } // restore | dump (dump = mongodump SOURCE_DB into DUMP_FILE, used by the self-test)
           ]
           resources: { cpu: json('1.0'), memory: '2Gi' }
           volumeMounts: [ { volumeName: 'restore', mountPath: '/restore' } ]

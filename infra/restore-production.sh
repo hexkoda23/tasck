@@ -9,16 +9,16 @@
 #     mongodump --uri "<production uri>" --db <name> --archive=production.archive.gz --gzip
 #
 #   infra/restore-production.sh --archive ./production.archive.gz --source-db <name-in-archive> [--target-db tasck] [--force]
-#   infra/restore-production.sh --inventory-only        # just (re)run the target inventory
+#   infra/restore-production.sh --inventory-only [--target-db tasck]     # just (re)run the target inventory
 #
 # Safety rules enforced here:
 #   * the target is always the Azure vCore cluster (the job reads mongo-url from Key Vault)
 #   * the target database must be EMPTY unless --force is passed (then collections are dropped and replaced)
-#   * the API is scaled to 0 replicas during the restore and back to 1 afterwards
+#   * when the target is the API's live database, the API is scaled to 0 during the restore and back to 1 afterwards
 #   * a target inventory (counts, indexes, content fingerprints) is produced for backend/verify_restore.py
 #
-# Requires: az CLI (logged in) with the containerapp extension; python with pymongo
-# for the final comparison (backend/verify_restore.py).
+# Proven end to end by infra/restore-selftest.sh. Requires: az CLI (logged in)
+# with the containerapp extension; python for the JSON handling.
 set -euo pipefail
 
 RG="${RG:-rg-tasck-prod}"
@@ -40,52 +40,29 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=jobs.sh
+. "$HERE/jobs.sh"
+resolve_storage
 
-STORAGE="$(az storage account list -g "$RG" --query "[?starts_with(name,'sttasck')].name | [0]" -o tsv)"
-[[ -n "$STORAGE" ]] || { echo "restore storage account not found in $RG (run infra/deploy.sh first)" >&2; exit 1; }
-STORAGE_KEY="$(az storage account keys list -g "$RG" -n "$STORAGE" --query "[0].value" -o tsv)"
-SHARE="restore"
-
-run_job() {  # name, [--env-vars ...]
-  local name="$1"; shift
-  local exec_name
-  exec_name="$(az containerapp job start -g "$RG" -n "$name" "$@" --query name -o tsv)"
-  echo "  started $name execution $exec_name"
-  local status
-  while true; do
-    status="$(az containerapp job execution show -g "$RG" -n "$name" --job-execution-name "$exec_name" --query properties.status -o tsv 2>/dev/null || echo Unknown)"
-    case "$status" in
-      Succeeded) echo "  $name: $status"; return 0 ;;
-      Failed|Stopped|Degraded) echo "  $name: $status" >&2; az containerapp job logs show -g "$RG" -n "$name" --execution "$exec_name" --container "${2:-}" 2>/dev/null | tail -40 >&2 || true; return 1 ;;
-      *) sleep 20 ;;
-    esac
-  done
-}
-
-inventory() {
-  log "Target inventory of '$TARGET_DB' (job tasck-inventory -> share:/target-inventory.json)"
-  run_job tasck-inventory --env-vars "DB_NAME=$TARGET_DB"
-  az storage file download --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name "$SHARE" \
-    --path target-inventory.json --dest ./target-inventory.json -o none
-  echo "  downloaded ./target-inventory.json"
-  echo
-  echo "Compare with the inventory taken on the SOURCE (run backend/inventory_mongo.py there):"
-  echo "  python backend/verify_restore.py source-inventory.json target-inventory.json"
+inventory() {  # <local-dest>
+  job_log "Inventory of '$TARGET_DB' (job tasck-inventory -> share:/target-inventory.json)"
+  run_job tasck-inventory inventory "DB_NAME=$TARGET_DB"
+  share_download target-inventory.json "$1"
+  echo "  downloaded $1"
 }
 
 if [[ $INVENTORY_ONLY -eq 1 ]]; then
-  inventory; exit 0
+  inventory ./target-inventory.json
+  echo; echo "Compare with the SOURCE inventory: python backend/verify_restore.py source-inventory.json target-inventory.json"
+  exit 0
 fi
 
 [[ -n "$ARCHIVE" && -f "$ARCHIVE" && -n "$SOURCE_DB" ]] || { echo "--archive <file> and --source-db <name> are required" >&2; exit 2; }
 DUMP_FILE="$(basename "$ARCHIVE")"
 
-log "Checking the target database '$TARGET_DB' is empty (via the inventory job)"
-run_job tasck-inventory --env-vars "DB_NAME=$TARGET_DB"
-az storage file download --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name "$SHARE" \
-  --path target-inventory.json --dest ./pre-restore-inventory.json -o none
+job_log "Checking the target database '$TARGET_DB' is empty"
+inventory ./pre-restore-inventory.json
 EXISTING="$(python -c "import json;d=json.load(open('pre-restore-inventory.json'));print(d['total_documents'])")"
 if [[ "$EXISTING" != "0" && $FORCE -ne 1 ]]; then
   echo "target database '$TARGET_DB' already holds $EXISTING documents (see pre-restore-inventory.json)." >&2
@@ -93,9 +70,8 @@ if [[ "$EXISTING" != "0" && $FORCE -ne 1 ]]; then
   exit 1
 fi
 
-log "Uploading $ARCHIVE to the restore share"
-az storage file upload --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name "$SHARE" \
-  --source "$ARCHIVE" --path "$DUMP_FILE" -o none
+job_log "Uploading $ARCHIVE to the restore share"
+share_upload "$ARCHIVE" "$DUMP_FILE"
 echo "  uploaded as $DUMP_FILE"
 
 echo
@@ -106,25 +82,28 @@ else
   [[ "$confirm" == "RESTORE" ]] || { echo "aborted"; exit 1; }
 fi
 
-API_DB="$(az containerapp show -g "$RG" -n tasck-api --query "properties.template.containers[0].env[?name=='DB_NAME'].value | [0]" -o tsv 2>/dev/null || echo tasck)"
+API_DB="$(api_db_name)"
 STOP_API=0; [[ "$TARGET_DB" == "$API_DB" ]] && STOP_API=1
 if [[ $STOP_API -eq 1 ]]; then
-  log "Stopping the API during the restore (target is the live database '$API_DB')"
+  job_log "Stopping the API during the restore (target is the live database '$API_DB')"
   az containerapp update -g "$RG" -n tasck-api --min-replicas 0 --max-replicas 0 -o none
 else
-  log "Target '$TARGET_DB' is not the API's database ('$API_DB'); the API keeps running"
+  job_log "Target '$TARGET_DB' is not the API's database ('$API_DB'); the API keeps running"
 fi
 
-log "Running mongorestore inside Azure (job tasck-restore)"
+job_log "Running mongorestore inside Azure (job tasck-restore)"
 DROP="false"; [[ $FORCE -eq 1 ]] && DROP="true"
-if ! run_job tasck-restore --env-vars "DUMP_FILE=$DUMP_FILE" "SOURCE_DB=$SOURCE_DB" "TARGET_DB=$TARGET_DB" "DROP=$DROP"; then
+if ! run_job tasck-restore mongorestore "MODE=restore" "DUMP_FILE=$DUMP_FILE" "SOURCE_DB=$SOURCE_DB" "TARGET_DB=$TARGET_DB" "DROP=$DROP"; then
   echo "restore job failed; if the API was stopped it is still scaled to 0. Investigate, then: az containerapp update -g $RG -n tasck-api --min-replicas 1 --max-replicas 1" >&2
   exit 1
 fi
 
 if [[ $STOP_API -eq 1 ]]; then
-  log "Starting the API"
+  job_log "Starting the API"
   az containerapp update -g "$RG" -n tasck-api --min-replicas 1 --max-replicas 1 -o none
 fi
 
-inventory
+inventory ./target-inventory.json
+echo
+echo "Compare with the inventory taken on the SOURCE (backend/inventory_mongo.py there):"
+echo "  python backend/verify_restore.py source-inventory.json target-inventory.json"
