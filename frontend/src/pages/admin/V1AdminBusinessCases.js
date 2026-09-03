@@ -575,7 +575,10 @@ const V1AdminBusinessCases = () => {
         {filtered.map((c) => {
           const sm = stageMeta[c.stage] || stageMeta.plan;
           const hb = healthBadge(c.health);
-          const nextPath = businessCasePhasePath(c.id, c);
+          // This is the Business Case tab, so stay in it - a case still in
+          // Connect or Framing opens at Planning rather than bouncing the
+          // admin into the CRM area.
+          const nextPath = businessCasePhasePath(c.id, c, { area: 'business-case' });
           return (
             <div
               key={c.id}

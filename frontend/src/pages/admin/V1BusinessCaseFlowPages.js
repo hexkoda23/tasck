@@ -358,7 +358,17 @@ const stepperConfig = (id, stage, pathname, bc = {}) => {
   };
 };
 
-export const businessCasePhasePath = (id, bc = {}) => {
+/*
+ * The admin has two areas, and a page belongs to exactly one of them:
+ *   CRM           - Connect + Framing  (/connect/*, /frame/*)
+ *   Business Case - Planning -> Delivery -> Reporting
+ * FlowShell already splits on the same test to pick the back button and the
+ * stepper, which is why opening a /frame page from the Business Cases tab
+ * looked like being thrown into CRM Brands.
+ */
+const isCrmAreaPath = (path) => /\/business-cases\/[^/]+(?:\/snapshot\/[^/]+)?\/(connect|frame)(\/|$)/.test(path || '');
+
+const resolvePhasePath = (id, bc = {}) => {
   // Where the admin actually was beats where the stage says they should be.
   // Falls through to the stage-derived path when nothing is remembered.
   const remembered = lastFlowPage(id);
@@ -389,6 +399,25 @@ export const businessCasePhasePath = (id, bc = {}) => {
     return adminRoute(`/business-cases/${id}/frame/snapshot`);
   }
   return adminRoute(`/business-cases/${id}/connect`);
+};
+
+/**
+ * The page to open for a case.
+ *
+ * `area: 'business-case'` keeps the answer inside the Business Case tab:
+ * opening a row there must not land on a Connect or Framing page, which
+ * renders as the CRM area and reads as being bounced to another tab. A case
+ * whose active page is still in CRM opens at Planning, the first page of the
+ * tab the admin is actually in - the Framing steps stay reachable from CRM
+ * Brands, where they belong.
+ *
+ * Without the option the answer is the true active page, whichever area it is
+ * in - which is what CRM Brands and the `/business-cases/:id` redirect want.
+ */
+export const businessCasePhasePath = (id, bc = {}, options = {}) => {
+  const resolved = resolvePhasePath(id, bc);
+  if (options.area !== 'business-case') return resolved;
+  return isCrmAreaPath(resolved) ? adminRoute(`/business-cases/${id}/plan/planning`) : resolved;
 };
 
 export const V3BusinessCaseStageHome = () => {
