@@ -358,7 +358,7 @@ already loads:
 | --- | --- |
 | Connect | a meeting or connect source is saved |
 | Conversations & Transcripts | `connect.opportunities_detected_at` / `analyzed_at` |
-| Alignment Snapshot | a snapshot exists |
+| Alignment Snapshot | the snapshot is **approved** (`frame.alignment_snapshot_status`, or the snapshot's own `approved_at` / `status`) |
 | Brainstorm Transcript | `plan.brainstorm_transcript_analyzed_at`, or a round exists |
 | Brainstorm | a brainstorm round exists |
 | Creator Selector | `selected_creator_ids` is non-empty |
@@ -376,6 +376,33 @@ safe. Detour pages are ungated except `/connect/opportunities`, which names
 
 A step with no rule is treated as passable, so adding a page to `FLOW_STEPS`
 without a rule fails open rather than stranding anyone.
+
+Generating the Alignment Snapshot is deliberately **not** enough to pass it. The
+document still has to be sent, commented on, revised and approved, and the case
+does not advance until the admin approves - so the page is passed on approval.
+The Opportunities detour keeps its own weaker rule (`snapshot-exists`), because
+producing a snapshot is what that page is for; approving it is not.
+
+### Resuming where the admin left off
+
+`rememberFlowPage()` / `lastFlowPage()` in `v1FlowSteps.js`. Continue on a brand
+used to reopen whatever page the case's *stage* implied, which is rarely where
+the admin actually was: leaving mid-way through the Pitch Deck, working in
+another tab and coming back put them on the stage's landing page instead.
+
+`useBusinessCaseBundle` records the current flow page on every mount - the one
+hook every flow page passes through - and `businessCasePhasePath()` prefers the
+remembered page over the stage-derived one. Because every entry point (CRM
+Brands, the brand detail's Continue, the Business Cases list, the
+`/business-cases/:id` redirect) resolves through that function, they all gained
+it at once.
+
+Stored in `localStorage` under `v1LastFlowPage:<caseId>` as `{ suffix,
+snapshotId }`, so it is shared across the browser's tabs and survives a reload.
+The path is **rebuilt from `FLOW_STEPS` / `ASIDE_STEPS` on read**, never
+navigated to as a stored string, so a stale or tampered value cannot send anyone
+to an arbitrary route - it just falls back to the stage-derived path, as it does
+when nothing is stored or storage is unavailable.
 
 **A page that already has its own onward button gets no footer Next at all** -
 one job, one button. `ownsNext` in `FLOW_STEPS` marks them:
@@ -416,6 +443,17 @@ Next; Pitch Deck and Creative Brief keep Previous with no footer Next while
 their cards read "Open Creative Brief" and "Move to Business Case"; and
 Conversations & Transcripts, which duplicates nothing, still shows
 "Next: Alignment Snapshot".
+
+Approval gate: a generated-but-unapproved snapshot showed "Approve the Alignment
+Snapshot to continue." and no button; with `frame.alignment_snapshot_status`
+approved it offered "Next: Brainstorm Transcript". The Opportunities detour kept
+the weaker rule, showing "Generate the Alignment Snapshot to continue." with no
+snapshot present.
+
+Resume: leaving the Pitch Deck and reopening `/business-cases/bc-stub` landed
+back on the Pitch Deck rather than the stage's page, and a **second browser tab**
+resolved to the same page. Clearing the stored key fell back to the
+stage-derived path.
 
 ### Also fixed in passing
 

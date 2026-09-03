@@ -50,7 +50,7 @@ const ASIDE_STEPS = {
   // The Opportunities page exists to turn opportunities into Alignment
   // Snapshots, so it is a real gate; the rest are read-only detours the admin
   // was sent to, and hiding Next on those would only strand them.
-  '/connect/opportunities': { label: 'Opportunities', prev: 'connect-schedule', next: 'snapshot', requires: 'snapshot' },
+  '/connect/opportunities': { label: 'Opportunities', prev: 'connect-schedule', next: 'snapshot', requires: 'snapshot-exists' },
   '/connect/questions': { label: 'Connect Questions', prev: 'connect-schedule', next: 'snapshot' },
   '/connect/analysis': { label: 'Connect Analysis', prev: 'connect-schedule', next: 'snapshot' },
   '/connect/reschedule': { label: 'Reschedule', prev: 'connect-schedule', next: 'connect-schedule' },
@@ -140,7 +140,26 @@ const STEP_DONE = {
   'connect-schedule': (bundle, bc) => Boolean(
     bc.connect?.opportunities_detected_at || bc.connect?.analyzed_at
   ),
-  snapshot: (bundle, bc) => Boolean(
+  /*
+   * Generating the Alignment Snapshot is not finishing it - it still has to be
+   * sent, commented on, revised and approved, and until the admin approves it
+   * the case does not advance. So the Alignment Snapshot page is passed on
+   * APPROVAL, not on the document existing.
+   *
+   * `frame.alignment_snapshot_status` is what admin approval sets and what the
+   * stage advance keys off; the snapshot's own `approved_at` / `status` covers
+   * records written before that field was populated.
+   */
+  snapshot: (bundle, bc) => {
+    const frame = bc.frame || {};
+    if (frame.alignment_snapshot_status === 'approved' || frame.alignment_snapshot_approved_at) return true;
+    const snapshots = Array.isArray(bundle.alignment_snapshots) && bundle.alignment_snapshots.length
+      ? bundle.alignment_snapshots
+      : [bundle.alignment_snapshot].filter(Boolean);
+    return snapshots.some((snap) => snap && (snap.approved_at || snap.status === 'approved'));
+  },
+  // Whether a snapshot exists at all - what the Opportunities page produces.
+  'snapshot-exists': (bundle, bc) => Boolean(
     bundle.alignment_snapshot?.id
     || (Array.isArray(bundle.alignment_snapshots) && bundle.alignment_snapshots.length)
     || bc.frame?.alignment_snapshot_id
@@ -172,7 +191,8 @@ const STEP_DONE = {
 export const STEP_PENDING_HINT = {
   connect: 'Save a conversation with this brand to continue.',
   'connect-schedule': 'Analyze the conversations to continue.',
-  snapshot: 'Generate the Alignment Snapshot to continue.',
+  snapshot: 'Approve the Alignment Snapshot to continue.',
+  'snapshot-exists': 'Generate the Alignment Snapshot to continue.',
   'brainstorm-transcript': 'Add and analyse the brainstorm transcript to continue.',
   brainstorm: 'Run the brainstorm to continue.',
   'creator-scan': 'Select at least one creator to continue.',
@@ -218,4 +238,59 @@ export const flowStepOwnsNext = (pathname) => {
   if (ASIDE_STEPS[suffix]) return false;
   const step = FLOW_STEPS.find((entry) => entry.suffix === suffix);
   return Boolean(step && step.ownsNext);
+};
+
+/*
+ * The flow page this admin was last on, per business case.
+ *
+ * "Continue" on a brand used to reopen whatever page the case's STAGE implies,
+ * which is not where the admin was: leaving mid-way through the Pitch Deck,
+ * working in another tab and coming back put them on the stage's landing page
+ * instead of the deck. This remembers the actual page, and every entry point
+ * gets it because they all resolve through businessCasePhasePath().
+ *
+ * localStorage, so it is shared across the browser's tabs and survives a
+ * reload. Per-viewer convenience only - if it is missing, unreadable, or names
+ * a page that is no longer part of the flow, the caller falls back to the
+ * stage-derived path.
+ */
+const LAST_PAGE_KEY = (id) => `v1LastFlowPage:${id}`;
+
+export const rememberFlowPage = (id, pathname) => {
+  if (!id) return;
+  const suffix = suffixOf(pathname);
+  const known = FLOW_STEPS.some((step) => step.suffix === suffix) || Boolean(ASIDE_STEPS[suffix]);
+  if (!known) return;
+  try {
+    window.localStorage.setItem(
+      LAST_PAGE_KEY(id),
+      JSON.stringify({ suffix, snapshotId: flowSnapshotId(pathname) }),
+    );
+  } catch (e) {
+    /* private mode / storage disabled - remembering is a convenience */
+  }
+};
+
+export const lastFlowPage = (id) => {
+  if (!id) return '';
+  let stored = null;
+  try {
+    stored = window.localStorage.getItem(LAST_PAGE_KEY(id));
+  } catch (e) {
+    return '';
+  }
+  if (!stored) return '';
+  let parsed = null;
+  try {
+    parsed = JSON.parse(stored);
+  } catch (e) {
+    return '';
+  }
+  const suffix = parsed && parsed.suffix;
+  // Rebuilt from the tables rather than trusting the stored string, so a stale
+  // or tampered value can never send anyone to an arbitrary route.
+  const step = FLOW_STEPS.find((entry) => entry.suffix === suffix);
+  if (step) return flowStepHref(step, id, parsed.snapshotId);
+  if (ASIDE_STEPS[suffix]) return adminRoute(`/business-cases/${id}${suffix}`);
+  return '';
 };

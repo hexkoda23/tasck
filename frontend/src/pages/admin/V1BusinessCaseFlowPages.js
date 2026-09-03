@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-import { flowNeighbours, flowStepHref, flowGateKey, flowStepComplete, flowStepOwnsNext, STEP_PENDING_HINT } from '../../lib/v1FlowSteps';
+import { flowNeighbours, flowStepHref, flowGateKey, flowStepComplete, flowStepOwnsNext, rememberFlowPage, lastFlowPage, STEP_PENDING_HINT } from '../../lib/v1FlowSteps';
 import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PriorityTag, PRIORITY_OPTIONS } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
@@ -207,6 +207,7 @@ const brainstormingSections = [
 
 export const useBusinessCaseBundle = () => {
   const params = useParams();
+  const location = useLocation();
   const id = params.id || params.businessCaseId;
   const snapshotId = params.snapshotId || params.alignmentSnapshotId || null;
   const [bundle, setBundle] = useState(null);
@@ -227,6 +228,12 @@ export const useBusinessCaseBundle = () => {
     if (!id) return;
     v3TouchBusinessCase(id).catch(() => {});
   }, [id]);
+  // Remember WHICH page, so Continue on the brand reopens the page the admin
+  // actually left rather than the one the stage implies. Every flow page goes
+  // through this hook, so recording here covers all of them.
+  useEffect(() => {
+    rememberFlowPage(id, location.pathname);
+  }, [id, location.pathname]);
   return { id, snapshotId, bundle, loading, reload };
 };
 
@@ -352,6 +359,10 @@ const stepperConfig = (id, stage, pathname, bc = {}) => {
 };
 
 export const businessCasePhasePath = (id, bc = {}) => {
+  // Where the admin actually was beats where the stage says they should be.
+  // Falls through to the stage-derived path when nothing is remembered.
+  const remembered = lastFlowPage(id);
+  if (remembered) return remembered;
   const stage = bc.stage || 'connect';
   if (stage === 'closed' || stage === 'reporting') return adminRoute(`/business-cases/${id}/reporting/final-report`);
   // Once a case has reached Planning or beyond, the active page is that
