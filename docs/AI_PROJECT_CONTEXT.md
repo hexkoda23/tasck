@@ -377,9 +377,21 @@ safe. Detour pages are ungated except `/connect/opportunities`, which names
 A step with no rule is treated as passable, so adding a page to `FLOW_STEPS`
 without a rule fails open rather than stranding anyone.
 
-Note this gates the *footer* only. A page's own onward buttons are unchanged -
-the Pitch Deck still offers "Open Creative Brief", because those two are
-siblings an admin may do in either order.
+**A page that already has its own onward button gets no footer Next at all** -
+one job, one button. `ownsNext` in `FLOW_STEPS` marks them:
+
+* **Connect / Business Call** - its "Next steps" card already carries a Next.
+  With no Previous either (it is the first step) the footer disappears entirely.
+* **Pitch Deck** and **Creative Brief** - each has a "Next step" card. Here the
+  duplication was also a correctness bug: that card points at the sibling *or*
+  at Planning depending on which of the pair was opened first, while a footer
+  Next is fixed, so a page could show "Move to Business Case" and
+  "Next: Creative Brief" at once, disagreeing about where the admin goes.
+
+These pages keep the footer **Previous**, which nothing on them duplicates.
+Suppression is by destination and role, not by the presence of any button:
+Planning keeps its footer Next to Contract Studio even though its card opens
+Deliverables, because those are different places to go.
 
 ### Verified
 
@@ -398,6 +410,12 @@ Snapshot" once analysed; the Alignment Snapshot page stayed locked until a
 snapshot existed, then offered Brainstorm Transcript. Creator Selector, Pitch
 Deck and Planning all showed their own hints with nothing generated, and the
 ungated `/frame/waiting-brand` detour kept its Next throughout.
+
+After the `ownsNext` change: Connect renders no footer at all and only its card
+Next; Pitch Deck and Creative Brief keep Previous with no footer Next while
+their cards read "Open Creative Brief" and "Move to Business Case"; and
+Conversations & Transcripts, which duplicates nothing, still shows
+"Next: Alignment Snapshot".
 
 ### Also fixed in passing
 
