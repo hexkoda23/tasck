@@ -65,8 +65,8 @@ run_job() {  # name, [--env-vars ...]
 }
 
 inventory() {
-  log "Target inventory (job tasck-inventory -> share:/target-inventory.json)"
-  run_job tasck-inventory
+  log "Target inventory of '$TARGET_DB' (job tasck-inventory -> share:/target-inventory.json)"
+  run_job tasck-inventory --env-vars "DB_NAME=$TARGET_DB"
   az storage file download --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name "$SHARE" \
     --path target-inventory.json --dest ./target-inventory.json -o none
   echo "  downloaded ./target-inventory.json"
@@ -83,7 +83,7 @@ fi
 DUMP_FILE="$(basename "$ARCHIVE")"
 
 log "Checking the target database '$TARGET_DB' is empty (via the inventory job)"
-run_job tasck-inventory
+run_job tasck-inventory --env-vars "DB_NAME=$TARGET_DB"
 az storage file download --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name "$SHARE" \
   --path target-inventory.json --dest ./pre-restore-inventory.json -o none
 EXISTING="$(python -c "import json;d=json.load(open('pre-restore-inventory.json'));print(d['total_documents'])")"
@@ -99,20 +99,32 @@ az storage file upload --account-name "$STORAGE" --account-key "$STORAGE_KEY" --
 echo "  uploaded as $DUMP_FILE"
 
 echo
-read -r -p "Restore '$SOURCE_DB' from $DUMP_FILE into Azure database '$TARGET_DB' (drop existing: $([[ $FORCE -eq 1 ]] && echo yes || echo no))? Type RESTORE to continue: " confirm
-[[ "$confirm" == "RESTORE" ]] || { echo "aborted"; exit 1; }
+if [[ "${RESTORE_CONFIRM:-}" == "RESTORE" ]]; then
+  echo "RESTORE_CONFIRM=RESTORE supplied; proceeding without prompt"
+else
+  read -r -p "Restore '$SOURCE_DB' from $DUMP_FILE into Azure database '$TARGET_DB' (drop existing: $([[ $FORCE -eq 1 ]] && echo yes || echo no))? Type RESTORE to continue: " confirm
+  [[ "$confirm" == "RESTORE" ]] || { echo "aborted"; exit 1; }
+fi
 
-log "Stopping the API during the restore"
-az containerapp update -g "$RG" -n tasck-api --min-replicas 0 --max-replicas 0 -o none
+API_DB="$(az containerapp show -g "$RG" -n tasck-api --query "properties.template.containers[0].env[?name=='DB_NAME'].value | [0]" -o tsv 2>/dev/null || echo tasck)"
+STOP_API=0; [[ "$TARGET_DB" == "$API_DB" ]] && STOP_API=1
+if [[ $STOP_API -eq 1 ]]; then
+  log "Stopping the API during the restore (target is the live database '$API_DB')"
+  az containerapp update -g "$RG" -n tasck-api --min-replicas 0 --max-replicas 0 -o none
+else
+  log "Target '$TARGET_DB' is not the API's database ('$API_DB'); the API keeps running"
+fi
 
 log "Running mongorestore inside Azure (job tasck-restore)"
 DROP="false"; [[ $FORCE -eq 1 ]] && DROP="true"
 if ! run_job tasck-restore --env-vars "DUMP_FILE=$DUMP_FILE" "SOURCE_DB=$SOURCE_DB" "TARGET_DB=$TARGET_DB" "DROP=$DROP"; then
-  echo "restore job failed; the API is still scaled to 0. Investigate, then: az containerapp update -g $RG -n tasck-api --min-replicas 1 --max-replicas 1" >&2
+  echo "restore job failed; if the API was stopped it is still scaled to 0. Investigate, then: az containerapp update -g $RG -n tasck-api --min-replicas 1 --max-replicas 1" >&2
   exit 1
 fi
 
-log "Starting the API"
-az containerapp update -g "$RG" -n tasck-api --min-replicas 1 --max-replicas 1 -o none
+if [[ $STOP_API -eq 1 ]]; then
+  log "Starting the API"
+  az containerapp update -g "$RG" -n tasck-api --min-replicas 1 --max-replicas 1 -o none
+fi
 
 inventory

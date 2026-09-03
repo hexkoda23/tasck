@@ -35,6 +35,12 @@ python backend/inventory_mongo.py --uri "$MONGO_URL" --db "$DB_NAME" --out sourc
 
 ## 2. Restore into Azure
 
+The pipeline is proven by `infra/restore-selftest.sh`, which dumps the current
+Azure database inside Azure, restores it into a scratch database through the
+same script and jobs, verifies it with the inventory tooling, and drops the
+scratch database. Run it any time to re-prove the path before the real restore.
+
+
 ```bash
 infra/restore-production.sh --archive ./production.archive.gz --source-db "<DB_NAME from Emergent>" --force
 ```
@@ -69,10 +75,10 @@ managed certificate cannot be issued while Cloudflare proxies the hostname:
 
 | Record | Name | Value |
 | --- | --- | --- |
-| TXT | `asuid.<host>` | the `customDomainVerificationId` output of `infra/deploy.sh --skip-build` |
+| TXT | `asuid.<host>` | `C65C9534E9EB8E48EA7228CAFCCFF4B69DBBB799811D51A9E483C14698052731` (the environment's `customDomainVerificationId`) |
 | CNAME | `<host>` | `tasck-web.wittysea-78b195c2.westeurope.azurecontainerapps.io` |
 
-For an apex domain use an A record to the `containerEnvStaticIp` output plus
+For an apex domain use an A record to `48.207.251.217` (the environment's static IP) plus
 the same TXT record. Then bind and issue the certificate (two passes):
 
 ```bash
@@ -109,8 +115,24 @@ and the App Insights availability test `tasck-web-health`.
 
 ## 7. Rollback (any time before step 8)
 
-Point the DNS record back at the Emergent origin. Nothing on Emergent was
-changed, so it resumes immediately. Data written to Azure after cutover would
+**Traffic rollback:** point the DNS record back at the Emergent origin. Nothing
+on Emergent was changed, so it resumes immediately.
+
+**Azure application rollback** (bad image, independent of DNS): every build is
+tagged in ACR (`az acr repository show-tags -n acrtasckproddcycxfri --repository tasck-api --orderby time_desc`).
+Roll one app back with
+
+```bash
+az containerapp update -g rg-tasck-prod -n tasck-api --image acrtasckproddcycxfri.azurecr.io/tasck-api:<previous tag>
+```
+
+(same for `tasck-web`). Single-revision mode swaps traffic once the new
+revision is healthy; `infra/deploy.sh --skip-infra --only api` rebuilds forward.
+
+**Data rollback:** Cosmos DB for MongoDB vCore keeps automatic backups with
+point-in-time restore (restore creates a new cluster; repoint `mongo-url` in Key
+Vault and redeploy). A failed `tasck-restore` run can also simply be re-run with
+`--force` from the same archive. Data written to Azure after cutover would
 need a reverse export; keep the cutover window short and announced.
 
 ## 8. Decommission (only after days of stable operation)
