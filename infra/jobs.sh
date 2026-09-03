@@ -42,7 +42,12 @@ for l in sys.stdin:
 
 # Local paths handed to az must be Windows-style on Git Bash (path conversion is
 # disabled above so that share paths survive); no-op elsewhere.
-local_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+# Always absolute: az treats a relative --dest as a directory name.
+local_path() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m -a "$1"
+  elif command -v realpath >/dev/null 2>&1; then realpath -m "$1"
+  else printf '%s' "$1"; fi
+}
 
 # share_download <path-on-share> <local-dest>
 share_download() {
