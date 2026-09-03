@@ -1499,3 +1499,20 @@ Preview remains: users 36, v3_admin_users 8, v3_rms 8, v3_templates 12, v3_syste
 - Added PART 21: operator-only read-only verification checklist (runtime, mongosh counts/indexes, mongodump pre-flight, env-var names, whois/dig DNS, openssl TLS, SPF/DKIM/DMARC).
 - Readiness: YELLOW CONDITIONAL. Open blockers: emergentintegrations/EMERGENT_LLM_KEY lock-in, no DB backup with mongod inside the app container, no production shell access, secrets committed to git, passwordless demo-login.
 - Backlog unchanged and still pending user verification: Brand Import Sheet edit flow.
+
+
+---
+
+## 2026-09-03 — Phase 1 LIVE Production Discovery (read-only)
+- Created `/app/TASCK_PRODUCTION_MIGRATION_DISCOVERY.md` (831 lines, 12 sections + Emergent asks). Only new file in `git status`; no app/DB/DNS/deploy/env changes; secret-scanned clean.
+- Live production inspected via public HTTPS GETs + DoH + TLS handshake (production shell NOT available; those items marked NOT VERIFIED).
+- CRITICAL: production API is fully UNAUTHENTICATED - unauth GETs returned brands, cases, transcripts, contacts PII, contracts, invoices, email bodies, admin users; demo-login issues an admin session with no credential. Live exposure today, not just a migration blocker.
+- UNRESOLVED: production DB location. Preview = loopback mongod, but deployed source references "Atlas MongoDB" twice (server.py:78, PRD.md:539). Blocks backup method choice.
+- Live prod inventory (2026-09-03, active use): 2 brands, 2 business cases, 3 meeting transcripts (6391/2659/26332 chars), 4 creators, 2 approved alignment snapshots, pitch deck pd-eb77f1fd (16 slides, 3 views/38 turns), 2 creative briefs, 2 contracts, 2 deliverables, 3 invoices, 1 final report (10 sections), 7 sent emails, 8 v3_admin_users, 36 legacy users. All 9 legacy v1/v2 collections EMPTY. ~95 business docs total.
+- AI provider LIVE-VERIFIED: every artefact stamped `emergent:anthropic/claude-sonnet-4-5` => Emergent gateway is the active path and ANTHROPIC_API_KEY is likely unset in prod. Removable by config alone (Anthropic path is raw httpx; emergentintegrations imports are lazy; delete requirements line).
+- Edge: Cloudflare fronts thcodemo.space (Google Trust Services cert, 2yr HSTS preload); DNS at Namecheap (apex A -> Cloudflare, TTL 300, www CNAME to apex); origin on GCP (`via: 1.1 google`). Cloudflare zone ownership unknown - determines cutover shape. Namecheap BasicDNS cannot CNAME at apex.
+- Storage: NO GridFS, NO object storage, NO upload/generated-file dirs. 587KB docx + 343KB flipbook generated live per request. boto3 installed but uncalled. Zero files to migrate.
+- Jobs: TASCK has no cron of its own; only Emergent webhook-cron (every minute, root, reads backend/.env). 6 in-process asyncio AI runners => App Service needs Always On + instance count 1.
+- ENABLE_DIAGNOSTICS / ENABLE_ADMIN_CLEANUP / ADMIN_CLEANUP_TOKEN now have ZERO call sites (stale .env keys); all such endpoints 404 in prod. No destructive admin endpoint exposed.
+- Privacy: CRM logos fetched from icons.duckduckgo.com/ip3/<client-domain> and google.com/s2/favicons; real client domains embedded in the shipped JS bundle.
+- Report ends with 10 read-only asks from Emergent (DB host class, prod shell/mongosh output incl. v3_system_meta, env-var names, backup existence, Cloudflare ownership, webhook-cron config, injected runtime values, image contents, SMTP/SPF facts, supported freeze procedure).
