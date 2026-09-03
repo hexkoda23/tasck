@@ -98,6 +98,7 @@ const brandInitials = (brand) => {
 
 const BrandLogo = ({ brand, size = 'md', className = '', testId = 'brand-logo' }) => {
   const pixelSize = typeof size === 'number' ? size : (SIZE_PRESETS[size] || SIZE_PRESETS.md);
+  const direct = directLogoUrl(brand);
   const candidates = buildCandidates(brand);
   const name = brand?.company || brand?.name || brand?.brand_name || '';
   // As in lib/brandLogo.js: the name-keyed cache is a fast path for guessed
