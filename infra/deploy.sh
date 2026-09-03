@@ -5,6 +5,7 @@
 #   infra/deploy.sh --skip-build         infra only (placeholder images stay)
 #   infra/deploy.sh --skip-infra         rebuild + roll images onto existing apps
 #   infra/deploy.sh --tag 2026-09-03a    pin the image tag (default: UTC timestamp + git sha)
+#   infra/deploy.sh --skip-infra --only api   rebuild and roll just one image (api|web)
 #
 # Environment overrides: RG, LOCATION, ENV_NAME, MONGO_TIER, EXTRA_CORS_ORIGINS,
 # PUBLIC_APP_URL, ENABLE_DEMO_LOGIN (true|false).
@@ -27,11 +28,13 @@ ENABLE_DEMO_LOGIN="${ENABLE_DEMO_LOGIN:-true}"
 SKIP_INFRA=0
 SKIP_BUILD=0
 TAG=""
+ONLY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-infra) SKIP_INFRA=1 ;;
     --skip-build) SKIP_BUILD=1 ;;
     --tag) TAG="$2"; shift ;;
+    --only) ONLY="$2"; shift ;;
     -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -202,14 +205,24 @@ acr_build() {
   done
 }
 
-log "Building tasck-api:$TAG in $ACR_NAME (linux/amd64)"
-acr_build --image "tasck-api:$TAG" --image "tasck-api:latest"   --file "$CTX/Dockerfile.api" "$CTX"
+API_REF="$API_IMAGE"; WEB_REF="$WEB_IMAGE"
+if [[ -z "$ONLY" || "$ONLY" == "api" ]]; then
+  log "Building tasck-api:$TAG in $ACR_NAME (linux/amd64)"
+  acr_build --image "tasck-api:$TAG" --image "tasck-api:latest" \
+    --file "$CTX/Dockerfile.api" "$CTX"
+  API_REF="$ACR_SERVER/tasck-api:$TAG"
+fi
 
-log "Building tasck-web:$TAG with REACT_APP_BACKEND_URL=$PUBLIC_URL"
-acr_build --image "tasck-web:$TAG" --image "tasck-web:latest"   --build-arg "REACT_APP_BACKEND_URL=$PUBLIC_URL"   --file "$CTX/Dockerfile.web" "$CTX"
+if [[ -z "$ONLY" || "$ONLY" == "web" ]]; then
+  log "Building tasck-web:$TAG with REACT_APP_BACKEND_URL=$PUBLIC_URL"
+  acr_build --image "tasck-web:$TAG" --image "tasck-web:latest" \
+    --build-arg "REACT_APP_BACKEND_URL=$PUBLIC_URL" \
+    --file "$CTX/Dockerfile.web" "$CTX"
+  WEB_REF="$ACR_SERVER/tasck-web:$TAG"
+fi
 
 log "Deploying the container apps with the new images"
-OUT="$(deploy_bicep "$ACR_SERVER/tasck-api:$TAG" "$ACR_SERVER/tasck-web:$TAG" true)"
+OUT="$(deploy_bicep "$API_REF" "$WEB_REF" true)"
 
 log "Smoke test"
 sleep 20
