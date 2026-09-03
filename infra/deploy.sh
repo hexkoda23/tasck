@@ -41,9 +41,6 @@ done
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 
 command -v az >/dev/null || { echo "az CLI is required" >&2; exit 1; }
-# az on Windows streams ACR build logs through a cp1252 console and crashes on
-# non-Latin characters (pip progress bars); force UTF-8 for the CLI's Python.
-export PYTHONIOENCODING=utf-8 PYTHONUTF8=1
 az account show --query "{sub:name,id:id,user:user.name}" -o table
 
 # --------------------------------------------------------------------------
@@ -179,11 +176,36 @@ else
   cp -R "$REPO"/. "$CTX"/
 fi
 
+# Queue the build without streaming its log, then poll the run. (On Windows the
+# CLI runs Python in isolated mode and crashes decoding non-Latin characters in
+# streamed build output; polling avoids that and is also restart-safe.)
+acr_build() {
+  local out run_id status
+  out="$(az acr build --registry "$ACR_NAME" --platform linux/amd64 --no-logs "$@" 2>&1 | tr -d '')"
+  run_id="$(printf '%s
+' "$out" | sed -n 's/.*Queued a build with ID: \([a-z0-9]*\).*//p' | tail -1)"
+  [[ -n "$run_id" ]] || { printf '%s
+' "$out" >&2; echo "could not queue ACR build" >&2; return 1; }
+  echo "  queued ACR run $run_id; waiting..."
+  while true; do
+    status="$(az acr task show-run --registry "$ACR_NAME" --run-id "$run_id" --query status -o tsv 2>/dev/null || echo Unknown)"
+    case "$status" in
+      Succeeded) echo "  run $run_id succeeded"; return 0 ;;
+      Failed|Canceled|Error|Timeout)
+        echo "  run $run_id ended with status $status; last log lines:" >&2
+        az acr task logs --registry "$ACR_NAME" --run-id "$run_id" 2>/dev/null | tail -40 | tr -cd '	
+ -~' >&2 || true
+        return 1 ;;
+      *) sleep 20 ;;
+    esac
+  done
+}
+
 log "Building tasck-api:$TAG in $ACR_NAME (linux/amd64)"
-az acr build --registry "$ACR_NAME" --platform linux/amd64   --image "tasck-api:$TAG" --image "tasck-api:latest"   --file "$CTX/Dockerfile.api" "$CTX"
+acr_build --image "tasck-api:$TAG" --image "tasck-api:latest"   --file "$CTX/Dockerfile.api" "$CTX"
 
 log "Building tasck-web:$TAG with REACT_APP_BACKEND_URL=$PUBLIC_URL"
-az acr build --registry "$ACR_NAME" --platform linux/amd64   --image "tasck-web:$TAG" --image "tasck-web:latest"   --build-arg "REACT_APP_BACKEND_URL=$PUBLIC_URL"   --file "$CTX/Dockerfile.web" "$CTX"
+acr_build --image "tasck-web:$TAG" --image "tasck-web:latest"   --build-arg "REACT_APP_BACKEND_URL=$PUBLIC_URL"   --file "$CTX/Dockerfile.web" "$CTX"
 
 log "Deploying the container apps with the new images"
 OUT="$(deploy_bicep "$ACR_SERVER/tasck-api:$TAG" "$ACR_SERVER/tasck-web:$TAG" true)"
