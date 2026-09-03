@@ -43,7 +43,7 @@ set -e
 job_log "4/4 dropping scratch database '$SCRATCH_DB', deleting the self-test archive, resetting job env"
 az containerapp exec -g "$RG" -n tasck-api --command "python -c \"import os,pymongo; pymongo.MongoClient(os.environ['MONGO_URL']).drop_database('$SCRATCH_DB'); print('dropped $SCRATCH_DB')\"" 2>/dev/null | grep -v '^INFO\|^WARNING' || true
 share_delete "$ARCHIVE_NAME"
-az containerapp job update -g "$RG" -n tasck-restore --set-env-vars "MODE=restore" "DROP=false" -o none
+az containerapp job update -g "$RG" -n tasck-restore --set-env-vars "MODE=restore" "DROP=false" "TARGET_DB=$SOURCE_DB" -o none
 az containerapp job update -g "$RG" -n tasck-inventory --set-env-vars "DB_NAME=$SOURCE_DB" -o none
 
 echo

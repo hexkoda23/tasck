@@ -39,7 +39,9 @@ Feature verification with those values:
 | PDF generation (ReportLab) | Works: contract PDF (3 pages) and contract DOCX generated from a throwaway contract, then deleted. |
 
 All temporary test records were deleted afterwards; the database holds only the
-36 seeded account records.
+36 seeded account records. Repeatable checks: `infra/smoke-test.sh <url>` (19
+read-only checks), `infra/feature-test.sh <url> [--email addr]` (DOCX, PDF, AI
+status, optional email), `infra/restore-selftest.sh` (restore pipeline).
 
 ## Topology
 
@@ -66,7 +68,7 @@ Everything lives in one resource group, `rg-tasck-prod` (West Europe):
 | Cosmos DB for MongoDB vCore | `mongo-tasck-prod-<suffix>` | MongoDB 8.0, M10, new and empty at first deploy |
 | Log Analytics / App Insights | `log-tasck-prod` / `appi-tasck-prod` | Container logs, metrics, availability test `tasck-web-health` |
 | Storage account + file share | `sttasckprod<suffix>` / `restore` | Staging area for the production dump and inventories (restore phase only) |
-| Container Apps jobs | `tasck-restore`, `tasck-inventory` | Manual jobs: `mongorestore` inside Azure; read-only target inventory |
+| Container Apps jobs | `tasck-restore`, `tasck-inventory` | Manual jobs: `mongorestore`/`mongodump` inside Azure; read-only inventory. Proven by `infra/restore-selftest.sh` |
 
 The frontend and API share one public hostname exactly as they did on Emergent.
 The web bundle calls the API with same-origin relative paths (`/api/...`), so

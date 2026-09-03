@@ -35,10 +35,11 @@ python backend/inventory_mongo.py --uri "$MONGO_URL" --db "$DB_NAME" --out sourc
 
 ## 2. Restore into Azure
 
-The pipeline is proven by `infra/restore-selftest.sh`, which dumps the current
-Azure database inside Azure, restores it into a scratch database through the
-same script and jobs, verifies it with the inventory tooling, and drops the
-scratch database. Run it any time to re-prove the path before the real restore.
+The pipeline is proven by `infra/restore-selftest.sh` (last run 2026-09-04,
+PASSED): it dumps the current Azure database inside Azure, restores it into a
+scratch database through the same script and jobs, verifies it with the
+inventory tooling (12 collections, counts, content fingerprints and indexes all
+matched), and drops the scratch database. Run it again before the real restore.
 
 
 ```bash
@@ -47,10 +48,13 @@ infra/restore-production.sh --archive ./production.archive.gz --source-db "<DB_N
 
 - `--force` is required because the Azure database currently holds the 36 seeded
   test accounts; the job drops and replaces collections from the archive.
-- The script stops the API, uploads the archive to the `restore` Azure Files share,
-  runs `mongorestore` inside Azure (job `tasck-restore`, image `mongo:8.0`),
-  restarts the API, then runs the `tasck-inventory` job and downloads
-  `target-inventory.json`.
+- The script checks the target is empty (inventory job), uploads the archive to
+  the `restore` Azure Files share, stops the API (only when the target is the live
+  database), runs `mongorestore` inside Azure (job `tasck-restore`, image
+  `mongo:8.0`), restarts the API, then runs the `tasck-inventory` job and
+  downloads `target-inventory.json`. Jobs are parameterised with
+  `az containerapp job update --set-env-vars` (a start-time override would drop
+  the share mount). Git Bash users: the scripts handle Windows path conversion.
 - Mongo vCore is M10 today. If the archive is large (inline Base64 invoices and
   deck artwork), raise `MONGO_TIER` in `infra/deploy.env` before restoring and
   scale back afterwards.
