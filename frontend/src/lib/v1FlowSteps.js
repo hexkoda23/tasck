@@ -15,16 +15,24 @@ import { adminRoute } from './v3AdminRouteBase';
  * Connect call produced several Alignment Snapshots each one owns its own
  * Creator Selector, Pitch Deck and Creative Brief, and moving between them
  * must stay inside the snapshot the admin opened.
+ *
+ * `ownsNext` marks a page that already carries its own onward button, so the
+ * footer must not add a second one. Two buttons doing one job is clutter at
+ * best; on the Pitch Deck and Creative Brief it was worse than that, because
+ * their "Next step" card points at the sibling or at Planning depending on
+ * which of the pair was opened first, while a footer Next is fixed - so the
+ * page could offer "Move to Business Case" and "Next: Creative Brief" at the
+ * same time, disagreeing about where the admin goes.
  */
 export const FLOW_STEPS = [
-  { key: 'connect', suffix: '/connect', label: 'Connect / Business Call' },
+  { key: 'connect', suffix: '/connect', label: 'Connect / Business Call', ownsNext: true },
   { key: 'connect-schedule', suffix: '/connect/schedule', label: 'Conversations & Transcripts' },
   { key: 'snapshot', suffix: '/frame/snapshot', label: 'Alignment Snapshot' },
   { key: 'brainstorm-transcript', suffix: '/frame/brainstorm-transcript', label: 'Brainstorm Transcript' },
   { key: 'brainstorm', suffix: '/frame/brainstorm', label: 'Brainstorm' },
   { key: 'creator-scan', suffix: '/frame/creator-scan', label: 'Creator Selector', scoped: true },
-  { key: 'pitch-deck', suffix: '/frame/pitch-deck', label: 'Pitch Deck', scoped: true },
-  { key: 'brief', suffix: '/frame/brief', label: 'Creative Brief', scoped: true },
+  { key: 'pitch-deck', suffix: '/frame/pitch-deck', label: 'Pitch Deck', scoped: true, ownsNext: true },
+  { key: 'brief', suffix: '/frame/brief', label: 'Creative Brief', scoped: true, ownsNext: true },
   { key: 'planning', suffix: '/plan/planning', label: 'Planning' },
   { key: 'contracts', suffix: '/delivery/contracts', label: 'Contract Studio' },
   { key: 'deliverables', suffix: '/delivery/deliverables', label: 'Deliverables' },
@@ -196,4 +204,18 @@ export const flowGateKey = (pathname) => {
   if (aside) return aside.requires || null;
   const step = FLOW_STEPS.find((entry) => entry.suffix === suffix);
   return step ? step.key : null;
+};
+
+/**
+ * True when the page at `pathname` already has its own onward control, so the
+ * footer should leave Next alone rather than duplicate it.
+ */
+export const flowStepOwnsNext = (pathname) => {
+  const raw = suffixOf(pathname);
+  const suffix = /^\/plan\/(brainstorm|creator-scan|brief|creator-briefing-call)$/.test(raw)
+    ? raw.replace('/plan/', '/frame/')
+    : raw;
+  if (ASIDE_STEPS[suffix]) return false;
+  const step = FLOW_STEPS.find((entry) => entry.suffix === suffix);
+  return Boolean(step && step.ownsNext);
 };

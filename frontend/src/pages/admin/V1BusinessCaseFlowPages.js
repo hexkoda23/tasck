@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-import { flowNeighbours, flowStepHref, flowGateKey, flowStepComplete, STEP_PENDING_HINT } from '../../lib/v1FlowSteps';
+import { flowNeighbours, flowStepHref, flowGateKey, flowStepComplete, flowStepOwnsNext, STEP_PENDING_HINT } from '../../lib/v1FlowSteps';
 import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PriorityTag, PRIORITY_OPTIONS } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
@@ -474,11 +474,16 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
  * what finishes it, so its absence reads as a gate rather than a fault.
  *
  * Previous is never gated - going back is always safe.
+ *
+ * A page that already carries its own onward button gets no footer Next at
+ * all: one job, one button. Those pages keep the footer Previous, which
+ * nothing else on them duplicates.
  */
 const FlowFooterNav = ({ id, bundle }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { prev, next, snapshotId } = flowNeighbours(location.pathname, id);
+  const { prev, next: nextStep, snapshotId } = flowNeighbours(location.pathname, id);
+  const next = flowStepOwnsNext(location.pathname) ? null : nextStep;
   if (!prev && !next) return null;
   const gateKey = flowGateKey(location.pathname);
   const passed = gateKey === null ? true : flowStepComplete(gateKey, bundle);
