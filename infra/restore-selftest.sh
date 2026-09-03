@@ -36,7 +36,7 @@ job_log "3/4 inventory of the source '$SOURCE_DB' and comparison"
 run_job tasck-inventory inventory "DB_NAME=$SOURCE_DB"
 share_download target-inventory.json ./selftest-source-inventory.json
 set +e
-python "$HERE/../backend/verify_restore.py" ./selftest-source-inventory.json ./selftest-target-inventory.json
+python "$(local_path "$HERE/../backend/verify_restore.py")" "$(local_path ./selftest-source-inventory.json)" "$(local_path ./selftest-target-inventory.json)"
 RESULT=$?
 set -e
 
