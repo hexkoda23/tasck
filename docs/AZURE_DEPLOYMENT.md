@@ -36,7 +36,7 @@ Feature verification with those values:
 | Document generation | Works: templated Creative Brief DOCX (banner, watermark, footer, Century Gothic) |
 | AI generation (Claude) | Blocked: the carried-over `ANTHROPIC_API_KEY` returns HTTP 401 "API key is invalid". A valid key must be stored as Key Vault secret `anthropic-api-key` (`infra/set-secrets.sh`), then `infra/deploy.sh --skip-build`. |
 | Opportunity scanning (SerpAPI) | Blocked by the SerpAPI account, not Azure: Free plan, 250/250 monthly searches used, every call returns 429. Needs a plan upgrade or the monthly reset. |
-| PDF generation (ReportLab: contracts, final reports) | Not exercised yet - needs a contract or report record (after the production restore). |
+| PDF generation (ReportLab) | Works: contract PDF (3 pages) and contract DOCX generated from a throwaway contract, then deleted. |
 
 All temporary test records were deleted afterwards; the database holds only the
 36 seeded account records.
@@ -64,11 +64,15 @@ Everything lives in one resource group, `rg-tasck-prod` (West Europe):
 | Key Vault | `kv-tasck-prod-<suffix>` | All secrets; apps read them through a managed identity |
 | Managed identity | `id-tasck-prod` | AcrPull + Key Vault Secrets User for the apps |
 | Cosmos DB for MongoDB vCore | `mongo-tasck-prod-<suffix>` | MongoDB 8.0, M10, new and empty at first deploy |
-| Log Analytics / App Insights | `log-tasck-prod` / `appi-tasck-prod` | Container logs, metrics |
+| Log Analytics / App Insights | `log-tasck-prod` / `appi-tasck-prod` | Container logs, metrics, availability test `tasck-web-health` |
+| Storage account + file share | `sttasckprod<suffix>` / `restore` | Staging area for the production dump and inventories (restore phase only) |
+| Container Apps jobs | `tasck-restore`, `tasck-inventory` | Manual jobs: `mongorestore` inside Azure; read-only target inventory |
 
-The frontend and API share one public hostname exactly as they did on Emergent,
-so `REACT_APP_BACKEND_URL` is the public web URL and every API call goes to
-`https://<web>/api/...`.
+The frontend and API share one public hostname exactly as they did on Emergent.
+The web bundle calls the API with same-origin relative paths (`/api/...`), so
+one web image serves the azurecontainerapps.io hostname and the custom domain
+alike and no rebuild is needed at cutover. `REACT_APP_BACKEND_URL` is left
+empty; set it only for a split-host deployment.
 
 ## Deploy
 
@@ -184,15 +188,11 @@ az containerapp update -g rg-tasck-prod -n tasck-api --image <acr>/tasck-api:<pr
 az keyvault secret show --vault-name <kv> --name mongo-url --query value -o tsv
 ```
 
-## Remaining phases (not started until Azure is verified)
+## Remaining phases
 
-1. **Production data**: obtain a verified `mongodump` of the real production
-   database from Emergent (not the preview `test_database`), restore it into the
-   vCore cluster with `mongorestore` using the Key Vault connection string, and
-   verify counts, indexes and inline-file records per collection.
-2. **Domain**: add the production hostname as a custom domain on `tasck-web`
-   (managed certificate), set `publicAppUrl`/`extraCorsOrigins`, rebuild the web
-   image with the final URL, and only then change Cloudflare DNS.
-3. **Email DNS**: confirm SPF/DKIM/DMARC for the sending domain
-   (`docs/EMAIL_DELIVERABILITY.md`).
-4. Keep Emergent running as rollback until the cutover is verified.
+Owned by `docs/CUTOVER_RUNBOOK.md`: production export, Azure-side restore
+(`infra/restore-production.sh`), integrity verification
+(`backend/verify_restore.py`), custom domain and certificate, DNS cutover,
+rollback and decommission. It also lists the blockers that need an owner
+(Anthropic key, SerpAPI quota, production dump, DNS access, mail-domain
+authentication, credential rotation).
