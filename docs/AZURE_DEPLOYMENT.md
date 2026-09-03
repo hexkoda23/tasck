@@ -3,6 +3,30 @@
 How TASCK runs on Azure, how to deploy it, and what the remaining migration
 phases are. The Emergent deployment stays untouched until the final cutover.
 
+## Current state (2026-09-03)
+
+Deployed and smoke-tested with a NEW, EMPTY database. Emergent is untouched and
+remains the live production site.
+
+| Item | Value |
+| --- | --- |
+| Web (public) | https://tasck-web.wittysea-78b195c2.westeurope.azurecontainerapps.io |
+| API (internal only) | https://tasck-api.internal.wittysea-78b195c2.westeurope.azurecontainerapps.io |
+| Registry | acrtasckproddcycxfri.azurecr.io |
+| Key Vault | kv-tasck-prod-dcycxfri |
+| Mongo vCore | mongo-tasck-prod-dcycxfri (MongoDB 8.0, M10, database `tasck`) |
+
+Verified: SPA, client routing, `/api` proxy, health probes, V1 role login,
+V1 admin UI, v3 CRM read endpoints, portal logins (reject bad credentials),
+Mongo connectivity. The 36 account records were seeded with
+`backend/seed_accounts.py` so sign-in could be tested; they are replaced by the
+production restore.
+
+Not yet verified (need secrets and data): AI generation (Anthropic key),
+opportunity scanning (SerpAPI key), email (SMTP), document generation (needs a
+business case with a snapshot). Run `infra/set-secrets.sh`, then
+`infra/deploy.sh --skip-build`, then exercise those flows.
+
 ## Topology
 
 ```
