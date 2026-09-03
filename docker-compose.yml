@@ -1,0 +1,60 @@
+# Local end-to-end run of the same images Azure uses (linux/amd64).
+#
+#   docker compose up --build
+#   open http://localhost:8080          (web, proxies /api to the API container)
+#
+# The API reads secrets from your shell environment - export ANTHROPIC_API_KEY,
+# SERPAPI_API_KEY and SMTP_* before `docker compose up`, or put them in a local
+# .env next to this file (docker compose reads it; it is git-ignored).
+services:
+  mongo:
+    image: mongo:8.0
+    platform: linux/amd64
+    ports:
+      - "27017:27017"
+    volumes:
+      - tasck-mongo:/data/db
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    platform: linux/amd64
+    environment:
+      APP_ENV: development          # enables demo account seeding on an empty local DB
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: tasck_local
+      PORT: "8000"
+      CORS_ORIGINS: http://localhost:8080
+      FRONTEND_URL: http://localhost:8080
+      PUBLIC_APP_URL: http://localhost:8080
+      TASCK_AI_PROVIDER: anthropic
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      SERPAPI_API_KEY: ${SERPAPI_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-TASCK}
+    depends_on:
+      - mongo
+    ports:
+      - "8001:8000"
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        REACT_APP_BACKEND_URL: http://localhost:8080
+    platform: linux/amd64
+    environment:
+      API_UPSTREAM: http://api:8000
+    depends_on:
+      - api
+    ports:
+      - "8080:8080"
+
+volumes:
+  tasck-mongo:

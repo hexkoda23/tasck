@@ -6120,21 +6120,49 @@ def make_v3_router(db):
         excerpt = text[:12000]
         fields: Dict[str, Any] = {}
         analysis_source = "none"
+        extract_user_message = f"Document filename: {file.filename}\n\nDocument text:\n{excerpt}"
         emergent_key = os.getenv("EMERGENT_LLM_KEY")
-        if emergent_key:
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        _prefer_anthropic = _resolve_ai_provider("IMPORT_EXTRACT_PROVIDER")
+
+        async def _extract_via_emergent() -> Optional[Dict[str, Any]]:
+            if not emergent_key:
+                return None
+            model = os.getenv("IMPORT_EXTRACT_EMERGENT_MODEL") or "gemini-2.5-flash"
+            # Worker thread, not the event loop - see _emergent_chat.
+            text_out = await _emergent_chat(
+                emergent_key, f"import-extract-{uuid.uuid4()}", _IMPORT_EXTRACT_SYSTEM,
+                "gemini", model, extract_user_message, timeout=60,
+            )
+            parsed = _parse_json_object(text_out) or {}
+            if parsed:
+                parsed["analysis_source"] = f"emergent:gemini/{model}"
+            return parsed or None
+
+        def _extract_via_anthropic() -> Optional[Dict[str, Any]]:
+            if not anthropic_key:
+                return None
+            model = (os.getenv("IMPORT_EXTRACT_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL")
+                     or "claude-sonnet-4-5")
+            return _anthropic_json_call(anthropic_key, model, _IMPORT_EXTRACT_SYSTEM,
+                                        extract_user_message, max_tokens=2000, temperature=0.0,
+                                        timeout=60)
+
+        # Same provider preference as every other AI feature: Anthropic when it
+        # is configured (Azure), the Emergent gateway otherwise. Whichever runs
+        # first and returns fields wins; the other is the fallback.
+        extract_order = ([_extract_via_anthropic, _extract_via_emergent] if _prefer_anthropic
+                         else [_extract_via_emergent, _extract_via_anthropic])
+        for _extract in extract_order:
             try:
-                model = os.getenv("IMPORT_EXTRACT_EMERGENT_MODEL") or "gemini-2.5-flash"
-                # Worker thread, not the event loop - see _emergent_chat.
-                text_out = await _emergent_chat(
-                    emergent_key, f"import-extract-{uuid.uuid4()}", _IMPORT_EXTRACT_SYSTEM,
-                    "gemini", model,
-                    f"Document filename: {file.filename}\n\nDocument text:\n{excerpt}",
-                    timeout=60,
-                )
-                fields = _parse_json_object(text_out) or {}
-                analysis_source = f"emergent:gemini/{model}"
+                result = await _extract() if asyncio.iscoroutinefunction(_extract) else await asyncio.to_thread(_extract)
             except Exception as exc:
-                logging.warning("Import extract LLM failed: %s", exc)
+                logging.warning("Import extract LLM (%s) failed: %s", _extract.__name__, exc)
+                continue
+            if result:
+                analysis_source = str(result.pop("analysis_source", None) or "unknown")
+                fields = result
+                break
 
         def _s(key: str) -> str:
             val = fields.get(key)

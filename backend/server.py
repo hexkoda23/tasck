@@ -20,7 +20,30 @@ from seed_data import get_seed_data
 from v3_routes import make_v3_router
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+APP_ENV = (os.environ.get("APP_ENV") or "development").strip().lower()
+LOCAL_ENVS = {"development", "dev", "local", "test"}
+IS_LOCAL_ENV = APP_ENV in LOCAL_ENVS
+
+# A checked-in dotenv file must never become a production fallback. Azure injects
+# configuration through the process environment (App Settings / Key Vault
+# references); dotenv is strictly a local-development convenience and, even
+# locally, never overrides a value already present in the process environment.
+if IS_LOCAL_ENV:
+    load_dotenv(ROOT_DIR / '.env', override=False)
+
+
+def _flag(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+# The V1 admin / staff / creative sign-in is a passwordless role login. It is
+# how the client signs in on the current production deployment, so it stays
+# available by default on Azure to preserve existing behaviour. Set
+# ENABLE_DEMO_LOGIN=false once a credentialed admin login replaces it.
+ENABLE_DEMO_LOGIN = _flag("ENABLE_DEMO_LOGIN", default=True)
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -160,8 +183,15 @@ async def startup_event():
         # against real brands.
         logger.info("Background hydration completed.")
 
-    asyncio.create_task(_hydrate())
-    logger.info("TASCK OS API started successfully (v1+v2+v3) - hydration running in background")
+    # Azure staging and production start with exactly the database supplied to
+    # them. Never seed, wipe, import, or repair customer data on boot outside
+    # an explicitly local/demo environment.
+    bootstrap_enabled = IS_LOCAL_ENV and _flag("ENABLE_DEMO_BOOTSTRAP", default=True)
+    if bootstrap_enabled:
+        asyncio.create_task(_hydrate())
+        logger.info("TASCK OS API started with local demo hydration enabled")
+    else:
+        logger.info("TASCK OS API started with production-safe bootstrap disabled")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -171,7 +201,9 @@ async def shutdown_db_client():
 
 @api_router.post("/auth/demo-login", response_model=DemoLoginResponse)
 async def demo_login(request: DemoLoginRequest):
-    """Demo login - returns user based on role selection"""
+    """Role-based login - returns the account for the selected role."""
+    if not ENABLE_DEMO_LOGIN:
+        raise HTTPException(status_code=404, detail="Not found")
     role = request.role
     
     if role == UserRole.STAFF:
@@ -700,14 +732,7 @@ app.include_router(api_router)
 app.include_router(v3_router)
 
 # CORS
-_default_cors_origins = [
-    "http://localhost:7159",
-    "http://localhost:3000",
-    "https://thcodemo.space",
-    "https://www.thcodemo.space",
-    "https://tasck-live-demo-1.emergent.host",
-    "https://tasck-live-demo-1.preview.emergentagent.com",
-]
+_default_cors_origins = ["http://localhost:7159", "http://localhost:3000"] if IS_LOCAL_ENV else []
 _env_cors_origins = [origin.strip() for origin in os.environ.get('CORS_ORIGINS', '').split(',') if origin.strip()]
 # Note: CORS spec forbids Access-Control-Allow-Origin='*' when credentials are
 # allowed. If the env asks for '*' we drop it and rely on the explicit list +
@@ -718,7 +743,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=allow_origins,
-    allow_origin_regex=r"https://.*\.(?:emergent\.host|emergentagent\.com)$",
+    allow_origin_regex=r"https://.*\.(?:emergent\.host|emergentagent\.com)$" if IS_LOCAL_ENV else None,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
@@ -739,7 +764,7 @@ def _cors_origin_for_request(request: Request) -> Optional[str]:
     if origin in allow_origins:
         return origin
     import re as _re
-    if _re.match(r"https://.*\.(?:emergent\.host|emergentagent\.com)$", origin):
+    if IS_LOCAL_ENV and _re.match(r"https://.*\.(?:emergent\.host|emergentagent\.com)$", origin):
         return origin
     return None
 

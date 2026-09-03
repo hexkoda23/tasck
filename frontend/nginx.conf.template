@@ -1,0 +1,74 @@
+# TASCK web tier: serves the React build and proxies /api to the API container.
+#
+# Rendered by the nginx image's entrypoint from environment variables:
+#   API_UPSTREAM  - scheme + host of the API, e.g. https://tasck-api.internal.<env>.azurecontainerapps.io
+#                   or http://tasck-api:8000 for local docker compose.
+# Same-origin /api keeps the browser, cookies, CORS and email links exactly as
+# they behaved on the previous host, where frontend and API shared one hostname.
+
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Uploads (invoices, CRM workbooks, project documents) go through /api.
+    client_max_body_size 50m;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml image/svg+xml;
+    gzip_min_length 1024;
+
+    # Health endpoint for the Container Apps probes on the web tier itself.
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+        add_header Content-Type text/plain;
+    }
+
+    location /api/ {
+        # No URI on proxy_pass: the original /api/... path is forwarded intact.
+        # The API hostname is resolved once at start-up (Container Apps ingress
+        # has a static address per environment).
+        proxy_pass ${API_UPSTREAM};
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_ssl_server_name on;
+
+        # AI generation calls run 60-180s. Container Apps ingress caps a
+        # request at 240s, so match that rather than nginx's 60s default.
+        proxy_connect_timeout 15s;
+        proxy_send_timeout 240s;
+        proxy_read_timeout 240s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # Hashed build assets are immutable.
+    location /static/ {
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+        try_files $uri =404;
+    }
+
+    location ~* \.(?:png|jpg|jpeg|gif|svg|ico|webp|woff2?|ttf)$ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+        try_files $uri =404;
+    }
+
+    # index.html must never be cached: it points at the current hashed bundle.
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

@@ -17,6 +17,8 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+import requests
+
 logger = logging.getLogger("tasck.v3.tracker")
 
 # ---------------------------------------------------------------------------
@@ -561,10 +563,16 @@ async def call_llm_enricher(
     freshness_bucket: Optional[str] = None,
     source_label: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Single Claude Sonnet 4.5 call via Emergent LLM Key. Returns v3.3 card."""
+    """Single Claude call. Returns v3.3 card.
+
+    Uses the Anthropic API directly when ANTHROPIC_API_KEY is set (the Azure
+    deployment), otherwise the Emergent gateway when EMERGENT_LLM_KEY is set.
+    Falls back to heuristics when neither is configured.
+    """
     key = os.getenv("EMERGENT_LLM_KEY")
-    if not key:
-        logger.warning("[Tracker v3.3] EMERGENT_LLM_KEY not set - falling back to heuristics")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if not key and not anthropic_key:
+        logger.warning("[Tracker v3.3] neither ANTHROPIC_API_KEY nor EMERGENT_LLM_KEY is set - falling back to heuristics")
         return None
 
     freshness_hint = ""
@@ -588,6 +596,38 @@ async def call_llm_enricher(
         f"Produce the JSON opportunity card."
     )
 
+    model = os.getenv("TRACKER_LLM_MODEL") or "claude-sonnet-4-6"
+
+    if anthropic_key:
+        try:
+            import asyncio as _asyncio
+
+            def _run_anthropic() -> str:
+                response = requests.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01",
+                             "content-type": "application/json"},
+                    json={"model": model, "max_tokens": 1200, "temperature": 0.2,
+                          "system": LLM_SYSTEM_PROMPT,
+                          "messages": [{"role": "user", "content": user_msg}]},
+                    timeout=45,
+                )
+                if response.status_code >= 400:
+                    raise RuntimeError(f"anthropic:{model} HTTP {response.status_code}: "
+                                       f"{(response.text or '')[:200]}")
+                data = response.json()
+                return "\n".join(part.get("text", "") for part in data.get("content", [])
+                                 if part.get("type") == "text")
+
+            text = await _asyncio.to_thread(_run_anthropic)
+            logger.info("[Tracker v3.3] LLM raw response (first 240 chars) = %s", text[:240])
+            return normalise_card(_parse_json_strict(text))
+        except Exception as exc:
+            logger.warning("[Tracker v3.3] Anthropic call failed: %s", exc)
+            if not key:
+                return None
+            # Fall through to the Emergent gateway when it is also configured.
+
     try:
         # Lazy import so the module loads even if emergentintegrations isn't ready
         from emergentintegrations.llm.chat import LlmChat, UserMessage
@@ -598,7 +638,7 @@ async def call_llm_enricher(
             api_key=key,
             session_id=f"tracker-v33-{_uuid.uuid4().hex[:8]}",
             system_message=LLM_SYSTEM_PROMPT,
-        ).with_model("anthropic", "claude-sonnet-4-6")
+        ).with_model("anthropic", model)
 
         # LlmChat.send_message is declared `async` but calls the sync
         # `litellm.completion()` internally, which blocks the event loop and

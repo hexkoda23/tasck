@@ -1,0 +1,32 @@
+# TASCK web - React (CRA/CRACO) build served by nginx, with /api proxied to the
+# API container so the browser sees a single origin (as on the previous host).
+#
+# Build on linux/amd64:
+#   az acr build --platform linux/amd64 -f Dockerfile.web \
+#      --build-arg REACT_APP_BACKEND_URL=https://<public web hostname> -t tasck-web:<tag> .
+#
+# REACT_APP_BACKEND_URL is embedded into the bundle at build time. Point it at
+# the PUBLIC web hostname (not the API's internal hostname): every API call then
+# goes to https://<web>/api/... and nginx forwards it to the API.
+FROM --platform=linux/amd64 node:20-bookworm-slim AS build
+
+WORKDIR /src
+COPY frontend/package.json frontend/yarn.lock ./
+RUN corepack enable && yarn install --frozen-lockfile --network-timeout 600000
+
+COPY frontend/ ./
+ARG REACT_APP_BACKEND_URL
+ENV REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL} \
+    GENERATE_SOURCEMAP=false \
+    NODE_OPTIONS=--max-old-space-size=4096
+RUN test -n "$REACT_APP_BACKEND_URL" || (echo "REACT_APP_BACKEND_URL build-arg is required" && exit 1) \
+    && yarn build
+
+FROM --platform=linux/amd64 nginxinc/nginx-unprivileged:1.27-alpine
+# The image's entrypoint renders /etc/nginx/templates/*.template with envsubst
+# into /etc/nginx/conf.d/ on start, which is how API_UPSTREAM gets injected at
+# runtime (so one web image serves any environment).
+COPY frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /src/build /usr/share/nginx/html
+ENV API_UPSTREAM=http://localhost:8000
+EXPOSE 8080

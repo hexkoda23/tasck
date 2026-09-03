@@ -1,0 +1,43 @@
+# TASCK API - FastAPI on Uvicorn.
+#
+# Build on linux/amd64 (Azure Container Apps). The previous host built on an
+# ARM64 base image; every dependency here has manylinux x86_64 wheels, so the
+# only architecture-specific work is choosing the platform at build time:
+#   az acr build --platform linux/amd64 -f Dockerfile.api -t tasck-api:<tag> .
+FROM --platform=linux/amd64 python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    APP_ENV=production \
+    PORT=8000
+
+WORKDIR /app
+
+# DejaVu gives ReportLab/Pillow a predictable fallback font set on Linux; the
+# TASCK brand fonts ship in backend/static. curl is for the container health
+# probe only.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 tasck
+
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --requirement requirements.txt
+
+COPY backend/ ./
+RUN chown -R tasck:tasck /app
+USER tasck
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" || exit 1
+
+# One worker: long-running AI/document jobs run in-process (asyncio tasks) and
+# report progress through MongoDB, so a single process per replica keeps job
+# state coherent. Scale with replicas, not workers.
+# --proxy-headers / --forwarded-allow-ips: the Container Apps ingress and the
+# web tier's nginx sit in front, so honour X-Forwarded-* from them.
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT} --workers 1 --proxy-headers --forwarded-allow-ips='*' --timeout-keep-alive 75"]
