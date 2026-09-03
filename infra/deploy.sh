@@ -37,6 +37,10 @@ AI_MODEL="${AI_MODEL:-claude-sonnet-4-5}"
 ALIGNMENT_ANALYZER_TIMEOUT_SECONDS="${ALIGNMENT_ANALYZER_TIMEOUT_SECONDS:-75}"
 ANALYZE_ALL_HARD_TIMEOUT_SECONDS="${ANALYZE_ALL_HARD_TIMEOUT_SECONDS:-35}"
 CREATOR_MATCH_TIMEOUT_SECONDS="${CREATOR_MATCH_TIMEOUT_SECONDS:-50}"
+# Cutover / restore preparation (all optional): see docs/CUTOVER_RUNBOOK.md
+CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-}"
+CUSTOM_DOMAIN_CERT_ID="${CUSTOM_DOMAIN_CERT_ID:-}"
+OPERATOR_IP="${OPERATOR_IP:-}"
 
 SKIP_INFRA=0
 SKIP_BUILD=0
@@ -130,7 +134,7 @@ deploy_bicep() {
       webImage="$web_image" \
       extraCorsOrigins="$EXTRA_CORS_ORIGINS" \
       publicAppUrl="$PUBLIC_APP_URL" \
-      enableDemoLogin="$ENABLE_DEMO_LOGIN" smtpHost="$SMTP_HOST" smtpPort="$SMTP_PORT" smtpFromEmail="$SMTP_FROM_EMAIL" smtpFromName="$SMTP_FROM_NAME" smtpReplyTo="$SMTP_REPLY_TO" smtpUseTls="$SMTP_USE_TLS" smtpUseSsl="$SMTP_USE_SSL" aiModel="$AI_MODEL" alignmentAnalyzerTimeoutSeconds="$ALIGNMENT_ANALYZER_TIMEOUT_SECONDS" analyzeAllHardTimeoutSeconds="$ANALYZE_ALL_HARD_TIMEOUT_SECONDS" creatorMatchTimeoutSeconds="$CREATOR_MATCH_TIMEOUT_SECONDS" \
+      enableDemoLogin="$ENABLE_DEMO_LOGIN" customDomain="$CUSTOM_DOMAIN" customDomainCertificateId="$CUSTOM_DOMAIN_CERT_ID" operatorIp="$OPERATOR_IP" smtpHost="$SMTP_HOST" smtpPort="$SMTP_PORT" smtpFromEmail="$SMTP_FROM_EMAIL" smtpFromName="$SMTP_FROM_NAME" smtpReplyTo="$SMTP_REPLY_TO" smtpUseTls="$SMTP_USE_TLS" smtpUseSsl="$SMTP_USE_SSL" aiModel="$AI_MODEL" alignmentAnalyzerTimeoutSeconds="$ALIGNMENT_ANALYZER_TIMEOUT_SECONDS" analyzeAllHardTimeoutSeconds="$ANALYZE_ALL_HARD_TIMEOUT_SECONDS" creatorMatchTimeoutSeconds="$CREATOR_MATCH_TIMEOUT_SECONDS" \
     --query "properties.outputs" -o json
 }
 
@@ -165,6 +169,10 @@ echo "  Key Vault      : $KV_NAME"
 echo "  Web (public)   : https://$WEB_FQDN"
 echo "  API (internal) : https://$API_FQDN"
 echo "  Secrets wired  : $WIRE_SECRETS"
+echo "  Restore share  : $(jqv restoreStorageAccount 2>/dev/null || echo n/a) / $(jqv restoreShareName 2>/dev/null || echo n/a)"
+echo "  Domain verify  : TXT asuid.<host> = $(jqv customDomainVerificationId 2>/dev/null || echo n/a)"
+echo "  Env static IP  : $(jqv containerEnvStaticIp 2>/dev/null || echo n/a)"
+[[ -n "$CUSTOM_DOMAIN" ]] && echo "  Custom domain  : $CUSTOM_DOMAIN (certificate: $(jqv customDomainCertificateId 2>/dev/null || echo pending))"
 
 if [[ $SKIP_BUILD -eq 1 ]]; then
   log "Skipping image build"
