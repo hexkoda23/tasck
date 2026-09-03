@@ -40,13 +40,17 @@ for l in sys.stdin:
   done
 }
 
+# Local paths handed to az must be Windows-style on Git Bash (path conversion is
+# disabled above so that share paths survive); no-op elsewhere.
+local_path() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+
 # share_download <path-on-share> <local-dest>
 share_download() {
-  az storage file download --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name restore --path "$1" --dest "$2" -o none
+  az storage file download --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name restore --path "$1" --dest "$(local_path "$2")" -o none
 }
 # share_upload <local-file> <path-on-share>
 share_upload() {
-  az storage file upload --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name restore --source "$1" --path "$2" -o none
+  az storage file upload --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name restore --source "$(local_path "$1")" --path "$2" -o none
 }
 # share_delete <path-on-share>
 share_delete() {
