@@ -42,6 +42,15 @@ import v3_tracker_dedupe
 
 logger = logging.getLogger("tasck.v3")
 
+_SECRET_QUERY_PARAM = re.compile(r"(api_key|apikey|key|token|password)=([^&\s'\"]+)", re.IGNORECASE)
+
+
+def _redact_secrets(text: str) -> str:
+    """Strip credential-bearing query parameters from text destined for logs or
+    stored error fields. `requests` embeds the full request URL (including
+    ?api_key=...) in its exception messages."""
+    return _SECRET_QUERY_PARAM.sub(r"\1=<redacted>", text or "")
+
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -4113,9 +4122,9 @@ def make_v3_router(db):
                                 scraped_about = meta_fallback[:1500]
                                 about_source = "serpapi_meta"
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("SerpAPI rediscovery scrape failed for %s (%s): %s", brand_name, retry_url, exc)
+                        logger.warning("SerpAPI rediscovery scrape failed for %s (%s): %s", brand_name, retry_url, _redact_secrets(str(exc)))
             except requests.RequestException as exc:
-                logger.warning("SerpAPI rediscovery request failed for %s: %s", brand_name, exc)
+                logger.warning("SerpAPI rediscovery request failed for %s: %s", brand_name, _redact_secrets(str(exc)))
 
         # Rediscovery (or anything else) got us content after all, so the
         # earlier failure is no longer worth reporting.
@@ -17357,8 +17366,11 @@ Produce the opportunity card JSON.
                     )
                     return {"plan": plan, "raw": data, "error": data.get("error")}
                 except Exception as exc:
-                    logger.warning("[SerpAPI fan-out a%d] call failed: %s - %s", attempt_num, plan["source_key"], exc)
-                    return {"plan": plan, "raw": {}, "error": str(exc)}
+                    # requests puts the full URL - including api_key= - in the
+                    # exception text; never log or persist that.
+                    reason = _redact_secrets(str(exc))
+                    logger.warning("[SerpAPI fan-out a%d] call failed: %s - %s", attempt_num, plan["source_key"], reason)
+                    return {"plan": plan, "raw": {}, "error": reason}
 
             fanout_results = await asyncio.gather(*[_serpapi_one(p) for p in attempt_plans])
             diagnostics["serpapi_calls_total"] += len(attempt_plans)
