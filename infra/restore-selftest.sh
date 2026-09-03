@@ -36,8 +36,10 @@ wait_job() {  # job, execution
 }
 
 log "1/4 mongodump of '$SOURCE_DB' inside Azure -> share:/$ARCHIVE_NAME"
+# The job template already runs `/bin/bash -c <script>`; only the script argument is
+# overridden (passing "-c" again would be parsed by az itself).
 EXEC="$(az containerapp job start -g "$RG" -n tasck-restore \
-  --command "/bin/bash" --args "-c" "set -euo pipefail; mongodump --uri \"\$MONGO_URL\" --db \"$SOURCE_DB\" --archive=/restore/$ARCHIVE_NAME --gzip && ls -la /restore/$ARCHIVE_NAME" \
+  --args "set -euo pipefail; mongodump --uri \"\$MONGO_URL\" --db \"$SOURCE_DB\" --archive=/restore/$ARCHIVE_NAME --gzip && ls -la /restore/$ARCHIVE_NAME" \
   --query name -o tsv)"
 wait_job tasck-restore "$EXEC"
 az storage file download --account-name "$STORAGE" --account-key "$STORAGE_KEY" --share-name restore --path "$ARCHIVE_NAME" --dest "$WORK/$ARCHIVE_NAME" -o none
