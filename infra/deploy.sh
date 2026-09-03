@@ -162,16 +162,24 @@ if [[ -z "$TAG" ]]; then
 fi
 PUBLIC_URL="${PUBLIC_APP_URL:-https://$WEB_FQDN}"
 
+# Build from a clean export of the committed tree: what runs on Azure is exactly
+# what is in git (no node_modules, no local .env, no build output uploaded).
+CTX="$(mktemp -d "${TMPDIR:-/tmp}/tasck-ctx.XXXXXX")"
+trap 'rm -rf "$CTX"' EXIT
+if git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if [[ -n "$(git -C "$REPO" status --porcelain)" ]]; then
+    echo "WARNING: uncommitted changes are NOT included in the build (building from HEAD)." >&2
+  fi
+  git -C "$REPO" archive --format=tar HEAD | tar -x -C "$CTX"
+else
+  cp -R "$REPO"/. "$CTX"/
+fi
+
 log "Building tasck-api:$TAG in $ACR_NAME (linux/amd64)"
-az acr build --registry "$ACR_NAME" --platform linux/amd64 \
-  --image "tasck-api:$TAG" --image "tasck-api:latest" \
-  --file "$REPO/Dockerfile.api" "$REPO"
+az acr build --registry "$ACR_NAME" --platform linux/amd64   --image "tasck-api:$TAG" --image "tasck-api:latest"   --file "$CTX/Dockerfile.api" "$CTX"
 
 log "Building tasck-web:$TAG with REACT_APP_BACKEND_URL=$PUBLIC_URL"
-az acr build --registry "$ACR_NAME" --platform linux/amd64 \
-  --image "tasck-web:$TAG" --image "tasck-web:latest" \
-  --build-arg "REACT_APP_BACKEND_URL=$PUBLIC_URL" \
-  --file "$REPO/Dockerfile.web" "$REPO"
+az acr build --registry "$ACR_NAME" --platform linux/amd64   --image "tasck-web:$TAG" --image "tasck-web:latest"   --build-arg "REACT_APP_BACKEND_URL=$PUBLIC_URL"   --file "$CTX/Dockerfile.web" "$CTX"
 
 log "Deploying the container apps with the new images"
 OUT="$(deploy_bicep "$ACR_SERVER/tasck-api:$TAG" "$ACR_SERVER/tasck-web:$TAG" true)"
