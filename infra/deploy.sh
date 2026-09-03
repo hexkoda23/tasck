@@ -25,6 +25,19 @@ EXTRA_CORS_ORIGINS="${EXTRA_CORS_ORIGINS:-}"
 PUBLIC_APP_URL="${PUBLIC_APP_URL:-}"
 ENABLE_DEMO_LOGIN="${ENABLE_DEMO_LOGIN:-true}"
 
+# Non-secret per-environment settings (SMTP host/port/from, AI model, timeouts).
+# infra/deploy.env is git-ignored; see infra/deploy.env.example.
+if [[ -f "$HERE/deploy.env" ]]; then
+  set -a; . "$HERE/deploy.env"; set +a
+fi
+SMTP_HOST="${SMTP_HOST:-}"; SMTP_PORT="${SMTP_PORT:-587}"; SMTP_FROM_EMAIL="${SMTP_FROM_EMAIL:-}"
+SMTP_FROM_NAME="${SMTP_FROM_NAME:-TASCK}"; SMTP_REPLY_TO="${SMTP_REPLY_TO:-}"
+SMTP_USE_TLS="${SMTP_USE_TLS:-true}"; SMTP_USE_SSL="${SMTP_USE_SSL:-false}"
+AI_MODEL="${AI_MODEL:-claude-sonnet-4-5}"
+ALIGNMENT_ANALYZER_TIMEOUT_SECONDS="${ALIGNMENT_ANALYZER_TIMEOUT_SECONDS:-75}"
+ANALYZE_ALL_HARD_TIMEOUT_SECONDS="${ANALYZE_ALL_HARD_TIMEOUT_SECONDS:-35}"
+CREATOR_MATCH_TIMEOUT_SECONDS="${CREATOR_MATCH_TIMEOUT_SECONDS:-50}"
+
 SKIP_INFRA=0
 SKIP_BUILD=0
 TAG=""
@@ -88,7 +101,7 @@ fi
 WIRE_SECRETS=false
 if [[ -n "$KV_NAME" ]]; then
   missing=0
-  for s in anthropic-api-key serpapi-api-key smtp-password; do
+  for s in anthropic-api-key serpapi-api-key smtp-username smtp-password; do
     az keyvault secret show --vault-name "$KV_NAME" --name "$s" -o none 2>/dev/null || missing=1
   done
   [[ $missing -eq 0 ]] && WIRE_SECRETS=true
@@ -117,7 +130,7 @@ deploy_bicep() {
       webImage="$web_image" \
       extraCorsOrigins="$EXTRA_CORS_ORIGINS" \
       publicAppUrl="$PUBLIC_APP_URL" \
-      enableDemoLogin="$ENABLE_DEMO_LOGIN" \
+      enableDemoLogin="$ENABLE_DEMO_LOGIN" smtpHost="$SMTP_HOST" smtpPort="$SMTP_PORT" smtpFromEmail="$SMTP_FROM_EMAIL" smtpFromName="$SMTP_FROM_NAME" smtpReplyTo="$SMTP_REPLY_TO" smtpUseTls="$SMTP_USE_TLS" smtpUseSsl="$SMTP_USE_SSL" aiModel="$AI_MODEL" alignmentAnalyzerTimeoutSeconds="$ALIGNMENT_ANALYZER_TIMEOUT_SECONDS" analyzeAllHardTimeoutSeconds="$ANALYZE_ALL_HARD_TIMEOUT_SECONDS" creatorMatchTimeoutSeconds="$CREATOR_MATCH_TIMEOUT_SECONDS" \
     --query "properties.outputs" -o json
 }
 

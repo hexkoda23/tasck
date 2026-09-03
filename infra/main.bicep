@@ -74,6 +74,22 @@ param wireApiSecrets bool = false
 @description('Create the two container apps. deploy.sh runs once with false (registry, vault, database, environment), builds the images, then again with true.')
 param deployApps bool = true
 
+// --- Non-secret SMTP settings (the password and username are Key Vault secrets) ---
+param smtpHost string = ''
+param smtpPort string = '587'
+param smtpFromEmail string = ''
+param smtpFromName string = 'TASCK'
+param smtpReplyTo string = ''
+param smtpUseTls string = 'true'
+param smtpUseSsl string = 'false'
+
+// --- AI model / timeout settings (non-secret) ---
+@description('Default Claude model for every AI feature (ALIGNMENT_ANALYZER_MODEL; per-feature *_LLM_MODEL fall back to it).')
+param aiModel string = 'claude-sonnet-4-5'
+param alignmentAnalyzerTimeoutSeconds string = '75'
+param analyzeAllHardTimeoutSeconds string = '35'
+param creatorMatchTimeoutSeconds string = '50'
+
 var suffix = toLower(take(uniqueString(resourceGroup().id), 8))
 var tags = {
   project: 'tasck'
@@ -256,6 +272,7 @@ var apiSecretNames = wireApiSecrets ? [
   'mongo-url'
   'anthropic-api-key'
   'serpapi-api-key'
+  'smtp-username'
   'smtp-password'
 ] : [
   'mongo-url'
@@ -317,10 +334,25 @@ resource apiApp 'Microsoft.App/containerApps@2025-01-01' = if (deployApps) {
             { name: 'ENABLE_DIAGNOSTICS', value: 'false' }
             { name: 'ENABLE_ADMIN_CLEANUP', value: 'false' }
             { name: 'TASCK_AI_PROVIDER', value: 'anthropic' }
+            { name: 'ALIGNMENT_ANALYZER_MODEL', value: aiModel }
+            { name: 'BRAND_ABOUT_LLM_MODEL', value: aiModel }
+            { name: 'BRAINSTORM_LLM_MODEL', value: aiModel }
+            { name: 'CREATOR_MATCH_LLM_MODEL', value: aiModel }
+            { name: 'ALIGNMENT_ANALYZER_TIMEOUT_SECONDS', value: alignmentAnalyzerTimeoutSeconds }
+            { name: 'ANALYZE_ALL_HARD_TIMEOUT_SECONDS', value: analyzeAllHardTimeoutSeconds }
+            { name: 'CREATOR_MATCH_TIMEOUT_SECONDS', value: creatorMatchTimeoutSeconds }
+            { name: 'SMTP_HOST', value: smtpHost }
+            { name: 'SMTP_PORT', value: smtpPort }
+            { name: 'SMTP_FROM_EMAIL', value: smtpFromEmail }
+            { name: 'SMTP_FROM_NAME', value: smtpFromName }
+            { name: 'SMTP_REPLY_TO', value: smtpReplyTo }
+            { name: 'SMTP_USE_TLS', value: smtpUseTls }
+            { name: 'SMTP_USE_SSL', value: smtpUseSsl }
             { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
           ], wireApiSecrets ? [
             { name: 'ANTHROPIC_API_KEY', secretRef: 'anthropic-api-key' }
             { name: 'SERPAPI_API_KEY', secretRef: 'serpapi-api-key' }
+            { name: 'SMTP_USERNAME', secretRef: 'smtp-username' }
             { name: 'SMTP_PASSWORD', secretRef: 'smtp-password' }
           ] : [])
           probes: [

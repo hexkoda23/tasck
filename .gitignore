@@ -37,6 +37,8 @@ backend/.env
 frontend/.env
 !backend/.env.example
 !frontend/.env.example
+infra/deploy.env
+!infra/deploy.env.example
 
 *token.json*
 *credentials.json*
