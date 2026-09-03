@@ -3608,6 +3608,25 @@ def make_v3_router(db):
         #   "none"     - no trustworthy source, scraped_about left empty
         about_source = "none"
         final_url = website
+        # Why the scrape came back empty, in words an admin can act on. The
+        # endpoint used to swallow every failure and return 200 with blank
+        # fields, so a dead domain and a site with no description looked
+        # identical from the CRM - both just said "Not captured yet".
+        scrape_error = ""
+
+        def _fetch_failure_reason(exc: Exception, target: str) -> str:
+            text = str(exc) or exc.__class__.__name__
+            lowered = text.lower()
+            host = _domain_from_url(target) or target
+            if "certificate" in lowered and ("expired" in lowered or "verify failed" in lowered):
+                return f"{host} has an invalid or expired security certificate, so its pages could not be read."
+            if "timed out" in lowered or "timeout" in lowered:
+                return f"{host} did not respond in time."
+            if "name or service not known" in lowered or "nodename nor servname" in lowered or "getaddrinfo" in lowered:
+                return f"{host} does not resolve - check the website address on this brand."
+            if "connect" in lowered:
+                return f"{host} could not be reached."
+            return f"{host} could not be read ({text})."
 
         if not website and os.getenv("SERPAPI_API_KEY", "").strip():
             try:
@@ -3967,18 +3986,22 @@ def make_v3_router(db):
                 # Network / 4xx / 5xx / SSL / timeout. Log with full context so
                 # we can debug from production logs instead of guessing.
                 logger.warning("Scrape HTTP error for %s (%s): %s", url, brand_name, exc)
+                scrape_error = _fetch_failure_reason(exc, url)
                 website_fetch_failed = True
             except (ValueError, KeyError, TypeError) as exc:
                 logger.warning("Scrape parse error for %s (%s): %s", url, brand_name, exc)
+                scrape_error = f"{_domain_from_url(url) or url} returned a page that could not be parsed."
                 website_fetch_failed = True
             except Exception as exc:  # noqa: BLE001
                 # Catch-all so a single bad page doesn't 500 the whole endpoint.
                 logger.warning("Scrape unexpected error for %s (%s): %s", url, brand_name, exc)
+                scrape_error = _fetch_failure_reason(exc, url)
                 website_fetch_failed = True
             else:
                 website_fetch_failed = False
         else:
             website_fetch_failed = True
+            scrape_error = "No website on this brand, and no search key configured to find one."
 
         # ---- SerpAPI rediscovery fallback ----
         # If we couldn't reach the configured website (dead domain like
@@ -4089,6 +4112,13 @@ def make_v3_router(db):
             except requests.RequestException as exc:
                 logger.warning("SerpAPI rediscovery request failed for %s: %s", brand_name, exc)
 
+        # Rediscovery (or anything else) got us content after all, so the
+        # earlier failure is no longer worth reporting.
+        if scraped_about or scraped_logo:
+            scrape_error = ""
+        elif not scrape_error:
+            scrape_error = f"{_domain_from_url(final_url) or 'The site'} was read, but it publishes no description or logo we could use."
+
         if not scraped_about:
             scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
         if not scraped_logo:
@@ -4125,6 +4155,10 @@ def make_v3_router(db):
             "website": final_url,
             "source_url": final_url,
             "scraped": True,
+            # Empty when something was found. Shown to the admin verbatim so a
+            # dead domain reads as a dead domain instead of an empty field.
+            "error": scrape_error,
+            "reached_website": not website_fetch_failed,
         }
     class BrandCreate(BaseModel):
         company: str

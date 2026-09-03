@@ -243,11 +243,30 @@ export const setCachedBrandLogo = (name, url) => {
   writeCache(entries);
 };
 
+/**
+ * True for a URL long enough to be junk rather than a link.
+ *
+ * An uploaded logo is stored inline as a `data:` URI and is legitimately
+ * thousands of characters long, so the length test must not apply to it -
+ * applying it dropped every uploaded logo from the candidate list, which is
+ * why an upload saved correctly and then never appeared.
+ */
 export const truncate = (url, max = 512) => {
   if (typeof url !== 'string') return false;
   const trimmed = url.trim();
+  if (trimmed.slice(0, 5).toLowerCase() === 'data:') return false;
   return trimmed.length > max;
 };
+
+/**
+ * An inline logo - an upload held on the record as a `data:` URI.
+ *
+ * Not the same question as "is this stored on the brand": a scraped logo is
+ * saved as an ordinary https URL and is just as explicit. Callers say which
+ * candidate came from the record by passing it as `storedLogo`; this helper
+ * only catches inline ones that arrive inside a candidate list.
+ */
+export const isInlineLogo = (url) => typeof url === 'string' && /^(data:|blob:)/i.test(url.trim());
 
 const deriveInitials = (name = '') => {
   const clean = String(name).trim();
@@ -338,6 +357,7 @@ const detectWhiteLogo = (url, cb) => {
 export const BrandLogo = ({
   name,
   candidates = [],
+  storedLogo = '',
   initials,
   containerClassName = '',
   imgClassName = '',
@@ -345,9 +365,20 @@ export const BrandLogo = ({
 }) => {
   const overrides = overrideCandidatesFor(name);
   const userCandidates = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
-  const overriddenCandidateKey = [...overrides, ...userCandidates].join('|');
-  const resolved = [...overrides, ...userCandidates];
-  const cached = getCachedBrandLogo(name);
+  // The logo on the brand record - uploaded, or scraped and saved - is an
+  // explicit choice, so it outranks both the hardcoded name overrides and the
+  // guessed favicons. Everything else keeps its existing order.
+  const stored = Array.from(new Set(
+    [storedLogo, ...userCandidates.filter(isInlineLogo)].filter(Boolean).map((c) => String(c).trim()),
+  ));
+  const guesses = userCandidates.filter((candidate) => !stored.includes(String(candidate).trim()));
+  const overriddenCandidateKey = [...stored, ...overrides, ...guesses].join('|');
+  const resolved = [...stored, ...overrides, ...guesses];
+  // The cache is a fast path for GUESSING, so it only applies when the record
+  // holds nothing. It is keyed by brand name, written on every successful load
+  // and never expires, so consulting it ahead of the record's own logo pinned
+  // an old favicon in place for good - a new upload could never displace it.
+  const cached = stored.length ? '' : getCachedBrandLogo(name);
   // When there's a cached URL, try it first (fast path). When cache is empty
   // we must NOT prepend '' - an empty first entry short-circuits the <img>
   // render below and the whole fallback chain never fires.
@@ -383,7 +414,7 @@ export const BrandLogo = ({
           src={url}
           alt={`${name || 'Brand'} logo`}
           className={imgClassName}
-          onLoad={() => setCachedBrandLogo(name, url)}
+          onLoad={() => { if (!stored.includes(url)) setCachedBrandLogo(name, url); }}
           onError={() => setIndex((current) => current + 1)}
         />
       ) : (

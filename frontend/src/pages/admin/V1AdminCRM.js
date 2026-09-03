@@ -122,7 +122,9 @@ const logoCandidatesForBrand = (brand) => {
     'https://' + domain + '/favicon.png',
     'https://' + domain + '/favicon.ico',
   ]);
-  return [brand.logoUrl, ...domainCandidates]
+  // brand.logoUrl is passed separately as `storedLogo` - it is not a guess and
+  // must not be ordered among these.
+  return domainCandidates
     .filter(Boolean)
     .filter((value, index, array) => array.indexOf(value) === index);
 };
@@ -130,6 +132,7 @@ const logoCandidatesForBrand = (brand) => {
 const CrmBrandLogo = ({ brand }) => (
   <BrandLogo
     name={brand.company}
+    storedLogo={brand.logoUrl}
     candidates={logoCandidatesForBrand(brand)}
     initials={brandInitials(brand.company)}
     containerClassName="w-12 h-12 rounded-lg border border-[#E8E4DB] bg-white flex items-center justify-center flex-shrink-0 overflow-hidden"

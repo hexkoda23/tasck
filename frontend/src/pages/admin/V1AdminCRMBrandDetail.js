@@ -208,6 +208,7 @@ const logoCandidatesForBrand = (brand) => {
 const BrandLogo = ({ brand }) => (
   <SharedBrandLogo
     name={brandName(brand)}
+    storedLogo={logoUrlForBrand(brand)}
     candidates={logoCandidatesForBrand(brand)}
     containerClassName="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-[#D7CBB8] bg-white"
     imgClassName="h-full w-full object-contain p-2"
@@ -492,12 +493,18 @@ const V1AdminCRMBrandDetail = () => {
           ...(res.warnings || []),
           ...(res.enrichment_target?.warnings || []),
         ];
-        const dedupedWarnings = Array.from(new Set(warnings));
+        // The endpoint answers 200 even when it could not read the site, so
+        // its `error` is the only thing that distinguishes "the site is dead"
+        // from "the site had nothing". Show it rather than an empty summary.
+        const dedupedWarnings = Array.from(new Set(res.error ? [res.error, ...warnings] : warnings));
         const sourceType = res.enrichment_target?.source_type || 'website';
         const summary = [];
         summary.push(`Source: ${sourceType}${res.website ? ` · ${res.website}` : ''}`);
         if (res.logo_url) summary.push('Logo found and updated');
         if (res.about || res.brand_about) summary.push('About information captured');
+        if (!res.logo_url && !res.about && !res.brand_about) {
+          summary.push('Nothing new was captured - see below');
+        }
         if (Array.isArray(res.supporting_links) && res.supporting_links.length) {
           summary.push(`${res.supporting_links.length} supporting link(s) kept`);
         }

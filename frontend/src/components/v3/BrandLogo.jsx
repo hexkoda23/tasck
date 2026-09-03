@@ -74,9 +74,12 @@ const buildCandidates = (brand) => {
   const domain = domainFromBrand(brand);
   const name = brand?.company || brand?.name || brand?.brand_name || '';
   const overrides = overrideCandidatesFor(name);
+  // `direct` comes off the brand record - uploaded, or scraped and saved - so
+  // it is an explicit choice and goes ahead of the hardcoded name overrides,
+  // which are only guesses for brands whose record has nothing.
   const candidates = [
-    ...overrides,
     direct,
+    ...overrides,
     domain ? `https://${domain}/favicon.png` : '',
     domain ? `https://${domain}/favicon.ico` : '',
     domain ? `https://www.google.com/s2/favicons?sz=256&domain=${domain}` : '',
@@ -97,8 +100,13 @@ const BrandLogo = ({ brand, size = 'md', className = '', testId = 'brand-logo' }
   const pixelSize = typeof size === 'number' ? size : (SIZE_PRESETS[size] || SIZE_PRESETS.md);
   const candidates = buildCandidates(brand);
   const name = brand?.company || brand?.name || brand?.brand_name || '';
-  const cached = getCachedBrandLogo(name);
-  const initialCandidates = [cached, ...candidates.filter((c) => c && c !== cached && !truncateBrandLogo(c))];
+  // As in lib/brandLogo.js: the name-keyed cache is a fast path for guessed
+  // favicons only. It never expires and nothing clears it when the brand
+  // changes, so consulting it ahead of the record's own logo kept an old
+  // favicon on screen after an upload.
+  const cached = direct ? '' : getCachedBrandLogo(name);
+  const usable = candidates.filter((c) => c && c !== cached && !truncateBrandLogo(c));
+  const initialCandidates = (cached ? [cached, ...usable] : usable);
   const [index, setIndex] = useState(0);
 
   // Reset when the brand changes.
@@ -117,7 +125,7 @@ const BrandLogo = ({ brand, size = 'md', className = '', testId = 'brand-logo' }
         src={currentSrc}
         alt={`${name || 'Brand'} logo`}
         data-testid={testId}
-        onLoad={() => setCachedBrandLogo(name, currentSrc)}
+        onLoad={() => { if (currentSrc !== direct) setCachedBrandLogo(name, currentSrc); }}
         onError={() => setIndex((i) => i + 1)}
         className={`rounded-[10px] object-contain bg-white border border-[#E8E4DB] ${className}`}
         style={{ width: pixelSize, height: pixelSize }}
