@@ -41,6 +41,9 @@ done
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 
 command -v az >/dev/null || { echo "az CLI is required" >&2; exit 1; }
+# az on Windows streams ACR build logs through a cp1252 console and crashes on
+# non-Latin characters (pip progress bars); force UTF-8 for the CLI's Python.
+export PYTHONIOENCODING=utf-8 PYTHONUTF8=1
 az account show --query "{sub:name,id:id,user:user.name}" -o table
 
 # --------------------------------------------------------------------------
