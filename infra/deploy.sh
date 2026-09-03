@@ -76,7 +76,8 @@ fi
 if [[ -z "$MONGO_PASSWORD" ]]; then
   # 32 alphanumeric characters + a fixed punctuation tail so it is URL-safe and
   # satisfies the service's complexity rules.
-  MONGO_PASSWORD="$(LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32)Tk1!"
+  # (python, not tr|head: under pipefail the SIGPIPE from head aborts the script)
+  MONGO_PASSWORD="$(python -c 'import secrets,string;print("".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(32))+"Tk1!")')"
   log "Generated a new Mongo administrator password (stored only in Key Vault)"
 fi
 
