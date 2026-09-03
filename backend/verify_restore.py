@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Compare two inventories produced by infra/inventory_mongo.py.
+"""Compare two inventories produced by backend/inventory_mongo.py.
 
-    python infra/verify_restore.py source.json target.json
+    python backend/verify_restore.py source.json target.json
 
 Exit code 0 when every collection in the source exists in the target with the
 same document count, the same content fingerprint, and the same index set

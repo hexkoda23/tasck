@@ -83,6 +83,16 @@ param smtpReplyTo string = ''
 param smtpUseTls string = 'true'
 param smtpUseSsl string = 'false'
 
+// --- Restore / cutover preparation ---
+@description('Operator public IP allowed to reach the Mongo cluster directly (mongorestore/mongosh from a workstation). Empty = Azure services only.')
+param operatorIp string = ''
+
+@description('Custom production hostname for the web app (e.g. app.example.com). Empty = not configured. The DNS records printed in the outputs must exist BEFORE deploying with this set.')
+param customDomain string = ''
+
+@description('Resource id of the managed certificate for customDomain. Empty on the first pass (domain bound without TLS while the certificate is issued); deploy.sh feeds the id on the second pass.')
+param customDomainCertificateId string = ''
+
 // --- AI model / timeout settings (non-secret) ---
 @description('Default Claude model for every AI feature (ALIGNMENT_ANALYZER_MODEL; per-feature *_LLM_MODEL fall back to it).')
 param aiModel string = 'claude-sonnet-4-5'
@@ -223,6 +233,43 @@ resource mongoAllowAzure 'Microsoft.DocumentDB/mongoClusters/firewallRules@2025-
   }
 }
 
+resource mongoAllowOperator 'Microsoft.DocumentDB/mongoClusters/firewallRules@2025-09-01' = if (!empty(operatorIp)) {
+  parent: mongo
+  name: 'AllowOperatorWorkstation'
+  properties: {
+    startIpAddress: operatorIp
+    endIpAddress: operatorIp
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Restore staging: an Azure Files share mounted into the restore/inventory jobs.
+// The production mongodump archive is uploaded here; nothing else uses it.
+// ---------------------------------------------------------------------------
+resource restoreStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: 'sttasck${envName}${suffix}'
+  location: location
+  tags: tags
+  sku: { name: 'Standard_LRS' }
+  kind: 'StorageV2'
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    allowBlobPublicAccess: false
+    supportsHttpsTrafficOnly: true
+  }
+}
+
+resource restoreFileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+  parent: restoreStorage
+  name: 'default'
+}
+
+resource restoreShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  parent: restoreFileService
+  name: 'restore'
+  properties: { shareQuota: 100 }
+}
+
 // The service returns the SRV connection string with <user>/<password> placeholders.
 var mongoConnectionString = replace(replace(mongo.properties.connectionString, '<user>', mongoAdminUser), '<password>', uriComponent(mongoAdminPassword))
 
@@ -258,6 +305,161 @@ resource containerEnv 'Microsoft.App/managedEnvironments@2025-01-01' = {
     workloadProfiles: [
       { name: 'Consumption', workloadProfileType: 'Consumption' }
     ]
+  }
+}
+
+resource restoreEnvStorage 'Microsoft.App/managedEnvironments/storages@2025-01-01' = {
+  parent: containerEnv
+  name: 'restore'
+  properties: {
+    azureFile: {
+      accountName: restoreStorage.name
+      accountKey: restoreStorage.listKeys().keys[0].value
+      shareName: restoreShare.name
+      accessMode: 'ReadWrite'
+    }
+  }
+}
+
+// Manual job: restores a mongodump archive from the share into the vCore cluster.
+// Started by infra/restore-production.sh, never automatically.
+resource restoreJob 'Microsoft.App/jobs@2025-01-01' = {
+  name: 'tasck-restore'
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${identity.id}': {} }
+  }
+  dependsOn: [kvSecretsUser, secretMongoUrl]
+  properties: {
+    environmentId: containerEnv.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 14400
+      replicaRetryLimit: 0
+      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
+      secrets: [
+        { name: 'mongo-url', keyVaultUrl: '${keyVaultUri}secrets/mongo-url', identity: identity.id }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'mongorestore'
+          image: 'mongo:8.0'
+          command: ['/bin/bash', '-c']
+          // DUMP_FILE / SOURCE_DB / TARGET_DB / DROP are supplied at start time.
+          args: [
+            'set -euo pipefail; f=/restore/$DUMP_FILE; test -f "$f" || { echo "missing $f"; ls -la /restore; exit 1; }; echo "restoring $f: $SOURCE_DB -> $TARGET_DB (drop=$DROP)"; extra=""; [ "$DROP" = "true" ] && extra="--drop"; case "$f" in *.gz) gz="--gzip" ;; *) gz="" ;; esac; mongorestore --uri "$MONGO_URL" --archive="$f" $gz --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --nsInclude "$SOURCE_DB.*" --maintainInsertionOrder --numParallelCollections 2 --numInsertionWorkersPerCollection 2 $extra; echo "restore finished"'
+          ]
+          env: [
+            { name: 'MONGO_URL', secretRef: 'mongo-url' }
+            { name: 'DUMP_FILE', value: 'production.archive.gz' }
+            { name: 'SOURCE_DB', value: 'test_database' }
+            { name: 'TARGET_DB', value: dbName }
+            { name: 'DROP', value: 'false' }
+          ]
+          resources: { cpu: json('1.0'), memory: '2Gi' }
+          volumeMounts: [ { volumeName: 'restore', mountPath: '/restore' } ]
+        }
+      ]
+      volumes: [
+        { name: 'restore', storageType: 'AzureFile', storageName: restoreEnvStorage.name }
+      ]
+    }
+  }
+}
+
+// Manual job: read-only inventory of the target database, written to the share
+// as target-inventory.json for backend/verify_restore.py.
+resource inventoryJob 'Microsoft.App/jobs@2025-01-01' = if (deployApps) {
+  name: 'tasck-inventory'
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${identity.id}': {} }
+  }
+  dependsOn: [acrPull, kvSecretsUser, secretMongoUrl]
+  properties: {
+    environmentId: containerEnv.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 7200
+      replicaRetryLimit: 0
+      manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
+      registries: [ { server: acr.properties.loginServer, identity: identity.id } ]
+      secrets: [
+        { name: 'mongo-url', keyVaultUrl: '${keyVaultUri}secrets/mongo-url', identity: identity.id }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'inventory'
+          image: apiImage
+          command: ['python', 'inventory_mongo.py', '--uri-env', 'MONGO_URL', '--db-env', 'DB_NAME', '--out', '/restore/target-inventory.json']
+          env: [
+            { name: 'MONGO_URL', secretRef: 'mongo-url' }
+            { name: 'DB_NAME', value: dbName }
+          ]
+          resources: { cpu: json('0.5'), memory: '1Gi' }
+          volumeMounts: [ { volumeName: 'restore', mountPath: '/restore' } ]
+        }
+      ]
+      volumes: [
+        { name: 'restore', storageType: 'AzureFile', storageName: restoreEnvStorage.name }
+      ]
+    }
+  }
+}
+
+// Managed TLS certificate for the custom domain. Created once the domain is bound
+// (first pass, bindingType Disabled) and the DNS validation records exist.
+resource webManagedCert 'Microsoft.App/managedEnvironments/managedCertificates@2025-01-01' = if (!empty(customDomain) && empty(customDomainCertificateId)) {
+  parent: containerEnv
+  name: 'cert-${replace(customDomain, '.', '-')}'
+  location: location
+  tags: tags
+  properties: {
+    subjectName: customDomain
+    domainControlValidation: 'CNAME'
+  }
+  dependsOn: [webApp]
+}
+
+// Availability test: the public health endpoint every 5 minutes from three regions.
+resource healthWebTest 'Microsoft.Insights/webtests@2022-06-15' = if (deployApps) {
+  name: 'tasck-web-health'
+  location: location
+  tags: union(tags, { 'hidden-link:${appInsights.id}': 'Resource' })
+  kind: 'standard'
+  properties: {
+    SyntheticMonitorId: 'tasck-web-health'
+    Name: 'TASCK web /api/health'
+    Enabled: true
+    Frequency: 300
+    Timeout: 30
+    Kind: 'standard'
+    RetryEnabled: true
+    Locations: [
+      { Id: 'emea-nl-ams-azr' }
+      { Id: 'emea-gb-db3-azr' }
+      { Id: 'emea-fr-pra-edge' }
+    ]
+    Request: {
+      RequestUrl: 'https://${webFqdn}/api/health'
+      HttpVerb: 'GET'
+      ParseDependentRequests: false
+    }
+    ValidationRules: {
+      ExpectedHttpStatusCode: 200
+      SSLCheck: true
+      SSLCertRemainingLifetimeCheck: 7
+    }
   }
 }
 
@@ -404,6 +606,13 @@ resource webApp 'Microsoft.App/containerApps@2025-01-01' = if (deployApps) {
         targetPort: webPort
         transport: 'auto'
         allowInsecure: false
+        customDomains: empty(customDomain) ? null : [
+          {
+            name: customDomain
+            bindingType: empty(customDomainCertificateId) ? 'Disabled' : 'SniEnabled'
+            certificateId: empty(customDomainCertificateId) ? null : customDomainCertificateId
+          }
+        ]
       }
       registries: [
         { server: acr.properties.loginServer, identity: identity.id }
@@ -454,4 +663,10 @@ output mongoClusterName string = mongo.name
 output mongoHost string = '${mongo.name}.mongocluster.cosmos.azure.com'
 output dbName string = dbName
 output appInsightsName string = appInsights.name
+output restoreStorageAccount string = restoreStorage.name
+output restoreShareName string = restoreShare.name
+output restoreJobName string = restoreJob.name
+output customDomainVerificationId string = containerEnv.properties.customDomainConfiguration.customDomainVerificationId
+output containerEnvStaticIp string = containerEnv.properties.staticIp
+output customDomainCertificateId string = (!empty(customDomain) && empty(customDomainCertificateId)) ? webManagedCert.id : customDomainCertificateId
 output logAnalyticsName string = logAnalytics.name

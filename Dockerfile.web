@@ -3,11 +3,14 @@
 #
 # Build on linux/amd64:
 #   az acr build --platform linux/amd64 -f Dockerfile.web \
-#      --build-arg REACT_APP_BACKEND_URL=https://<public web hostname> -t tasck-web:<tag> .
+#      -t tasck-web:<tag> .        (add --build-arg REACT_APP_BACKEND_URL=<origin> only for a split-host setup)
 #
-# REACT_APP_BACKEND_URL is embedded into the bundle at build time. Point it at
-# the PUBLIC web hostname (not the API's internal hostname): every API call then
-# goes to https://<web>/api/... and nginx forwards it to the API.
+# REACT_APP_BACKEND_URL is embedded into the bundle at build time. Leave it EMPTY
+# (the default) for same-origin API calls: the bundle then requests /api/... on
+# whatever hostname served it and nginx forwards to the API. One web image is
+# therefore valid for the azurecontainerapps.io hostname and the custom domain at
+# the same time, so cutover needs no rebuild. Set an absolute origin only when the
+# API is served from a different host.
 FROM node:20-bookworm-slim AS build
 
 WORKDIR /src
@@ -15,12 +18,11 @@ COPY frontend/package.json frontend/yarn.lock ./
 RUN corepack enable && yarn install --frozen-lockfile --network-timeout 600000
 
 COPY frontend/ ./
-ARG REACT_APP_BACKEND_URL
+ARG REACT_APP_BACKEND_URL=""
 ENV REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL} \
     GENERATE_SOURCEMAP=false \
     NODE_OPTIONS=--max-old-space-size=4096
-RUN test -n "$REACT_APP_BACKEND_URL" || (echo "REACT_APP_BACKEND_URL build-arg is required" && exit 1) \
-    && yarn build
+RUN yarn build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 # The image's entrypoint renders /etc/nginx/templates/*.template with envsubst

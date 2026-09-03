@@ -3,10 +3,10 @@
 
 Run it against the SOURCE (Emergent production, once access is granted) and
 again against the TARGET (Azure) after the restore, then compare the two JSON
-files with infra/verify_restore.py.
+files with backend/verify_restore.py.
 
-    python infra/inventory_mongo.py --uri "$MONGO_URL" --db tasck --out source.json
-    python infra/inventory_mongo.py --uri "$AZURE_MONGO_URL" --db tasck --out target.json
+    python backend/inventory_mongo.py --uri "$MONGO_URL" --db tasck --out source.json
+    python backend/inventory_mongo.py --uri "$AZURE_MONGO_URL" --db tasck --out target.json
 
 What it records per collection:
   - document count (exact, via count_documents)
@@ -114,14 +114,21 @@ def inventory(uri: str, db_name: str, sample_hash_limit: int) -> Dict[str, Any]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--uri", required=True, help="MongoDB connection string (never printed)")
-    ap.add_argument("--db", required=True, help="database name")
+    ap.add_argument("--uri", help="MongoDB connection string (never printed)")
+    ap.add_argument("--uri-env", help="name of an environment variable holding the connection string (keeps it off the command line)")
+    ap.add_argument("--db", help="database name")
+    ap.add_argument("--db-env", help="name of an environment variable holding the database name")
     ap.add_argument("--out", required=True, help="output JSON path")
     ap.add_argument("--sample-hash-limit", type=int, default=0,
                     help="hash at most N docs per collection (0 = all; use only for a quick look)")
     args = ap.parse_args()
-    print(f"Inventorying database '{args.db}' (read-only)...", file=sys.stderr)
-    data = inventory(args.uri, args.db, args.sample_hash_limit)
+    import os
+    uri = args.uri or (os.environ.get(args.uri_env) if args.uri_env else None)
+    db_name = args.db or (os.environ.get(args.db_env) if args.db_env else None)
+    if not uri or not db_name:
+        ap.error("provide --uri or --uri-env, and --db or --db-env")
+    print(f"Inventorying database '{db_name}' (read-only)...", file=sys.stderr)
+    data = inventory(uri, db_name, args.sample_hash_limit)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, sort_keys=True)
     print(f"{data['collection_count']} collections, {data['total_documents']} documents -> {args.out}", file=sys.stderr)

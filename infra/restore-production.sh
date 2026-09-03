@@ -76,7 +76,7 @@ mongorestore --uri "$MONGO_URL" \
 log "Starting the API"
 az containerapp update -g "$RG" -n tasck-api --min-replicas 1 --max-replicas 1 -o none
 
-log "Target inventory -> target-inventory.json (compare with the source inventory using infra/verify_restore.py)"
-python "$HERE/inventory_mongo.py" --uri "$MONGO_URL" --db "$TARGET_DB" --out target-inventory.json
+log "Target inventory -> target-inventory.json (compare with the source inventory using backend/verify_restore.py)"
+python "$HERE/../backend/inventory_mongo.py" --uri "$MONGO_URL" --db "$TARGET_DB" --out target-inventory.json
 echo
-echo "Next: python infra/verify_restore.py source-inventory.json target-inventory.json"
+echo "Next: python backend/verify_restore.py source-inventory.json target-inventory.json"

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { MessageCircle, X, Send, CheckCircle } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
-const API = process.env.REACT_APP_BACKEND_URL;
+const API = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 
 const FeedbackPopup = () => {
   const [open, setOpen] = useState(false);

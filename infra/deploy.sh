@@ -178,6 +178,9 @@ if [[ -z "$TAG" ]]; then
   TAG="$(date -u +%Y%m%d-%H%M%S)-$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo nogit)"
 fi
 PUBLIC_URL="${PUBLIC_APP_URL:-https://$WEB_FQDN}"
+# Origin baked into the web bundle for API calls. Empty (default) = same-origin
+# relative /api, valid for every hostname the web app answers on (no rebuild at cutover).
+WEB_API_ORIGIN="${WEB_API_ORIGIN-}"
 
 # Build from a clean export of the committed tree: what runs on Azure is exactly
 # what is in git (no node_modules, no local .env, no build output uploaded).
@@ -227,9 +230,9 @@ if [[ -z "$ONLY" || "$ONLY" == "api" ]]; then
 fi
 
 if [[ -z "$ONLY" || "$ONLY" == "web" ]]; then
-  log "Building tasck-web:$TAG with REACT_APP_BACKEND_URL=$PUBLIC_URL"
+  log "Building tasck-web:$TAG with REACT_APP_BACKEND_URL='$WEB_API_ORIGIN' (empty = same-origin)"
   acr_build --image "tasck-web:$TAG" --image "tasck-web:latest" \
-    --build-arg "REACT_APP_BACKEND_URL=$PUBLIC_URL" \
+    --build-arg "REACT_APP_BACKEND_URL=$WEB_API_ORIGIN" \
     --file "$CTX/Dockerfile.web" "$CTX"
   WEB_REF="$ACR_SERVER/tasck-web:$TAG"
 fi

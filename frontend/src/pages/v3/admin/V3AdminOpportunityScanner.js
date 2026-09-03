@@ -147,7 +147,7 @@ const V3AdminOpportunityScanner = () => {
 
   const loadCounts = async () => {
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/v3/opportunities/pipeline-counts`);
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL || ''}/api/v3/opportunities/pipeline-counts`);
       const data = await r.json();
       setPipelineCounts(data || {});
     } catch (e) {
@@ -164,7 +164,7 @@ const V3AdminOpportunityScanner = () => {
   const transitionCandidate = async (candidate, toState) => {
     setBusy(true);
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/v3/opportunities/candidates/${candidate.id}/transition`, {
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL || ''}/api/v3/opportunities/candidates/${candidate.id}/transition`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to_state: toState }),

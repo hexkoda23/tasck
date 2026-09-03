@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MessageCircle, ChevronLeft, Filter, Clock, User, Mail, FileText } from 'lucide-react';
 
-const API = process.env.REACT_APP_BACKEND_URL;
+const API = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
 
 const FeedbackAdmin = () => {
   const navigate = useNavigate();
