@@ -181,11 +181,13 @@ fi
 # streamed build output; polling avoids that and is also restart-safe.)
 acr_build() {
   local out run_id status
-  out="$(az acr build --registry "$ACR_NAME" --platform linux/amd64 --no-logs "$@" 2>&1 | tr -d '')"
-  run_id="$(printf '%s
-' "$out" | sed -n 's/.*Queued a build with ID: \([a-z0-9]*\).*//p' | tail -1)"
-  [[ -n "$run_id" ]] || { printf '%s
-' "$out" >&2; echo "could not queue ACR build" >&2; return 1; }
+  out="$(az acr build --registry "$ACR_NAME" --platform linux/amd64 --no-logs "$@" 2>&1 | tr -d '\r')"
+  run_id="$(printf '%s\n' "$out" | grep -o 'Queued a build with ID: [A-Za-z0-9]*' | awk '{print $NF}' | tail -1)"
+  if [[ -z "$run_id" ]]; then
+    printf '%s\n' "$out" >&2
+    echo "could not queue ACR build" >&2
+    return 1
+  fi
   echo "  queued ACR run $run_id; waiting..."
   while true; do
     status="$(az acr task show-run --registry "$ACR_NAME" --run-id "$run_id" --query status -o tsv 2>/dev/null || echo Unknown)"
@@ -193,8 +195,7 @@ acr_build() {
       Succeeded) echo "  run $run_id succeeded"; return 0 ;;
       Failed|Canceled|Error|Timeout)
         echo "  run $run_id ended with status $status; last log lines:" >&2
-        az acr task logs --registry "$ACR_NAME" --run-id "$run_id" 2>/dev/null | tail -40 | tr -cd '	
- -~' >&2 || true
+        az acr task logs --registry "$ACR_NAME" --run-id "$run_id" 2>/dev/null | tail -40 | tr -cd '\11\12\15\40-\176' >&2 || true
         return 1 ;;
       *) sleep 20 ;;
     esac
