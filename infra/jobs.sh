@@ -46,9 +46,23 @@ for l in sys.stdin:
 # disabled above so that share paths survive); no-op elsewhere.
 # Always absolute: az treats a relative --dest as a directory name.
 local_path() {
-  if command -v cygpath >/dev/null 2>&1; then cygpath -m -a "$1"
-  elif command -v realpath >/dev/null 2>&1; then realpath -m "$1"
-  else printf '%s' "$1"; fi
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m -a "$p"
+  elif [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "mingw"* ]]; then
+    local dir base
+    dir="$(dirname "$p")"
+    base="$(basename "$p")"
+    if [[ -d "$dir" ]]; then
+      echo "$(cd "$dir" && pwd -W)/$base"
+    else
+      echo "$p"
+    fi
+  elif command -v realpath >/dev/null 2>&1; then
+    realpath -m "$p"
+  else
+    printf '%s' "$p"
+  fi
 }
 
 # share_download <path-on-share> <local-dest>

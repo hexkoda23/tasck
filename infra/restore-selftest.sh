@@ -15,6 +15,8 @@ set -euo pipefail
 RG="${RG:-rg-tasck-prod}"
 SCRATCH_DB="${SCRATCH_DB:-tasck_restoretest}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Detect python interpreter (Windows Git Bash has python3, not python)
+PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)"
 # shellcheck source=jobs.sh
 . "$HERE/jobs.sh"
 resolve_storage
@@ -36,7 +38,7 @@ job_log "3/4 inventory of the source '$SOURCE_DB' and comparison"
 run_job tasck-inventory inventory "DB_NAME=$SOURCE_DB"
 share_download target-inventory.json ./selftest-source-inventory.json
 set +e
-python "$(local_path "$HERE/../backend/verify_restore.py")" "$(local_path ./selftest-source-inventory.json)" "$(local_path ./selftest-target-inventory.json)"
+"$PYTHON" "$(local_path "$HERE/../backend/verify_restore.py")" "$(local_path ./selftest-source-inventory.json)" "$(local_path ./selftest-target-inventory.json)"
 RESULT=$?
 set -e
 

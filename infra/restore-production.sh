@@ -44,6 +44,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${PYTHON:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)}"
 # shellcheck source=jobs.sh
 . "$HERE/jobs.sh"
 resolve_storage
@@ -57,7 +58,7 @@ inventory() {  # <local-dest>
 
 if [[ $INVENTORY_ONLY -eq 1 ]]; then
   inventory ./target-inventory.json
-  echo; echo "Compare with the SOURCE inventory: python backend/verify_restore.py source-inventory.json target-inventory.json"
+  echo; echo "Compare with the SOURCE inventory: $PYTHON backend/verify_restore.py source-inventory.json target-inventory.json"
   exit 0
 fi
 
@@ -68,8 +69,8 @@ if [[ $DRY_RUN -eq 1 ]]; then
   job_log "Dry run: uploading $ARCHIVE and validating it inside Azure (no writes)"
   share_upload "$ARCHIVE" "$DUMP_FILE"
   run_job tasck-restore mongorestore "MODE=dryrun" "DUMP_FILE=$DUMP_FILE" "SOURCE_DB=$SOURCE_DB" "TARGET_DB=$TARGET_DB"
-  EXEC_LAST="$(az containerapp job execution list -g "$RG" -n tasck-restore --query "sort_by([], &properties.startTime)[-1].name" -o tsv)"
-  az containerapp job logs show -g "$RG" -n tasck-restore --execution "$EXEC_LAST" --container mongorestore 2>/dev/null     | python -c 'import sys,json
+  EXEC_LAST="$(az containerapp job execution list -g "$RG" -n tasck-restore --query "sort_by([], &properties.startTime)[-1].name" -o tsv | sed 's/\r//g')"
+  az containerapp job logs show -g "$RG" -n tasck-restore --execution "$EXEC_LAST" --container mongorestore 2>/dev/null     | "$PYTHON" -c 'import sys,json
 for l in sys.stdin:
     l=l.strip()
     try: print(json.loads(l).get("Log", l))
@@ -81,7 +82,7 @@ fi
 
 job_log "Checking the target database '$TARGET_DB' is empty"
 inventory ./pre-restore-inventory.json
-EXISTING="$(python -c "import json;d=json.load(open('pre-restore-inventory.json'));print(d['total_documents'])")"
+EXISTING="$("$PYTHON" -c "import json;d=json.load(open('pre-restore-inventory.json'));print(d['total_documents'])")"
 if [[ "$EXISTING" != "0" && $FORCE -ne 1 ]]; then
   echo "target database '$TARGET_DB' already holds $EXISTING documents (see pre-restore-inventory.json)." >&2
   echo "Re-run with --force to drop and replace its collections." >&2
