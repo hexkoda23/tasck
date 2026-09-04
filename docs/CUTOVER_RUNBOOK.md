@@ -19,10 +19,29 @@ the `azure-migration` branch.
 | 5 | SMTP sending domain alignment (SPF/DKIM/DMARC for the From domain) | Domain owner | Deliverability after cutover; see `docs/EMAIL_DELIVERABILITY.md`. The current From address is a Gmail mailbox, which works but sends "via" Gmail. |
 | 6 | Credential rotation approval | You | The Anthropic, SerpAPI and SMTP values in Key Vault are the ones that were committed to git history on the previous host. |
 
+## 0. Go / no-go checklist (run before scheduling the cutover window)
+
+Run `infra/readiness-audit.sh`; every line must be PASS except the two known
+WARNs (`ENABLE_DEMO_LOGIN=true`, no custom domain yet) until those are resolved.
+
+| Gate | How to confirm |
+| --- | --- |
+| Azure apps healthy, smoke test green | `infra/readiness-audit.sh` (includes `infra/smoke-test.sh`) |
+| Non-AI features work | `infra/feature-test.sh https://<host>` (DOCX, PDF, optional email) |
+| AI works | audit line "Anthropic credential valid" is PASS, then `infra/feature-test.sh` reports an alignment snapshot |
+| Restore pipeline proven | `infra/restore-selftest.sh` PASSED within the last few days |
+| Production archive validated | `infra/restore-production.sh --archive ... --source-db ... --dry-run` lists the expected namespaces |
+| Data restored and verified | `backend/verify_restore.py` PASSED on the real archive (step 3) |
+| Domain bound with TLS | audit line "custom domain(s) bound" and the certificate `Succeeded` |
+| Emails carry the production hostname | `PUBLIC_APP_URL` set in `infra/deploy.env` and redeployed |
+| Rollback rehearsed | image rollback verified 2026-09-04 (web rolled back to the previous tag and forward, healthy both ways); DNS rollback = revert records |
+| Client informed of the freeze window | communication sent |
+
 ## 1. Freeze and export (Emergent side)
 
 1. Announce a short content freeze to the client (no edits during export and restore).
-2. On the Emergent production environment (not preview), take the archive and an inventory:
+2. On the Emergent production environment (not preview), take the archive and an inventory
+   (`mongodump` ships with MongoDB Database Tools; `backend/inventory_mongo.py` needs only `pymongo`):
 
 ```bash
 mongodump --uri "$MONGO_URL" --db "$DB_NAME" --archive=production.archive.gz --gzip
@@ -34,6 +53,13 @@ python backend/inventory_mongo.py --uri "$MONGO_URL" --db "$DB_NAME" --out sourc
 3. Copy `production.archive.gz` and `source-inventory.json` to the operator workstation.
 
 ## 2. Restore into Azure
+
+First validate the archive without writing anything (uploads it and runs
+`mongorestore --dryRun` inside Azure, listing the namespaces it contains):
+
+```bash
+infra/restore-production.sh --archive ./production.archive.gz --source-db "<DB_NAME from Emergent>" --dry-run
+```
 
 The pipeline is proven by `infra/restore-selftest.sh` (last run 2026-09-04,
 PASSED): it dumps the current Azure database inside Azure, restores it into a
@@ -73,9 +99,11 @@ login with a real account, invoices with inline files.
 
 ## 4. Custom domain (no traffic moves yet)
 
-Decide the production hostname (`thcodemo.space` is what history identifies as
-production). In Cloudflare, add **DNS-only (grey cloud)** records first; the
-managed certificate cannot be issued while Cloudflare proxies the hostname:
+Exact records, binding commands and Cloudflare settings: `docs/CLOUDFLARE_DNS.md`.
+The `asuid` TXT records are inert and can be added at any time; the A/CNAME
+records ARE the cutover (step 6). Summary: in Cloudflare, add **DNS-only (grey
+cloud)** records first; the managed certificate cannot be issued while
+Cloudflare proxies the hostname:
 
 | Record | Name | Value |
 | --- | --- | --- |
