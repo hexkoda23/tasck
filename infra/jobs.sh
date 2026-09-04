@@ -42,27 +42,26 @@ for l in sys.stdin:
   done
 }
 
-# Local paths handed to az must be Windows-style on Git Bash (path conversion is
+# Local paths handed to az must be Windows-style on Git Bash / WSL (path conversion is
 # disabled above so that share paths survive); no-op elsewhere.
 # Always absolute: az treats a relative --dest as a directory name.
 local_path() {
   local p="$1"
   if command -v cygpath >/dev/null 2>&1; then
-    cygpath -m -a "$p"
+    p="$(cygpath -m -a "$p")"
+  elif command -v realpath >/dev/null 2>&1; then
+    p="$(realpath -m "$p")"
   elif [[ "${OSTYPE:-}" == "msys" || "${OSTYPE:-}" == "mingw"* ]]; then
     local dir base
     dir="$(dirname "$p")"
     base="$(basename "$p")"
     if [[ -d "$dir" ]]; then
-      echo "$(cd "$dir" && pwd -W)/$base"
-    else
-      echo "$p"
+      p="$(cd "$dir" && pwd -W)/$base"
     fi
-  elif command -v realpath >/dev/null 2>&1; then
-    realpath -m "$p"
-  else
-    printf '%s' "$p"
   fi
+  # Convert WSL /mnt/c/... paths to C:/... so native Windows az.cmd can write to the real file path
+  p="$(echo "$p" | sed -E 's|^/mnt/([a-zA-Z])|\1:|')"
+  echo "$p"
 }
 
 # share_download <path-on-share> <local-dest>
