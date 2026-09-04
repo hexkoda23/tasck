@@ -9,6 +9,8 @@
 # Windows paths before az sees them; disable that for the whole script.
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
+PYTHON="${PYTHON:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)}"
+
 job_log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 
 # run_job <job> <container-name> [KEY=VALUE ...]
@@ -20,16 +22,16 @@ run_job() {
     az containerapp job update -g "$RG" -n "$job" --set-env-vars "$@" -o none
   fi
   local exec_name status
-  exec_name="$(az containerapp job start -g "$RG" -n "$job" --query name -o tsv)"
+  exec_name="$(az containerapp job start -g "$RG" -n "$job" --query name -o tsv | sed 's/\r//g')"
   echo "  started $job execution $exec_name"
   while true; do
-    status="$(az containerapp job execution show -g "$RG" -n "$job" --job-execution-name "$exec_name" --query properties.status -o tsv 2>/dev/null || echo Unknown)"
+    status="$(az containerapp job execution show -g "$RG" -n "$job" --job-execution-name "$exec_name" --query properties.status -o tsv 2>/dev/null | sed 's/\r//g' || echo Unknown)"
     case "$status" in
       Succeeded) echo "  $job/$exec_name: Succeeded"; return 0 ;;
       Failed|Stopped|Degraded)
         echo "  $job/$exec_name: $status" >&2
         az containerapp job logs show -g "$RG" -n "$job" --execution "$exec_name" --container "$container" 2>/dev/null \
-          | python -c 'import sys,json
+          | "$PYTHON" -c 'import sys,json
 for l in sys.stdin:
     l=l.strip()
     try: print(json.loads(l).get("Log", l))
@@ -63,11 +65,11 @@ share_delete() {
 }
 
 resolve_storage() {
-  STORAGE="$(az storage account list -g "$RG" --query "[?starts_with(name,'sttasck')].name | [0]" -o tsv)"
+  STORAGE="$(az storage account list -g "$RG" --query "[?starts_with(name,'sttasck')].name | [0]" -o tsv | sed 's/\r//g')"
   [[ -n "$STORAGE" ]] || { echo "restore storage account not found in $RG (run infra/deploy.sh first)" >&2; exit 1; }
-  STORAGE_KEY="$(az storage account keys list -g "$RG" -n "$STORAGE" --query "[0].value" -o tsv)"
+  STORAGE_KEY="$(az storage account keys list -g "$RG" -n "$STORAGE" --query "[0].value" -o tsv | sed 's/\r//g')"
 }
 
 api_db_name() {
-  az containerapp show -g "$RG" -n tasck-api --query "properties.template.containers[0].env[?name=='DB_NAME'].value | [0]" -o tsv 2>/dev/null || echo tasck
+  az containerapp show -g "$RG" -n tasck-api --query "properties.template.containers[0].env[?name=='DB_NAME'].value | [0]" -o tsv 2>/dev/null | sed 's/\r//g' || echo tasck
 }
