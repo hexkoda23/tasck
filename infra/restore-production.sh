@@ -10,6 +10,7 @@
 #
 #   infra/restore-production.sh --archive ./production.archive.gz --source-db <name-in-archive> [--target-db tasck] [--force]
 #   infra/restore-production.sh --inventory-only [--target-db tasck]     # just (re)run the target inventory
+#   infra/restore-production.sh --archive ./production.archive.gz --source-db <name> --dry-run   # validate the archive inside Azure, write nothing
 #
 # Safety rules enforced here:
 #   * the target is always the Azure vCore cluster (the job reads mongo-url from Key Vault)
@@ -27,6 +28,7 @@ SOURCE_DB=""
 TARGET_DB="tasck"
 FORCE=0
 INVENTORY_ONLY=0
+DRY_RUN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --archive) ARCHIVE="$2"; shift ;;
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do
     --target-db) TARGET_DB="$2"; shift ;;
     --force) FORCE=1 ;;
     --inventory-only) INVENTORY_ONLY=1 ;;
+    --dry-run) DRY_RUN=1 ;;
     -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -60,6 +63,21 @@ fi
 
 [[ -n "$ARCHIVE" && -f "$ARCHIVE" && -n "$SOURCE_DB" ]] || { echo "--archive <file> and --source-db <name> are required" >&2; exit 2; }
 DUMP_FILE="$(basename "$ARCHIVE")"
+
+if [[ $DRY_RUN -eq 1 ]]; then
+  job_log "Dry run: uploading $ARCHIVE and validating it inside Azure (no writes)"
+  share_upload "$ARCHIVE" "$DUMP_FILE"
+  run_job tasck-restore mongorestore "MODE=dryrun" "DUMP_FILE=$DUMP_FILE" "SOURCE_DB=$SOURCE_DB" "TARGET_DB=$TARGET_DB"
+  EXEC_LAST="$(az containerapp job execution list -g "$RG" -n tasck-restore --query "sort_by([], &properties.startTime)[-1].name" -o tsv)"
+  az containerapp job logs show -g "$RG" -n tasck-restore --execution "$EXEC_LAST" --container mongorestore 2>/dev/null     | python -c 'import sys,json
+for l in sys.stdin:
+    l=l.strip()
+    try: print(json.loads(l).get("Log", l))
+    except Exception: print(l)' | tail -60
+  az containerapp job update -g "$RG" -n tasck-restore --set-env-vars "MODE=restore" -o none
+  echo; echo "Archive validated. The archive stays on the share as $DUMP_FILE; re-run without --dry-run to restore."
+  exit 0
+fi
 
 job_log "Checking the target database '$TARGET_DB' is empty"
 inventory ./pre-restore-inventory.json

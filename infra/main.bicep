@@ -353,7 +353,7 @@ resource restoreJob 'Microsoft.App/jobs@2025-01-01' = {
           // DUMP_FILE / SOURCE_DB / TARGET_DB / DROP / MODE are set with `az containerapp job update --set-env-vars` before each start
           // (a start-time template override would drop the share mount).
           args: [
-            'set -euo pipefail; f=/restore/$DUMP_FILE; if [ "$MODE" = "dump" ]; then echo "dumping $SOURCE_DB -> $f"; mongodump --uri "$MONGO_URL" --db "$SOURCE_DB" --archive="$f" --gzip; ls -la "$f"; echo "dump finished"; exit 0; fi; test -f "$f" || { echo "missing $f"; ls -la /restore; exit 1; }; echo "restoring $f: $SOURCE_DB -> $TARGET_DB (drop=$DROP)"; extra=""; [ "$DROP" = "true" ] && extra="--drop"; case "$f" in *.gz) gz="--gzip" ;; *) gz="" ;; esac; mongorestore --uri "$MONGO_URL" --archive="$f" $gz --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --nsInclude "$SOURCE_DB.*" --maintainInsertionOrder --numParallelCollections 2 --numInsertionWorkersPerCollection 2 $extra; echo "restore finished"'
+            'set -euo pipefail; f=/restore/$DUMP_FILE; if [ "$MODE" = "dump" ]; then echo "dumping $SOURCE_DB -> $f"; mongodump --uri "$MONGO_URL" --db "$SOURCE_DB" --archive="$f" --gzip; ls -la "$f"; echo "dump finished"; exit 0; fi; test -f "$f" || { echo "missing $f"; ls -la /restore; exit 1; }; case "$f" in *.gz) gz="--gzip" ;; *) gz="" ;; esac; if [ "$MODE" = "dryrun" ]; then echo "dry run of $f (no writes): namespaces for $SOURCE_DB"; mongorestore --uri "$MONGO_URL" --archive="$f" $gz --nsInclude "$SOURCE_DB.*" --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --dryRun -vv 2>&1 | grep -Ei "found collection|restoring|namespace|error|failed" | head -200; echo "dry run finished"; exit 0; fi; echo "restoring $f: $SOURCE_DB -> $TARGET_DB (drop=$DROP)"; extra=""; [ "$DROP" = "true" ] && extra="--drop"; mongorestore --uri "$MONGO_URL" --archive="$f" $gz --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --nsInclude "$SOURCE_DB.*" --maintainInsertionOrder --numParallelCollections 2 --numInsertionWorkersPerCollection 2 $extra; echo "restore finished"'
           ]
           env: [
             { name: 'MONGO_URL', secretRef: 'mongo-url' }
@@ -361,7 +361,7 @@ resource restoreJob 'Microsoft.App/jobs@2025-01-01' = {
             { name: 'SOURCE_DB', value: 'test_database' }
             { name: 'TARGET_DB', value: dbName }
             { name: 'DROP', value: 'false' }
-            { name: 'MODE', value: 'restore' } // restore | dump (dump = mongodump SOURCE_DB into DUMP_FILE, used by the self-test)
+            { name: 'MODE', value: 'restore' } // restore | dump | dryrun (dump: mongodump SOURCE_DB into DUMP_FILE; dryrun: validate the archive, list namespaces, write nothing)
           ]
           resources: { cpu: json('1.0'), memory: '2Gi' }
           volumeMounts: [ { volumeName: 'restore', mountPath: '/restore' } ]
