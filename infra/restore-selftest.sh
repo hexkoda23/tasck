@@ -20,7 +20,7 @@ PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || ech
 # shellcheck source=jobs.sh
 . "$HERE/jobs.sh"
 resolve_storage
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+WORK="$(mktemp -d -p "$HERE")"; trap 'rm -rf "$WORK"' EXIT
 
 SOURCE_DB="$(api_db_name)"
 ARCHIVE_NAME="selftest-$(date -u +%Y%m%d%H%M%S).archive.gz"
