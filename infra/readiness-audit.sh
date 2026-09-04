@@ -39,7 +39,7 @@ scale="$(q containerapp show -g "$RG" -n tasck-api --query "[properties.template
 # --- configuration -----------------------------------------------------------
 KV="$(q keyvault list -g "$RG" --query "[?starts_with(name,'kv-tasck-')].name | [0]" -o tsv)"
 for s in mongo-url anthropic-api-key serpapi-api-key smtp-username smtp-password; do
-  q keyvault secret show --vault-name "$KV" --name "$s" -o none && pass "Key Vault secret present: $s" || fail "Key Vault secret missing: $s"
+  az keyvault secret show --vault-name "$KV" --name "$s" -o none 2>/dev/null && pass "Key Vault secret present: $s" || fail "Key Vault secret missing: $s"
 done
 envnames="$(q containerapp show -g "$RG" -n tasck-api --query "properties.template.containers[0].env[].name" -o tsv | tr '\n' ' ')"
 for v in APP_ENV MONGO_URL DB_NAME CORS_ORIGINS FRONTEND_URL PUBLIC_APP_URL BRAND_PORTAL_URL CREATOR_PORTAL_URL ENABLE_DEMO_LOGIN TASCK_AI_PROVIDER ALIGNMENT_ANALYZER_MODEL ANTHROPIC_API_KEY SERPAPI_API_KEY SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_FROM_EMAIL SMTP_USE_TLS; do
