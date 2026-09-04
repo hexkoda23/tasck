@@ -65,7 +65,7 @@ mg="$(printf '%s\n' "$cred" | awk '/^MONGO/{print $2" users="$3}')"; [[ -n "$mg"
 
 # --- monitoring --------------------------------------------------------------
 WS="$(q monitor log-analytics workspace show -g "$RG" -n log-tasck-prod --query customerId -o tsv)"
-avail="$(q monitor log-analytics query -w "$WS" --analytics-query "AppAvailabilityResults | where TimeGenerated > ago(1h) | summarize ok=countif(Success==true), n=count()" --query "[0].[ok,n]" -o tsv | tr '\t' '/')"
+avail="$(q monitor log-analytics query -w "$WS" --analytics-query "AppAvailabilityResults | where TimeGenerated > ago(1h) | summarize ok=countif(Success==true), n=count() | extend s=strcat(ok,'/',n)" --query "[0].s" -o tsv)"
 [[ -n "$avail" && "$avail" != "0/0" ]] && pass "availability test results last hour ok/total: $avail" || warn "no availability results in the last hour ($avail)"
 logs="$(q monitor log-analytics query -w "$WS" --analytics-query "ContainerAppConsoleLogs_CL | where TimeGenerated > ago(1h) | count" --query "[0].Count" -o tsv)"
 [[ -n "$logs" && "$logs" != "0" ]] && pass "container logs flowing ($logs lines last hour)" || warn "no container log lines in the last hour"
