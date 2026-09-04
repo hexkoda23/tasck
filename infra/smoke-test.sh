@@ -11,6 +11,8 @@ set -uo pipefail
 BASE="${1:?usage: smoke-test.sh <https://host>}"
 BASE="${BASE%/}"
 fail=0
+# Detect python interpreter (Windows Git Bash has python3, not python)
+PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)"
 # A path both bash tools and (on Windows) python can open.
 BODY="$(mktemp)"; command -v cygpath >/dev/null && BODY="$(cygpath -m "$BODY")"
 trap 'rm -f "$BODY"' EXIT
@@ -37,7 +39,7 @@ check "SPA deep link (client routing)"     200 "$BASE/admin/business-cases"
 check "api /api/health via proxy"          200 "$BASE/api/health"
 check "api root /api/"                     200 "$BASE/api/"
 check "v1 role login (admin)"              200 "$BASE/api/auth/demo-login" -H 'content-type: application/json' -d '{"role":"admin"}'
-BODY="$BODY" python - <<'EOF' || fail=1
+BODY="$BODY" "$PYTHON" - <<'EOF' || fail=1
 import json
 import os
 d = json.load(open(os.environ['BODY']))

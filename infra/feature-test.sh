@@ -14,9 +14,11 @@ while [[ $# -gt 0 ]]; do case "$1" in --email) EMAIL="$2"; shift ;; esac; shift;
 fail=0
 TMP="$(mktemp -d)"; command -v cygpath >/dev/null && TMP="$(cygpath -m "$TMP")"
 trap 'rm -rf "$TMP"' EXIT
+# Detect python interpreter (Windows Git Bash has python3, not python)
+PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)"
 ok()   { printf 'PASS  %s\n' "$*"; }
 bad()  { printf 'FAIL  %s\n' "$*"; fail=1; }
-jget() { python -c "import sys,json; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
+jget() { "$PYTHON" -c "import sys,json; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
 
 echo "TASCK feature test against $BASE"
 BRAND="$(curl -sS -X POST "$BASE/api/v3/brands" -H 'content-type: application/json' \
@@ -28,7 +30,7 @@ CASE="$(curl -sS -X POST "$BASE/api/v3/business-cases" -H 'content-type: applica
 # --- DOCX (python-docx + TASCK template assets) ---
 code="$(curl -sS -o "$TMP/brief.docx" -w '%{http_code}' -X POST "$BASE/api/v3/business-cases/$CASE/creative-briefs/preview-docx" -H 'content-type: application/json' \
   -d '{"subject":"Feature test","brief_text":"Core narrative: feature test.\n\nDeliverables: one video.","creator_name":"Feature Tester"}')"
-if [[ "$code" == "200" ]] && python - "$TMP/brief.docx" <<'EOF'
+if [[ "$code" == "200" ]] && "$PYTHON" - "$TMP/brief.docx" <<'EOF'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1]) as z:
     doc = z.read('word/document.xml').decode('utf-8','ignore')
@@ -42,7 +44,7 @@ CONTRACT="$(curl -sS -X POST "$BASE/api/v3/contracts" -H 'content-type: applicat
 code="$(curl -sS -o "$TMP/contract.pdf" -w '%{http_code}' "$BASE/api/v3/contracts/$CONTRACT/pdf")"
 if [[ "$code" == "200" ]] && head -c 5 "$TMP/contract.pdf" | grep -q '%PDF-'; then ok "contract PDF rendered"; else bad "contract PDF (HTTP $code)"; fi
 code="$(curl -sS -o "$TMP/contract.docx" -w '%{http_code}' "$BASE/api/v3/contracts/$CONTRACT/docx")"
-[[ "$code" == "200" ]] && python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).getinfo('word/document.xml')" "$TMP/contract.docx" && ok "contract DOCX rendered" || bad "contract DOCX (HTTP $code)"
+[[ "$code" == "200" ]] && "$PYTHON" -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).getinfo('word/document.xml')" "$TMP/contract.docx" && ok "contract DOCX rendered" || bad "contract DOCX (HTTP $code)"
 
 # --- Email (optional, one message) ---
 if [[ -n "$EMAIL" ]]; then
