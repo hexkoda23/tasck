@@ -4,50 +4,44 @@
 **Prepared:** 2026-09-03 (UTC), by read-only inspection. **Nothing was created, modified, deployed, exported or deleted.**
 **Contains no credentials, secrets, tokens, connection strings or PII.**
 
-**Labels:** ✅ VERIFIED (observed live / in source) · ⚠️ INFERRED (confidence stated) · ❌ **NOT VERIFIED** (requires production shell, Emergent dashboard, or Cloudflare/Namecheap account)
+**Labels:** ✅ VERIFIED (observed live / in source) · ✅ CONFIRMED (Emergent platform support) · ⚠️ INFERRED (confidence stated) · ❌ **NOT VERIFIED** (requires the Emergent dashboard or the Cloudflare/Namecheap account)
+
+> 🔴 **REVISION 2 — read this first.** Emergent platform support has confirmed that the production database is an **Emergent-managed MongoDB Atlas cluster**, *not* an in-container `mongod`, and that **platform backups with 7-day PITR already exist**. Sections **1, 2, 4, 5, 8 and 9** are corrected accordingly and marked 🔴 CORRECTED inline. Where an earlier report in this project says "in-container `mongod`", "no backup exists", or "write freeze unavoidable", **this document supersedes it.**
 
 ---
 
 ## 1. PRODUCTION MONGODB — LOCATION, NAME, PORT, AUTH, TLS
 
+> 🔴 **CORRECTED — supersedes every earlier statement in this project about the production database.** Confirmed by Emergent platform support. My earlier "in-container `mongod`" conclusion was **wrong**; the two "Atlas MongoDB" comments at `server.py:78` and `PRD.md:539` were **literally correct** and should have outweighed the preview container's configuration.
+
 | Property | Value | Label |
 |---|---|---|
-| Provider | **Emergent-hosted `mongod` running inside the application container.** Not Atlas, not a managed service | ⚠️ INFERRED — HIGH |
-| Hostname | Container-local (loopback) expected | ❌ **NOT VERIFIED** |
-| Port | **27017 (default)** — the platform image starts `mongod` with no `--port` flag | ✅ VERIFIED |
-| Database name | **`test_database`** (inherited default) in committed config and in a live Emergent runtime | ⚠️ INFERRED / ❌ production value NOT VERIFIED (dashboard can override `DB_NAME`) |
-| Auth required | **No** (loopback trust, no credentials in the URI) | ⚠️ INFERRED / ❌ NOT VERIFIED |
-| TLS required | **No** | ⚠️ INFERRED / ❌ NOT VERIFIED |
-| Externally reachable | **No.** `thcodemo.space` resolves only to Cloudflare anycast, proxying HTTP/HTTPS. No route/listener for 27017. `mongod` uses `--bind_ip_all`, so it is reachable **only inside the pod network namespace** | ✅ VERIFIED |
-| Replica set / sharding | **None — standalone.** No oplog, no change streams ⇒ **no live replication or delta sync is possible** | ✅ VERIFIED |
-| Dump feasibility | Plain `mongodump`, **only from inside the production container** | ⚠️ INFERRED — HIGH |
+| Provider | **Emergent-managed MongoDB Atlas cluster, external to the application container.** **Shared (multi-tenant)** by default; dedicated cluster is a paid upgrade | ✅ CONFIRMED (Emergent support) |
+| Hostname | `{cluster}.mongodb.net` via SRV. Exact value at dashboard → Republish → Secrets → System keys → `MONGO_URL`. **Never paste it anywhere** | ✅ CONFIRMED (location) |
+| Scheme / port | **`mongodb+srv://`** — port resolved via SRV (standard 27017), not in the URI | ✅ CONFIRMED |
+| Database name | **Format `{app_name}-mydb`** — i.e. **NOT `test_database`**. `test_database` is the **preview/code** database only | ✅ CONFIRMED |
+| Auth required | **YES** — credentials embedded in the SRV connection string | ✅ CONFIRMED |
+| TLS required | **YES** — mandatory on Atlas (`mongodb+srv` enables TLS by default) | ✅ CONFIRMED |
+| Externally reachable | **Only from Emergent's internal network or an allowlisted IP.** Per the Knowledge Base: *"you cannot `mongodump` it directly from your laptop"* unless allowlisted | ✅ CONFIRMED |
+| Replica set | **Atlas is always a replica set ⇒ an oplog EXISTS.** Cross-collection-consistent dumps (`mongodump --oplog`) and even live/delta sync are **possible** — a material improvement on the earlier plan | ⚠️ INFERRED from Atlas architecture — confirm tier |
+| Platform backups | **ALREADY EXIST:** hourly (7 d), daily (7 d), weekly (4 w), monthly (12 m), yearly (1 y), **plus continuous 7-day PITR** | ✅ CONFIRMED |
+| Data-loss risk from redeploy/restart/rollback | **None** — the database is persistent and external to the container lifecycle | ✅ CONFIRMED |
+| Dump feasibility | **Self-service:** dashboard → Republish → Database → "Go to database" (`mongoview.emergent.host`) → **"Dump DB"**. Or `mongodump` from an allowlisted IP. **No production container shell exists** | ✅ CONFIRMED |
+| First-deploy lineage | Preview data was copied to production on the **first** deploy only; the two have been **completely independent** since | ✅ CONFIRMED |
 
-**Evidence for "in-container":** platform image supervises `[program:mongodb] command=/usr/bin/mongod --bind_ip_all`; base image is `fastapi_react_mongo_shadcn_base_image_cloud_arm:release-26022026-3`; **no `mongodb+srv`, TLS option, or credential handling exists anywhere in the source** (the two "Atlas MongoDB" hits are prose comments); 15 sequential DB round trips + a 268 KB payload cost only ~40 ms over a DB-free `/api/health` baseline.
+**⚠️ Why the earlier inference failed, and the part of it that still bites.** The platform image *does* supervise `[program:mongodb] /usr/bin/mongod --bind_ip_all` and the committed `backend/.env` *does* point at loopback — both ✅ VERIFIED. But in production the dashboard **overrides `MONGO_URL`/`DB_NAME`** with the Atlas values, so the in-container `mongod` is present but **unused**. The ~40 ms for 15 round trips reflects app-and-cluster **same-region co-location**, not a loopback socket. **The §1 trap is therefore worse than stated:** if `MONGO_URL` is ever missing from Azure App Settings, `load_dotenv(override=False)` falls back to the committed loopback value and the app starts **cleanly against a local, empty database** — real client data intact but invisible. **Delete `.env` from the runtime image.**
 
 🔴 **Configuration-precedence fact Terra must design around:** the backend reads config from the **`.env` file** — `server.py:23` → `load_dotenv(ROOT_DIR/'.env')` with **`override=False`**. Real process env wins, **but any key missing from Azure App Settings silently falls back to the committed `.env` value.** For `MONGO_URL` that means connecting to a container-local `mongod` and running against an **empty database with no error**. **Mitigation: delete `.env` from the runtime image so missing config crashes on startup.**
 
-**Settle §1 with one command (read-only, prints no values):**
-```bash
-cd /app/backend && python3 - <<'EOF'
-import os, re
-from dotenv import dotenv_values
-f = dotenv_values('/app/backend/.env')
-v = os.environ.get('MONGO_URL') or f.get('MONGO_URL','')
-print('config_source =', 'process_env' if os.environ.get('MONGO_URL') else 'dotenv_file')
-print('scheme        =', (re.match(r'^([a-z+]+)://', v) or ['','?'])[1])
-print('host_class    =', 'loopback' if ('localhost' in v or '127.0.0.1' in v) else ('atlas_srv' if 'mongodb+srv' in v else 'remote_host'))
-print('has_credentials =', '@' in v)
-print('db_name       =', os.environ.get('DB_NAME') or f.get('DB_NAME'))
-EOF
-```
+**Where to read the production values (no shell needed):** dashboard → **Republish → Secrets → System keys → "View & edit"** exposes `MONGO_URL` and `DB_NAME`. Record only the **cluster host** and the **database name**; the credentials must go straight into Azure Key Vault and appear nowhere else.
 
 ---
 
 ## 2. COLLECTION / DOCUMENT / INDEX INVENTORY + MONGODB VERSION
 
-**MongoDB version:** **7.0.42** in a live Emergent runtime of the same image. ❌ Production version NOT VERIFIED.
-**Collections:** **45 referenced by code**; 46 present in a live runtime. ❌ Production list NOT VERIFIED.
-**Approximate size:** ❌ NOT VERIFIED. Calibration from a live runtime (101 objects): **dataSize 2.08 MB · storageSize 3.71 MB · indexSize 1.219 MB**. Production ⚠️ INFERRED at **≈2–8 MB**.
+**MongoDB version:** ❌ **Production version NOT VERIFIED** — it is an **Atlas** cluster (see §1), so it is *not* the 7.0.42 observed in the preview container. Read it from the MongoDB Viewer or `db.version()`.
+**Collections:** **45 referenced by code**; 46 present in the preview runtime. ❌ Production list NOT VERIFIED.
+**Approximate size:** ❌ NOT VERIFIED. Preview calibration (101 objects): **dataSize 2.08 MB · storageSize 3.71 MB · indexSize 1.219 MB**. Production ⚠️ INFERRED at **≈2–8 MB** from the live document counts.
 **Total documents:** **≈95 live-counted** + un-countable auth/marker/job collections ⇒ ⚠️ INFERRED **≈100–250**.
 **GridFS: NONE** ✅ VERIFIED (no GridFS API usage; zero `fs.*` collections; email attachments store metadata only, 112–360 bytes each).
 **Binary data: NONE in any collection** ✅ VERIFIED.
@@ -110,8 +104,12 @@ Baseline captured **2026-09-03**. ⚠️ These drift as the agency works — **r
 
 ## 4. CREATE THE BACKUP — EXACT COMMANDS *(not executed; run by an authorized operator)*
 
-**Where:** from a shell **inside the production container** (Emergent dashboard → shell). Not possible from outside.
-**Prerequisite:** do not restart, redeploy or replace the container until Step 5/§5 verification passes.
+> 🔴 **CORRECTED.** There is **no shell into the production container** — Emergent does not provide one. The production database is **Atlas** (§1), reachable only from Emergent's internal network or an allowlisted IP.
+> **Primary route (self-service, no CLI):** dashboard → **Republish → Database → "Go to database"** (`mongoview.emergent.host`) → **"Dump DB"** for the full database, or a collection → *Run query* → *Export all*.
+> **Secondary route:** take `MONGO_URL`/`DB_NAME` from Republish → Secrets → System keys and run the commands below **from an allowlisted IP** (request allowlisting from `support@emergent.sh`).
+> The `mongosh`/`mongodump` commands below remain valid verbatim for the secondary route — only the *location you run them from* has changed. Tooling versions confirmed available: `mongodump`/`mongorestore` 100.18.0, `mongosh` 2.10.0, `sha256sum`, `gzip`, `curl`.
+>
+> **Prerequisite (relaxed):** the Atlas database is persistent and external to the container, so redeploys/restarts/rollbacks **cannot** destroy it.
 
 **Step 0 — load config without printing it:**
 ```bash
@@ -146,7 +144,7 @@ mongosh --quiet "$MONGO_URL" --eval '
 ' | tee -a /tmp/tasck-prebackup-metadata.txt
 ```
 
-**Step 3 — freeze writes.** Standalone MongoDB ⇒ `mongodump` is consistent **per collection only**, and one TASCK user action writes to several collections. Either agree a short quiet window with the agency (~8 staff; **15–30 min** is ample — the dump takes seconds) **or** block `POST/PUT/PATCH/DELETE` on `/api/*` at the edge, leaving `GET` alive. **Do not stop the container or `mongod`.**
+**Step 3 — freeze writes (now OPTIONAL).** 🔴 **CORRECTED:** production is an **Atlas replica set**, so an **oplog exists** and `mongodump --oplog` yields a **cross-collection-consistent** point-in-time dump *without* a freeze. The "freeze is unavoidable" constraint applied only to the preview standalone. A short quiet window (~15 min) is still the belt-and-braces option if you prefer it; otherwise proceed live. **Never stop the application or the cluster.**
 
 **Step 4 — dump:**
 ```bash
@@ -154,9 +152,9 @@ OUT="/tmp/tasck-prod-$(date -u +%Y%m%dT%H%M%SZ).gz"
 mongodump --uri="$MONGO_URL" --db="$DB" --archive="$OUT" --gzip
 ls -lh "$OUT"
 ```
-**Save location:** `/tmp/tasck-prod-<UTC-timestamp>.gz` inside the production container — one gzipped archive, expected single-digit MB.
-Do **not** pass `--oplog` (no oplog exists). Do **not** use `--out` (directory dumps are harder to checksum/transfer).
-⚠️ **`/tmp` is ephemeral.** Copy it off in §6 before anything else. If the platform can only download from `/app`, use `mkdir -p /app/_backup_tmp` and write there, then **delete that directory after transfer** — `/app` is a persistent volume and must never be committed to git.
+**Save location:** `/tmp/tasck-prod-<UTC-timestamp>.gz` on **whichever allowlisted host you run this from** — one gzipped archive, expected single-digit MB. (Via the "Dump DB" button the file lands in your **browser's download folder** instead; rename it to `production.archive.gz`.)
+🔴 **CORRECTED: DO pass `--oplog`** — Atlas is a replica set, so `mongodump --oplog` gives cross-collection consistency with no write freeze. Still avoid `--out` (directory dumps are harder to checksum/transfer).
+⚠️ Keep **two independent copies** and never commit the archive to git.
 
 **Fallback if `mongodump` is unavailable — install nothing:**
 ```bash
@@ -241,7 +239,7 @@ If any check fails: **discard the archive and repeat from §4 Step 3.** An unver
 | `"A product of emergent.sh"` meta tag | Live HTML `<head>` | Remove |
 | Emergent cron control plane | `/etc/cron.d/webhook-crons` → `.emergent/cron/*.sh`, `ea.int.apis.emergentagent.com` | Drop entirely. ✅ **NO TASCK-SPECIFIC CRON EXISTS** (see §8/D) |
 | Emergent base image | `.emergent/emergent.yml` → `fastapi_react_mongo_shadcn_base_image_cloud_arm:release-26022026-3` (**ARM64**) | No Dockerfile exists — author one, **x86_64**, and re-test native wheels (`python-docx`, `openpyxl`, `bcrypt`) |
-| In-container `mongod` | Platform supervisor | Replace with **Cosmos DB for MongoDB vCore** (credentials + TLS required — unlike today) |
+| **Emergent-managed MongoDB Atlas** (shared/multi-tenant cluster) | Dashboard-set `MONGO_URL`/`DB_NAME` | Replace with **Cosmos DB for MongoDB vCore** — auth + TLS required on both sides, so the connection style is unchanged. Note the in-container `mongod` from the base image is **present but unused** in production; do not ship it in the Azure image |
 | Emergent ingress `/api` path rule + platform TLS | Live behaviour | Reproduce **single-origin** `/api/* → API`, `/* → SPA` on one hostname (Front Door) |
 | Hardcoded `DEFAULT_PUBLIC_APP_URL = https://thcodemo.space` | `v3_routes.py:138` | Set `PUBLIC_APP_URL`/`APP_BASE_URL`; prune |
 | Emergent hostnames in the CORS default list | `server.py:702-711` + regex `*.emergent.host|*.emergentagent.com` | Env-driven via `CORS_ORIGINS` (no code change needed to add Azure); prune the regex/defaults |
@@ -274,21 +272,21 @@ Anthropic (`api.anthropic.com`), the existing **SMTP provider**, SerpAPI, Google
 7. **Secrets are committed to git** (`backend/.env`, `frontend/.env` tracked) — treat all as exposed; **rotate** into Key Vault (references via managed identity), never as literal App Settings.
 
 ### B. 🟠 Must resolve before production cutover
-8. **No backup exists, and no backup mechanism exists.** ✅ VERIFIED no dump code, no backup cron, no snapshot logic. ❌ Emergent platform-side snapshots NOT VERIFIED. If the DB is in-container, **any container replacement before a verified dump is unrecoverable loss.**
-9. **DB location unconfirmed** (§1) — determines the dump method and freeze length.
+8. ~~**No backup exists, and no backup mechanism exists.**~~ 🔴→🟡 **DOWNGRADED.** ✅ CONFIRMED the managed Atlas cluster already has **hourly (7 d) / daily (7 d) / weekly (4 w) / monthly (12 m) / yearly (1 y) backups plus continuous 7-day PITR**, and the database is **persistent and external to the container** — redeploys, restarts and rollbacks cannot destroy it. The *application* still ships no backup code of its own (✅ VERIFIED), so **Azure needs its own PITR from day one**, and you still need a portable archive for the migration itself. The pre-migration data-loss panic is gone.
+9. ~~**DB location unconfirmed.**~~ ✅ **RESOLVED — Emergent-managed MongoDB Atlas** (§1). Consequence: the Azure target must supply **auth + TLS**, and `DB_NAME` is **`{app_name}-mydb`**, not `test_database` — get the `--nsFrom` namespace right or the restore silently lands nowhere.
 10. **Cloudflare edge is almost certainly Emergent's, not the client's.** ✅ VERIFIED: `sliver=010-tier1` on `thcodemo.space` vs `sliver=none` on `emergent.host`; the apex cert has a **single SAN** vs the platform's `*.emergent.host` wildcard; the client zone was never delegated to Cloudflare. ⇒ ⚠️ INFERRED HIGH: **Cloudflare for SaaS in Emergent's account.** You **cannot** keep this edge — TLS, HSTS, WAF/DDoS, redirects and caching are lost **in one step** and must be rebuilt (Front Door, or a new client-owned Cloudflare zone) **before** traffic moves. **CLOUDFLARE ACCOUNT ACCESS REQUIRED** to export the rules being replaced and to exclude Workers.
 11. **DNS/apex constraint.** ✅ VERIFIED: DNS at **Namecheap** (`dns1/dns2.registrar-servers.com`); apex = **two A records** to Cloudflare anycast (`172.66.2.113`, `162.159.142.117`), **TTL 300**, **no apex CNAME**; `www` = CNAME → apex **plus a 308 redirect**; only the apex and `www` exist (9 candidate subdomains all NXDOMAIN); **no CAA record** 🟢 (Azure managed certs can be issued freely); no HTTPS/SVCB record. Namecheap BasicDNS has **no apex CNAME flattening** ⇒ choose **(a)** Azure DNS + **ALIAS** at apex, **(b)** Namecheap A → Front Door **anycast IP** + `asuid`/`_dnsauth` TXT, or **(c)** client-owned Cloudflare zone with a proxied CNAME. **Decide before cutover day.**
 12. **HSTS: `max-age=63072000; includeSubDomains; preload`** ✅ VERIFIED — the domain is committed to HTTPS-only for **2 years** and is preload-flagged. **Valid TLS must be live on Azure from the first second of cutover**; there is no HTTP fallback and no fast way to undo preload. Also reproduce `x-content-type-options: nosniff` and `referrer-policy: strict-origin-when-cross-origin`.
 13. **CORS is enforced and must be set.** ✅ VERIFIED live: a preflight from `https://tasck-azure-test.azurewebsites.net` was **rejected — HTTP 400, no `access-control-allow-origin`**; the same preflight from `https://thcodemo.space` returned **200** with the header. `CORS_ORIGINS` is merged with the defaults ⇒ **no code change**, but forgetting to set it kills the browser client. `allow_credentials=True`.
 14. **Email deliverability.** ✅ VERIFIED: `thetasck.com` publishes SPF `include:_spf.google.com` **`-all` (hard fail)**; `thcodemo.space` publishes only Namecheap-forwarding SPF; **no DMARC on either domain**; no DKIM found at common selectors. MX = Namecheap email forwarding. A new relay or egress path **fails SPF outright**. **Keep the existing SMTP provider** (zero DNS change) and confirm the real `SMTP_HOST` / `SMTP_FROM_EMAIL` domain first. Only **7** emails have ever been sent in production, all to the agency's own domain ⇒ external deliverability is effectively **untested**.
 15. 🔴 **The second Emergent URL is a live public copy of production.** ✅ VERIFIED `https://tasck-live-demo-1.emergent.host` serves the **same SPA and the same unauthenticated API against the same database** (`/api/health` returns a live timestamp); `tasck-live-demo-1.preview.emergentagent.com` also answers `200` publicly. **Two consequences:** (i) **split brain** — after cutover, staff with a stale bookmark keep writing to the abandoned database, silently and with no error; (ii) the data exposure in blocker 1 is **not fixed by cutover** — the CRM stays readable there until the Emergent deployment is actually decommissioned. **Treat "Emergent stopped/deleted" as a hard verified checklist item, not "left warm indefinitely."**
-16. **A short write freeze is unavoidable.** Standalone MongoDB — no oplog, no change streams ⇒ **no delta sync**. Budget **15–30 min** (dump = seconds; verification dominates).
+16. ~~**A short write freeze is unavoidable.**~~ 🟠→🟡 **RELAXED.** Production is an **Atlas replica set** with an **oplog**, so `mongodump --oplog` is cross-collection consistent and **delta/live sync is possible**. Budget a **short optional** window for the final cutover rather than a mandatory one.
 17. **Async AI jobs constrain topology.** Six in-process `asyncio` runners; client polls by job id. App Service needs **Always On** and **instance count = 1** (multi-instance polling breaks — a client may poll an instance that doesn't own the task). Keep the stale-job reaper.
 18. **Timeout ceilings differ.** The async pattern exists because of a ~100 s edge cap. App Service has a **fixed ~230 s** request limit that cannot be raised; Front Door defaults to **60 s** origin response (max 240 s). Validate the heaviest AI job end-to-end.
 19. **`ENABLE_RELOAD` / uvicorn `--reload`** — ❌ production value NOT VERIFIED; a live Emergent runtime uses `--reload --workers 1`. **Never run `--reload` in production** — a reload kills in-flight AI job runners.
 
 ### C. 🟡 Can be handled after cutover
-Zero secondary indexes (`_id_` only; fine at ~100 docs, add as volume grows — Cosmos vCore charges for unindexed scans) · third-party icon services leaking client domains · `DB_NAME` = `test_database` · hardcoded `DEFAULT_PUBLIC_APP_URL` + Emergent CORS defaults · unused dependencies · `users` (36) is demo data that **cannot** be deleted until blocker 1 is fixed · legacy `/v1` `/v2` `/v3` SPA screens still routable (❌ usage NOT VERIFIED — ask the client) · externalise async jobs to lift the single-instance constraint · email sent inline in the request path · test suite depends on a live server + seeded data (**do not** use as an Azure smoke test) · `v3_routes.py` ≈19.9k lines / ~202 routes.
+Zero secondary indexes (`_id_` only; fine at ~100 docs, add as volume grows — Cosmos vCore charges for unindexed scans) · third-party icon services leaking client domains · `DB_NAME` = `{app_name}-mydb` (rename only alongside the App Setting) · hardcoded `DEFAULT_PUBLIC_APP_URL` + Emergent CORS defaults · unused dependencies · `users` (36) is demo data that **cannot** be deleted until blocker 1 is fixed · legacy `/v1` `/v2` `/v3` SPA screens still routable (❌ usage NOT VERIFIED — ask the client) · externalise async jobs to lift the single-instance constraint · email sent inline in the request path · test suite depends on a live server + seeded data (**do not** use as an Azure smoke test) · `v3_routes.py` ≈19.9k lines / ~202 routes.
 
 ### D. ✅ No longer blockers
 **File/object storage migration — none exists.** ✅ VERIFIED no GridFS, no object storage, no upload directory, no generated-file persistence; documents are generated per request (587 KB `.docx` and 343 KB flipbook generated live). **Zero files to migrate; no Blob Storage required for correctness.** · **Cron reproduction — `NO TASCK-SPECIFIC EMERGENT CRON JOB FOUND`** (`crons.yml` absent, `applied.hash` 0 bytes, no `dispatch_webhook` line in the crontab, `WEBHOOK_CRON_SECRET` unprovisioned, and no scheduler/APScheduler/timer in the app; one prod-side re-check remains) · "AI welded to Emergent" (config-only) · hardcoded CORS (env-driven) · destructive admin/diagnostics endpoints (zero call sites, 404 live) · payments/OAuth/webhooks (none exist) · non-default Mongo port (default 27017) · publicly exposed database (no public route to 27017) · CAA blocking Azure certs (no CAA record) · unknown subdomains (only apex + `www`).
@@ -307,7 +305,7 @@ Zero secondary indexes (`_id_` only; fine at ~100 docs, add as volume grows — 
 - Write the **validation suite** from §3 and deploy/test against an **empty** Cosmos database.
 
 ### Requires your action
-1. Run the **§1 one-liner** to settle the DB location. 2. Run **§4 Steps 1–2** and hand Terra the metadata + fresh fingerprints. 3. **Export the production App Settings variable list (names only)** — critically: is `ANTHROPIC_API_KEY` set? is `WIPE_DEMO_DATA_ONCE` absent? 4. Confirm `ls /app/.emergent/crons.yml` and `grep -c dispatch_webhook /etc/cron.d/webhook-crons` in **production**. 5. Ask Emergent whether **any** platform-side DB snapshot exists. 6. **Cloudflare account:** confirm ownership, export all zone rules + Workers routes, confirm cert/HSTS management, pull traffic analytics for sizing. 7. **Namecheap:** apex record strategy + write access at cutover (TTL already 300). 8. Confirm the SMTP provider host **name** and `SMTP_FROM_EMAIL` **domain**. 9. Provide the deployed container's start commands, worker count, `ENABLE_RELOAD` value, CPU/RAM/disk. 10. Agree the write-freeze window with the agency. 11. Decide on the legacy `/v1` `/v2` `/v3` screens. 12. **Supply secrets securely** (Key Vault only, all **rotated**): SMTP credentials · a **new** `ANTHROPIC_API_KEY` · `SERPAPI_API_KEY` · optional `OPENAI_API_KEY`. Never supply `EMERGENT_LLM_KEY`, `code_server_password`, `STRIPE_API_KEY` or `WEBHOOK_CRON_SECRET` — platform-owned/unused.
+1. ~~Run the §1 one-liner~~ ✅ **DONE — production is Emergent-managed Atlas.** Instead: read the **cluster host + `DB_NAME`** from Republish → Secrets → System keys. 2. **Export the data:** Republish → Database → "Go to database" → **"Dump DB"**; then run **§4 Steps 1–2** against that database (via the Viewer, or `mongosh` from an allowlisted IP) and hand Terra the metadata + fresh fingerprints. 3. **Export the production App Settings variable list (names only)** — critically: is `ANTHROPIC_API_KEY` set? is `WIPE_DEMO_DATA_ONCE` absent? 4. ~~Confirm crons in production~~ — no production shell exists; ask `support@emergent.sh` to confirm no webhook-cron is configured for this deployment. 5. ~~Ask whether platform snapshots exist~~ ✅ **ANSWERED — they do** (hourly/daily/weekly/monthly/yearly + 7-day PITR); optionally ask support for a copy as a second safety net. 6. **Cloudflare account:** confirm ownership, export all zone rules + Workers routes, confirm cert/HSTS management, pull traffic analytics for sizing. 7. **Namecheap:** apex record strategy + write access at cutover (TTL already 300). 8. Confirm the SMTP provider host **name** and `SMTP_FROM_EMAIL` **domain**. 9. Provide the deployed container's start commands, worker count, `ENABLE_RELOAD` value, CPU/RAM/disk. 10. Agree the write-freeze window with the agency. 11. Decide on the legacy `/v1` `/v2` `/v3` screens. 12. **Supply secrets securely** (Key Vault only, all **rotated**): SMTP credentials · a **new** `ANTHROPIC_API_KEY` · `SERPAPI_API_KEY` · optional `OPENAI_API_KEY`. Never supply `EMERGENT_LLM_KEY`, `code_server_password`, `STRIPE_API_KEY` or `WEBHOOK_CRON_SECRET` — platform-owned/unused.
 
 ### Requires the backup (blocked until §4–§6 complete)
 Cosmos restore · post-restore integrity diff against §3 · end-to-end validation with real data · the cutover itself · any rehearsal of the freeze/restore timing. **Nothing past "empty-database Azure deployment" can proceed without it.**

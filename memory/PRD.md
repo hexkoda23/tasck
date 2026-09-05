@@ -1533,3 +1533,22 @@ Preview remains: users 36, v3_admin_users 8, v3_rms 8, v3_templates 12, v3_syste
 - NEW 🔴 BLOCKER: `tasck-live-demo-1.emergent.host` publicly serves the SAME app + API against the SAME database (verified /api/health). Split-brain writes + continued data exposure after cutover => Emergent must be decommissioned, not left warm.
 - CORS enforcement live-verified: preflight from an unknown azurewebsites.net origin => HTTP 400 with no ACAO; from thcodemo.space => 200 with ACAO.
 - Blockers regrouped A/B/C/D. Group D (no longer blockers): file/object storage migration, cron reproduction, "AI welded to Emergent", hardcoded CORS, destructive admin endpoints, payments/OAuth/webhooks, non-default Mongo port, publicly exposed DB, CAA blocking certs, unknown subdomains.
+
+
+---
+
+## 2026-09-03 (late) — 🔴 CORRECTION: production DB is Emergent-managed MongoDB ATLAS
+Confirmed by Emergent platform support. This SUPERSEDES the "in-container mongod" conclusion in all three prior reports (TASCK_PRODUCTION_MIGRATION_MASTER_REPORT.md, TASCK_PRODUCTION_MIGRATION_DISCOVERY.md, TASCK_FINAL_PRODUCTION_DISCOVERY.md). The "Atlas MongoDB" comments at server.py:78 and PRD.md:539 were literally correct.
+- Production DB = Emergent-managed MongoDB **Atlas** cluster, EXTERNAL to the app container. Shared/multi-tenant by default; dedicated cluster is a paid upgrade.
+- Scheme `mongodb+srv://{app}:{pwd}@{cluster}.mongodb.net/...`; **auth REQUIRED, TLS REQUIRED**; port via SRV.
+- **DB_NAME format `{app_name}-mydb` - NOT `test_database`.** test_database is the preview/code DB only.
+- Reachable only from Emergent internal network or an allowlisted IP => cannot mongodump from a laptop by default.
+- Atlas => replica set => an **oplog exists**, so `mongodump --oplog` and even live/delta sync are possible. The "write freeze is unavoidable" constraint from earlier reports is RELAXED for production (it was true only of the preview standalone).
+- **Platform backups DO exist:** hourly 7d, daily 7d, weekly 4w, monthly 12m, yearly 1y, plus continuous 7-day PITR. Blocker "no backup exists" downgraded 🔴->🟡.
+- Redeploy/restart/rollback CANNOT destroy the production DB (persistent, external to container lifecycle).
+- Preview data was copied to production on FIRST deploy only; independent ever since.
+- Self-service export path: Republish -> Database -> "Go to database" (mongoview.emergent.host) -> **"Dump DB"** (full DB); or per-collection via Run query -> Export all. Credentials at Republish -> Secrets -> System keys.
+- **No shell access to the production container exists** - this is why the agent environment can never take the dump. Agent env verified to have: no k8s service account, no cluster API, no in-cluster DNS for the deployment, no Emergent CLI, no non-loopback Mongo URI on disk.
+- Why the earlier inference failed: the platform image genuinely does supervise mongod --bind_ip_all and backend/.env genuinely does point at loopback, but the production dashboard OVERRIDES MONGO_URL/DB_NAME with Atlas values, leaving the in-container mongod present but unused. The ~40ms/15-round-trip latency reflects same-region co-location, not loopback.
+- Residual trap is now MORE severe: with load_dotenv(override=False), a missing MONGO_URL App Setting on Azure makes the app fall back to the committed loopback value and start cleanly against an EMPTY local DB. Delete .env from the runtime image.
+- Handoff doc /app/TASCK_TERRA_PRODUCTION_HANDOFF.md sections 1, 8, 9 updated with these corrections.
