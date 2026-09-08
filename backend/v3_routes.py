@@ -2310,6 +2310,11 @@ Ground everything in the inputs (Alignment Snapshot, Creator Selector data,
 selected creators). Use the brand's own numbers where given. Where a number is
 not given, keep it directional rather than inventing one.
 
+Never invent a person. The audience persona is a SEGMENT, not an individual -
+"Urban Commuters (25-40)", never a made-up name and age. The only people who
+may be named anywhere in this deck are the creators actually selected for this
+campaign.
+
 Return JSON only, no markdown fences, with EXACTLY this shape:
 
 {
@@ -2360,7 +2365,7 @@ Return JSON only, no markdown fences, with EXACTLY this shape:
       "title": "the audience in a phrase, e.g. 'Urban Millennials (30-40)'",
       "lead": "one line describing them",
       "persona_label": "Audience Persona",
-      "persona": {"name": "a plausible persona name", "age": "e.g. 34"},
+      "persona": {"name": "the audience segment in 2-4 words, e.g. 'Urban Commuters'", "age": "the age range, e.g. '25-40'"},
       "traits": ["5-7 short persona traits"],
       "market_size_label": "Market Size",
       "market_size": "the size of the opportunity, directional if unknown",
