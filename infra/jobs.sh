@@ -9,7 +9,7 @@
 # Windows paths before az sees them; disable that for the whole script.
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
-PYTHON="${PYTHON:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)}"
+PYTHON="${PYTHON:-$(command -v python 2>/dev/null || command -v python3 2>/dev/null || echo python)}"
 
 job_log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 

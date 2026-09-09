@@ -144,7 +144,7 @@ def creator_login_url() -> str:
 # default exists only so we never ship a RELATIVE link ("/brand/login"), which
 # is what happened when the env was unset: the brand received a dead link they
 # could not click. Override it per environment rather than editing this value.
-DEFAULT_PUBLIC_APP_URL = (os.getenv("DEFAULT_PUBLIC_APP_URL") or "https://thcodemo.space").strip().rstrip("/")
+DEFAULT_PUBLIC_APP_URL = (os.getenv("DEFAULT_PUBLIC_APP_URL") or "").strip().rstrip("/")
 
 
 def app_base_url() -> str:
@@ -153,9 +153,7 @@ def app_base_url() -> str:
     Resolution order:
       1. FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL (explicit override).
       2. http://localhost:7159 when APP_ENV is "local" or "dev".
-      3. DEFAULT_PUBLIC_APP_URL - an absolute URL, never "". A relative link in
-         an email is always broken for the recipient, so a possibly-stale
-         absolute host beats a guaranteed-dead relative path.
+      3. DEFAULT_PUBLIC_APP_URL, when explicitly configured.
     """
     raw = (
         os.getenv("FRONTEND_URL")
@@ -168,12 +166,12 @@ def app_base_url() -> str:
     env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
     if env in {"local", "dev", "development"}:
         return "http://localhost:7159"
-    logger.warning(
-        "No FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL set - email links fall back to %s. "
-        "Set one of these env vars for this environment.",
-        DEFAULT_PUBLIC_APP_URL,
+    if DEFAULT_PUBLIC_APP_URL:
+        return DEFAULT_PUBLIC_APP_URL
+    raise RuntimeError(
+        "No public application URL is configured. Set FRONTEND_URL, PUBLIC_APP_URL, "
+        "APP_BASE_URL, or DEFAULT_PUBLIC_APP_URL for this environment."
     )
-    return DEFAULT_PUBLIC_APP_URL
 
 
 def _brand_created_at_key(brand: Dict[str, Any]) -> str:
@@ -197,6 +195,39 @@ _PUBLIC_EMAIL_DOMAINS = {
     "icloud.com", "me.com", "aol.com", "proton.me", "protonmail.com", "zoho.com",
 }
 
+_AGENCY_BLOCKED_DOMAINS = {
+    "tasck.com", "thetasck.com", "thcodemo.space",
+    "emergent.host", "emergentagent.com", "preview.emergentagent.com",
+}
+
+_BRAND_NAME_NOISE_TOKENS = {
+    "ltd", "limited", "inc", "incorporated", "co", "company", "corp", "corporation",
+    "group", "global", "intl", "international", "nigeria", "ng", "africa", "plc",
+    "holdings", "the", "and", "&",
+}
+
+_MARKETPLACE_REJECT_DOMAINS = {
+    "apps.apple.com", "itunes.apple.com", "play.google.com", "play.google.com.ng", "market.android.com",
+    "instagram.com", "facebook.com", "x.com", "twitter.com", "tiktok.com", "linkedin.com",
+    "snapchat.com", "youtube.com", "youtu.be", "crunchbase.com", "producthunt.com", "indeed.com",
+    "glassdoor.com", "yelp.com", "google.com", "bing.com", "duckduckgo.com", "wikipedia.org",
+    "wikidata.org", "amazon.com", "amazon.co.uk", "etsy.com", "ebay.com", "alibaba.com",
+    "jiji.ng", "konga.com", "github.com", "medium.com", "substack.com", "wordpress.com",
+    "wix.com", "godaddy.com", "namecheap.com",
+}
+
+_LOGO_REJECT_URL_FRAGMENTS = (
+    "apps.apple.com/assets/", "itunes.apple.com/", "play.google.com/intl/", "play.google.com/static/",
+    "googleusercontent.com/play-", "static.xx.fbcdn.net/rsrc.php", "static.licdn.com/",
+    "abs.twimg.com/", "abs-0.twimg.com/", "scontent.cdninstagram.com/static",
+)
+
+_LOGO_REJECT_ALT_HINTS = (
+    "app store", "app-store", "download on the app store", "google play", "get it on google play",
+    "google-play", "appstore-badge", "googleplay-badge", "download badge", "instagram icon",
+    "facebook icon", "twitter icon",
+)
+
 
 def _normalise_website_url(value: Any) -> str:
     raw = str(value or "").strip()
@@ -211,7 +242,93 @@ def _normalise_website_url(value: Any) -> str:
     return ""
 
 
-def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "") -> str:
+def _normalise_brand_token(value: Any) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())
+    return "".join(token for token in text.split() if token and token not in _BRAND_NAME_NOISE_TOKENS)
+
+
+def _email_domain_matches_brand(email_domain: str, brand_name: str) -> bool:
+    domain_token = _normalise_brand_token((email_domain or "").split(".")[0])
+    brand_token = _normalise_brand_token(brand_name)
+    return bool(domain_token and brand_token and (domain_token in brand_token or brand_token in domain_token))
+
+
+def _is_marketplace_domain(domain: str) -> bool:
+    value = str(domain or "").lower().removeprefix("www.")
+    return any(value == rejected or value.endswith("." + rejected) for rejected in _MARKETPLACE_REJECT_DOMAINS)
+
+
+def _is_bad_logo_url(candidate: str, official_domain: str = "", alt_hint: str = "") -> bool:
+    if not candidate or str(candidate).startswith("data:"):
+        return True
+    lowered = str(candidate).lower()
+    if any(fragment in lowered for fragment in _LOGO_REJECT_URL_FRAGMENTS):
+        return True
+    if any(hint in str(alt_hint or "").lower() for hint in _LOGO_REJECT_ALT_HINTS):
+        return True
+    logo_domain = _domain_from_url(candidate)
+    if official_domain and logo_domain and _is_marketplace_domain(logo_domain):
+        if not _is_marketplace_domain(str(official_domain).removeprefix("www.")):
+            return True
+    return False
+
+
+def _score_brand_candidate(url: str, brand_name: str, declared_website: str = "") -> Dict[str, Any]:
+    candidate = _normalise_website_url(url)
+    domain = _domain_from_url(candidate)
+    declared_domain = _domain_from_url(declared_website)
+    brand_token = _normalise_brand_token(brand_name)
+    domain_token = _normalise_brand_token((domain or "").split(".")[0])
+    if not candidate or not domain:
+        return {"url": url, "domain": domain, "source_type": "invalid", "score": 0, "reason": "Empty or unparseable URL."}
+    if declared_domain and domain == declared_domain:
+        return {"url": candidate, "domain": domain, "source_type": "official_website", "score": 100, "reason": "Matches the explicit website provided by admin."}
+    if _is_marketplace_domain(domain):
+        return {"url": candidate, "domain": domain, "source_type": "marketplace", "score": 5, "reason": "Marketplace, social, or directory page."}
+    score = 30
+    if brand_token and domain_token and (domain_token in brand_token or brand_token in domain_token):
+        score += 50
+    if brand_token and brand_token in candidate.lower().replace(".", "").replace("-", ""):
+        score += 5
+    if domain.endswith((".app", ".io", ".co", ".com", ".ng")):
+        score += 5
+    return {"url": candidate, "domain": domain, "source_type": "candidate_website", "score": score, "reason": "Scored search candidate."}
+
+
+def _looks_like_bad_logo_url(value: Any) -> bool:
+    text = str(value or "").strip()
+    if text.lower().startswith("data:"):
+        return False
+    return not text or not text.lower().startswith(("http://", "https://")) or _is_bad_logo_url(text)
+
+
+def _canonical_brand_logo(brand: Dict[str, Any]) -> str:
+    if not isinstance(brand, dict):
+        return ""
+    keys = ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url")
+    for key in keys:
+        value = brand.get(key)
+        if isinstance(value, str) and not _looks_like_bad_logo_url(value):
+            return value.strip()
+    return ""
+
+
+def _normalise_brand_payload(brand: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(brand, dict):
+        return brand
+    payload = {**brand}
+    logo = _canonical_brand_logo(payload)
+    if logo:
+        payload["logo_url"] = logo
+        payload["brand_logo_url"] = logo
+    else:
+        for key in ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url"):
+            if payload.get(key) and _looks_like_bad_logo_url(payload[key]):
+                payload[key] = ""
+    return payload
+
+
+def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "", brand_name: Any = "") -> str:
     direct = _normalise_website_url(website)
     if direct:
         return direct
@@ -220,8 +337,37 @@ def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url
         return source
     email_domain = str(email or "").strip().lower().rsplit("@", 1)[-1] if "@" in str(email or "") else ""
     if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS and "." in email_domain:
+        if email_domain in _AGENCY_BLOCKED_DOMAINS:
+            return ""
+        if brand_name and not _email_domain_matches_brand(email_domain, str(brand_name)):
+            return ""
         return f"https://{email_domain}"
     return ""
+
+
+def resolve_brand_enrichment_target(brand: Dict[str, Any]) -> Dict[str, Any]:
+    warnings: List[str] = []
+    raw_website = brand.get("website") or brand.get("url") or brand.get("brand_url") or brand.get("source_url") or ""
+    brand_name = str(brand.get("company") or brand.get("name") or brand.get("brand_name") or "").strip()
+    email = str(brand.get("email") or brand.get("primary_email") or "").strip().lower()
+    email_domain = email.rsplit("@", 1)[-1] if "@" in email else ""
+    explicit_website = _normalise_website_url(raw_website)
+    if explicit_website:
+        if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS:
+            website_domain = _domain_from_url(explicit_website)
+            if email_domain != website_domain:
+                warnings.append(f"Ignored contact email domain {email_domain} because explicit website {website_domain} exists.")
+        return {"target_type": "website", "target_value": explicit_website, "confidence": "high", "warnings": warnings}
+    if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS:
+        if email_domain in _AGENCY_BLOCKED_DOMAINS:
+            warnings.append(f"Ignored contact email domain {email_domain} because it is on the agency block list.")
+        elif brand_name and _email_domain_matches_brand(email_domain, brand_name):
+            return {"target_type": "email_domain", "target_value": f"https://{email_domain}", "confidence": "high", "warnings": warnings}
+        elif brand_name:
+            warnings.append(f"Ignored contact email domain {email_domain} because it does not match brand name {brand_name}.")
+    if brand_name:
+        return {"target_type": "brand_name", "target_value": brand_name, "confidence": "medium", "warnings": warnings}
+    return {"target_type": "none", "target_value": "", "confidence": "low", "warnings": warnings + ["No usable brand identity."]}
 
 
 def _compact_text(value: Any, limit: int = 900) -> str:
@@ -3401,7 +3547,7 @@ def make_v3_router(db):
                 for brand in enriched:
                     projects = sorted(by_brand.get(brand["id"], []), key=_proj_rank)
                     brand["alignment_projects"] = projects
-        return enriched
+        return [_normalise_brand_payload(brand) for brand in enriched]
 
     @router.get("/brands/{brand_id}")
     async def get_brand(brand_id: str):
@@ -3454,7 +3600,7 @@ def make_v3_router(db):
             ))
 
         return {
-            "brand": brand,
+            "brand": _normalise_brand_payload(brand),
             "contacts": contacts,
             "business_cases": cases,
             "alignment_projects": alignment_projects,
@@ -3610,8 +3756,13 @@ def make_v3_router(db):
         source_url = brand.get("source_url") or brand.get("source") or brand.get("lead_source") or brand.get("scrape_source") or ""
         raw_website = brand.get("website") or brand.get("url") or brand.get("brand_url")
         raw_website = _strip_tracking_params(raw_website or "") or raw_website
-        website = _website_from_brand_inputs(website=raw_website, email=brand.get("email"), source_url=_strip_tracking_params(source_url))
         brand_name = brand.get("company") or brand.get("name") or brand.get("brand_name") or "Brand"
+        website = _website_from_brand_inputs(
+            website=raw_website,
+            email=brand.get("email"),
+            source_url=_strip_tracking_params(source_url),
+            brand_name=brand_name,
+        )
         scraped_about = ""
         scraped_logo = ""
         scraped_budget = ""
@@ -3648,14 +3799,15 @@ def make_v3_router(db):
                 search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=min(12, max(3, _budget_left() - 8)))
                 search_response.raise_for_status()
                 search_data = search_response.json()
-                blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com"}
-                for result in search_data.get("organic_results") or []:
-                    link = str(result.get("link") or "")
-                    domain = _domain_from_url(link)
-                    if domain and not any(domain.endswith(blocked) for blocked in blocked_domains):
-                        website = _normalise_website_url(link)
-                        final_url = website
-                        break
+                scored_candidates = [
+                    _score_brand_candidate(str(result.get("link") or ""), brand_name)
+                    for result in search_data.get("organic_results") or []
+                ]
+                accepted = [item for item in scored_candidates if item["score"] > 5]
+                if accepted:
+                    selected = max(accepted, key=lambda item: item["score"])
+                    website = selected["url"]
+                    final_url = website
             except requests.RequestException as exc:
                 logger.warning("Brand website search failed for %s: %s", brand_name, exc)
 
@@ -3800,14 +3952,19 @@ def make_v3_router(db):
                                 scraped_about = max(phrases, key=len)[:700]
                                 break
 
-                    def _add_logo(candidate: str, score: int = 0):
+                    selected_domain = _domain_from_url(final_url)
+
+                    def _add_logo(candidate: str, score: int = 0, alt_hint: str = ""):
                         candidate = str(candidate or "").strip()
                         if not candidate or candidate.startswith("data:"):
                             return
                         lowered = candidate.lower()
                         if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar", "blank", "vite.svg", "react.svg"]):
                             return
-                        logo_candidates.append((score, urljoin(final_url, candidate)))
+                        full_url = urljoin(final_url, candidate)
+                        if _is_bad_logo_url(full_url, selected_domain, alt_hint):
+                            return
+                        logo_candidates.append((score, full_url))
 
                     logo_candidates = []
                     for tag in _re.findall(r'<meta[^>]+>', html, _re.I | _re.S):
@@ -3828,7 +3985,11 @@ def make_v3_router(db):
                     for tag in _re.findall(r'<img[^>]+>', html, _re.I | _re.S):
                         haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), _attr(tag, "alt"), _attr(tag, "src"), _attr(tag, "data-src")]).lower()
                         if "logo" in haystack or _slug(brand_name).replace(".", "") in haystack.replace("-", "").replace("_", ""):
-                            _add_logo(_attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"), 92 if "logo" in haystack else 68)
+                            _add_logo(
+                                _attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"),
+                                92 if "logo" in haystack else 68,
+                                _attr(tag, "alt"),
+                            )
                     for match in _re.findall(r'"logo"\s*:\s*(?:"([^"\n]+)"|\{[^}]*"url"\s*:\s*"([^"\n]+)")', html, _re.I | _re.S):
                         _add_logo(next((item for item in match if item), ""), 96)
                     # JSON-LD Organization.logo gets the highest score - it's
@@ -4137,6 +4298,8 @@ def make_v3_router(db):
             scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
         if not scraped_logo:
             scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
+        if scraped_logo and _is_bad_logo_url(scraped_logo, _domain_from_url(final_url)):
+            scraped_logo = ""
         # We Yan's scraped logo is white and invisible on the tile - always pin a known-good logo.
         if _is_weyan_brand(brand_name):
             scraped_logo = WEYAN_LOGO_URL
@@ -4214,7 +4377,7 @@ def make_v3_router(db):
             crm_accepted_at = now
         about_text = _compact_text(payload.about or payload.brand_about)
         source_url = payload.source_url or ""
-        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url, brand_name=payload.company)
         logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,
@@ -4399,7 +4562,7 @@ def make_v3_router(db):
         rm = await _relationship_manager(payload.rm_id)
         about_text = _compact_text(payload.about or payload.brand_about)
         source_url = payload.source_url or ""
-        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url, brand_name=payload.company)
         logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,
