@@ -38,9 +38,9 @@ is wanted (e.g. `azure.thcodemo.space`, same TXT/CNAME pattern).
 once per hostname (apex and `www`), two passes each:
 
 ```bash
-CUSTOM_DOMAIN=thcodemo.space infra/deploy.sh --skip-build          # pass 1: bind, create managed certificate
+CUSTOM_DOMAIN=thcodemo.space CUSTOM_DOMAIN_VALIDATION_METHOD=HTTP infra/deploy.sh --skip-build          # pass 1: bind, create managed certificate
 # wait until: az containerapp env certificate list -g rg-tasck-prod -n cae-tasck-prod --managed-certificates-only -o table  shows Succeeded
-CUSTOM_DOMAIN=thcodemo.space CUSTOM_DOMAIN_CERT_ID="$(az containerapp env certificate list -g rg-tasck-prod -n cae-tasck-prod --managed-certificates-only --query "[?properties.subjectName=='thcodemo.space'].id | [0]" -o tsv)" infra/deploy.sh --skip-build   # pass 2: enable TLS
+CUSTOM_DOMAIN=thcodemo.space CUSTOM_DOMAIN_VALIDATION_METHOD=HTTP CUSTOM_DOMAIN_CERT_ID="$(az containerapp env certificate list -g rg-tasck-prod -n cae-tasck-prod --managed-certificates-only --query "[?properties.subjectName=='thcodemo.space'].id | [0]" -o tsv)" infra/deploy.sh --skip-build   # pass 2: enable TLS
 ```
 
 Because Bicep tracks a single `customDomain`, bind the second hostname with the
@@ -62,12 +62,16 @@ EXTRA_CORS_ORIGINS=https://www.thcodemo.space
 so portal links in emails carry the production hostname. The web bundle needs no
 rebuild (same-origin API calls).
 
-## Cloudflare proxy (optional, after certificates are issued)
+## Cloudflare proxy
 
 - SSL/TLS mode: **Full (strict)** (Azure serves a valid managed certificate).
-- Turn the proxy on (orange cloud) only after both certificates show
-  `Succeeded`; Azure renews managed certificates through the same CNAME
-  validation, so keep the `asuid` TXT records permanently.
+- Keep records **DNS only** when using Azure free managed certificates. Azure
+  requires the apex A record or subdomain CNAME to continue pointing directly
+  at Container Apps for certificate issuance and renewal; an intermediary
+  Cloudflare target can prevent renewal. If orange-cloud proxying is mandatory,
+  use a separately managed origin certificate and rehearse its renewal before
+  enabling the proxy.
+- Keep the `asuid` TXT records permanently.
 - Leave "Always Use HTTPS" on; Container Apps ingress already redirects HTTP.
 - Do not enable Cloudflare features that rewrite HTML (Rocket Loader, Auto
   Minify) on first cutover; the SPA has not been tested with them.

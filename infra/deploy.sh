@@ -8,7 +8,8 @@
 #   infra/deploy.sh --skip-infra --only api   rebuild and roll just one image (api|web)
 #
 # Environment overrides: RG, LOCATION, ENV_NAME, MONGO_TIER, EXTRA_CORS_ORIGINS,
-# PUBLIC_APP_URL, ENABLE_DEMO_LOGIN (true|false).
+# PUBLIC_APP_URL, ENABLE_DEMO_LOGIN (true|false), CUSTOM_DOMAIN,
+# CUSTOM_DOMAIN_VALIDATION_METHOD (HTTP for apex/A, CNAME for subdomain).
 #
 # Never touches Emergent, DNS, or any database contents. The Mongo cluster it
 # creates is new and empty; production data is restored in a later phase.
@@ -39,6 +40,7 @@ ANALYZE_ALL_HARD_TIMEOUT_SECONDS="${ANALYZE_ALL_HARD_TIMEOUT_SECONDS:-35}"
 CREATOR_MATCH_TIMEOUT_SECONDS="${CREATOR_MATCH_TIMEOUT_SECONDS:-50}"
 # Cutover / restore preparation (all optional): see docs/CUTOVER_RUNBOOK.md
 CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-}"
+CUSTOM_DOMAIN_VALIDATION_METHOD="${CUSTOM_DOMAIN_VALIDATION_METHOD:-CNAME}"
 CUSTOM_DOMAIN_CERT_ID="${CUSTOM_DOMAIN_CERT_ID:-}"
 OPERATOR_IP="${OPERATOR_IP:-}"
 
@@ -134,7 +136,7 @@ deploy_bicep() {
       webImage="$web_image" \
       extraCorsOrigins="$EXTRA_CORS_ORIGINS" \
       publicAppUrl="$PUBLIC_APP_URL" \
-      enableDemoLogin="$ENABLE_DEMO_LOGIN" customDomain="$CUSTOM_DOMAIN" customDomainCertificateId="$CUSTOM_DOMAIN_CERT_ID" operatorIp="$OPERATOR_IP" smtpHost="$SMTP_HOST" smtpPort="$SMTP_PORT" smtpFromEmail="$SMTP_FROM_EMAIL" smtpFromName="$SMTP_FROM_NAME" smtpReplyTo="$SMTP_REPLY_TO" smtpUseTls="$SMTP_USE_TLS" smtpUseSsl="$SMTP_USE_SSL" aiModel="$AI_MODEL" alignmentAnalyzerTimeoutSeconds="$ALIGNMENT_ANALYZER_TIMEOUT_SECONDS" analyzeAllHardTimeoutSeconds="$ANALYZE_ALL_HARD_TIMEOUT_SECONDS" creatorMatchTimeoutSeconds="$CREATOR_MATCH_TIMEOUT_SECONDS" \
+      enableDemoLogin="$ENABLE_DEMO_LOGIN" customDomain="$CUSTOM_DOMAIN" customDomainValidationMethod="$CUSTOM_DOMAIN_VALIDATION_METHOD" customDomainCertificateId="$CUSTOM_DOMAIN_CERT_ID" operatorIp="$OPERATOR_IP" smtpHost="$SMTP_HOST" smtpPort="$SMTP_PORT" smtpFromEmail="$SMTP_FROM_EMAIL" smtpFromName="$SMTP_FROM_NAME" smtpReplyTo="$SMTP_REPLY_TO" smtpUseTls="$SMTP_USE_TLS" smtpUseSsl="$SMTP_USE_SSL" aiModel="$AI_MODEL" alignmentAnalyzerTimeoutSeconds="$ALIGNMENT_ANALYZER_TIMEOUT_SECONDS" analyzeAllHardTimeoutSeconds="$ANALYZE_ALL_HARD_TIMEOUT_SECONDS" creatorMatchTimeoutSeconds="$CREATOR_MATCH_TIMEOUT_SECONDS" \
     --query "properties.outputs" -o json
 }
 

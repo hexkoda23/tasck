@@ -90,6 +90,14 @@ param operatorIp string = ''
 @description('Custom production hostname for the web app (e.g. app.example.com). Empty = not configured. The DNS records printed in the outputs must exist BEFORE deploying with this set.')
 param customDomain string = ''
 
+@description('Managed-certificate validation method. Use HTTP for an apex/A-record domain and CNAME for a subdomain.')
+@allowed([
+  'CNAME'
+  'HTTP'
+  'TXT'
+])
+param customDomainValidationMethod string = 'CNAME'
+
 @description('Resource id of the managed certificate for customDomain. Empty on the first pass (domain bound without TLS while the certificate is issued); deploy.sh feeds the id on the second pass.')
 param customDomainCertificateId string = ''
 
@@ -428,7 +436,7 @@ resource webManagedCert 'Microsoft.App/managedEnvironments/managedCertificates@2
   tags: tags
   properties: {
     subjectName: customDomain
-    domainControlValidation: 'CNAME'
+    domainControlValidation: customDomainValidationMethod
   }
   dependsOn: [webApp]
 }
