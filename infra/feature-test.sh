@@ -15,7 +15,7 @@ fail=0
 TMP="$(mktemp -d)"; command -v cygpath >/dev/null && TMP="$(cygpath -m "$TMP")"
 trap 'rm -rf "$TMP"' EXIT
 # Detect python interpreter (Windows Git Bash has python3, not python)
-PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)"
+PYTHON="$(command -v python 2>/dev/null || command -v python3 2>/dev/null || echo python)"
 ok()   { printf 'PASS  %s\n' "$*"; }
 bad()  { printf 'FAIL  %s\n' "$*"; fail=1; }
 jget() { "$PYTHON" -c "import sys,json; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
