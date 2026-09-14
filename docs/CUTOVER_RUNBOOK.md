@@ -12,7 +12,7 @@ the `azure-migration` branch.
 
 | # | Blocker | Needed from | Unblocks |
 | --- | --- | --- | --- |
-| 1 | Valid Anthropic API key (the carried-over key returns 401) | Anthropic console owner | Every AI feature. Store with `infra/set-secrets.sh` (secret `anthropic-api-key`), then `infra/deploy.sh --skip-build`. |
+| 1 | Anthropic account credit. The key in Key Vault is valid (replaced 2026-09-10) but every call returns 400 "Your credit balance is too low". | Anthropic console owner (Plans & Billing) | Every AI feature. No config change needed once credit is added; re-run `infra/feature-test.sh` to confirm a snapshot is produced. |
 | 2 | SerpAPI quota (Free plan, 250/250 used) | SerpAPI account owner | Opportunity scanner. Upgrade plan, or wait for the monthly reset. No config change needed unless the key changes. |
 | 3 | Production `mongodump` archive from Emergent | Emergent environment access | Step 2 below. Must be the live `thcodemo.space` database, not the preview `test_database`. |
 | 4 | Production hostname decision and DNS access (Cloudflare) | Domain owner | Steps 4 and 6. |
@@ -31,7 +31,7 @@ the `azure-migration` branch.
 - Rollback archive of the previous Azure database:
   `azure-rollback-20260914232208.archive.gz` on the restore share (156
   documents, includes the 7 Azure-only failed opportunity jobs).
-- Remaining before cutover: valid Anthropic key, SerpAPI quota, custom domain
+- Remaining before cutover: Anthropic account credit, SerpAPI quota, custom domain
   binding, a final delta export if the client edits production again
   (repeat steps 1-3; the export is byte-comparable, so "no change" is provable).
 
