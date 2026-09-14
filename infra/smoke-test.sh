@@ -12,7 +12,7 @@ BASE="${1:?usage: smoke-test.sh <https://host>}"
 BASE="${BASE%/}"
 fail=0
 # Detect python interpreter (Windows Git Bash has python3, not python)
-PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)"
+PYTHON="$(command -v python 2>/dev/null || command -v python3 2>/dev/null || echo python)"
 # A path both bash tools and (on Windows) python can open.
 BODY="$(mktemp)"; command -v cygpath >/dev/null && BODY="$(cygpath -m "$BODY")"
 trap 'rm -f "$BODY"' EXIT
