@@ -156,3 +156,15 @@ frontend/node_modules/.cache/default-development/30.pack
 frontend/node_modules/.cache/default-development/34.pack
 frontend/node_modules/.cache/default-development/36.pack
 frontend/node_modules/.cache/default-development/12.pack
+
+# Never commit: local scratch files holding the Emergent production connection string,
+# exported production data, downloaded MongoDB tools, and probe outputs.
+/run.py
+/run_test.py
+/test_mongo.sh
+/mongodb-tools/
+/backend/endpoints.txt
+infra/emergent-export/output/
+*.archive.gz
+*.dump.tar.gz
+*-inventory.json

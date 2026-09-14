@@ -98,6 +98,9 @@ param customDomain string = ''
 ])
 param customDomainValidationMethod string = 'CNAME'
 
+@description('Wire the Emergent production MongoDB connection string (Key Vault secret emergent-source-mongo-url) into the restore/inventory jobs so the production dump and source inventory run inside Azure. Set only for the migration window.')
+param sourceRestoreEnabled bool = false
+
 @description('Resource id of the managed certificate for customDomain. Empty on the first pass (domain bound without TLS while the certificate is issued); deploy.sh feeds the id on the second pass.')
 param customDomainCertificateId string = ''
 
@@ -348,9 +351,11 @@ resource restoreJob 'Microsoft.App/jobs@2025-01-01' = {
       replicaTimeout: 14400
       replicaRetryLimit: 0
       manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
-      secrets: [
+      secrets: concat([
         { name: 'mongo-url', keyVaultUrl: '${keyVaultUri}secrets/mongo-url', identity: identity.id }
-      ]
+      ], sourceRestoreEnabled ? [
+        { name: 'source-mongo-url', keyVaultUrl: '${keyVaultUri}secrets/emergent-source-mongo-url', identity: identity.id }
+      ] : [])
     }
     template: {
       containers: [
@@ -361,7 +366,7 @@ resource restoreJob 'Microsoft.App/jobs@2025-01-01' = {
           // DUMP_FILE / SOURCE_DB / TARGET_DB / DROP / MODE are set with `az containerapp job update --set-env-vars` before each start
           // (a start-time template override would drop the share mount).
           args: [
-            'set -euo pipefail; f=/restore/$DUMP_FILE; if [ "$MODE" = "dump" ]; then echo "dumping $SOURCE_DB -> $f"; mongodump --uri "$MONGO_URL" --db "$SOURCE_DB" --archive="$f" --gzip; ls -la "$f"; echo "dump finished"; exit 0; fi; test -f "$f" || { echo "missing $f"; ls -la /restore; exit 1; }; case "$f" in *.gz) gz="--gzip" ;; *) gz="" ;; esac; if [ "$MODE" = "dryrun" ]; then echo "dry run of $f (no writes): namespaces for $SOURCE_DB"; mongorestore --uri "$MONGO_URL" --archive="$f" $gz --nsInclude "$SOURCE_DB.*" --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --dryRun -vv 2>&1 | grep -Ei "found collection|restoring|namespace|error|failed" | head -200; echo "dry run finished"; exit 0; fi; echo "restoring $f: $SOURCE_DB -> $TARGET_DB (drop=$DROP)"; extra=""; [ "$DROP" = "true" ] && extra="--drop"; mongorestore --uri "$MONGO_URL" --archive="$f" $gz --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --nsInclude "$SOURCE_DB.*" --maintainInsertionOrder --numParallelCollections 2 --numInsertionWorkersPerCollection 2 $extra; echo "restore finished"'
+            'set -euo pipefail; f=/restore/$DUMP_FILE; if [ "$MODE" = "dump" ]; then echo "dumping $SOURCE_DB -> $f"; mongodump --uri "$MONGO_URL" --db "$SOURCE_DB" --archive="$f" --gzip; ls -la "$f"; echo "dump finished"; exit 0; fi; if [ "$MODE" = "dumpsource" ]; then echo "dumping SOURCE (Emergent) $SOURCE_DB -> $f"; mongodump --uri "$SOURCE_MONGO_URL" --db "$SOURCE_DB" --archive="$f" --gzip; ls -la "$f"; echo "source dump finished"; exit 0; fi; test -f "$f" || { echo "missing $f"; ls -la /restore; exit 1; }; case "$f" in *.tar.gz|*.tgz) rm -rf /tmp/dump; mkdir -p /tmp/dump; tar -xzf "$f" -C /tmp/dump; test -d "/tmp/dump/$SOURCE_DB" || { echo "tarball has no $SOURCE_DB/ directory:"; ls -la /tmp/dump; exit 1; }; src="--dir=/tmp/dump" ;; *.gz) src="--archive=$f --gzip" ;; *) src="--archive=$f" ;; esac; if [ "$MODE" = "dryrun" ]; then echo "dry run of $f (no writes): namespaces for $SOURCE_DB"; mongorestore --uri "$MONGO_URL" $src --nsInclude "$SOURCE_DB.*" --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --dryRun -vv 2>&1 | grep -Ei "found collection|restoring|namespace|error|failed" | head -200; echo "dry run finished"; exit 0; fi; echo "restoring $f: $SOURCE_DB -> $TARGET_DB (drop=$DROP)"; extra=""; [ "$DROP" = "true" ] && extra="--drop"; mongorestore --uri "$MONGO_URL" $src --nsFrom "$SOURCE_DB.*" --nsTo "$TARGET_DB.*" --nsInclude "$SOURCE_DB.*" --maintainInsertionOrder --numParallelCollections 2 --numInsertionWorkersPerCollection 2 $extra; echo "restore finished"'
           ]
           env: [
             { name: 'MONGO_URL', secretRef: 'mongo-url' }
@@ -369,7 +374,9 @@ resource restoreJob 'Microsoft.App/jobs@2025-01-01' = {
             { name: 'SOURCE_DB', value: 'test_database' }
             { name: 'TARGET_DB', value: dbName }
             { name: 'DROP', value: 'false' }
-            { name: 'MODE', value: 'restore' } // restore | dump | dryrun (dump: mongodump SOURCE_DB into DUMP_FILE; dryrun: validate the archive, list namespaces, write nothing)
+            { name: 'MODE', value: 'restore' } // restore | dump | dumpsource | dryrun. DUMP_FILE may be a mongodump archive (.archive[.gz]) or a .tar.gz of a
+            { name: 'SOURCE_MONGO_URL', secretRef: sourceRestoreEnabled ? 'source-mongo-url' : 'mongo-url' } // dumpsource reads this; points at the Azure db unless sourceRestoreEnabled
+            // mongodump directory (mongodump --out, or backend/pymongo_dump.py when the tools are unavailable).
           ]
           resources: { cpu: json('1.0'), memory: '2Gi' }
           volumeMounts: [ { volumeName: 'restore', mountPath: '/restore' } ]
@@ -402,9 +409,11 @@ resource inventoryJob 'Microsoft.App/jobs@2025-01-01' = if (deployApps) {
       replicaRetryLimit: 0
       manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
       registries: [ { server: acr.properties.loginServer, identity: identity.id } ]
-      secrets: [
+      secrets: concat([
         { name: 'mongo-url', keyVaultUrl: '${keyVaultUri}secrets/mongo-url', identity: identity.id }
-      ]
+      ], sourceRestoreEnabled ? [
+        { name: 'source-mongo-url', keyVaultUrl: '${keyVaultUri}secrets/emergent-source-mongo-url', identity: identity.id }
+      ] : [])
     }
     template: {
       containers: [

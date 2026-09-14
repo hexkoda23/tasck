@@ -14,7 +14,7 @@ fail() { printf 'FAIL  %s\n' "$*"; fails=$((fails+1)); }
 # Strip Windows carriage returns from az CLI TSV output
 q() { az "$@" 2>/dev/null | grep -v '^WARNING' | sed 's/\r//g'; }
 # Detect python interpreter (Windows Git Bash has python3, not python)
-PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)"
+PYTHON="$(command -v python 2>/dev/null || command -v python3 2>/dev/null || echo python)"
 
 echo "TASCK Azure readiness audit - $(date -u +%Y-%m-%dT%H:%MZ) - resource group $RG"
 echo

@@ -7,6 +7,8 @@
 # THIS IS NOT RUN DURING THE INITIAL AZURE BRING-UP. It never touches the source
 # (Emergent) database: its input is a mongodump ARCHIVE file produced there:
 #     mongodump --uri "<production uri>" --db <name> --archive=production.archive.gz --gzip
+# or, when the MongoDB tools are not installed there, a .tar.gz of the directory written by
+#     python backend/pymongo_dump.py --uri "<production uri>" --db <name> --out ./dump && tar -czf production.dump.tar.gz -C ./dump .
 #
 #   infra/restore-production.sh --archive ./production.archive.gz --source-db <name-in-archive> [--target-db tasck] [--force]
 #   infra/restore-production.sh --inventory-only [--target-db tasck]     # just (re)run the target inventory
@@ -44,7 +46,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON="${PYTHON:-$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python)}"
+# Prefer `python`: on Windows, `python3` can be an unusable Microsoft Store alias.
+PYTHON="${PYTHON:-$(command -v python 2>/dev/null || command -v python3 2>/dev/null || echo python)}"
 # shellcheck source=jobs.sh
 . "$HERE/jobs.sh"
 resolve_storage
