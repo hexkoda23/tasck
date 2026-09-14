@@ -58,7 +58,7 @@ demo="$(q containerapp show -g "$RG" -n tasck-api --query "properties.template.c
 
 # --- live credentials (from inside the API; no values printed) --------------
 cred="$(az containerapp exec -g "$RG" -n tasck-api --command "python -c \"import os,requests,smtplib,pymongo
-r=requests.get('https://api.anthropic.com/v1/models',headers={'x-api-key':os.environ['ANTHROPIC_API_KEY'],'anthropic-version':'2023-06-01'},timeout=20); print('ANTHROPIC', r.status_code)
+h={'x-api-key':os.environ['ANTHROPIC_API_KEY'],'anthropic-version':'2023-06-01','content-type':'application/json'}; r=requests.post('https://api.anthropic.com/v1/messages',headers=h,json={'model':os.environ.get('ALIGNMENT_ANALYZER_MODEL','claude-sonnet-4-5'),'max_tokens':1,'messages':[{'role':'user','content':'hi'}]},timeout=30); print('ANTHROPIC', r.status_code, (r.json().get('error',{}).get('message','')[:90].replace(' ','_') if r.status_code>=400 else 'ok'))
 d=requests.get('https://serpapi.com/account.json',params={'api_key':os.environ['SERPAPI_API_KEY']},timeout=20).json(); print('SERPAPI', d.get('plan_name'), d.get('total_searches_left'))
 s=smtplib.SMTP(os.environ['SMTP_HOST'],int(os.environ['SMTP_PORT']),timeout=20); s.starttls(); print('SMTP', s.login(os.environ['SMTP_USERNAME'],os.environ['SMTP_PASSWORD'])[0]); s.quit()
 c=pymongo.MongoClient(os.environ['MONGO_URL'],serverSelectionTimeoutMS=10000); print('MONGO', c.server_info()['version'], c[os.environ['DB_NAME']].users.count_documents({}))\"" 2>/dev/null \
