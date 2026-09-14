@@ -19,6 +19,22 @@ the `azure-migration` branch.
 | 5 | SMTP sending domain alignment (SPF/DKIM/DMARC for the From domain) | Domain owner | Deliverability after cutover; see `docs/EMAIL_DELIVERABILITY.md`. The current From address is a Gmail mailbox, which works but sends "via" Gmail. |
 | 6 | Credential rotation approval | You | The Anthropic, SerpAPI and SMTP values in Key Vault are the ones that were committed to git history on the previous host. |
 
+## Status 2026-09-15: production data restored into Azure
+
+- Source: fresh Mongo Viewer export of `tasck-live-demo-1-test_database` taken
+  2026-09-14 23:17 UTC (187 documents, 25 collections, checksums verified,
+  identical to the 11 September export).
+- Converted with `backend/json_export_to_dump.py`, validated with a dry run,
+  restored with `infra/restore-production.sh --force` (API paused), verified
+  with `backend/verify_restore.py`: **PASSED, 187/187, all fingerprints and
+  indexes match**.
+- Rollback archive of the previous Azure database:
+  `azure-rollback-20260914232208.archive.gz` on the restore share (156
+  documents, includes the 7 Azure-only failed opportunity jobs).
+- Remaining before cutover: valid Anthropic key, SerpAPI quota, custom domain
+  binding, a final delta export if the client edits production again
+  (repeat steps 1-3; the export is byte-comparable, so "no change" is provable).
+
 ## 0. Go / no-go checklist (run before scheduling the cutover window)
 
 Run `infra/readiness-audit.sh`; every line must be PASS except the two known
