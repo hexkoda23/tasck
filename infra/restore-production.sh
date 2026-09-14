@@ -108,7 +108,9 @@ API_DB="$(api_db_name)"
 STOP_API=0; [[ "$TARGET_DB" == "$API_DB" ]] && STOP_API=1
 if [[ $STOP_API -eq 1 ]]; then
   job_log "Stopping the API during the restore (target is the live database '$API_DB')"
-  az containerapp update -g "$RG" -n tasck-api --min-replicas 0 --max-replicas 0 -o none
+  # `az containerapp stop` halts every replica (single-revision apps cannot be
+  # scaled to max 0). Fall back to min 0 / max 1 if the CLI lacks the command.
+  az containerapp stop -g "$RG" -n tasck-api -o none 2>/dev/null     || az containerapp update -g "$RG" -n tasck-api --min-replicas 0 --max-replicas 1 -o none
 else
   job_log "Target '$TARGET_DB' is not the API's database ('$API_DB'); the API keeps running"
 fi
@@ -116,12 +118,13 @@ fi
 job_log "Running mongorestore inside Azure (job tasck-restore)"
 DROP="false"; [[ $FORCE -eq 1 ]] && DROP="true"
 if ! run_job tasck-restore mongorestore "MODE=restore" "DUMP_FILE=$DUMP_FILE" "SOURCE_DB=$SOURCE_DB" "TARGET_DB=$TARGET_DB" "DROP=$DROP"; then
-  echo "restore job failed; if the API was stopped it is still scaled to 0. Investigate, then: az containerapp update -g $RG -n tasck-api --min-replicas 1 --max-replicas 1" >&2
+  echo "restore job failed; if the API was stopped it is still stopped. Investigate, then: az containerapp start -g $RG -n tasck-api" >&2
   exit 1
 fi
 
 if [[ $STOP_API -eq 1 ]]; then
   job_log "Starting the API"
+  az containerapp start -g "$RG" -n tasck-api -o none 2>/dev/null || true
   az containerapp update -g "$RG" -n tasck-api --min-replicas 1 --max-replicas 1 -o none
 fi
 
