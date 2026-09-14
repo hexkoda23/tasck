@@ -37,20 +37,45 @@ WARNs (`ENABLE_DEMO_LOGIN=true`, no custom domain yet) until those are resolved.
 | Rollback rehearsed | image rollback verified 2026-09-04 (web rolled back to the previous tag and forward, healthy both ways); DNS rollback = revert records |
 | Client informed of the freeze window | communication sent |
 
-## 1. Freeze and export (Emergent side)
+## 1. Freeze and export (production database)
+
+The production database is the Emergent-hosted MongoDB Atlas cluster behind the
+`tasck-live-demo-1` deployment (database `tasck-live-demo-1-test_database`).
+Its connection string is stored only in Key Vault as `emergent-source-mongo-url`
+and is never written to the repository. The Atlas IP allowlist does not admit
+this workstation, so the dump is taken INSIDE Azure by the `tasck-restore` job in
+`dumpsource` mode (read-only `mongodump --archive --gzip`), which produces a
+real BSON archive with indexes.
 
 1. Announce a short content freeze to the client (no edits during export and restore).
-2. On the Emergent production environment (not preview), take the archive and an inventory
-   (`mongodump` ships with MongoDB Database Tools; `backend/inventory_mongo.py` needs only `pymongo`):
+2. Enable the source wiring and take the dump (each step is a job run; the archive lands on the `restore` share):
 
 ```bash
-mongodump --uri "$MONGO_URL" --db "$DB_NAME" --archive=production.archive.gz --gzip
-python backend/inventory_mongo.py --uri "$MONGO_URL" --db "$DB_NAME" --out source-inventory.json
+SOURCE_RESTORE_ENABLED=true infra/deploy.sh --skip-build
+```
+```bash
+. infra/jobs.sh; RG=rg-tasck-prod; resolve_storage
+A="production-$(date -u +%Y%m%d%H%M%S).archive.gz"
+run_job tasck-restore mongorestore MODE=dumpsource "DUMP_FILE=$A" SOURCE_DB=tasck-live-demo-1-test_database
+share_download "$A" "./$A"
 ```
 
-   `inventory_mongo.py` is read-only (counts, indexes, per-collection content
-   fingerprints, count of documents with large inline payloads).
-3. Copy `production.archive.gz` and `source-inventory.json` to the operator workstation.
+3. Take the read-only SOURCE inventory (counts, indexes, content fingerprints) with the inventory job pointed at the source secret, then point it back:
+
+```bash
+az containerapp job update -g rg-tasck-prod -n tasck-inventory --set-env-vars MONGO_URL=secretref:source-mongo-url DB_NAME=tasck-live-demo-1-test_database -o none
+run_job tasck-inventory inventory && share_download target-inventory.json ./source-inventory.json
+az containerapp job update -g rg-tasck-prod -n tasck-inventory --set-env-vars MONGO_URL=secretref:mongo-url DB_NAME=tasck -o none
+```
+
+Fallbacks if the Azure route is ever unavailable: run `mongodump` (from
+`mongodb-tools/`) or `backend/pymongo_dump.py` (pymongo only, writes the same
+directory layout; pack it with `tar -czf x.dump.tar.gz -C ./dump .`) wherever the
+database is reachable, and move the file with the write-only upload command from
+`infra/make-upload-sas.sh <file>`. The restore job accepts both `.archive.gz`
+and `.dump.tar.gz`. The older JSON exporter (`infra/emergent-export/export.py`)
+captures documents but not indexes or exact BSON types; use it only as a last
+resort.
 
 ## 2. Restore into Azure
 
@@ -72,8 +97,10 @@ matched), and drops the scratch database. Run it again before the real restore.
 infra/restore-production.sh --archive ./production.archive.gz --source-db "<DB_NAME from Emergent>" --force
 ```
 
-- `--force` is required because the Azure database currently holds the 36 seeded
-  test accounts; the job drops and replaces collections from the archive.
+- `--force` is required because the Azure database is not empty (seeded accounts
+  plus data loaded during testing); the job drops and replaces collections from
+  the archive. Take a rollback archive of the current Azure database first:
+  `run_job tasck-restore mongorestore MODE=dump DUMP_FILE=azure-rollback-$(date -u +%Y%m%d%H%M%S).archive.gz SOURCE_DB=tasck`.
 - The script checks the target is empty (inventory job), uploads the archive to
   the `restore` Azure Files share, stops the API (only when the target is the live
   database), runs `mongorestore` inside Azure (job `tasck-restore`, image

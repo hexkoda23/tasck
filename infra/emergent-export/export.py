@@ -49,7 +49,10 @@ class EmergentExporter:
         self.timeout = timeout
         self.retries = retries
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "TASCK-Migration-Exporter/1.0"})
+        self.session.headers.update({
+            "User-Agent": "TASCK-Migration-Exporter/1.0",
+            "x-session-id": self.session_id,
+        })
 
     def log(self, message: str) -> None:
         """Print log message with session ID masked."""
@@ -58,7 +61,7 @@ class EmergentExporter:
         print(f"[{timestamp}] {safe_msg}")
 
     def _get(self, endpoint: str, params: Dict[str, Any] = None) -> requests.Response:
-        """Make an HTTP GET request with session_id parameter and retry logic."""
+        """Make an HTTP GET request with session_id parameter and x-session-id header."""
         if params is None:
             params = {}
         params["session_id"] = self.session_id
@@ -84,98 +87,64 @@ class EmergentExporter:
         raise RuntimeError(f"Failed request to {endpoint} after {self.retries} attempts")
 
     def fetch_inventory(self) -> Dict[str, int]:
-        """Fetch list of collections and expected document counts."""
-        self.log(f"Discovering collections for environment '{self.environment}', database '{self.database}'...")
+        """Fetch list of collections and expected document counts via confirmed document endpoints."""
+        self.log(f"Discovering collection counts for environment '{self.environment}', database '{self.database}'...")
 
-        candidate_endpoints = [
-            f"/api/collections/{self.environment}/{self.database}",
-            f"/api/databases/{self.environment}/{self.database}/collections",
-            f"/api/collections/{self.database}",
-            f"/api/databases/{self.database}/collections",
-            "/api/collections",
-            "/api/databases",
+        known_collections = [
+            # Legacy application collections (10)
+            "users", "brands", "deals", "projects", "opportunities",
+            "tasks", "messages", "activities", "wallet_transactions", "copilot_recommendations",
+            # v3 router collections (35)
+            "v3_admin_users", "v3_alignment_snapshots", "v3_analysis_jobs", "v3_brainstorm_rounds",
+            "v3_brand_accounts", "v3_brands", "v3_business_cases", "v3_connect_sources",
+            "v3_contacts", "v3_contracts", "v3_creative_briefs", "v3_creative_snapshots",
+            "v3_creators", "v3_deck_views", "v3_deliverables", "v3_duplicate_dismissals",
+            "v3_email_outbox", "v3_feedback_requests", "v3_fees", "v3_final_reports",
+            "v3_insights", "v3_interactions", "v3_invoices", "v3_meetings",
+            "v3_opportunities", "v3_opportunity_candidates", "v3_opportunity_scans", "v3_pitch_decks",
+            "v3_projects", "v3_reports", "v3_rms", "v3_system_meta",
+            "v3_tasks", "v3_templates", "v3_wallet",
+            # Auxiliary / discovery collections (14)
+            "feedback", "activity_logs", "analytics_sessions", "audit_log", "clients",
+            "login_records", "page_views", "proposals", "task_boards", "task_cards",
+            "task_labels", "task_shares", "user_actions", "user_sessions"
         ]
 
         inventory: Dict[str, int] = {}
-        last_error = None
-
-        for endpoint in candidate_endpoints:
+        for col_name in known_collections:
             try:
-                resp = self._get(endpoint)
+                endpoint = f"/api/documents/{self.environment}/{self.database}/{col_name}"
+                resp = self._get(endpoint, params={"limit": 1, "skip": 0})
                 data = resp.json()
-                parsed = self._parse_inventory_json(data)
-                if parsed:
-                    inventory = parsed
-                    self.log(f"Inventory discovery succeeded via endpoint: {endpoint}")
-                    break
+                if isinstance(data, dict):
+                    count = int(data.get("total", len(data.get("documents", []))))
+                elif isinstance(data, list):
+                    count = len(data)
+                else:
+                    count = 0
+                inventory[col_name] = count
+            except RuntimeError as e:
+                # HTTP 404 or missing collection
+                pass
             except Exception as e:
-                last_error = e
-                continue
+                safe_err = mask_session_id(str(e), self.session_id)
+                self.log(f"  Note: collection '{col_name}' check failed: {safe_err}")
 
         if not inventory:
-            self.log("Inventory discovery endpoints returned no structured list. Probing document endpoints...")
-            inventory = self._probe_known_collections()
-
-        if not inventory:
-            raise RuntimeError(f"Could not discover collections inventory. Last error: {mask_session_id(str(last_error), self.session_id)}")
-
-        return inventory
-
-    def _parse_inventory_json(self, data: Any) -> Dict[str, int]:
-        """Normalize inventory JSON responses into {collection_name: count}."""
-        inventory = {}
-
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, dict):
-                    name = item.get("name") or item.get("collection_name") or item.get("id")
-                    count = item.get("total") or item.get("count") or item.get("doc_count") or item.get("total_documents") or 0
-                    if name:
-                        inventory[name] = int(count)
-                elif isinstance(item, str):
-                    inventory[item] = -1  # count unknown, will probe
-
-        elif isinstance(data, dict):
-            collections = data.get("collections") or data.get("items") or data
-            if isinstance(collections, list):
-                return self._parse_inventory_json(collections)
-            elif isinstance(collections, dict):
-                for name, info in collections.items():
-                    if isinstance(info, dict):
-                        count = info.get("count") or info.get("total") or info.get("total_documents") or 0
-                        inventory[name] = int(count)
-                    elif isinstance(info, (int, float)):
-                        inventory[name] = int(info)
-
-        # For any collections with unknown (-1) count, probe count
-        for name, count in list(inventory.items()):
-            if count < 0:
-                inventory[name] = self._get_collection_count(name)
+            raise RuntimeError("Could not retrieve document count for any collection. Check session ID and environment/database parameters.")
 
         return inventory
 
     def _get_collection_count(self, collection_name: str) -> int:
-        """Fetch total document count for a single collection."""
+        """Fetch total document count for a single collection using the confirmed document endpoint."""
         endpoint = f"/api/documents/{self.environment}/{self.database}/{collection_name}"
         resp = self._get(endpoint, params={"limit": 1, "skip": 0})
         data = resp.json()
-        return int(data.get("total", len(data.get("documents", []))))
-
-    def _probe_known_collections(self) -> Dict[str, int]:
-        """Fallback list of standard TASCK backend collections if inventory discovery API is unavailable."""
-        known = [
-            "users", "feedback", "v3_brands", "v3_brand_accounts", "v3_business_cases",
-            "v3_connect_sources", "v3_contacts", "v3_contracts", "v3_email_outbox",
-            "v3_interactions", "v3_opportunity_scans", "v3_analysis_jobs", "v3_alignment_snapshots"
-        ]
-        inventory = {}
-        for col in known:
-            try:
-                count = self._get_collection_count(col)
-                inventory[col] = count
-            except Exception:
-                pass
-        return inventory
+        if isinstance(data, dict):
+            return int(data.get("total", len(data.get("documents", []))))
+        elif isinstance(data, list):
+            return len(data)
+        return 0
 
     def export_collection(self, collection_name: str, expected_count: int) -> Tuple[List[Dict[str, Any]], str, str]:
         """Paginate and retrieve all documents for a collection."""
@@ -183,27 +152,28 @@ class EmergentExporter:
 
         endpoint = f"/api/documents/{self.environment}/{self.database}/{collection_name}"
         all_documents: List[Dict[str, Any]] = []
-        skip = 0
 
-        while True:
-            resp = self._get(endpoint, params={"limit": PAGE_LIMIT, "skip": skip})
-            data = resp.json()
+        if expected_count > 0:
+            skip = 0
+            while True:
+                resp = self._get(endpoint, params={"limit": PAGE_LIMIT, "skip": skip})
+                data = resp.json()
 
-            docs = data.get("documents", [])
-            if not docs and isinstance(data, list):
-                docs = data
+                docs = data.get("documents", [])
+                if not docs and isinstance(data, list):
+                    docs = data
 
-            all_documents.extend(docs)
+                all_documents.extend(docs)
 
-            total_server = data.get("total", expected_count)
-            has_next = data.get("has_next", False)
+                total_server = data.get("total", expected_count)
+                has_next = data.get("has_next", False)
 
-            self.log(f"  [{collection_name}] Fetched {len(all_documents)}/{total_server} documents (skip={skip})...")
+                self.log(f"  [{collection_name}] Fetched {len(all_documents)}/{total_server} documents (skip={skip})...")
 
-            if not docs or not has_next or len(all_documents) >= total_server:
-                break
+                if not docs or not has_next or len(all_documents) >= total_server:
+                    break
 
-            skip += PAGE_LIMIT
+                skip += PAGE_LIMIT
 
         actual_count = len(all_documents)
         if actual_count != expected_count:
