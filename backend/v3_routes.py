@@ -11905,13 +11905,15 @@ def make_v3_router(db):
                 brief = await _call_creative_brief_tool(brand, case, snapshot, selector,
                                                         creators, failures=failures)
                 if not brief:
-                    # Name the provider's actual complaint rather than pointing
-                    # the admin at an env var that is usually fine.
+                    # The provider's actual complaint goes to the log and the
+                    # job's `error` field for whoever fixes it; the admin gets
+                    # a sentence they can act on, not model names and JSON.
                     detail = " | ".join(failures) or "no AI provider is configured"
+                    logger.warning("Creative Brief generation unavailable for %s: %s", bc_id, detail)
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"Could not write the brief - {detail}",
+                                  "message": "The brief could not be written right now - the writing service could not complete the request. Please try again later.",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}})
                     return
@@ -12306,13 +12308,15 @@ def make_v3_router(db):
                 result = await _call_pitch_deck_tool(brand, case, snapshot, selector, creators,
                                                      failures=failures)
                 if not result:
-                    # Show the provider's actual complaint. "Check your API key"
-                    # was wrong most of the time and hid the real cause.
+                    # The provider's actual complaint goes to the log and the
+                    # job's `error` field for whoever fixes it; the admin gets
+                    # a sentence they can act on, not model names and JSON.
                     detail = " | ".join(failures) or "no AI provider is configured"
+                    logger.warning("Pitch Deck generation unavailable for %s: %s", bc_id, detail)
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"Could not write the Pitch Deck - {detail}",
+                                  "message": "The Pitch Deck could not be written right now - the writing service could not complete the request. Please try again later.",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}})
                     return
@@ -15266,13 +15270,15 @@ def make_v3_router(db):
                 result = await _call_opportunity_detection_tool(brand, case, corpus,
                                                                 failures=failures)
                 if not result:
-                    # Name the provider's actual complaint. "Check your API key"
-                    # was wrong most of the time and hid the real cause.
+                    # The provider's actual complaint goes to the log and the
+                    # job's `error` field for whoever fixes it; the admin gets
+                    # a sentence they can act on, not model names and JSON.
                     detail = " | ".join(failures) or "no AI provider is configured"
+                    logger.warning("Opportunity detection unavailable for %s: %s", bc_id, detail)
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"Could not analyse the conversations - {detail}",
+                                  "message": "Analysis is unavailable right now - the analysis service could not complete the request. Please try again later.",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}},
                     )

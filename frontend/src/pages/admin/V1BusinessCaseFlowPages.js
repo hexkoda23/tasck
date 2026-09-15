@@ -1614,7 +1614,9 @@ export const V3BusinessCaseConnectSchedule = () => {
           const fallbackRec = job.recommendation;
           if (fallbackRec) setAnalysisResult(fallbackRec);
           await reload();
-          const errorMsg = job.error || job.message || 'unknown error';
+          // job.error is the raw provider/exception text, kept on the job for
+          // diagnosis; the admin sees the job's own plain-language message.
+          const errorMsg = job.message || 'Analysis is unavailable right now. Please try again later.';
           setSaveNotice(`Analysis failed - showing safe fallback. (${errorMsg})`);
           setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: errorMsg, message: 'Analysis failed. A safe fallback is shown below.' }));
           return;
