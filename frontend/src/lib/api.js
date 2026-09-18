@@ -67,6 +67,29 @@ export const getActivities = (limit = 20) => api.get('/activities', { params: { 
 export const getCopilotRecommendations = () => api.get('/copilot/recommendations');
 export const dismissRecommendation = (recId) => api.post(`/copilot/recommendations/${recId}/dismiss`);
 
+const chatErrorMessage = (error) => {
+  const apiError = error?.response?.data?.error;
+  if (apiError?.message) return apiError.message;
+
+  // The backend maps provider failures, but retain the same explicit message
+  // if a deployment is missing the route or a proxy responds before it.
+  if (error?.response?.status === 404) {
+    return 'Action Not Supported: The requested route or backend action endpoint is missing or improperly configured.';
+  }
+  return error?.message || 'Chat Request Failed: The assistant could not complete this request. Please try again.';
+};
+
+export const sendCopilotMessage = async (message) => {
+  try {
+    const response = await api.post('/chat', { message });
+    return response.data;
+  } catch (error) {
+    const chatError = new Error(chatErrorMessage(error));
+    chatError.code = error?.response?.data?.error?.code;
+    throw chatError;
+  }
+};
+
 // Wallet
 export const getWallet = (userId) => api.get(`/wallet/${userId}`);
 export const getWalletTransactions = (userId) => api.get(`/wallet/${userId}/transactions`);

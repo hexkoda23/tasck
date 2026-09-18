@@ -3,6 +3,7 @@ import { NavLink, useNavigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import Logo from '../shared/Logo';
 import Avatar from '../shared/Avatar';
+import { sendCopilotMessage } from '../../lib/api';
 import { 
   Home, GitBranch, Handshake, FolderOpen, Target, Users, Building2,
   BarChart3, MessageSquare, Calendar, FileText, Settings, Bell, Search,
@@ -89,6 +90,10 @@ export const DashboardLayout = ({ role }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [showCopilot, setShowCopilot] = useState(false);
+  const [copilotInput, setCopilotInput] = useState('');
+  const [copilotMessages, setCopilotMessages] = useState([]);
+  const [copilotError, setCopilotError] = useState(null);
+  const [copilotLoading, setCopilotLoading] = useState(false);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showQuickAction, setShowQuickAction] = useState(false);
 
@@ -128,6 +133,29 @@ export const DashboardLayout = ({ role }) => {
   const handleLogout = () => {
     logout();
     navigate('/');
+  };
+
+  const submitCopilotMessage = async (value = copilotInput) => {
+    const message = value.trim();
+    if (!message || copilotLoading) return;
+
+    setCopilotMessages((messages) => [...messages, { role: 'user', text: message }]);
+    setCopilotInput('');
+    setCopilotError(null);
+    setCopilotLoading(true);
+    try {
+      const reply = await sendCopilotMessage(message);
+      setCopilotMessages((messages) => [...messages, { role: 'assistant', text: reply.message }]);
+    } catch (error) {
+      setCopilotError(error);
+    } finally {
+      setCopilotLoading(false);
+    }
+  };
+
+  const handleCopilotSubmit = (event) => {
+    event.preventDefault();
+    submitCopilotMessage();
   };
 
   React.useEffect(() => {
@@ -254,9 +282,53 @@ export const DashboardLayout = ({ role }) => {
             </div>
           </div>
 
-          <div className="typing-indicator flex items-center gap-1.5 mb-5">
-            <span></span><span></span><span></span>
-            <span className="text-[11px] text-[#94A3B8] ml-1">Thinking...</span>
+          <div className="rounded-lg border border-[#E2E8F0] bg-white p-3 mb-5" data-testid="copilot-chat-window">
+            <p className="text-[10px] text-[#94A3B8] uppercase tracking-wider font-medium mb-2">Conversation</p>
+            <div className="space-y-2 max-h-56 overflow-y-auto pr-1" aria-live="polite">
+              {copilotMessages.length === 0 && !copilotLoading && !copilotError && (
+                <p className="text-xs text-[#64748B]">Ask Copilot about a deal, pipeline, or TASCK workflow.</p>
+              )}
+              {copilotMessages.map((message, index) => (
+                <div
+                  key={`${message.role}-${index}`}
+                  className={`rounded-lg px-3 py-2 text-xs leading-5 ${message.role === 'user' ? 'bg-[#EEF2FF] text-[#1E3A8A] ml-5' : 'bg-[#F8FAFC] text-[#1E293B] mr-5'}`}
+                >
+                  {message.text}
+                </div>
+              ))}
+              {copilotLoading && (
+                <div className="typing-indicator flex items-center gap-1.5 py-1">
+                  <span></span><span></span><span></span>
+                  <span className="text-[11px] text-[#94A3B8] ml-1">Thinking...</span>
+                </div>
+              )}
+              {copilotError && (
+                <div
+                  className="rounded-lg border border-[#FECACA] bg-[#FEF2F2] px-3 py-2 text-xs leading-5 text-[#B91C1C]"
+                  data-testid="copilot-chat-error"
+                  role="alert"
+                >
+                  {copilotError.message}
+                </div>
+              )}
+            </div>
+            <form className="mt-3 flex gap-2" onSubmit={handleCopilotSubmit}>
+              <input
+                value={copilotInput}
+                onChange={(event) => setCopilotInput(event.target.value)}
+                disabled={copilotLoading}
+                className="min-w-0 flex-1 rounded-md border border-[#CBD5E1] px-2 py-1.5 text-xs text-[#1E293B] outline-none focus:border-[#2F55FF] disabled:bg-[#F8FAFC]"
+                placeholder="Ask Copilot…"
+                aria-label="Ask TASCK Copilot"
+              />
+              <button
+                type="submit"
+                disabled={!copilotInput.trim() || copilotLoading}
+                className="rounded-md bg-[#2F55FF] px-2.5 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Send
+              </button>
+            </form>
           </div>
           
           <div className="space-y-4">
@@ -277,9 +349,9 @@ export const DashboardLayout = ({ role }) => {
           <div className="mt-6 pt-4 border-t border-[#F1F5F9]">
             <p className="text-[#94A3B8] text-[10px] uppercase tracking-wider mb-3">Quick Actions</p>
             <div className="flex flex-wrap gap-2">
-              <button className="text-[11px] rounded-lg bg-[#F1F5F9] text-[#64748B] px-3 py-1.5 hover:bg-[#E2E8F0] transition-colors">Draft email</button>
-              <button className="text-[11px] rounded-lg bg-[#F1F5F9] text-[#64748B] px-3 py-1.5 hover:bg-[#E2E8F0] transition-colors">Summarize pipeline</button>
-              <button className="text-[11px] rounded-lg bg-[#F1F5F9] text-[#64748B] px-3 py-1.5 hover:bg-[#E2E8F0] transition-colors">Find talent</button>
+              <button type="button" onClick={() => submitCopilotMessage('Help me draft an email.')} className="text-[11px] rounded-lg bg-[#F1F5F9] text-[#64748B] px-3 py-1.5 hover:bg-[#E2E8F0] transition-colors">Draft email</button>
+              <button type="button" onClick={() => submitCopilotMessage('Summarize the current pipeline.')} className="text-[11px] rounded-lg bg-[#F1F5F9] text-[#64748B] px-3 py-1.5 hover:bg-[#E2E8F0] transition-colors">Summarize pipeline</button>
+              <button type="button" onClick={() => submitCopilotMessage('Help me find suitable talent.')} className="text-[11px] rounded-lg bg-[#F1F5F9] text-[#64748B] px-3 py-1.5 hover:bg-[#E2E8F0] transition-colors">Find talent</button>
             </div>
           </div>
         </aside>

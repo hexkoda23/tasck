@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 import uuid
 from datetime import datetime, timezone
+import requests
 
 from models import (
     UserRole, DealStatus, ProjectStatus, OpportunityStatus, 
@@ -19,6 +20,7 @@ from models import (
 from seed_data import get_seed_data
 from v3_routes import make_v3_router
 from v3_workbook_import import WorkbookImporter
+from chat_error_handling import chat_error_for
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -449,6 +451,93 @@ async def get_wallet_transactions(user_id: str):
     return transactions
 
 # ==================== MESSAGE ENDPOINTS ====================
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=12000)
+
+
+def _anthropic_error_detail(response: requests.Response) -> str:
+    """Extract an error description for logs and error classification only."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return (response.text or "")[:1000]
+
+    error = payload.get("error", payload) if isinstance(payload, dict) else payload
+    if isinstance(error, dict):
+        return str(error.get("message") or error.get("type") or "")[:1000]
+    return str(error or "")[:1000]
+
+
+@api_router.post("/chat")
+async def chat_with_copilot(request: ChatRequest):
+    """Send a staff message to Copilot and return a safely mapped failure.
+
+    Unlike the other AI workflows, this endpoint intentionally returns a
+    compact ``error.message`` contract because the chat panel renders that
+    message directly to the administrator.
+    """
+    api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+    if not api_key:
+        error = chat_error_for(401, "ANTHROPIC_API_KEY is missing")
+        return JSONResponse(status_code=error.status_code, content=error.as_response())
+
+    model = (os.getenv("COPILOT_CHAT_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL")
+             or "claude-sonnet-4-5")
+    payload = {
+        "model": model,
+        "max_tokens": 700,
+        "temperature": 0.2,
+        "system": (
+            "You are TASCK Copilot, an internal assistant for TASCK OS staff. "
+            "Give concise, practical answers about the platform and business operations."
+        ),
+        "messages": [{"role": "user", "content": request.message.strip()}],
+    }
+
+    try:
+        response = await asyncio.to_thread(
+            requests.post,
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+            timeout=45,
+        )
+    except requests.RequestException as exc:
+        logger.warning("Copilot Anthropic request failed: %s", exc)
+        error = chat_error_for(503, str(exc))
+        return JSONResponse(status_code=error.status_code, content=error.as_response())
+
+    if response.status_code >= 400:
+        provider_detail = _anthropic_error_detail(response)
+        logger.warning(
+            "Copilot Anthropic request failed (HTTP %s): %s",
+            response.status_code,
+            provider_detail,
+        )
+        error = chat_error_for(response.status_code, provider_detail)
+        return JSONResponse(status_code=error.status_code, content=error.as_response())
+
+    try:
+        completion = response.json()
+        text = "\n".join(
+            part.get("text", "")
+            for part in completion.get("content", [])
+            if part.get("type") == "text"
+        ).strip()
+    except (ValueError, AttributeError, TypeError) as exc:
+        logger.warning("Copilot returned an unreadable Anthropic response: %s", exc)
+        text = ""
+
+    if not text:
+        error = chat_error_for(502, "Anthropic returned no text content")
+        return JSONResponse(status_code=error.status_code, content=error.as_response())
+
+    return {"message": text, "model": model}
 
 @api_router.get("/messages")
 async def get_messages(user_id: Optional[str] = None):
