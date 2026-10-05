@@ -1,5 +1,139 @@
 # TASCK OS — Product Requirements Document
 
+## Update — 28 Sep 2026 — "No emergent text in generated links" + Writer Model fix RE-APPLIED
+
+### IMPORTANT: a GitHub merge silently reverted earlier work
+Commit `dff1913` ("Merge branch 'main' of github.com/THCO-Labs/TASCK into feature-dean") overwrote
+`backend/v3_routes.py` with the repo's version, **erasing the 17 Sep Writer Model fix**: the assistant was back
+to a single dead-Anthropic provider, `max_tokens=1200`, `HTTPException(502)` and no `provider-health` endpoint,
+so the chatbot had started failing again. Re-applied in full on 28 Sep. **Anything fixed here must be pushed to
+the GitHub repo, or the next merge from `main` will revert it again.**
+
+### Where "emergent" can appear in generated links (audited)
+1. **Frontend document links** - flipbook, slides, pitch-deck PDF, alignment DOCX, creative brief DOCX,
+   contract PDF/view, final report view - are built in the browser from `REACT_APP_BACKEND_URL`, **baked in at
+   build time**. Live bundle (`thcodemo.space/static/js/main.02b19fa6.js`) greps **clean**: baked value is
+   `https://thcodemo.space`. Safe as long as every build uses the custom domain.
+2. **In-app copied links** use `window.location.origin` - always clean.
+3. **Backend/emailed links** (`app_base_url()`): brand approvals, pitch-deck review, creator portal,
+   brand/creator login, feedback form. Previously fell back to a hardcoded preview host when
+   `FRONTEND_URL`/`PUBLIC_APP_URL`/`APP_BASE_URL` were unset - the real exposure.
+4. **Platform-injected scripts** - the live page loads `assets.emergent.sh/scripts/emergent-main.js` and
+   `debug-monitor.js`. These are **NOT in our source** (`frontend/public/index.html` has no emergent reference);
+   the Emergent platform injects them at serve time. They cannot be removed in code - they disappear when the
+   app is hosted elsewhere (Azure). PostHog was kept per client instruction.
+
+### Shipped
+- **Request-host fallback (the safeguard).** `REQUEST_PUBLIC_ORIGIN` ContextVar (`v3_routes.py`) + a
+  `capture_public_origin` HTTP middleware (`server.py`) record the public origin of the request being served
+  (Origin -> Referer -> `X-Forwarded-Host`/`-Proto` -> Host). `app_base_url()` now resolves
+  **env -> request host -> localhost (dev) -> hardcoded default**. Internal hosts (localhost, 127.0.0.1,
+  hostnames with no dot) are ignored, and a public host on plain http is upgraded to https so no brand is emailed
+  an http:// link. A forgotten env var can no longer put the preview domain in a recipient's email.
+- **`GET /api/v3/link-audit`** - one request listing every externally-shared link with its resolved host,
+  `app_base_url_source` (`env` / `request_host` / `hardcoded_default`), a `clean` boolean and any `offenders`.
+  Also lists the frontend build-time paths with the exact curl+grep command to verify a deployed bundle.
+- `FRONTEND_URL` set in the preview `.env` (preview host). **Production must set its own to
+  `https://thcodemo.space`** - plus `REACT_APP_BACKEND_URL` at build time.
+- Re-applied: Claude Sonnet 4.5 via Emergent gateway as the Writer Model route, 40s per-provider budget,
+  `max_tokens` 4000, honest 200-with-reason instead of a 502 that Cloudflare masks, `writer_model` in the
+  response, and the 95s client timeout in `v3api.js`.
+
+### Verified (preview)
+- `link-audit` with env set: source `env`, every link on the preview host (`clean: false` is *correct* here -
+  the preview domain legitimately contains "emergent", which proves the detector works).
+- With `FRONTEND_URL`/`PUBLIC_APP_URL`/`APP_BASE_URL` removed (simulating a deploy where nobody set them):
+  `Origin: https://thcodemo.space` -> `https://thcodemo.space` **clean**; `Host: thcodemo.space` -> https
+  upgraded, clean; `X-Forwarded-Host: app.tasck.com` -> `https://app.tasck.com` clean;
+  `localhost:3000` and `127.0.0.1:8001` correctly **ignored**; no request context (background job) falls back
+  and logs the warning.
+- Regression: business cases list loads (2 cases, 0 console errors), feedback public-link still returns the
+  right token, assistant edit mode returns a rewritten section via `emergent:anthropic/claude-sonnet-4-5`.
+
+### Deploy checklist for a clean-link release
+1. Build with `REACT_APP_BACKEND_URL=https://thcodemo.space`.
+2. Set `FRONTEND_URL=https://thcodemo.space` on the backend (optional now, but explicit beats derived).
+3. After deploy: `curl -s https://thcodemo.space/api/v3/link-audit` -> expect `"clean": true`.
+4. `curl -s https://thcodemo.space/static/js/main.*.js | grep -c emergentagent` -> expect 0.
+
+
+## Update — 28 Sep 2026 — Feedback share links pointed at the admin page, not the form
+
+### Reported
+"Send to Brand / Send to Creator" shared
+`/admin/business-cases/bc-3904d778/reporting/final-report` instead of the public form
+`/feedback/2eed3e84357f499eaf86689038147802`. A recipient cannot open that - it needs an admin login and is
+not the form.
+
+### Root cause
+Three share routes disagreed because only one of them knew about the public token.
+`handleShare` (`V1BusinessCaseFlowPages.js`) built the feedback link client-side as
+`window.location.origin + adminRoute('/business-cases/' + id + '/reporting/final-report')` for **both**
+`copy_link` and `whatsapp`. The token lived server-side in `_ensure_feedback_token`, reachable only from
+`POST /final-reports/{id}/feedback/send-email` - so the **emailed** link was correct all along while copy and
+WhatsApp shared the admin URL.
+
+### Shipped
+- **Backend** `GET /api/v3/final-reports/{report_id}/feedback/public-link?audience=brand|creator` - returns
+  `{audience, token, url}` using the *same* `_ensure_feedback_token`, so every channel resolves one token per
+  audience (idempotent: an already-sent form keeps its existing token). Rejects `all`, 404s on unknown report.
+- **Frontend** `v3GetFeedbackPublicLink` + `handleShare` now awaits the real form URL for `copy_link` and
+  `whatsapp`. Clipboard failure after the await (lost user activation) falls back to showing the link in the
+  notice instead of silently losing it. The report's own share paths are untouched.
+
+### Verified (preview)
+- `public-link` for `fr-ca4d65d2`: brand -> `…/feedback/2eed3e84357f499eaf86689038147802` (the exact token the
+  client quoted as correct - so it reused, not re-minted), creator -> a different token.
+- Both tokens resolve through `GET /api/v3/public/feedback/{token}` with 5 questions each and the right
+  audience; a bogus token 404s. Audience separation intact.
+- UI: "Send to Brand" -> Copy link put `https://…/feedback/2eed3e84…` on the clipboard (no `/admin/`).
+  "Send to Creator" -> WhatsApp opened `wa.me` with the creator's `…/feedback/ccc0615e…` URL.
+- The shared link renders the public Brand Partner form at 390px with no horizontal overflow and no JS errors.
+
+### Note
+Emailed links depend on `app_base_url()`; with no `FRONTEND_URL`/`PUBLIC_APP_URL` set it falls back to
+`DEFAULT_PUBLIC_APP_URL` (the preview host) and logs a warning. Set `FRONTEND_URL` per environment before
+cutover or emailed links will point at preview.
+
+
+## Update — 21 Sep 2026 — "Uncaught runtime errors: DataCloneError … PerformanceServerTiming" (PostHog recorder)
+
+### What was happening
+The red overlay was **not our app crashing**. Every frame in the stack sat inside
+`us-assets.i.posthog.com/static/…/posthog-recorder.js`; the React bundle never appeared. It was PostHog's
+session-replay recorder throwing inside a `PerformanceObserver` callback, and CRA's dev overlay surfacing any
+unhandled error on the page as "Uncaught runtime errors".
+
+### Root cause (two mistakes in one `posthog.init`, `frontend/public/index.html`)
+1. **`capturePerformance` was nested inside `session_recording`.** It is a **top-level** PostHog option
+   (`capture_performance`), so nested it was simply ignored - performance capture stayed **on** despite the
+   config visibly trying to turn it off. Its `PerformanceObserver` therefore collected resource entries, and
+   any response carrying a `Server-Timing` header (Cloudflare adds one) brings a `PerformanceServerTiming`
+   object along.
+2. **`recordCrossOriginIframes: true`** makes the recorder relay records to the parent window via
+   `postMessage`. `PerformanceServerTiming` is not structured-cloneable, so each such entry threw
+   `DataCloneError: Failed to execute 'postMessage' on 'Window'`. PostHog only supports that flag when you
+   control *both* frames; ours are the generated flipbook and third-party embeds, so it bought nothing.
+
+### Shipped
+- `capture_performance: false` moved to the top level (where PostHog actually reads it).
+- `recordCrossOriginIframes: false` - removes the postMessage relay that could not clone the object.
+- Both lines carry a comment explaining why, so the nesting mistake is not reintroduced.
+
+### Verified
+Landing page + `/admin/business-cases`, 15s of dwell, scrolling and an authenticated API call:
+**0 DataCloneError / "could not be cloned" console errors and no dev overlay** (previously thrown repeatedly).
+Session replay still initialises; only performance capture and the cross-origin relay are off.
+
+Needs a **redeploy** to reach production - `public/index.html` is baked into the build.
+
+### Separate observation (not touched, not asked for)
+The Business Cases page header counts **1** total while the list and every stage chip read **0**. By design
+`VISIBLE_STAGES = ['plan','deliver','closed']` hides `connect`/`frame` cases (they live in the CRM brand
+workflow), but the total metric counts them - so the only case in the database (`bc-fefc2fed`, stage `frame`)
+is counted yet unlistable. Worth reconciling: either exclude those stages from the total or show them.
+
+
 ## Update — 21 Feb 2026 — Admin quality-of-life: Duplicates, Unread badge, Deck analytics
 
 ### Shipped
@@ -1460,3 +1594,106 @@ Fix: converted it to the same background-job pattern as the Creative Brief / Pit
 - `v3AnalyzeBrainstormTranscript` now polls (2.5s interval, 120 attempts, tolerates 6 transient gateway blips) and streams the job message into the existing "Analyzing transcript" popup.
 Verified live: kickoff 0.27s, job completed in ~35s, all 8 Creator Selector fields filled, and the UI popup ran through "AI is reading the transcript and filling the TTA Creator Selector…" -> "Creator Selector filled" -> auto-navigated to the filled Creator Selector.
 Audit: no other long AI call remains synchronous (import-extract is a single 60s-capped call; opportunity detection runs inside a job runner).
+
+## 2026-09-01 - Production cleanup: database wiped of all demo/test/seed CRM data
+NOTE: the codebase had been rolled back, so the earlier cleanup work (2026-06-25 f) was no longer present and the workbook importer had restored the data. Redone in this codebase state, without touching app functionality or UI.
+
+Deleted (231 rows): v3_brands 9 (8 CRM-workbook brands + the Zestora test brand), v3_business_cases 20, v3_creators 35, v3_projects 24, v3_meetings 14, v3_contacts 13, v3_contracts 11, v3_fees 11, v3_wallet 11, v3_tasks 10, v3_insights 6, v3_reports 5, v3_pitch_decks 2, v3_alignment_snapshots, v3_creative_briefs, v3_brand_accounts, v3_creator_accounts, v3_email_outbox, v3_analysis_jobs, v3_opportunity_candidates/scans, v3_interactions, v3_duplicate_dismissals, legacy v1/v2 collections, `feedback` 2, and the 11 `brand_contact` logins whose brands were removed.
+
+Preserved: `users` 36 (the only login source for /api/auth/demo-login - clearing it locks all five roles out), `v3_admin_users` 8 (1 super_admin + 7 relationship managers), `v3_rms` 8 (staff), `v3_templates` 12 (agency document templates = configuration). All 45 collections still exist; schema, indexes, app code, auth structure and configuration untouched.
+One judgement call: the single `role: brand` account (adenike@diageo-ng.com) is a demo account, but `demo_login` 404s for role=brand without it, so it was KEPT and only its stale pointer to the deleted demo brand was unset - zero orphan references remain.
+
+Code changes (data/startup only, no functional or UI change):
+- `server.py`: the CRM workbook importer no longer runs in the startup hydration - it was recreating the workbook brands and all derived records on every boot. Manual load remains available via `POST /api/v3/admin/import-crm-workbook`.
+- `cleanup_demo_data.py`: added `full_reset()`, `BUSINESS_COLLECTIONS`, `PRESERVED_NOTES` and a `--full` flag. `python cleanup_demo_data.py --dry-run --full` reports, without `--dry-run` it deletes. Idempotent.
+
+Verified: DB clean after cleanup AND after a restart (no workbook import line in the logs); all 5 role logins return 200; brands/business-cases/creators/projects/meetings all return []; Overview, CRM Brands, Business Cases and Messages render with zero JS errors; created a brand through the UI (detail page opened correctly) and started a project through "New Business Case" (landed on Connect / Business Call with the brand bound) - both verification records were then removed; orphan sweep across all 45 collections on brand_id/business_case_id/creator_id returns none.
+
+## 2026-09-01 (b) - Why production still showed demo data, and the fix
+The client reported thcodemo.space/admin still full of demo data after the cleanup. Root cause: `MONGO_URL=mongodb://localhost:27017` - every environment runs its OWN MongoDB inside its own container, so the preview cleanup could never reach the deployed database. The wipe had to travel with the code.
+
+Two marker-guarded passes were added to the startup hydration in `server.py` (markers live in `v3_system_meta`, so neither ever repeats):
+1. `WIPE_DEMO_DATA_ONCE` (set to `2026-09-01-client-clean` in backend/.env): on first boot with that value, runs `cleanup()` + `full_reset()` - a total wipe of brand/project data. Change the value to request another wipe later.
+2. Unconditional safety net `workbook-wipe:v1`: deletes only rows carrying `created_from_crm_template: True` (i.e. rows the CRM workbook importer wrote - a flag hand-entered records never have) plus the orphaned `brand_contact` logins. This clears a deployed environment even if its env vars are managed outside backend/.env. `v3_rms` and `v3_templates` are not in BUSINESS_COLLECTIONS, so staff and templates survive.
+`cleanup_demo_data.py` gained `workbook_reset(db, dry_run)` alongside `full_reset`.
+
+Verified in preview by simulating a production boot:
+- Planted demo brand/case/creator -> restart -> "Demo-data wipe ... removed 3 records", all gone, marker written.
+- Added a client brand -> restart -> "already applied - skipping", client brand survived (the wipe never repeats).
+- Cleared only the safety-net marker, planted 1 workbook-flagged brand + 1 client brand -> restart -> "Workbook-import wipe removed 1 records", the client brand untouched, staff intact.
+Preview remains: users 36, v3_admin_users 8, v3_rms 8, v3_templates 12, v3_system_meta 2 (markers). Brands/cases/creators return []; admin login 200.
+
+
+---
+
+## 2026-06-19 — Azure Migration Discovery Report (read-only)
+- Audited and extended `/app/TASCK_PRODUCTION_MIGRATION_MASTER_REPORT.md` (736 lines, 21 parts). No secrets present; no app/DB/DNS/deploy changes made.
+- Corrections on re-audit: (1) CORS is env-driven via `CORS_ORIGINS` merged with hardcoded defaults + `*.emergent(host|agent.com)` regex — no code change needed for a new Azure hostname (risk downgraded to YELLOW); (2) the container's supervised nginx only fronts Emergent code-server, not app traffic.
+- Azure target fixed by user decision: App Service for Containers (WEBSITES_PORT=8001, Always On, 1 instance) + Static Web Apps + ACR + Cosmos DB for MongoDB vCore + Key Vault + Front Door + Azure DNS + App Insights.
+- Added PART 21: operator-only read-only verification checklist (runtime, mongosh counts/indexes, mongodump pre-flight, env-var names, whois/dig DNS, openssl TLS, SPF/DKIM/DMARC).
+- Readiness: YELLOW CONDITIONAL. Open blockers: emergentintegrations/EMERGENT_LLM_KEY lock-in, no DB backup with mongod inside the app container, no production shell access, secrets committed to git, passwordless demo-login.
+- Backlog unchanged and still pending user verification: Brand Import Sheet edit flow.
+
+
+---
+
+## 2026-09-03 — Phase 1 LIVE Production Discovery (read-only)
+- Created `/app/TASCK_PRODUCTION_MIGRATION_DISCOVERY.md` (831 lines, 12 sections + Emergent asks). Only new file in `git status`; no app/DB/DNS/deploy/env changes; secret-scanned clean.
+- Live production inspected via public HTTPS GETs + DoH + TLS handshake (production shell NOT available; those items marked NOT VERIFIED).
+- CRITICAL: production API is fully UNAUTHENTICATED - unauth GETs returned brands, cases, transcripts, contacts PII, contracts, invoices, email bodies, admin users; demo-login issues an admin session with no credential. Live exposure today, not just a migration blocker.
+- UNRESOLVED: production DB location. Preview = loopback mongod, but deployed source references "Atlas MongoDB" twice (server.py:78, PRD.md:539). Blocks backup method choice.
+- Live prod inventory (2026-09-03, active use): 2 brands, 2 business cases, 3 meeting transcripts (6391/2659/26332 chars), 4 creators, 2 approved alignment snapshots, pitch deck pd-eb77f1fd (16 slides, 3 views/38 turns), 2 creative briefs, 2 contracts, 2 deliverables, 3 invoices, 1 final report (10 sections), 7 sent emails, 8 v3_admin_users, 36 legacy users. All 9 legacy v1/v2 collections EMPTY. ~95 business docs total.
+- AI provider LIVE-VERIFIED: every artefact stamped `emergent:anthropic/claude-sonnet-4-5` => Emergent gateway is the active path and ANTHROPIC_API_KEY is likely unset in prod. Removable by config alone (Anthropic path is raw httpx; emergentintegrations imports are lazy; delete requirements line).
+- Edge: Cloudflare fronts thcodemo.space (Google Trust Services cert, 2yr HSTS preload); DNS at Namecheap (apex A -> Cloudflare, TTL 300, www CNAME to apex); origin on GCP (`via: 1.1 google`). Cloudflare zone ownership unknown - determines cutover shape. Namecheap BasicDNS cannot CNAME at apex.
+- Storage: NO GridFS, NO object storage, NO upload/generated-file dirs. 587KB docx + 343KB flipbook generated live per request. boto3 installed but uncalled. Zero files to migrate.
+- Jobs: TASCK has no cron of its own; only Emergent webhook-cron (every minute, root, reads backend/.env). 6 in-process asyncio AI runners => App Service needs Always On + instance count 1.
+- ENABLE_DIAGNOSTICS / ENABLE_ADMIN_CLEANUP / ADMIN_CLEANUP_TOKEN now have ZERO call sites (stale .env keys); all such endpoints 404 in prod. No destructive admin endpoint exposed.
+- Privacy: CRM logos fetched from icons.duckduckgo.com/ip3/<client-domain> and google.com/s2/favicons; real client domains embedded in the shipped JS bundle.
+- Report ends with 10 read-only asks from Emergent (DB host class, prod shell/mongosh output incl. v3_system_meta, env-var names, backup existence, Cloudflare ownership, webhook-cron config, injected runtime values, image contents, SMTP/SPF facts, supported freeze procedure).
+
+
+---
+
+## 2026-09-03 (later) — FINAL read-only discovery for Terra handoff
+- Created `/app/TASCK_FINAL_PRODUCTION_DISCOVERY.md` (433 lines, sections 1-7 only, no repeat of the 831-line report). Only new file in `git status`; nothing modified; secret-scanned clean.
+- DB location: still NOT definitively verified, but now HIGH-confidence "Emergent-hosted in-container mongod". New evidence: platform image supervises `[program:mongodb] /usr/bin/mongod --bind_ip_all` (default port 27017); image name is `fastapi_react_mongo_shadcn_base_image_cloud_arm`; no `mongodb+srv`/TLS/auth options anywhere in code (Atlas mentions are prose comments only); 15 sequential DB round trips + 268KB payload cost only ~40ms over a DB-free /api/health baseline. Settled by one dashboard/shell check.
+- GridFS: definitively NONE (code + zero fs.* collections in a live runtime). Zero files to migrate; no Blob Storage needed.
+- Per-collection sizes/indexes: impossible remotely - no db.command/dbstats/serverStatus/list_collection_names in code and ZERO error-leaking `HTTPException(5xx, str(e))` handlers. Indexes are `_id_` only (zero create_index calls anywhere). Preview calibration: 2.08MB data / 3.71MB storage / 1.219MB index / 46 collections / 101 objects / MongoDB 7.0.42.
+- CONFIG PRECEDENCE (new, important): backend reads config from the `.env` FILE via `load_dotenv(override=False)`, not the container env. Live runtime process env contained NO MONGO_URL/DB_NAME/SMTP_*. Azure trap: a missing App Setting silently falls back to the committed `.env` (localhost mongo => empty DB, no error). Mitigation: delete `.env` from the runtime image.
+- Platform-injected env NAMES observed in a live Emergent pod: INTEGRATION_PROXY_URL, integration_proxy_url, WEBHOOK_CRON_API_URL, EMERGENT_PYPI_INDEX, LINTERS_PYPI_INDEX, UV_EXTRA_INDEX_URL, job_id, run_id, base_url, preview_endpoint, code_server_password, monitor_polling_interval, ENABLE_RELOAD, STRIPE_API_KEY (!unused by TASCK), K8s service vars, browser-tooling paths. CORRECTION: `APP_URL` is NOT injected - the real names are lowercase base_url/preview_endpoint.
+- CRON: NO TASCK-SPECIFIC EMERGENT CRON JOB FOUND. crons.yml absent, applied.hash 0 bytes, only the watch_crons reconciler line in /etc/cron.d/webhook-crons (no dispatch_webhook line), WEBHOOK_CRON_SECRET absent from .env. One prod-side re-check remains (its own comment says reconcile is scope=preview).
+- EDGE: apex = 2 A records to Cloudflare anycast, TTL 300, no apex CNAME; www CNAME->apex plus a 308 redirect; http->301 https; NO CAA record (Azure cert issuance unblocked); no HTTPS/SVCB; nine candidate subdomains all NXDOMAIN; HSTS 2yr preload includeSubDomains; static assets immutable 1yr, HTML no-store; no Workers/Pages evidence.
+- CLOUDFLARE OWNERSHIP now HIGH-confidence EMERGENT (Cloudflare for SaaS): `sliver=010-tier1` on thcodemo.space vs `sliver=none` on emergent.host; apex cert has a single SAN vs `*.emergent.host` wildcard; client zone never delegated to CF. => the edge CANNOT be kept; rebuild on Front Door or a client-owned CF zone. Formal confirmation still needs account access.
+- NEW 🔴 BLOCKER: `tasck-live-demo-1.emergent.host` publicly serves the SAME app + API against the SAME database (verified /api/health). Split-brain writes + continued data exposure after cutover => Emergent must be decommissioned, not left warm.
+- CORS enforcement live-verified: preflight from an unknown azurewebsites.net origin => HTTP 400 with no ACAO; from thcodemo.space => 200 with ACAO.
+- Blockers regrouped A/B/C/D. Group D (no longer blockers): file/object storage migration, cron reproduction, "AI welded to Emergent", hardcoded CORS, destructive admin endpoints, payments/OAuth/webhooks, non-default Mongo port, publicly exposed DB, CAA blocking certs, unknown subdomains.
+
+
+---
+
+## 2026-09-03 (late) — 🔴 CORRECTION: production DB is Emergent-managed MongoDB ATLAS
+Confirmed by Emergent platform support. This SUPERSEDES the "in-container mongod" conclusion in all three prior reports (TASCK_PRODUCTION_MIGRATION_MASTER_REPORT.md, TASCK_PRODUCTION_MIGRATION_DISCOVERY.md, TASCK_FINAL_PRODUCTION_DISCOVERY.md). The "Atlas MongoDB" comments at server.py:78 and PRD.md:539 were literally correct.
+- Production DB = Emergent-managed MongoDB **Atlas** cluster, EXTERNAL to the app container. Shared/multi-tenant by default; dedicated cluster is a paid upgrade.
+- Scheme `mongodb+srv://{app}:{pwd}@{cluster}.mongodb.net/...`; **auth REQUIRED, TLS REQUIRED**; port via SRV.
+- **DB_NAME format `{app_name}-mydb` - NOT `test_database`.** test_database is the preview/code DB only.
+- Reachable only from Emergent internal network or an allowlisted IP => cannot mongodump from a laptop by default.
+- Atlas => replica set => an **oplog exists**, so `mongodump --oplog` and even live/delta sync are possible. The "write freeze is unavoidable" constraint from earlier reports is RELAXED for production (it was true only of the preview standalone).
+- **Platform backups DO exist:** hourly 7d, daily 7d, weekly 4w, monthly 12m, yearly 1y, plus continuous 7-day PITR. Blocker "no backup exists" downgraded 🔴->🟡.
+- Redeploy/restart/rollback CANNOT destroy the production DB (persistent, external to container lifecycle).
+- Preview data was copied to production on FIRST deploy only; independent ever since.
+- Self-service export path: Republish -> Database -> "Go to database" (mongoview.emergent.host) -> **"Dump DB"** (full DB); or per-collection via Run query -> Export all. Credentials at Republish -> Secrets -> System keys.
+- **No shell access to the production container exists** - this is why the agent environment can never take the dump. Agent env verified to have: no k8s service account, no cluster API, no in-cluster DNS for the deployment, no Emergent CLI, no non-loopback Mongo URI on disk.
+- Why the earlier inference failed: the platform image genuinely does supervise mongod --bind_ip_all and backend/.env genuinely does point at loopback, but the production dashboard OVERRIDES MONGO_URL/DB_NAME with Atlas values, leaving the in-container mongod present but unused. The ~40ms/15-round-trip latency reflects same-region co-location, not loopback.
+- Residual trap is now MORE severe: with load_dotenv(override=False), a missing MONGO_URL App Setting on Azure makes the app fall back to the committed loopback value and start cleanly against an EMPTY local DB. Delete .env from the runtime image.
+- Handoff doc /app/TASCK_TERRA_PRODUCTION_HANDOFF.md sections 1, 8, 9 updated with these corrections.
+
+
+---
+
+## 2026-09-11 — API-derived production export artifacts (read-only)
+- Created `/app/exports/production-verification.xlsx` (no PII; 5 sheets: Summary, Collections, Fingerprints, Not Accessible via API, Restore Checklist), `/app/exports/production-api-export.json` (2.3 MB, full nested records, CONTAINS CLIENT PII - user to delete after download), `/app/exports/SHA256SUMS`.
+- Built by read-only HTTPS GET against the live production API (38 endpoints OK). NOT a mongodump and NOT restorable - loses BSON types and omits 4 collections with no read endpoint (v3_system_meta CRITICAL, v3_brand_accounts, v3_creator_accounts, v3_rms).
+- 🔴 PRODUCTION HAS GROWN since the 2026-09-03 baseline - the agency is actively using it. New counts (2026-09-11): brands 5, business_cases 6, creators 5, projects 6, meetings 9, contacts 5, interactions 6, templates 12, brainstorm_rounds 7, creative_briefs 2, contracts 4, deliverables 2, invoices 3, final_reports 1, email_outbox 14, admin_users 8, legacy users 36. Alignment snapshots 5, pitch decks 2 (both 16 slides). Transcript char counts now [2659,5552,5552,5583,5583,6391,11247,11278,26332]; brief lengths [3372,4054]. Timeline events per case: bc-258326e6=33, bc-2cf882ab=30, bc-6ba2ed61=18, bc-da3265b2=8, bc-1c16901f=6, bc-7c07636f=2.
+- Handoff doc section 3 now carries a STALE warning pointing Terra at the workbook instead of the old numbers, with a re-measure-before-final-export instruction.
+- Emergent export status: no Dump DB button visible for this deployment; no customer IP allowlisting; no --oplog on shared tier; no production container shell. Owner must email support@emergent.sh (my support_agent calls are KB lookups, NOT tickets - clarified to user).
+- Still-open user decision: authentication fix deferred ("not yet - focus on getting the export out first"). API remains fully unauthenticated in production.

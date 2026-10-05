@@ -30,10 +30,11 @@ import {
   v3ResendBrandCredentials,
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-import { RelationshipStageSelect, relationshipStageMeta, relationshipStageOf } from '../../lib/relationshipStage';
+import useTopbarOffset from '../../lib/useTopbarOffset';
 import { PriorityTag as RelationshipPriorityTag } from '../../lib/snapshotPriority';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
-import { BrandLogo as SharedBrandLogo } from '../../lib/brandLogo';
+import { BrandLogo as SharedBrandLogo, emailDomainMatchesBrand, isThirdPartyLogoDomain } from '../../lib/brandLogo';
+import { isClosed, listableCases } from '../../lib/stageContent';
 import { toast } from 'sonner';
 
 const EMPTY_VALUE = 'Not captured yet';
@@ -184,9 +185,11 @@ const domainFromEmail = (email = '') => {
 const logoCandidatesForBrand = (brand) => {
   const direct = logoUrlForBrand(brand);
   const websiteDomain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
-  const emailDomain = domainFromEmail(firstValue(brand, ['email', 'contact_email', 'primary_contact_email', 'primaryContactEmail']));
+  const contactDomain = domainFromEmail(firstValue(brand, ['email', 'contact_email', 'primary_contact_email', 'primaryContactEmail']));
+  const emailDomain = emailDomainMatchesBrand(contactDomain, brandName(brand)) ? contactDomain : '';
   const domains = [websiteDomain, emailDomain]
     .filter(Boolean)
+    .filter((domain) => !isThirdPartyLogoDomain(domain))
     .filter((value, index, array) => array.indexOf(value) === index);
   const domainCandidates = domains.flatMap((domain) => [
     // Clearbit (`logo.clearbit.com`) removed - the service shut down and the
@@ -206,9 +209,33 @@ const logoCandidatesForBrand = (brand) => {
     .filter((value, index, array) => array.indexOf(value) === index);
 };
 
-const BrandLogo = ({ brand }) => (
+// Plain-language origin of a logo URL the page found on its own (nothing
+// saved on the record), e.g. a favicon service keyed on the brand's domain.
+const describeLogoUrl = (url) => {
+  const text = String(url || '');
+  if (!text) return '';
+  if (/^(data:|blob:)/i.test(text)) return 'An uploaded image';
+  try {
+    const parsed = new URL(text);
+    const host = parsed.hostname.replace(/^www\./, '');
+    if (host === 'google.com' && parsed.pathname.startsWith('/s2/favicons')) {
+      return `Google's favicon service for ${parsed.searchParams.get('domain') || 'the brand website'}`;
+    }
+    if (host === 'icons.duckduckgo.com') {
+      return `DuckDuckGo's icon service for ${parsed.pathname.split('/').pop().replace(/\.ico$/, '')}`;
+    }
+    if (host === 'upload.wikimedia.org') return 'Wikimedia Commons';
+    return host;
+  } catch (_) {
+    return '';
+  }
+};
+
+const BrandLogo = ({ brand, onResolved }) => (
   <SharedBrandLogo
     name={brandName(brand)}
+    onResolved={onResolved}
+    storedLogo={logoUrlForBrand(brand)}
     candidates={logoCandidatesForBrand(brand)}
     containerClassName="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-[8px] border border-[#D7CBB8] bg-white"
     imgClassName="h-full w-full object-contain p-2"
@@ -315,9 +342,18 @@ const businessCaseActivityTs = (businessCase) => {
   }), 0);
 };
 
+// Which project the page treats as CURRENT - the one it offers to continue.
+// A closed project must never become that, so this filter keeps them out.
 const activeCasesForBrand = (items = []) => [...items]
   .filter((businessCase) => !['closed', 'archived'].includes(String(businessCase?.stage || '').toLowerCase()) && businessCase?.status !== 'deleted')
   .sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a));
+
+// Which projects the page LISTS. Closing a project records that the work
+// finished; it does not mean the work disappears. Listing only active cases
+// took closed projects off the brand page entirely - and with them the stage
+// buttons and every document behind them. Closed projects are listed after
+// the live work and marked as closed.
+const listedCasesForBrand = (items = []) => listableCases(items, businessCaseActivityTs);
 
 // Brand portal account block + a "Resend credentials" button for when a brand
 // reports the original welcome-email credentials no longer work. Calls
@@ -398,6 +434,10 @@ const V1AdminCRMBrandDetail = () => {
   const [editingMarketingBudget, setEditingMarketingBudget] = useState(false);
   const [marketingBudgetDraft, setMarketingBudgetDraft] = useState('');
   const [editingLogo, setEditingLogo] = useState(false);
+  // The logo image the header tile actually loaded - the saved one, or a
+  // fallback found from the brand's website when nothing is saved yet.
+  const [shownLogoUrl, setShownLogoUrl] = useState('');
+  const topbarOffset = useTopbarOffset();
   const [logoDraft, setLogoDraft] = useState('');
   const [editingWebsite, setEditingWebsite] = useState(false);
   const [websiteDraft, setWebsiteDraft] = useState('');
@@ -405,6 +445,9 @@ const V1AdminCRMBrandDetail = () => {
   const [notesDraft, setNotesDraft] = useState('');
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
   const [projectChoiceOpen, setProjectChoiceOpen] = useState(false);
+  // Which project the continue-or-new dialog is pointed at. Empty until the
+  // admin picks one, which keeps a single-project brand exactly as it was.
+  const [selectedProjectId, setSelectedProjectId] = useState('');
   const [projectChoiceDismissed, setProjectChoiceDismissed] = useState(false);
   const [newProjectTitle, setNewProjectTitle] = useState('');
   // Two-step UI: the title input only appears after the admin picks one of the
@@ -493,12 +536,18 @@ const V1AdminCRMBrandDetail = () => {
           ...(res.warnings || []),
           ...(res.enrichment_target?.warnings || []),
         ];
-        const dedupedWarnings = Array.from(new Set(warnings));
+        // The endpoint answers 200 even when it could not read the site, so
+        // its `error` is the only thing that distinguishes "the site is dead"
+        // from "the site had nothing". Show it rather than an empty summary.
+        const dedupedWarnings = Array.from(new Set(res.error ? [res.error, ...warnings] : warnings));
         const sourceType = res.enrichment_target?.source_type || 'website';
         const summary = [];
         summary.push(`Source: ${sourceType}${res.website ? ` · ${res.website}` : ''}`);
         if (res.logo_url) summary.push('Logo found and updated');
         if (res.about || res.brand_about) summary.push('About information captured');
+        if (!res.logo_url && !res.about && !res.brand_about) {
+          summary.push('Nothing new was captured - see below');
+        }
         if (Array.isArray(res.supporting_links) && res.supporting_links.length) {
           summary.push(`${res.supporting_links.length} supporting link(s) kept`);
         }
@@ -555,7 +604,7 @@ const V1AdminCRMBrandDetail = () => {
 
   const handleSaveLogo = async () => {
     try {
-      await v3UpdateBrandDetails(id, { logo_url: logoDraft, brand_logo_url: logoDraft });
+      await v3UpdateBrandDetails(id, { logo_url: logoDraft, brand_logo_url: logoDraft, logo_source: 'Entered by an admin', logo_source_page: '' });
       toast.success('Logo updated successfully.');
       setEditingLogo(false);
       await reloadData();
@@ -590,7 +639,7 @@ const V1AdminCRMBrandDetail = () => {
         reader.readAsDataURL(file);
       });
       setLogoDraft(dataUrl);
-      await v3UpdateBrandDetails(id, { logo_url: dataUrl, brand_logo_url: dataUrl });
+      await v3UpdateBrandDetails(id, { logo_url: dataUrl, brand_logo_url: dataUrl, logo_source: 'Uploaded by an admin', logo_source_page: '' });
       toast.success('Logo uploaded successfully.');
       setEditingLogo(false);
       await reloadData();
@@ -669,7 +718,15 @@ const V1AdminCRMBrandDetail = () => {
   // waiting to be picked up, in the brand's priority order.
   const alignmentProjects = Array.isArray(bundle?.alignment_projects) ? bundle.alignment_projects : [];
   const activeBusinessCases = activeCasesForBrand(businessCases);
+  const listedBusinessCases = listedCasesForBrand(businessCases);
   const activeBusinessCase = activeBusinessCases[0] || null;
+  // A brand can have several projects running at once. The continue-or-new
+  // dialog lets the admin say WHICH one they mean; until they pick, and
+  // whenever a stale id no longer matches, this falls back to the most
+  // recently touched case - the single-project behaviour this page has
+  // always had.
+  const selectedProjectCase = activeBusinessCases.find((row) => row.id === selectedProjectId) || activeBusinessCase;
+  const hasSeveralProjects = activeBusinessCases.length > 1;
   const interactions = Array.isArray(bundle?.interactions) ? bundle.interactions : [];
   const opportunities = Array.isArray(bundle?.opportunities) ? bundle.opportunities : [];
   const emails = Array.isArray(bundle?.emails) ? bundle.emails : [];
@@ -692,22 +749,23 @@ const V1AdminCRMBrandDetail = () => {
   };
 
   const continueExistingProject = async () => {
-    if (!activeBusinessCase?.id) return;
+    const target = selectedProjectCase;
+    if (!target?.id) return;
     setMoving(true);
     setProjectChoiceOpen(false);
     setProjectChoiceDismissed(true);
     try {
-      const result = await v3ContinueBusinessCase(activeBusinessCase.id);
-      const continued = result.business_case || activeBusinessCase;
-      navigate(businessCasePhasePath(activeBusinessCase.id, continued));
+      const result = await v3ContinueBusinessCase(target.id);
+      const continued = result.business_case || target;
+      navigate(businessCasePhasePath(target.id, continued));
     } catch (error) {
-      navigate(businessCasePhasePath(activeBusinessCase.id, activeBusinessCase));
+      navigate(businessCasePhasePath(target.id, target));
     } finally {
       setMoving(false);
     }
   };
 
-  const startBrandProject = async (target, forceNew = false) => {
+  const startBrandProject = async (target, forceNew = false, reuseCaseId = null) => {
     if (!brand?.id) return;
     setMoving(true);
     setNotice('');
@@ -718,7 +776,14 @@ const V1AdminCRMBrandDetail = () => {
       // "<Brand> - Business Case Frame" - which is why every project under a
       // brand read the same.
       const customTitle = newProjectTitle.trim();
-      const payload = { force_new: forceNew, title: customTitle || undefined };
+      // business_case_id only matters when reusing: it tells the backend
+      // which of the brand's open projects the admin picked, instead of it
+      // falling back to the most recently updated one.
+      const payload = {
+        force_new: forceNew,
+        title: customTitle || undefined,
+        business_case_id: !forceNew && reuseCaseId ? reuseCaseId : undefined,
+      };
       const result = target === 'frame'
         ? await v3MoveBrandToFrame(brand.id, payload)
         : await v3MoveBrandToBusinessCall(brand.id, payload);
@@ -734,8 +799,22 @@ const V1AdminCRMBrandDetail = () => {
     }
   };
 
+  /*
+   * "Move to call page" means exactly that: open this brand's Connect page.
+   *
+   * It used to hand off to the continue-or-start-new dialog whenever the brand
+   * had an active case, which is how a brand past Connect stopped reaching the
+   * call page at all: Continue opens the case's CURRENT phase, and once the
+   * stage has moved on that is never Connect. But the Connect page stays valid
+   * for the life of a case - later calls, more transcripts - so a passed stage
+   * is no reason to withhold it.
+   *
+   * Safe to skip the dialog: with force_new false the endpoint is a lookup,
+   * returning the brand's active case untouched and only creating one when
+   * there is none, so this cannot pull a case's stage backwards. Starting a
+   * SEPARATE project is still offered by the dialog that opens on arrival.
+   */
   const moveToCallPage = async () => {
-    if (openProjectDecision()) return;
     await startBrandProject('connect', false);
   };
 
@@ -751,9 +830,13 @@ const V1AdminCRMBrandDetail = () => {
   if (!brand) {
     return (
       <div className="space-y-4" data-testid="v1-brand-detail-not-found">
-        <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
-        </button>
+        <div className="v1-flow-sticky-nav" style={{ top: topbarOffset }}>
+          <div>
+            <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
+              <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
+            </button>
+          </div>
+        </div>
         <div className="v3-card p-8 text-center text-[13px] text-[#8A8A8A]">{notice || 'Brand not found.'}</div>
       </div>
     );
@@ -767,42 +850,33 @@ const V1AdminCRMBrandDetail = () => {
 
   return (
     <div className="space-y-5" data-testid="v1-brand-detail">
-      <div className="flex items-center justify-between gap-4">
-        <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
-        </button>
-        <div className="flex-1" />
-        {/* Relationship stage. Saves to the brand record, so the tag updates
-            everywhere this brand appears (CRM list, business case pages). */}
-        <RelationshipStageSelect
-          brandId={id}
-          value={relationshipStageOf(brand)}
-          onChange={(next, error) => {
-            if (error) {
-              toast.error('Could not update the relationship stage.');
-              return;
-            }
-            toast.success(`Stage set to "${relationshipStageMeta(next).label}".`);
-            reloadData();
-          }}
-        />
-        <button
-          type="button"
-          onClick={() => setDeleteConfirmOpen(true)}
-          disabled={deleting}
-          className="inline-flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg border border-[#E0B0A4] bg-[#FBF1EE] text-[#B54A37] hover:bg-[#F5D9D2] transition-colors disabled:opacity-50"
-          data-testid="v1-brand-delete-button"
-          title="Delete this brand and all its linked records"
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-          {deleting ? 'Deleting…' : 'Delete brand'}
-        </button>
+      {/* Pinned so the admin can go back from anywhere on the page. */}
+      <div className="v1-flow-sticky-nav" style={{ top: topbarOffset }} data-testid="brand-detail-sticky-nav">
+        <div className="flex items-center justify-between gap-4">
+          <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
+          </button>
+          <div className="flex-1" />
+          {/* The relationship stage control used to sit here. Removed at the
+              client's request; the field itself is untouched on the record. */}
+          <button
+            type="button"
+            onClick={() => setDeleteConfirmOpen(true)}
+            disabled={deleting}
+            className="inline-flex items-center gap-1.5 text-[12px] px-3 py-1.5 rounded-lg border border-[#E0B0A4] bg-[#FBF1EE] text-[#B54A37] hover:bg-[#F5D9D2] transition-colors disabled:opacity-50"
+            data-testid="v1-brand-delete-button"
+            title="Delete this brand and all its linked records"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {deleting ? 'Deleting…' : 'Delete brand'}
+          </button>
+        </div>
       </div>
 
       <div className="v3-card p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex gap-4">
-            <BrandLogo brand={brand} />
+            <BrandLogo brand={brand} onResolved={setShownLogoUrl} />
             <div>
               <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">CRM Brand</p>
               <h1 className="v3-heading mt-1 text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)}</h1>
@@ -820,6 +894,77 @@ const V1AdminCRMBrandDetail = () => {
         </div>
         {notice && <div className="mt-4 rounded-[8px] border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2 text-[12px] text-[#7A5A1E]">{notice}</div>}
       </div>
+
+      {/* Active business cases: surfaced above Next action so admins can jump
+          straight into any stage of a project without scrolling past it. */}
+      <InfoCard title="Active business cases">
+        {listedBusinessCases.length ? (
+          <div className="grid gap-2">
+            {listedBusinessCases.map((businessCase) => (
+              <div key={businessCase.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 hover:border-[#1F4A3A]">
+                {renamingId === businessCase.id ? (
+                  // Inline rename. Projects are created with a generated
+                  // name, so every one under a brand reads the same until
+                  // someone gives it a real one.
+                  <form
+                    onSubmit={(e) => { e.preventDefault(); saveBusinessCaseName(businessCase.id); }}
+                    className="flex flex-wrap items-center gap-2"
+                  >
+                    <input
+                      autoFocus
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Escape') setRenamingId(''); }}
+                      maxLength={160}
+                      placeholder="Project name"
+                      className="flex-1 min-w-[200px] rounded-md border border-[#E8E4DB] bg-white px-2 py-1.5 text-[13px] outline-none focus:border-[#1F4A3A]"
+                      data-testid={`brand-bc-rename-input-${businessCase.id}`}
+                    />
+                    <button type="submit" disabled={renameBusy} className="v3-btn-primary text-[11px]" data-testid={`brand-bc-rename-save-${businessCase.id}`}>
+                      {renameBusy ? 'Saving…' : 'Save'}
+                    </button>
+                    <button type="button" onClick={() => setRenamingId('')} className="v3-btn-secondary text-[11px]">Cancel</button>
+                  </form>
+                ) : (
+                  <div className="flex items-start justify-between gap-2">
+                    <button type="button" onClick={() => navigate(businessCasePhasePath(businessCase.id, businessCase))} className="block flex-1 min-w-0 text-left" data-testid={`brand-bc-open-${businessCase.id}`}>
+                      <div className="flex items-center gap-2 text-[13px] font-medium text-[#1A1A1A]"><BriefcaseBusiness className="h-4 w-4 flex-shrink-0 text-[#1F4A3A]" /> <span className="break-words">{businessCase.title || 'Business Case'}</span></div>
+                      <p className="mt-1 text-[11px] text-[#8A8A8A]">
+                        Stage: {businessCase.stage_label || statusLabel(businessCase.stage)}
+                        {isClosed(businessCase) && (
+                          <span className="ml-2 rounded-full border border-[#D7CBB8] bg-[#F4F2EC] px-2 py-0.5 text-[10px] font-semibold text-[#6E6657]" data-testid={`brand-bc-closed-${businessCase.id}`}>Closed</span>
+                        )}
+                      </p>
+                    </button>
+                    <button
+                      type="button"
+                      title="Rename this project"
+                      onClick={(e) => { e.stopPropagation(); setRenamingId(businessCase.id); setRenameDraft(businessCase.title || ''); }}
+                      className="flex-shrink-0 rounded-md border border-[#E8E4DB] px-2 py-1 text-[10px] text-[#1F4A3A] hover:border-[#1F4A3A]"
+                      data-testid={`brand-bc-rename-${businessCase.id}`}
+                    >
+                      Rename
+                    </button>
+                  </div>
+                )}
+                {/* Direct jump links to Framing artifacts, shown as buttons so
+                    every stage is easy to spot and reach. Visible at every stage. */}
+                <div className="mt-2 grid grid-cols-4 gap-1.5 border-t border-[#E8E4DB] pt-2 sm:grid-cols-7">
+                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/snapshot`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-alignment-${businessCase.id}`}>Alignment</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brainstorm`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-creator-selector-${businessCase.id}`}>Creator Selector</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/creator-scan`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-creator-match-${businessCase.id}`}>Creator Match</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brief`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-brief-${businessCase.id}`}>Brief</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/plan/planning`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-planning-${businessCase.id}`}>Planning</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/delivery/deliverables`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-delivery-${businessCase.id}`}>Delivery</button>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/reporting/final-report`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-reporting-${businessCase.id}`}>Reporting</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[13px] text-[#8A8A8A]">No business case yet. Use Move to call page to create or open the Connect flow.</p>
+        )}
+      </InfoCard>
 
       {/* Next action: shared across the admin team. Any admin can read what is
           meant to happen next on this brand and edit it. */}
@@ -1035,16 +1180,39 @@ const V1AdminCRMBrandDetail = () => {
                   </div>
                 </div>
               ) : (
-                <p className="mt-1 whitespace-pre-wrap break-all text-[13px] leading-5 text-[#1A1A1A]">
-                  {(() => {
-                    const val = logoUrlForBrand(brand);
-                    if (!val) return EMPTY_VALUE;
-                    // Data URLs uploaded via the file picker can be huge - show a
-                    // friendly summary instead of a wall of base64 text.
-                    if (val.startsWith('data:')) return 'Uploaded image (stored inline)';
-                    return val;
-                  })()}
-                </p>
+                (() => {
+                  const stored = logoUrlForBrand(brand);
+                  // Nothing saved yet, but the header found a logo (e.g. the
+                  // favicon of the brand's website) - show that one rather
+                  // than claim no logo was captured.
+                  const val = stored || shownLogoUrl;
+                  const source = stored
+                    ? (textValue(brand.logo_source) !== EMPTY_VALUE ? textValue(brand.logo_source) : describeLogoUrl(stored))
+                    : describeLogoUrl(shownLogoUrl);
+                  const sourcePage = stored ? String(brand.logo_source_page || '') : '';
+                  return (
+                    <>
+                      <p className="mt-1 whitespace-pre-wrap break-all text-[13px] leading-5 text-[#1A1A1A]" data-testid="crm-logo-url">
+                        {!val
+                          ? EMPTY_VALUE
+                          // Data URLs can be huge - show a friendly summary instead
+                          // of a wall of base64 text.
+                          : val.startsWith('data:image/svg+xml') && !String(brand.logo_source || '').includes('admin')
+                            ? 'Inline SVG logo (stored with the brand)'
+                            : val.startsWith('data:') ? 'Uploaded image (stored inline)' : val}
+                      </p>
+                      {val && source && (
+                        <p className="mt-1 break-all text-[11px] leading-4 text-[#8A8A8A]" data-testid="crm-logo-source">
+                          Source: {source}
+                          {sourcePage && (
+                            <> · found on <a href={sourcePage} target="_blank" rel="noreferrer" className="text-[#1F4A3A] underline">{sourcePage}</a></>
+                          )}
+                          {!stored && ' (found automatically, not saved)'}
+                        </p>
+                      )}
+                    </>
+                  );
+                })()
               )}
             </div>
             <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">
@@ -1175,8 +1343,11 @@ const V1AdminCRMBrandDetail = () => {
         )}
       </InfoCard>
 
+      {/* One grid for Contacts, Campaigns, Interactions and Account so no
+          card is left alone in a half-empty row. With no campaigns, Account
+          sits beside Contacts and Interactions takes the full row below. */}
       <div className="grid gap-5 xl:grid-cols-2">
-        <InfoCard title="Contacts">
+        <InfoCard title="Contacts" className="order-1">
           {contacts.length ? (
             <div className="grid gap-2">
               {contacts.map((contact, index) => (
@@ -1192,7 +1363,7 @@ const V1AdminCRMBrandDetail = () => {
             can produce several; admin progresses ONE at a time, so the rest
             wait here (ranked by the brand's priority) to be picked up later. */}
         {alignmentProjects.length > 0 && (
-          <InfoCard title={`Campaigns from Alignment Snapshots (${alignmentProjects.length})`}>
+          <InfoCard title={`Campaigns from Alignment Snapshots (${alignmentProjects.length})`} className="order-2">
             <p className="text-[12px] text-[#6E6657] mb-3">
               Each campaign the AI found has its own Alignment Snapshot. You can only take one forward at a time —
               the rest stay here, in the brand's priority order, so you can come back and continue them later.
@@ -1236,80 +1407,7 @@ const V1AdminCRMBrandDetail = () => {
           </InfoCard>
         )}
 
-        <InfoCard title="Active business cases" className={alignmentProjects.length > 0 ? 'xl:col-span-2' : ''}>
-          {businessCases.length ? (
-            <div className="grid gap-2">
-              {businessCases.map((businessCase) => (
-                <div key={businessCase.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 hover:border-[#1F4A3A]">
-                  {renamingId === businessCase.id ? (
-                    // Inline rename. Projects are created with a generated
-                    // name, so every one under a brand reads the same until
-                    // someone gives it a real one.
-                    <form
-                      onSubmit={(e) => { e.preventDefault(); saveBusinessCaseName(businessCase.id); }}
-                      className="flex flex-wrap items-center gap-2"
-                    >
-                      <input
-                        autoFocus
-                        value={renameDraft}
-                        onChange={(e) => setRenameDraft(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Escape') setRenamingId(''); }}
-                        maxLength={160}
-                        placeholder="Project name"
-                        className="flex-1 min-w-[200px] rounded-md border border-[#E8E4DB] bg-white px-2 py-1.5 text-[13px] outline-none focus:border-[#1F4A3A]"
-                        data-testid={`brand-bc-rename-input-${businessCase.id}`}
-                      />
-                      <button type="submit" disabled={renameBusy} className="v3-btn-primary text-[11px]" data-testid={`brand-bc-rename-save-${businessCase.id}`}>
-                        {renameBusy ? 'Saving…' : 'Save'}
-                      </button>
-                      <button type="button" onClick={() => setRenamingId('')} className="v3-btn-secondary text-[11px]">Cancel</button>
-                    </form>
-                  ) : (
-                    <div className="flex items-start justify-between gap-2">
-                      <button type="button" onClick={() => navigate(businessCasePhasePath(businessCase.id, businessCase))} className="block flex-1 min-w-0 text-left" data-testid={`brand-bc-open-${businessCase.id}`}>
-                        <div className="flex items-center gap-2 text-[13px] font-medium text-[#1A1A1A]"><BriefcaseBusiness className="h-4 w-4 flex-shrink-0 text-[#1F4A3A]" /> <span className="break-words">{businessCase.title || 'Business Case'}</span></div>
-                        <p className="mt-1 text-[11px] text-[#8A8A8A]">Stage: {businessCase.stage_label || statusLabel(businessCase.stage)}</p>
-                      </button>
-                      <button
-                        type="button"
-                        title="Rename this project"
-                        onClick={(e) => { e.stopPropagation(); setRenamingId(businessCase.id); setRenameDraft(businessCase.title || ''); }}
-                        className="flex-shrink-0 rounded-md border border-[#E8E4DB] px-2 py-1 text-[10px] text-[#1F4A3A] hover:border-[#1F4A3A]"
-                        data-testid={`brand-bc-rename-${businessCase.id}`}
-                      >
-                        Rename
-                      </button>
-                    </div>
-                  )}
-                  {/* Direct jump links to Framing artifacts so admin can open
-                      any earlier document without having to walk back through
-                      Planning. Visible at every stage. */}
-                  <div className="mt-2 flex flex-wrap gap-1 border-t border-[#E8E4DB] pt-2">
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/snapshot`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Alignment</button>
-                    <span className="text-[10px] text-[#D7CBB8]">·</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brainstorm`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Creator Selector</button>
-                    <span className="text-[10px] text-[#D7CBB8]">·</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/creator-scan`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Creator Match</button>
-                    <span className="text-[10px] text-[#D7CBB8]">·</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brief`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Brief</button>
-                    <span className="text-[10px] text-[#D7CBB8]">·</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/plan/planning`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Planning</button>
-                    <span className="text-[10px] text-[#D7CBB8]">·</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/delivery/deliverables`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Delivery</button>
-                    <span className="text-[10px] text-[#D7CBB8]">·</span>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/reporting/final-report`); }} className="text-[10px] text-[#1F4A3A] underline hover:no-underline">Reporting</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-[13px] text-[#8A8A8A]">No business case yet. Use Move to call page to create or open the Connect flow.</p>
-          )}
-        </InfoCard>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-2">
-        <InfoCard title="Interactions">
+        <InfoCard title="Interactions" className={alignmentProjects.length > 0 ? 'order-3' : 'order-3 xl:col-span-2'}>
           {interactions.length ? (
             <div className="grid gap-2">
               {interactions.slice(0, 8).map((interaction, index) => <SmallRecord key={interaction.id || index} title={interaction.title || statusLabel(interaction.type, 'Interaction')} subtitle={[formatDateTime(interaction.date_iso || interaction.created_at), interaction.author].filter(Boolean).join(' | ')} body={interaction.content || interaction.summary || interaction.next_action} />)}
@@ -1319,7 +1417,7 @@ const V1AdminCRMBrandDetail = () => {
           )}
         </InfoCard>
 
-        <InfoCard title="Account and emails">
+        <InfoCard title="Account and emails" className={alignmentProjects.length > 0 ? 'order-4' : 'order-2'}>
           <div className="grid gap-3">
             <BrandAccountCard brandId={id} account={account} />
             <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3 text-[12px]" data-testid="brand-deliverables-panel">
@@ -1350,19 +1448,50 @@ const V1AdminCRMBrandDetail = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" data-testid="brand-project-choice-modal">
           <div className="v3-card w-full max-w-lg bg-white p-6 shadow-2xl">
             <div className="mb-5">
-              <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">Active project found</p>
+              <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A]">
+                {hasSeveralProjects ? `${activeBusinessCases.length} active projects found` : 'Active project found'}
+              </p>
               <h3 className="mt-1 text-[18px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
                 Continue or start a new project?
               </h3>
               <p className="mt-2 text-[13px] leading-6 text-[#6E6657]">
-                {brandName(brand)} already has an active Business Case. Continue opens the last worked phase. Start New creates a separate project for this brand.
+                {hasSeveralProjects
+                  ? `${brandName(brand)} has ${activeBusinessCases.length} active Business Cases. Pick the one you mean - Continue opens its last worked phase and adding a transcript adds it to that same case. Start New creates a separate project for this brand.`
+                  : `${brandName(brand)} already has an active Business Case. Continue opens the last worked phase, adding a transcript adds it to this same case, and Start New creates a separate project for this brand.`}
               </p>
             </div>
-            <div className="rounded-[8px] border border-[#E8E4DB] bg-[#FAFAF7] p-3 text-[12px]">
-              <p className="font-semibold text-[#1A1A1A]">{activeBusinessCase.title || 'Business Case'}</p>
-              <p className="mt-1 text-[#6E6657]">Stage: {statusLabel(activeBusinessCase.stage)}</p>
-              <p className="mt-1 text-[#8A8A8A]">Updated: {formatDateTime(activeBusinessCase.updated_at || activeBusinessCase.created_at)}</p>
-            </div>
+            {/* One project: the same read-only card as before. Several: the
+                same card per project, selectable, so Continue and the
+                transcript button act on the one the admin picked rather
+                than whichever was touched last. */}
+            {hasSeveralProjects ? (
+              <div className="max-h-[220px] space-y-2 overflow-y-auto" role="radiogroup" aria-label="Choose a project" data-testid="brand-project-choice-list">
+                {activeBusinessCases.map((projectCase) => {
+                  const picked = projectCase.id === selectedProjectCase?.id;
+                  return (
+                    <button
+                      key={projectCase.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={picked}
+                      onClick={() => setSelectedProjectId(projectCase.id)}
+                      className={`w-full rounded-[8px] border p-3 text-left text-[12px] transition-colors ${picked ? 'border-[#1F4A3A] bg-[#F1F6F3]' : 'border-[#E8E4DB] bg-[#FAFAF7] hover:border-[#C7D7CF]'}`}
+                      data-testid={`brand-project-choice-${projectCase.id}`}
+                    >
+                      <p className="font-semibold text-[#1A1A1A]">{projectCase.title || 'Business Case'}</p>
+                      <p className="mt-1 text-[#6E6657]">Stage: {statusLabel(projectCase.stage)}</p>
+                      <p className="mt-1 text-[#8A8A8A]">Updated: {formatDateTime(projectCase.updated_at || projectCase.created_at)}</p>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-[8px] border border-[#E8E4DB] bg-[#FAFAF7] p-3 text-[12px]">
+                <p className="font-semibold text-[#1A1A1A]">{activeBusinessCase.title || 'Business Case'}</p>
+                <p className="mt-1 text-[#6E6657]">Stage: {statusLabel(activeBusinessCase.stage)}</p>
+                <p className="mt-1 text-[#8A8A8A]">Updated: {formatDateTime(activeBusinessCase.updated_at || activeBusinessCase.created_at)}</p>
+              </div>
+            )}
             {/* Two-step flow:
                 Step 1 (startNewTarget == null) - Continue, Start new options.
                 Step 2 (startNewTarget set)     - title input + Confirm / Back. */}
@@ -1375,8 +1504,20 @@ const V1AdminCRMBrandDetail = () => {
                   <button type="button" onClick={() => { setNewProjectTitle(''); setStartNewTarget('connect'); }} disabled={moving} className="v3-btn-secondary justify-center" data-testid="brand-start-new-call">
                     Start new project
                   </button>
-                  <button type="button" onClick={() => { setNewProjectTitle(''); setStartNewTarget('frame'); }} disabled={moving} className="v3-btn-secondary justify-center sm:col-span-2" style={{ borderColor: '#C49B5F', color: '#C49B5F' }} data-testid="brand-start-new-frame">
-                    Upload new transcript
+                  {/* This reuses the active case (force_new=false) - it just opens
+                      the Frame transcript upload screen. It used to route through
+                      the "start new" step with force_new=true, which meant every
+                      re-test of the transcript flow minted a brand-new business
+                      case for the same brand. */}
+                  <button
+                    type="button"
+                    onClick={async () => { setProjectChoiceOpen(false); setProjectChoiceDismissed(true); await startBrandProject('frame', false, selectedProjectCase?.id); }}
+                    disabled={moving}
+                    className="v3-btn-secondary justify-center sm:col-span-2"
+                    style={{ borderColor: '#C49B5F', color: '#C49B5F' }}
+                    data-testid="brand-start-new-frame"
+                  >
+                    {moving ? 'Opening…' : (hasSeveralProjects ? 'Add another transcript to the selected project' : 'Add another transcript to this project')}
                   </button>
                 </div>
                 <button
@@ -1410,7 +1551,7 @@ const V1AdminCRMBrandDetail = () => {
                     className="v3-btn-primary justify-center"
                     data-testid="brand-confirm-start-new"
                   >
-                    {moving ? 'Starting…' : (startNewTarget === 'frame' ? 'Add transcript' : 'Confirm: move to call')}
+                    {moving ? 'Starting…' : 'Confirm: start new project'}
                   </button>
                   <button type="button" onClick={() => setStartNewTarget(null)} className="v3-btn-secondary justify-center" data-testid="brand-back-to-choices">
                     Back

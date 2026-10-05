@@ -31,6 +31,11 @@ dist/
 dist
 
 # Environment files (comprehensive coverage)
+# Real values live in local .env files or Azure Container App settings/secrets,
+# never in Git. Commit only the .env.example templates.
+.env
+.env.*
+!.env.example
 
 *token.json*
 *credentials.json*

@@ -1,0 +1,211 @@
+# Release flow: PR -> CI checks -> merge to main -> (this workflow) build and tag
+# images from that commit -> push to ACR -> required approval -> deploy to
+# Azure Container Apps.
+#
+# Runs automatically when the CI workflow succeeds for a push to main. It can
+# also be started by hand from main (for example to redeploy after a failed
+# approval window). Deployments always use images built here from a Git commit,
+# never local files or manual ACR builds.
+#
+# Only the container image changes. App settings, secrets, scale, ingress and
+# the database are never touched by this workflow.
+#
+# Setup and operations: deploy/azure/CICD.md
+name: Deploy to Azure
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      apps:
+        description: Which apps to deploy
+        type: choice
+        options: [both, tasck-api, tasck-web]
+        default: both
+
+permissions:
+  contents: read
+  id-token: write   # GitHub OIDC -> Azure, no stored Azure passwords
+
+# One production rollout at a time. A newer commit waiting for approval
+# replaces an older one that is still waiting.
+concurrency:
+  group: deploy-azure-production
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-tasck-prod
+  ACR_NAME: acrtasckproddcycxfri
+  ACR_LOGIN_SERVER: acrtasckproddcycxfri.azurecr.io
+
+jobs:
+  guard:
+    name: Resolve commit to release
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      apps: ${{ steps.pick.outputs.apps }}
+    steps:
+      - name: Pick the commit and refuse anything that is not a green main commit
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_APPS: ${{ inputs.apps }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_run" ]; then
+            if [ "$RUN_CONCLUSION" != "success" ]; then echo "CI did not succeed ($RUN_CONCLUSION); nothing to deploy."; exit 1; fi
+            if [ "$RUN_EVENT" != "push" ] || [ "$RUN_BRANCH" != "main" ] || [ "$RUN_REPO" != "$GITHUB_REPOSITORY" ]; then
+              echo "Only CI runs for pushes to main in $GITHUB_REPOSITORY deploy (got $RUN_EVENT/$RUN_BRANCH/$RUN_REPO)."; exit 1
+            fi
+            SHA="$RUN_SHA"; APPS="both"
+          else
+            if [ "$REF" != "refs/heads/main" ]; then echo "Manual deployments run only from main (got $REF)."; exit 1; fi
+            SHA="$GITHUB_SHA"; APPS="${INPUT_APPS:-both}"
+          fi
+          echo "Releasing commit $SHA (apps: $APPS)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "apps=$APPS" >> "$GITHUB_OUTPUT"
+
+  build-push:
+    name: Build and push ${{ matrix.app }}
+    needs: guard
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - app: tasck-api
+            context: backend
+          - app: tasck-web
+            context: frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.sha }}
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name "$ACR_NAME"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/${{ matrix.app }}:${{ needs.guard.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ needs.guard.outputs.sha }}
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+  deploy:
+    name: Deploy ${{ matrix.app }} to production
+    needs: [guard, build-push]
+    runs-on: ubuntu-24.04
+    environment: production   # required reviewers approve here
+    strategy:
+      max-parallel: 1         # API first, then web
+      matrix:
+        app: [tasck-api, tasck-web]
+    env:
+      SHA: ${{ needs.guard.outputs.sha }}
+    steps:
+      - name: Skip apps not selected
+        id: sel
+        run: |
+          if [ "${{ needs.guard.outputs.apps }}" = "both" ] || [ "${{ needs.guard.outputs.apps }}" = "${{ matrix.app }}" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: azure/login@v2
+        if: steps.sel.outputs.run == 'true'
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Roll out new image
+        if: steps.sel.outputs.run == 'true'
+        env:
+          APP: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          az extension add --name containerapp --upgrade --only-show-errors
+          # Deploy by immutable digest of the image this workflow built from $SHA.
+          DIGEST=$(az acr repository show --name "$ACR_NAME" --image "$APP:$SHA" --query digest -o tsv)
+          IMAGE="$ACR_LOGIN_SERVER/$APP@$DIGEST"
+
+          PREVIOUS_IMAGE=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query "properties.template.containers[0].image" -o tsv)
+          echo "Previous image: $PREVIOUS_IMAGE"
+          echo "New image:      $IMAGE"
+          echo "PREVIOUS_IMAGE=$PREVIOUS_IMAGE" >> "$GITHUB_ENV"
+
+          if [ "$PREVIOUS_IMAGE" = "$IMAGE" ]; then
+            echo "$APP already runs this image; nothing to roll out."
+            echo "UNCHANGED=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          az containerapp update -g "$RESOURCE_GROUP" -n "$APP" \
+            --image "$IMAGE" \
+            --revision-suffix "g${SHA::7}-${GITHUB_RUN_ID: -6}-${GITHUB_RUN_ATTEMPT}" \
+            --only-show-errors -o none
+
+      - name: Wait for the new revision to be healthy
+        if: steps.sel.outputs.run == 'true' && env.UNCHANGED != 'true'
+        env:
+          APP: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            read -r LATEST READY <<<"$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" \
+              --query "[properties.latestRevisionName, properties.latestReadyRevisionName]" -o tsv | tr '\n' ' ')"
+            STATE=$(az containerapp revision show -g "$RESOURCE_GROUP" -n "$APP" --revision "$LATEST" \
+              --query "properties.runningState" -o tsv 2>/dev/null || echo unknown)
+            echo "latest=$LATEST ready=$READY state=$STATE"
+            if [ "$LATEST" = "$READY" ] && [[ "$STATE" =~ ^(Running|RunningAtMaxScale)$ ]]; then exit 0; fi
+            if [[ "$STATE" =~ ^(Failed|Degraded)$ ]]; then exit 1; fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Smoke test through the public web endpoint
+        if: steps.sel.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          FQDN=$(az containerapp show -g "$RESOURCE_GROUP" -n tasck-web --query "properties.configuration.ingress.fqdn" -o tsv)
+          for i in $(seq 1 12); do
+            if curl -fsS "https://$FQDN/healthz" && curl -fsS "https://$FQDN/api/health"; then echo; exit 0; fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Roll back to the previous image
+        if: failure() && steps.sel.outputs.run == 'true' && env.PREVIOUS_IMAGE != '' && env.UNCHANGED != 'true'
+        env:
+          APP: ${{ matrix.app }}
+        run: |
+          echo "Rolling $APP back to $PREVIOUS_IMAGE"
+          az containerapp update -g "$RESOURCE_GROUP" -n "$APP" --image "$PREVIOUS_IMAGE" \
+            --revision-suffix "rollback-${GITHUB_RUN_ID: -6}-${GITHUB_RUN_ATTEMPT}" --only-show-errors -o none

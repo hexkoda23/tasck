@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Clock3, FileText, MessageSquare, Send, ShieldCheck } from 'lucide-react';
-import { v3AddAlignmentComment, v3AddPitchDeckComment, v3AddStrategySnapshotComment, v3ApproveAlignmentAs, v3ApprovePitchDeckAs, v3ApproveSnapshot, v3CreateInteraction, v3GetBrand, v3GetBusinessCase, v3ListBusinessCases, v3ListInteractions, v3SubmitBrandFeedback } from '../../lib/v3api';
+import { v3AddAlignmentComment, v3AddPitchDeckComment, v3AddStrategySnapshotComment, v3ApproveAlignmentAs, v3ApproveContract, v3ApprovePitchDeckAs, v3ApproveSnapshot, v3CreateInteraction, v3GetBrand, v3GetBusinessCase, v3ListBusinessCases, v3ListInteractions, v3SubmitBrandFeedback } from '../../lib/v3api';
 import { formatNairaV3 } from '../../lib/v3data';
 import { getBrandPortalSession } from '../../lib/v3brandPortal';
-import { BrandLogo as SharedBrandLogo } from '../../lib/brandLogo';
+import { BrandLogo as SharedBrandLogo, isThirdPartyLogoDomain } from '../../lib/brandLogo';
 
 export const emptyText = 'Not captured yet.';
 export const cleanPortalText = (value) => String(value ?? '').replace(/Ã—/g, 'x').replace(/â€”|â€“/g, '-').replace(/â€¦/g, '...').replace(/â‚¦/g, '₦').replace(/ðŸ[^\s]*/g, '').replace(/[_-]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -29,7 +29,8 @@ export const domainFromWebsite = (website = '') => {
 };
 export const brandLogoCandidates = (brand) => {
   const direct = brandLogo(brand);
-  const domain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
+  const siteDomain = domainFromWebsite(firstValue(brand, ['website', 'url', 'brand_url', 'source_url']));
+  const domain = isThirdPartyLogoDomain(siteDomain) ? '' : siteDomain;
   return [
     direct,
     domain ? 'https://' + domain + '/favicon.png' : '',
@@ -71,7 +72,8 @@ const hasOpenBrandComment = (doc) => Array.isArray(doc?.brand_comments)
 export const documentStatusLabel = (doc) => {
   if (!doc) return DOC_STATUS.NOT_READY;
   const status = String(doc.status || '').toLowerCase();
-  if (doc.brand_approved || doc.approved_at || status === 'approved') return DOC_STATUS.APPROVED;
+  // A signed contract is as settled as an approved document.
+  if (doc.brand_approved || doc.approved_at || status === 'approved' || status === 'signed') return DOC_STATUS.APPROVED;
   const released = Boolean(doc.sent_to_brand_at) || ['sent_to_brand', 'imported', 'sent'].includes(status);
   // The brand sending it back outranks "Sent": there is something to action.
   if (released && hasOpenBrandComment(doc)) return DOC_STATUS.IN_PROGRESS;
@@ -88,7 +90,8 @@ export const documentStatusTone = (doc) => ({
 export const stageIndex = (stage) => Math.max(0, stageOrder.indexOf(stage || 'connect'));
 export const bundleCase = (bundle) => bundle?.business_case || bundle?.businessCase || bundle?.case || bundle || {};
 export const activityTime = (item) => { const bc = bundleCase(item); return Math.max(...[bc.updated_at, bc.last_interaction_at, bc.created_at, item?.updated_at, item?.created_at].map((v) => { const p = Date.parse(v || ''); return Number.isNaN(p) ? 0 : p; }), 0); };
-export const projectValue = (bc) => { const value = bc?.estimated_value || bc?.value || bc?.total_value || bc?.budget; return value ? formatNairaV3(Number(value)) : 'Value pending'; };
+// Exact, in the currency admin approved it in (Planning > Total value).
+export const projectValue = (bc) => { const value = Number(bc?.estimated_value || bc?.value || bc?.total_value || bc?.budget); return value ? (bc?.value_currency === 'USD' ? '$' : '₦') + value.toLocaleString('en-US', { maximumFractionDigits: 2 }) : 'Value pending'; };
 export const projectProgress = (stage) => Math.round(((stageIndex(stage) + 1) / stageOrder.length) * 100);
 export const projectSummary = (bundle) => { const bc = bundleCase(bundle); if (bc.stage === 'closed') return cleanPortalText('This project has been closed by TASCK. The final report, feedback, contracts, and approved documents remain available in this brand portal.'); return cleanPortalText(bc.next_action || bc.summary || bc.connect?.stated_intent || bc.description || 'TASCK is progressing this project with your team.'); };
 
@@ -167,7 +170,10 @@ export const useV1BrandPortalData = () => {
       portalCache.set(brandId, fresh);
       setState({ loading: false, hydrated: true, error: '', ...fresh });
     } catch (e) {
-      setState((current) => ({ ...current, loading: false, error: portalCache.has(brandId) ? current.error : (e?.response?.data?.detail || e.message || 'Brand portal data could not be loaded.') }));
+      // A failed load is still a settled one: pages wait on `hydrated`, so
+      // leaving it false here kept them on "Loading brand portal data..."
+      // forever instead of showing the error.
+      setState((current) => ({ ...current, loading: false, hydrated: true, error: portalCache.has(brandId) ? current.error : (e?.response?.data?.detail || e.message || 'Brand portal data could not be loaded.') }));
     }
   }, [brandId]);
   useEffect(() => { reload(); }, [reload]);
@@ -192,10 +198,10 @@ export const latestRevisionInfo = (snapshot) => {
 // specific part of the document (per-section comment boxes), we thread the
 // section through so admin sees exactly which part the comment refers to.
 export const sendDocumentComment = ({ kind, snapshot, businessCase, brand, comment, author, sectionIndex, sectionHeading }) => { const cleanComment = cleanPortalText(comment); if (!cleanComment) throw new Error('Add a comment before sending it back to TASCK.'); const quoted = cleanPortalText(sectionHeading || '') || 'Brand review'; const idx = Number.isInteger(sectionIndex) ? sectionIndex : 0; if (kind === 'alignment') return v3AddAlignmentComment(snapshot.id, { section_index: idx, quoted_text: quoted, comment: cleanComment, author }); if (kind === 'strategy') return v3AddStrategySnapshotComment(snapshot.id, { section_index: idx, quoted_text: quoted, comment: cleanComment, author }); if (kind === 'pitch') return v3AddPitchDeckComment(snapshot.id, { section_index: idx, quoted_text: quoted, comment: cleanComment, author }); return v3CreateInteraction({ brand_id: businessCase.brand_id || brand?.id, business_case_id: businessCase.id, type: kind === 'contract' ? 'brand_contract_comment' : 'brand_document_comment', title: sentenceCaseStatus(kind) + ' comment from brand' + (sectionHeading ? ' - ' + cleanPortalText(sectionHeading) : ''), author, content: (sectionHeading ? '[' + cleanPortalText(sectionHeading) + '] ' : '') + cleanComment }); };
-export const approveDocument = ({ kind, businessCase, author, snapshot }) => { if (kind === 'alignment') return v3ApproveAlignmentAs(businessCase.id, author, 'brand', snapshot?.id); if (kind === 'strategy') return v3ApproveSnapshot(businessCase.id, author, 'brand'); if (kind === 'pitch') return v3ApprovePitchDeckAs(businessCase.id, author, 'brand'); return v3CreateInteraction({ brand_id: businessCase.brand_id, business_case_id: businessCase.id, type: 'brand_document_approval', title: sentenceCaseStatus(kind) + ' approved by brand', author, content: 'Brand approved this document from the V1 brand portal.' }); };
+export const approveDocument = ({ kind, businessCase, author, snapshot }) => { if (kind === 'alignment') return v3ApproveAlignmentAs(businessCase.id, author, 'brand', snapshot?.id); if (kind === 'strategy') return v3ApproveSnapshot(businessCase.id, author, 'brand'); if (kind === 'pitch') return v3ApprovePitchDeckAs(businessCase.id, author, 'brand', snapshot?.id); if (kind === 'contract' && snapshot?.id) return v3ApproveContract(snapshot.id, author); return v3CreateInteraction({ brand_id: businessCase.brand_id, business_case_id: businessCase.id, type: 'brand_document_approval', title: sentenceCaseStatus(kind) + ' approved by brand', author, content: 'Brand approved this document from the V1 brand portal.' }); };
 export const sendReportFeedback = async ({ businessCase, brand, author, feedback }) => { const cleanFeedback = cleanPortalText(feedback); if (!cleanFeedback) throw new Error('Add feedback before sending it to TASCK.'); await v3SubmitBrandFeedback(businessCase.id, { rater: author, scores: { clarity: 10, representation: 10, coordination: 10, professionalism: 10, overall: 10 }, comment: cleanFeedback }); return v3CreateInteraction({ brand_id: businessCase.brand_id || brand?.id, business_case_id: businessCase.id, type: 'brand_report_feedback', title: 'Report feedback from brand', author, content: cleanFeedback }); };
 
-export const BrandIdentityCard = ({ brand, session, compact = false }) => { return <div className={'v3-card ' + (compact ? 'p-4' : 'p-5')}><div className="flex items-start gap-4"><SharedBrandLogo name={brandName(brand)} candidates={brandLogoCandidates(brand)} containerClassName="w-16 h-16 rounded-xl border border-[#E8E4DB] bg-white overflow-hidden flex items-center justify-center shrink-0" imgClassName="w-full h-full object-contain p-1.5" initialsClassName="text-lg font-bold text-[#1F4A3A]" /><div className="min-w-0"><p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">Signed-in brand</p><h2 className="v3-heading text-2xl break-words" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)}</h2><p className="text-[13px] text-[#6B6258] mt-1">{brandIndustry(brand)} · {brandContact(brand, session)}</p>{!compact && <p className="text-[13px] text-[#5C5C5C] mt-3 leading-6">{brandAbout(brand)}</p>}</div></div></div>; };
+export const BrandIdentityCard = ({ brand, session, compact = false }) => { return <div className={'v3-card ' + (compact ? 'p-4' : 'p-5')}><div className="flex items-start gap-4"><SharedBrandLogo name={brandName(brand)} storedLogo={brandLogo(brand)} candidates={brandLogoCandidates(brand)} containerClassName="w-16 h-16 rounded-xl border border-[#E8E4DB] bg-white overflow-hidden flex items-center justify-center shrink-0" imgClassName="w-full h-full object-contain p-1.5" initialsClassName="text-lg font-bold text-[#1F4A3A]" /><div className="min-w-0"><p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider">Signed-in brand</p><h2 className="v3-heading text-2xl break-words" style={{ fontFamily: "'Fraunces', serif" }}>{brandName(brand)}</h2><p className="text-[13px] text-[#6B6258] mt-1">{brandIndustry(brand)} · {brandContact(brand, session)}</p>{!compact && <p className="text-[13px] text-[#5C5C5C] mt-3 leading-6">{brandAbout(brand)}</p>}</div></div></div>; };
 // "Closed" is intentionally not shown to brands (client feedback, Aug 2026):
 // it is an internal end-state, not a phase a brand is working through. It
 // stays in `stageOrder` so stageIndex/projectProgress keep working for closed

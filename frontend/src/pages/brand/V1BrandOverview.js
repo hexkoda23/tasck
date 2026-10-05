@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, BriefcaseBusiness, CheckCircle2, ChevronDown, Clock3, FileSignature, FileText, MessageSquare, Presentation, RotateCcw, ShieldCheck } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, CheckCircle2, ChevronDown, Clock3, FileSignature, FileText, MessageSquare, PackageCheck, Presentation, RotateCcw, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { BrandIdentityCard, ErrorState, LoadingState, ProjectStageRail, brandName, bundleCase, documentGroupsFromBundles, projectProgress,  projectValue, stageLabel, useV1BrandPortalData } from './V1BrandPortalData';
 import { v3ListBrandNotifications } from '../../lib/v3api';
@@ -25,6 +25,7 @@ const BRAND_KIND_ICON = {
   alignment_approved: CheckCircle2,
   strategy_ready: FileText,
   contract_ready: FileSignature,
+  deliverable_ready: PackageCheck,
   admin_message: MessageSquare,
 };
 

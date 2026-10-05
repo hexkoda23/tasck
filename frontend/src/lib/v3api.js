@@ -131,6 +131,35 @@ export const v3MarkAlignmentViewed = (bcId, snapshotId, viewer) => v3.post(`/bus
 
 export const v3UpdateAlignment = (snapshotId, payload) => v3.patch(`/alignment-snapshots/${snapshotId}`, payload).then(r => r.data);
 
+// -------- Admin Assistant (global chat widget) --------
+export const v3AdminAssistantChat = (payload) =>
+  // The server tries up to two AI providers, 40s each, so the client budget has
+  // to sit above that worst case (and still under the 100s edge-proxy limit) -
+  // otherwise a fallback that succeeds at 45s is thrown away by our own timeout.
+  v3.post('/admin-assistant/chat', payload, { timeout: 95000 }).then(r => r.data);
+
+// -------- Assistant agent (tool-calling; backend/assistant) --------
+// The server caps a turn at ASSISTANT_TIMEOUT_SECONDS (70s by default), so this
+// waits a little longer than the server does rather than abandoning work that is
+// still running - the old widget gave up at 60s while the backend could run for
+// 180, which surfaced as a gateway error on a request that later succeeded.
+const ASSISTANT = `${BACKEND_URL}/api/v3/assistant`;
+const assistant = axios.create({
+  baseURL: ASSISTANT,
+  headers: { 'Content-Type': 'application/json' },
+  timeout: 80000,
+});
+
+export const v3AssistantChat = (payload) => assistant.post('/chat', payload).then(r => r.data);
+export const v3AssistantChanges = (sessionId, limit = 50) =>
+  assistant.get('/changes', { params: { session_id: sessionId, limit } }).then(r => r.data);
+export const v3AssistantDiagnostics = () => assistant.get('/diagnostics').then(r => r.data);
+// Undo is deterministic, so it goes straight to the journal rather than through
+// the model: it takes back the whole of the most recent request and returns the
+// restored document.
+export const v3AssistantUndo = (sessionId) =>
+  assistant.post('/undo', { session_id: sessionId }).then(r => r.data);
+
 // Sending builds the .docx and then talks to Gmail SMTP (20s socket timeout)
 // before writing the outbox row, which can outrun the default 45s client
 // timeout and surface as a gateway error even though delivery is in flight.
@@ -206,17 +235,56 @@ export const v3AnalyzeBrainstormTranscript = async (bcId, transcript, alignmentS
   }
   throw new Error('Transcript analysis timed out. Please retry.');
 };
+export const v3SaveBrainstormTranscriptDraft = (bcId, transcript, alignmentSnapshotId, { keepalive = false } = {}) => {
+  const path = `/business-cases/${bcId}/brainstorm/transcript-draft`;
+  const body = { transcript, alignment_snapshot_id: alignmentSnapshotId || null };
+  // keepalive lets the save finish while the tab is closing or reloading
+  // (axios cannot). The browser caps keepalive bodies at 64KB, so very long
+  // transcripts rely on the debounced save instead.
+  if (keepalive) {
+    return fetch(`${V3}${path}`, {
+      method: 'PATCH', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+  }
+  return v3.patch(path, body).then(r => r.data);
+};
 export const v3SkipBrainstormTranscript = (bcId) => v3.post(`/business-cases/${bcId}/brainstorm/skip-transcript`).then(r => r.data);
 export const v3ContractPdfUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/pdf`;
 export const v3AlignmentDocxUrl = (snapshotId) => `${BACKEND_URL}/api/v3/alignment-snapshots/${snapshotId}/docx`;
 export const v3CreativeBriefDocxUrl = (briefId) => `${BACKEND_URL}/api/v3/creative-briefs/${briefId}/docx`;
 export const v3StrategySnapshotDocxUrl = (snapshotId) => `${BACKEND_URL}/api/v3/creative-snapshots/${snapshotId}/docx`;
 export const v3ContractDocxUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/docx`;
+// Links people are sent (Copy link / WhatsApp) must be absolute even when the
+// API is same-origin (BACKEND_URL empty in production builds).
+export const v3ShareableUrl = (url) => (/^https?:\/\//i.test(url) ? url : `${window.location.origin}${url}`);
+// The contract alone in the browser (inline PDF) - what Copy link and
+// WhatsApp share, instead of the admin Contract page.
+export const v3ContractViewUrl = (contractId) => v3ShareableUrl(`${BACKEND_URL}/api/v3/contracts/${contractId}/view`);
 export const v3FinalReportPdfUrl = (reportId) => `${BACKEND_URL}/api/v3/final-reports/${reportId}/pdf`;
-export const v3FeedbackPdfUrl = (reportId) => `${BACKEND_URL}/api/v3/final-reports/${reportId}/feedback/pdf`;
+// The report alone as a letterhead web page: what its Copy link / WhatsApp
+// share open; embed=true drops the page's own toolbar for the admin Preview.
+export const v3FinalReportViewUrl = (reportId, embed = false) => v3ShareableUrl(`${BACKEND_URL}/api/v3/final-reports/${reportId}/view${embed ? '?embed=true' : ''}`);
+// `audience` picks which form the PDF contains: 'brand' -> Brand Partner
+// form only, 'creator' -> Creative Partner form only. Omit it for the admin's
+// own full copy (both forms plus the internal-use notes).
+export const v3FeedbackPdfUrl = (reportId, audience) => `${BACKEND_URL}/api/v3/final-reports/${reportId}/feedback/pdf${audience ? `?audience=${encodeURIComponent(audience)}` : ''}`;
+// One side's feedback form (brand | creator) on the letterhead - the admin
+// Preview (embed) of exactly what that side's PDF holds.
+export const v3FeedbackViewUrl = (reportId, audience, embed = false) => v3ShareableUrl(`${BACKEND_URL}/api/v3/final-reports/${reportId}/feedback/view?audience=${encodeURIComponent(audience)}${embed ? '&embed=true' : ''}`);
 export const v3SendContractEmail = (contractId, payload) => v3.post(`/contracts/${contractId}/send-email`, payload).then(r => r.data);
 export const v3SendFinalReportEmail = (reportId, payload) => v3.post(`/final-reports/${reportId}/send-email`, payload).then(r => r.data);
+// payload.audience ('brand' | 'creator') decides which of the two forms is
+// attached - the brand never receives the creative's form and vice versa.
 export const v3SendFeedbackEmail = (reportId, payload) => v3.post(`/final-reports/${reportId}/feedback/send-email`, payload).then(r => r.data);
+
+// -------- Public feedback form (no login - the token in the URL is the
+// access control, same convention as the PDF/flip-book links above) --------
+// The public form URL for one side. This is what Copy link and WhatsApp must
+// share: the form itself, not the admin page that generated it.
+export const v3GetFeedbackPublicLink = (reportId, audience) =>
+  v3.get(`/final-reports/${reportId}/feedback/public-link`, { params: { audience } }).then(r => r.data);
+export const v3GetPublicFeedbackForm = (token) => v3.get(`/public/feedback/${token}`).then(r => r.data);
+export const v3SubmitPublicFeedbackForm = (token, payload) => v3.post(`/public/feedback/${token}`, payload).then(r => r.data);
 
 // -------- Contracts --------
 export const v3ListContracts = (bcId) => v3.get('/contracts', { params: { business_case_id: bcId } }).then(r => r.data);
@@ -224,9 +292,11 @@ export const v3CreateContract = (payload) => v3.post('/contracts', payload).then
 export const v3UpdateContract = (contractId, payload) => v3.patch(`/contracts/${contractId}`, payload).then(r => r.data);
 export const v3UpdateFinalReport = (reportId, payload) => v3.patch(`/final-reports/${reportId}`, payload).then(r => r.data);
 export const v3MarkReportSent = (reportId) => v3.post(`/final-reports/${reportId}/mark-report-sent`).then(r => r.data);
-export const v3MarkFeedbackSent = (reportId) => v3.post(`/final-reports/${reportId}/mark-feedback-sent`).then(r => r.data);
+export const v3MarkFeedbackSent = (reportId, audience) => v3.post(`/final-reports/${reportId}/mark-feedback-sent`, undefined, audience ? { params: { audience } } : undefined).then(r => r.data);
 export const v3CloseBusinessCase = (bcId) => v3.post(`/business-cases/${bcId}/close`).then(r => r.data);
 export const v3SignContract = (contractId) => v3.post(`/contracts/${contractId}/sign`).then(r => r.data);
+// Brand approves a contract from its portal (stamped on the contract).
+export const v3ApproveContract = (contractId, approver) => v3.post(`/contracts/${contractId}/approve`, { approver, approver_party: 'brand' }).then(r => r.data);
 // Planning Feedback card: admin can re-send feedback requests to brand/creator.
 export const v3SendFeedbackRequest = (bcId, payload) => v3.post(`/business-cases/${bcId}/feedback/request`, payload).then(r => r.data);
 export const v3ListFeedbackRequests = (bcId) => v3.get(`/business-cases/${bcId}/feedback/requests`).then(r => r.data);
@@ -236,6 +306,10 @@ export const v3CreateInvoice = (payload) => v3.post('/invoices', payload).then(r
 export const v3DeleteInvoice = (invoiceId) => v3.delete(`/invoices/${invoiceId}`).then(r => r.data);
 // Planning page free-form text (timeline plan, planning notes) saved on case.plan.
 export const v3UpdatePlanningText = (bcId, payload) => v3.patch(`/business-cases/${bcId}/planning`, payload).then(r => r.data);
+// Planning Concept (Pitch Deck slides 3 + 6) and timeline (slide 8), AI-written
+// from the deck; cached server-side until the deck changes.
+export const v3PlanningFromPitchDeck = (bcId, force = false) =>
+  v3.post(`/business-cases/${bcId}/planning/from-pitch-deck`, undefined, { params: force ? { force: true } : undefined, timeout: 120000 }).then(r => r.data);
 // Creator Match Scanner: persist the picked-creator shortlist so the Planning
 // page Creator details card lights up immediately (instead of only after the
 // brief is sent).
@@ -278,12 +352,26 @@ export const v3ListDeliverables = (bcId) => v3.get('/deliverables', { params: { 
 export const v3AddDeliverable = (payload) => v3.post('/deliverables', payload).then(r => r.data);
 export const v3UpdateDeliverable = (deliverableId, payload) => v3.patch(`/deliverables/${deliverableId}`, payload).then(r => r.data);
 export const v3TransitionDeliverable = (deliverableId) => v3.post(`/deliverables/${deliverableId}/transition`, { actor: 'rm' }).then(r => r.data);
+// Delivery page uploads: one call per file (PDF, Word, image...). The first
+// successful upload takes the deliverable off "pending upload". Returns the
+// deliverable with its slim `attachments` metadata, never the base64 blob.
+export const v3UploadDeliverableFile = (deliverableId, payload) => v3.post(`/deliverables/${deliverableId}/upload`, payload).then(r => r.data);
+export const v3DeleteDeliverableFile = (fileId) => v3.delete(`/deliverables/files/${fileId}`).then(r => r.data);
+// Stream URL for downloading a previously-uploaded deliverable attachment.
+export const v3DeliverableFileUrl = (fileId) => `${_BACKEND_URL_FOR_INVOICE}/api/v3/deliverables/files/${fileId}`;
+// Admin approval gate on the Delivery page. Approving marks the deliverables
+// approved, unlocks Reporting, and raises a fresh "deliverable available"
+// notification in the brand portal on every click. Omit deliverable_ids to
+// approve every deliverable on the business case.
+export const v3ApproveDeliverables = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/deliverables/approve`, payload).then(r => r.data);
 export const v3RequestScopeChange = (bcId, payload) => v3.post(`/business-cases/${bcId}/scope-change`, payload).then(r => r.data);
 export const v3ApproveScopeChange = (bcId, scId) => v3.post(`/business-cases/${bcId}/scope-change/${scId}/approve`).then(r => r.data);
 
 // -------- Closure --------
 export const v3ListFinalReports = (bcId) => v3.get('/final-reports', { params: { business_case_id: bcId } }).then(r => r.data);
-export const v3GenerateFinalReport = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/final-report/generate`, payload).then(r => r.data);
+// The report's prose is AI-written (server allows ~100s), so wait longer than
+// the 45s default.
+export const v3GenerateFinalReport = (bcId, payload = {}) => v3.post(`/business-cases/${bcId}/final-report/generate`, payload, { timeout: 150000 }).then(r => r.data);
 export const v3SubmitBrandFeedback = (bcId, payload) => v3.post(`/business-cases/${bcId}/feedback/brand`, payload).then(r => r.data);
 export const v3SubmitCreatorFeedback = (bcId, payload) => v3.post(`/business-cases/${bcId}/feedback/creator`, payload).then(r => r.data);
 
@@ -331,6 +419,7 @@ export const v3GenerateAlignmentFromTranscripts = (brandId, transcripts = []) =>
     call_date: item.date || item.call_date || '',
     session_label: item.session || item.session_label || `Session ${index + 1}`,
     notes: item.notes || '',
+    meeting_id: item.backendId || item.meeting_id || undefined,
   })),
 }, { timeout: 240000 }).then(r => r.data);
 export const v3RegenerateMeetingQuestions = (meetingId) => v3.post(`/meetings/${meetingId}/questions/regenerate`).then(r => r.data);
@@ -341,6 +430,9 @@ export const v3DeleteQualificationMeeting = (meetingId, payload = {}) => v3.post
 export const v3ProceedBusinessCall = (meetingId) => v3.post(`/meetings/${meetingId}/business/proceed`).then(r => r.data);
 export const v3RescheduleBusinessCall = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/business/reschedule`, payload).then(r => r.data);
 export const v3DeleteBusinessCall = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/business/delete`, payload).then(r => r.data);
+// Removes one saved transcript/conversation row only - unlike v3DeleteBusinessCall
+// above, this never deletes or flags the brand it belongs to.
+export const v3DeleteConnectTranscript = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/connect-transcript/delete`, payload).then(r => r.data);
 export const v3AcceptCreatorFitCall = (meetingId) => v3.post(`/meetings/${meetingId}/creator-fit/accept`).then(r => r.data);
 export const v3RescheduleCreatorFitCall = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/creator-fit/reschedule`, payload).then(r => r.data);
 export const v3RejectCreatorFitCall = (meetingId, payload = {}) => v3.post(`/meetings/${meetingId}/creator-fit/reject`, payload).then(r => r.data);
@@ -359,6 +451,13 @@ export const v3ReassignRM = (brandId, rmId) => v3.patch(`/brands/${brandId}/rm`,
 // Legacy reset helper removed; use the real workbook import instead
 
 // -------- Metrics --------
+// Agency-wide operational Overview. One request populates the whole page and
+// every figure is counted live from the CRM collections, so the dashboard
+// tracks the workflow rather than holding its own copy of it.
+// See backend/v3_overview.py.
+export const v3AdminOperationalOverview = (windowDays = 30) =>
+  v3.get('/metrics/overview', { params: { window_days: windowDays } }).then(r => r.data);
+
 export const v3AdminOverview = () => v3.get('/metrics/admin-overview').then(r => r.data);
 
 // -------- Projects --------
@@ -376,10 +475,12 @@ export const v3DeleteConnectSource = (bcId, sourceId) =>
 export const v3ListOpportunities = (bcId) => v3.get(`/business-cases/${bcId}/connect/opportunities`).then(r => r.data);
 // Detection runs as a background job (Claude takes 20-60s; a sync request
 // would 504 behind the gateway). Start it, then poll until it completes.
-export const v3StartDetectOpportunities = (bcId) => v3.post(`/business-cases/${bcId}/connect/detect-opportunities`).then(r => r.data);
+// `selection`, when given as { meeting_ids, source_ids }, limits detection to
+// just those conversations instead of every one ever saved for this case.
+export const v3StartDetectOpportunities = (bcId, selection) => v3.post(`/business-cases/${bcId}/connect/detect-opportunities`, selection || {}).then(r => r.data);
 export const v3GetDetectOpportunitiesJob = (bcId, jobId) => v3.get(`/business-cases/${bcId}/connect/detect-opportunities/jobs/${jobId}`).then(r => r.data);
-export const v3DetectOpportunities = async (bcId, onProgress) => {
-  const started = await v3StartDetectOpportunities(bcId);
+export const v3DetectOpportunities = async (bcId, onProgress, selection) => {
+  const started = await v3StartDetectOpportunities(bcId, selection);
   const jobId = started?.job_id;
   if (!jobId) return started; // future-proof: a sync response passes straight through
   for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -459,7 +560,8 @@ export const v3GeneratePitchDeck = async (bcId, onProgress, snapshotId) => {
   throw new Error('Pitch Deck generation timed out. Please retry.');
 };
 export const v3UpdatePitchDeck = (deckId, payload) => v3.patch(`/pitch-decks/${deckId}`, payload).then(r => r.data);
-export const v3ApprovePitchDeckAs = (bcId, approver, approver_party = 'admin') => v3.post(`/business-cases/${bcId}/pitch-deck/approve`, { approver, approver_party }).then(r => r.data);
+// deckId: the deck being approved (a case can hold one per Alignment Snapshot).
+export const v3ApprovePitchDeckAs = (bcId, approver, approver_party = 'admin', deckId) => v3.post(`/business-cases/${bcId}/pitch-deck/approve`, { approver, approver_party, deck_id: deckId || undefined }).then(r => r.data);
 // Same shape as the alignment send: docx build + SMTP. Longer timeout, and no
 // retry so the brand is never emailed the deck twice.
 export const v3SendPitchDeckToBrand = (bcId, payload = {}) =>
@@ -493,6 +595,7 @@ export const v3RemovePitchDeckCreatorImage = (deckId, imageId) =>
   v3.delete(`/pitch-decks/${deckId}/creator-images/${imageId}`).then(r => r.data);
 export const v3AddPitchDeckComment = (deckId, payload) => v3.post(`/pitch-decks/${deckId}/comments`, payload).then(r => r.data);
 export const v3PitchDeckDocxUrl = (deckId) => `${V3}/pitch-decks/${deckId}/docx`;
+export const v3PitchDeckPdfUrl = (deckId) => `${V3}/pitch-decks/${deckId}/pdf`;
 // Standalone flip-book HTML (fonts embedded, works offline). Inline for
 // preview; ?download=1 saves the file so admin can send it to clients.
 export const v3PitchDeckFlipbookUrl = (deckId, download = false) => `${V3}/pitch-decks/${deckId}/flipbook${download ? '?download=1' : ''}`;
@@ -515,6 +618,17 @@ export const v3MergeBusinessCaseInto = (sourceId, targetId, actor = 'admin') =>
   v3.post(`/business-cases/${sourceId}/merge-into`, { target_id: targetId, actor }).then(r => r.data);
 export const v3DismissDuplicatePair = (sourceId, otherId) =>
   v3.post(`/business-cases/${sourceId}/duplicate-dismiss`, { other_id: otherId }).then(r => r.data);
+
+// Bare-brand duplicates - two brands added twice with no business case yet
+// to catch them via the case-duplicate scan above.
+export const v3ListBrandDuplicates = () =>
+  v3.get('/brand-duplicates').then(r => r.data);
+export const v3BrandDuplicatesCount = () =>
+  v3.get('/brand-duplicates/count').then(r => r.data);
+export const v3MergeBrandInto = (sourceId, targetId, actor = 'admin') =>
+  v3.post(`/brands/${sourceId}/merge-into`, { target_id: targetId, actor }).then(r => r.data);
+export const v3DismissBrandDuplicatePair = (sourceId, otherId) =>
+  v3.post(`/brands/${sourceId}/duplicate-dismiss`, { other_id: otherId }).then(r => r.data);
 
 // --- Admin messages unread badge ---------------------------------------
 export const v3AdminMessagesUnreadCount = () =>

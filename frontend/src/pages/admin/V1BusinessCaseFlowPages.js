@@ -1,14 +1,25 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
+import { pickActiveBrainstormRound } from '../../lib/brainstormRound';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
-import { RelationshipStageSelect, relationshipStageMeta, relationshipStageOf } from '../../lib/relationshipStage';
+import useTopbarOffset from '../../lib/useTopbarOffset';
+import { flowNeighbours, flowStepHref, flowStepComplete, flowGateKey, flowStepOwnsNext, creatorsSelected, STEP_PENDING_HINT, rememberFlowPage, lastFlowPage, flowStepRank } from '../../lib/v1FlowSteps';
 import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
-import { PrioritySelect } from '../../lib/snapshotPriority';
+import { PriorityTag, PRIORITY_OPTIONS } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../components/admin/StrategyDraftEditor';
+import PitchDeckSlideEditor, { PITCH_SLIDE_LABELS, PITCH_SLIDE_ORDER_UI, flattenSlide, humanizeKey } from '../../components/admin/PitchDeckSlideEditor';
+import DateTimePickerField from '../../components/admin/DateTimePickerField';
+import TranscriptEntry from '../../components/admin/TranscriptEntry';
+import SavedArtifactCard from '../../components/admin/SavedArtifactCard';
+import { contentFingerprint } from '../../lib/contentFingerprint';
 import { TtaLetterhead } from '../../components/v1/TtaLetterhead';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
+import { useAssistantSurface } from '../../assistant/useAssistantSurface';
+import { shouldAutoGenerate } from '../../lib/stageContent';
+import { useClickOutside } from '../../hooks/useClickOutside';
+import { downloadFile } from '../../lib/downloadFile';
 
 // Detect a cell that contains a KPI list (either real array of dicts, or a
 // stringified Python-repr dict / object literal) and render it cleanly.
@@ -65,6 +76,7 @@ const KpiCardList = ({ items }) => {
   );
 };
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   BookOpen,
@@ -93,6 +105,8 @@ import {
   Hash,
   CircleDot,
   ExternalLink,
+  PencilLine,
+  Paperclip,
 } from 'lucide-react';
 import {
   v3AcceptCreatorBriefing,
@@ -110,7 +124,9 @@ import {
   v3BrainstormSuggestedQuestions,
   v3AnalyzeBrainstormTranscript,
   v3SkipBrainstormTranscript,
+  v3SaveBrainstormTranscriptDraft,
   v3ContractPdfUrl,
+  v3ContractViewUrl,
   v3AlignmentDocxUrl,
   v3TemplateBriefDocxUrl,
   v3TemplateBriefPreviewUrl,
@@ -125,6 +141,7 @@ import {
   v3AddPitchDeckCreatorImage,
   v3RemovePitchDeckCreatorImage,
   v3PitchDeckDocxUrl,
+  v3PitchDeckPdfUrl,
   v3PitchDeckFlipbookUrl,
   v3PitchDeckSlidesUrl,
   v3GetPitchDeckAnalytics,
@@ -132,15 +149,17 @@ import {
   v3StrategySnapshotDocxUrl,
   v3ContractDocxUrl,
   v3FinalReportPdfUrl,
+  v3FinalReportViewUrl,
   v3FeedbackPdfUrl,
+  v3FeedbackViewUrl,
   v3CreateBrief,
-  v3SendCreativeBriefToEmail,
   v3CreateContract,
   v3UpdateContract,
   v3SendContractEmail,
   v3UpdateFinalReport,
   v3SendFinalReportEmail,
   v3SendFeedbackEmail,
+  v3GetFeedbackPublicLink,
   v3CloseBusinessCase,
   v3CreateMeeting,
   v3UploadMeetingTranscript,
@@ -150,15 +169,22 @@ import {
   v3DeleteBusinessCaseConnect,
   v3GenerateAlignmentQuestions,
   v3GenerateAlignmentFromTranscripts,
+  v3DetectOpportunities,
+  v3DeleteConnectTranscript,
   v3GenerateFinalReport,
   v3GetBusinessCase,
   v3TouchBusinessCase,
   v3UpdateBusinessCaseValue,
+  v3CreateCreator,
   v3GetCreators,
   v3ListMeetings,
   v3ListBriefs,
   v3ListContracts,
   v3ListDeliverables,
+  v3ApproveDeliverables,
+  v3UploadDeliverableFile,
+  v3DeleteDeliverableFile,
+  v3DeliverableFileUrl,
   v3PromoteBusinessCaseConnect,
   v3RescheduleBusinessCaseConnect,
   v3RescheduleCreatorBriefing,
@@ -175,6 +201,7 @@ import {
   v3UploadInvoice,
   v3InvoiceFileUrl,
   v3UpdatePlanningText,
+  v3PlanningFromPitchDeck,
   v3SendStrategySnapshotToBrand,
   v3SignContract,
   v3SuggestCreatorMatches,
@@ -183,6 +210,7 @@ import {
   v3CompleteSubphase,
   v3UpdateSelectedCreators,
   v3UpdateStrategySnapshot,
+  v3SetSnapshotPriority,
 } from '../../lib/v3api';
 import { formatNairaV3 } from '../../lib/v3data';
 
@@ -200,6 +228,7 @@ const brainstormingSections = [
 
 export const useBusinessCaseBundle = () => {
   const params = useParams();
+  const location = useLocation();
   const id = params.id || params.businessCaseId;
   const snapshotId = params.snapshotId || params.alignmentSnapshotId || null;
   const [bundle, setBundle] = useState(null);
@@ -220,10 +249,30 @@ export const useBusinessCaseBundle = () => {
     if (!id) return;
     v3TouchBusinessCase(id).catch(() => {});
   }, [id]);
+  // Remember WHICH page, so Continue on the brand reopens the page the admin
+  // actually left rather than the one the stage implies. Every flow page goes
+  // through this hook, so recording here covers all of them.
+  useEffect(() => {
+    rememberFlowPage(id, location.pathname);
+  }, [id, location.pathname]);
   return { id, snapshotId, bundle, loading, reload };
 };
 
 const getCase = (bundle) => bundle?.business_case || {};
+
+// Read a picked File into the bare base64 body (no data: prefix) that the
+// backend upload endpoints expect. Shared by the Planning invoice upload and
+// the Delivery deliverable upload.
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+  reader.onload = () => {
+    const result = String(reader.result || '');
+    const comma = result.indexOf(',');
+    resolve(comma >= 0 ? result.slice(comma + 1) : result);
+  };
+  reader.readAsDataURL(file);
+});
 const getBrand = (bundle) => bundle?.brand || {};
 
 const valueFrom = (record, keys) => {
@@ -344,39 +393,46 @@ const stepperConfig = (id, stage, pathname, bc = {}) => {
   };
 };
 
-export const businessCasePhasePath = (id, bc = {}) => {
+/*
+ * The admin has two areas, and a page belongs to exactly one of them:
+ *   CRM           - Connect + Framing  (/connect/*, /frame/*)
+ *   Business Case - Planning -> Delivery -> Reporting
+ * FlowShell already splits on the same test to pick the back button and the
+ * stepper, which is why opening a /frame page from the Business Cases tab
+ * looked like being thrown into CRM Brands.
+ */
+const isCrmAreaPath = (path) => /\/business-cases\/[^/]+(?:\/snapshot\/[^/]+)?\/(connect|frame)(\/|$)/.test(path || '');
+
+const resolvePhasePath = (id, bc = {}) => {
+  // "Continue" opens the furthest phase the project has reached. The page the
+  // admin was last on only wins when it is at or beyond that point (say, the
+  // Pitch Deck within Framing) - looking back at Planning from Reporting
+  // used to make every later "Continue" reopen Planning.
+  const furthest = furthestPhasePath(id, bc);
+  const remembered = lastFlowPage(id);
+  if (remembered && flowStepRank(remembered) >= flowStepRank(furthest)) return remembered;
+  return furthest;
+};
+
+const furthestPhasePath = (id, bc = {}) => {
   const stage = bc.stage || 'connect';
-  if (stage === 'closed' || stage === 'reporting') return adminRoute(`/business-cases/${id}/reporting/final-report`);
-  // Backend `deliver` stage covers Planning -> Delivery -> Reporting in the
-  // Business Case area. Pick the right sub-page using existing case fields so
-  // clicking on a brand opens what the admin was actually working on, not
-  // always Planning:
-  // Gated by the same sub-phase completion flags as the stepper so clicking
-  // a brand never jumps past an incomplete phase:
-  //   - Reporting only once Delivery is completed.
-  //   - Delivery only once Planning is completed.
-  //   - Otherwise land on Planning.
-  if (stage === 'deliver') {
-    const plan = bc.plan || {};
-    const planningDone = Boolean(plan.planning_completed_at);
-    const deliveryDone = Boolean(plan.delivery_completed_at) || Boolean(bc.reporting_started_at) || Boolean(bc.final_report_sent_at);
-    if (deliveryDone) return adminRoute(`/business-cases/${id}/reporting/final-report`);
-    if (planningDone) return adminRoute(`/business-cases/${id}/delivery/deliverables`);
-    return adminRoute(`/business-cases/${id}/plan/planning`);
+  const plan = bc.plan || {};
+  // Reporting reached: the case (or the Final Report page) says so.
+  if (stage === 'closed' || stage === 'reporting' || bc.business_case_phase === 'reporting'
+    || plan.delivery_completed_at || bc.reporting_started_at || bc.final_report_sent_at) {
+    return adminRoute(`/business-cases/${id}/reporting/final-report`);
   }
-  if (stage === 'plan') {
-    // Framing sub-steps 2..5 live on backend `plan` but UI shows them under /frame/*.
-    const plan = bc.plan || {};
-    // Brainstorm starts with the transcript-upload page; once the transcript
-    // has been analysed (or a round exists), go straight to the brainstorm form.
-    if (!plan.brainstorm_transcript_analyzed_at && !plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm-transcript`);
-    if (!plan.brainstorm_round_id) return adminRoute(`/business-cases/${id}/frame/brainstorm`);
-    if (!Array.isArray(plan.selected_creator_ids) || plan.selected_creator_ids.length === 0) return adminRoute(`/business-cases/${id}/frame/creator-scan`);
-    if (!plan.creative_brief_id) return adminRoute(`/business-cases/${id}/frame/brief`);
-    // Strategy Snapshot step removed - once the brief exists, the flow moves
-    // straight into the Planning phase.
-    return adminRoute(`/business-cases/${id}/plan/planning`);
-  }
+  if (bc.business_case_phase === 'delivery') return adminRoute(`/business-cases/${id}/delivery/deliverables`);
+  // Once a case has reached Planning or beyond, the active page is that
+  // phase's own page. It used to walk BACKWARDS from here into the Framing
+  // sub-steps whenever a framing artifact was missing - a case sitting at
+  // Plan with no brainstorm yet opened the Creator Selector transcript page,
+  // which reads as being thrown back into the CRM rather than opened at the
+  // stage the row says the project is at. The Plan / Delivery / Reporting
+  // chips on the row still gate what is reachable, and the Framing steps stay
+  // linked from inside the flow.
+  if (stage === 'deliver') return adminRoute(`/business-cases/${id}/delivery/deliverables`);
+  if (stage === 'plan') return adminRoute(`/business-cases/${id}/plan/planning`);
   if (stage === 'frame') {
     const frame = bc.frame || {};
     const status = frame.alignment_snapshot_status || frame.status || '';
@@ -386,6 +442,25 @@ export const businessCasePhasePath = (id, bc = {}) => {
     return adminRoute(`/business-cases/${id}/frame/snapshot`);
   }
   return adminRoute(`/business-cases/${id}/connect`);
+};
+
+/**
+ * The page to open for a case.
+ *
+ * `area: 'business-case'` keeps the answer inside the Business Case tab:
+ * opening a row there must not land on a Connect or Framing page, which
+ * renders as the CRM area and reads as being bounced to another tab. A case
+ * whose active page is still in CRM opens at Planning, the first page of the
+ * tab the admin is actually in - the Framing steps stay reachable from CRM
+ * Brands, where they belong.
+ *
+ * Without the option the answer is the true active page, whichever area it is
+ * in - which is what CRM Brands and the `/business-cases/:id` redirect want.
+ */
+export const businessCasePhasePath = (id, bc = {}, options = {}) => {
+  const resolved = resolvePhasePath(id, bc);
+  if (options.area !== 'business-case') return resolved;
+  return isCrmAreaPath(resolved) ? adminRoute(`/business-cases/${id}/plan/planning`) : resolved;
 };
 
 export const V3BusinessCaseStageHome = () => {
@@ -403,6 +478,7 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { id, bundle, loading, reload } = useBusinessCaseBundle();
+  const topbarOffset = useTopbarOffset();
   const bc = getCase(bundle);
   const flowBrand = bundle?.brand || {};
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
@@ -414,76 +490,224 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const isCrmPage = /\/(connect|frame)(\/|$)/.test(location.pathname || '');
   return (
     <div className="v3-stage-shell space-y-5" data-testid="business-case-flow-page">
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={() => navigate(-1)} className="v3-btn-secondary text-[11px]" data-testid="business-case-back-btn">
-          <ArrowLeft className="w-3.5 h-3.5" /> Back
-        </button>
-        {isCrmPage ? (
-          <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]" data-testid="business-case-crm-brands-btn">
-            <ArrowLeft className="w-3.5 h-3.5" /> CRM Brands
+      {/* Sticky nav bar: just the back buttons, pinned under the topbar so
+          the admin can go back from anywhere on a long page. The title,
+          steps and phase bar below scroll with the page so the pinned bar
+          stays one short row. */}
+      <div className="v1-flow-sticky-nav" style={{ top: topbarOffset }} data-testid="business-case-flow-sticky-nav">
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => navigate(-1)} className="v3-btn-secondary text-[11px]" data-testid="business-case-back-btn">
+            <ArrowLeft className="w-3.5 h-3.5" /> Back
           </button>
-        ) : (
-          <button type="button" onClick={() => navigate(adminRoute('/business-cases'))} className="v3-btn-secondary text-[11px]" data-testid="business-case-list-btn">
-            <ArrowLeft className="w-3.5 h-3.5" /> Business Cases
-          </button>
-        )}
-        <div className="flex-1" />
-        {/* Same relationship stage control as the CRM brand page - pinned to
-            every Business Case page so the brand's position is always visible
-            and editable. Advancing a stage updates it automatically too. */}
-        {flowBrand.id && (
-          <RelationshipStageSelect
-            brandId={flowBrand.id}
-            value={relationshipStageOf(flowBrand)}
-            onChange={(next, error) => {
-              if (error) {
-                toast.error('Could not update the relationship stage.');
-                return;
-              }
-              toast.success(`Stage set to "${relationshipStageMeta(next).label}".`);
-              reload();
-            }}
-          />
-        )}
-      </div>
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          {!isCrmPage && (
-            <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-1">{bc.title}</p>
-          )}
-          <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>{title}</h1>
-          <p className="text-[13px] text-[#6E6657] mt-1 max-w-3xl">{subtitle}</p>
-        </div>
-        {nextAction && <div className="v3-next-action-card">{nextAction}</div>}
-      </div>
-      <div className="v3-stepper">
-        {stepperLinks.map(([label, href], idx) => {
-          const locked = idx > stepperIndex;
-          return (
-            <button
-              key={label}
-              onClick={() => { if (!locked) navigate(href); }}
-              disabled={locked}
-              aria-disabled={locked}
-              title={locked ? `Locked until the ${stepperLinks[idx - 1]?.[0]} stage is completed` : ''}
-              className={`v3-stepper-item${locked ? ' v3-stepper-item-locked' : ''}`}
-              data-testid={`stepper-${label.toLowerCase()}${locked ? '-locked' : ''}`}
-            >
-              {locked && <Lock className="w-3.5 h-3.5 mr-1.5 inline-block align-[-2px]" strokeWidth={2} />}
-              {label}
+          {isCrmPage ? (
+            <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]" data-testid="business-case-crm-brands-btn">
+              <ArrowLeft className="w-3.5 h-3.5" /> CRM Brands
             </button>
-          );
-        })}
+          ) : (
+            <button type="button" onClick={() => navigate(adminRoute('/business-cases'))} className="v3-btn-secondary text-[11px]" data-testid="business-case-list-btn">
+              <ArrowLeft className="w-3.5 h-3.5" /> Business Cases
+            </button>
+          )}
+          <div className="flex-1" />
+          {/* The relationship stage pill used to sit here. Removed at the
+              client's request - the stage is still tracked on the brand record
+              and still advances with the flow, it is just not surfaced. */}
+        </div>
+      </div>
+      <div className="flex flex-col gap-5" data-testid="business-case-flow-header">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            {!isCrmPage && (
+              <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-1">{bc.title}</p>
+            )}
+            <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>{title}</h1>
+            <p className="text-[13px] text-[#6E6657] mt-1 max-w-3xl">{subtitle}</p>
+          </div>
+          {nextAction && <div className="v3-next-action-card">{nextAction}</div>}
+        </div>
+        <div className="v3-stepper">
+          {stepperLinks.map(([label, href], idx) => {
+            const locked = idx > stepperIndex;
+            return (
+              <button
+                key={label}
+                onClick={() => { if (!locked) navigate(href); }}
+                disabled={locked}
+                aria-disabled={locked}
+                title={locked ? `Locked until the ${stepperLinks[idx - 1]?.[0]} stage is completed` : ''}
+                className={`v3-stepper-item${locked ? ' v3-stepper-item-locked' : ''}`}
+                data-testid={`stepper-${label.toLowerCase()}${locked ? '-locked' : ''}`}
+              >
+                {locked && <Lock className="w-3.5 h-3.5 mr-1.5 inline-block align-[-2px]" strokeWidth={2} />}
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <PhaseProgressBar stage={phaseFromPath(location.pathname) || bc.stage} />
       </div>
       {children}
+      <FlowFooterNav id={id} bundle={bundle} />
     </div>
   );
 };
 
+// The 5 broad relationship-stage phases, always shown together so the admin
+// can tell at a glance where a project sits overall - separate from the
+// stepper above, which only ever shows the 2-3 steps within whichever area
+// (CRM vs Business Case) the admin is currently in.
+const PHASE_INDEX = { connect: 0, frame: 1, plan: 2, deliver: 3, reporting: 4, closed: 4 };
+const PHASES = ['Connect', 'Framing', 'Planning', 'Delivery', 'Reporting'];
+
+// Which of the 5 broad phases the CURRENT PAGE belongs to, from its URL -
+// independent of the case's own persisted stage, so the bar tracks where the
+// admin is looking right now instead of freezing on the case's overall stage
+// (e.g. it stayed on "Reporting" while browsing Planning/Delivery pages of a
+// case whose stage had already advanced to closed/reporting).
+const phaseFromPath = (pathname = '') => {
+  if (/\/reporting(?:\/|$)/.test(pathname)) return 'reporting';
+  // Contract Studio (and its signature wait) and the Planning summary sit
+  // under /delivery/ in the URL but are Planning pages; Delivery proper is
+  // the Deliverables page.
+  if (/\/delivery\/(contracts|waiting-signatures|summary)(?:\/|$)/.test(pathname)) return 'plan';
+  if (/\/delivery(?:\/|$)/.test(pathname)) return 'deliver';
+  if (/\/plan(?:\/|$)/.test(pathname)) return 'plan';
+  if (/\/frame(?:\/|$)/.test(pathname)) return 'frame';
+  if (/\/connect(?:\/|$)/.test(pathname)) return 'connect';
+  return null;
+};
+
+const PhaseProgressBar = ({ stage }) => {
+  const activeIndex = PHASE_INDEX[stage] ?? 0;
+  return (
+    <div className="flex items-center gap-1.5" data-testid="phase-progress-bar">
+      {PHASES.map((label, idx) => (
+        <div key={label} className="flex-1 flex flex-col items-center gap-1" data-testid={`phase-progress-${label.toLowerCase()}`}>
+          <div className={`h-1 w-full rounded-full ${idx === activeIndex ? 'bg-[#1F4A3A]' : idx < activeIndex ? 'bg-[#C7D7CF]' : 'bg-[#E8E4DB]'}`} />
+          <span className={`text-[10px] uppercase tracking-wider ${idx === activeIndex ? 'text-[#1F4A3A] font-semibold' : 'text-[#8A8A8A]'}`}>{label}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+/*
+ * Next at the bottom of every flow page.
+ *
+ * This is a shortcut back to a stage the admin has ALREADY finished, not a
+ * second way to advance into new territory - that still only happens through
+ * each page's own primary action (Save & Continue, Generate Snapshot, Open
+ * Pitch Deck, ...). Showing Next as soon as the CURRENT page's own work was
+ * done meant it could appear right alongside that same page's own onward
+ * button, inviting the admin to jump into a stage they hadn't actually done
+ * anything on yet. So it only shows once the DESTINATION step's own work is
+ * already done; otherwise the footer renders nothing at all.
+ *
+ * There used to be a matching Previous button here, but FlowShell already
+ * puts a Back button at the top-left of every page - a second one at the
+ * bottom was pure duplication, so it was removed.
+ *
+ * A page that already carries its own onward button gets no footer Next at
+ * all: one job, one button.
+ */
+const FlowFooterNav = ({ id, bundle }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { next: nextStep, snapshotId } = flowNeighbours(location.pathname, id);
+  const next = flowStepOwnsNext(location.pathname) ? null : nextStep;
+  if (!next) return null;
+  /*
+   * Gate on THIS page's own step, not on the next one.
+   *
+   * This used to read flowStepComplete(next.key) - whether the page the
+   * button leads to had already been done - which got the question backwards
+   * both ways round. A page whose own work was finished hid its Next whenever
+   * the following step had not been started yet, stranding the admin on a
+   * finished page (the exact thing this footer exists to prevent). And a page
+   * whose own work was NOT done still offered Next whenever the following
+   * step happened to be complete, which walked the admin past unfinished
+   * work. flowGateKey() names the step that actually gates this page, which
+   * is what STEP_PENDING_HINT is keyed by too.
+   */
+  const gateKey = flowGateKey(location.pathname);
+  const passed = gateKey ? flowStepComplete(gateKey, bundle) : true;
+  const hint = !passed ? STEP_PENDING_HINT[gateKey] : '';
+  return (
+    <div
+      className="flex flex-wrap items-center justify-end gap-2 border-t border-[#E8E4DB] pt-4"
+      data-testid="flow-footer-nav"
+      data-passed={passed ? 'true' : 'false'}
+    >
+      {passed ? (
+        <button
+          type="button"
+          onClick={() => navigate(flowStepHref(next, id, snapshotId))}
+          className="v3-btn-primary text-[12px]"
+          data-testid="flow-footer-next"
+        >
+          Next: {next.label} <ArrowRight className="w-3.5 h-3.5" />
+        </button>
+      ) : (
+        <p className="text-[12px] text-[#8A8A8A]" data-testid="flow-footer-pending">
+          {hint || 'Finish this step to continue.'}
+        </p>
+      )}
+    </div>
+  );
+};
+
+/*
+ * Shown instead of the Pitch Deck / Creative Brief when the Creator Match
+ * Scanner has not selected any creators yet.
+ *
+ * Both documents are written FROM the selected creators, and both used to
+ * write themselves the moment the page opened - so arriving here early (a
+ * snapshot quick-link, a bookmark, browser Back, a remembered page) produced
+ * a finished-looking document built on an empty creator set, with nothing on
+ * screen to say a step had been missed.
+ */
+const CreatorScanRequired = ({ id, snapshotId, documentLabel }) => {
+  const navigate = useNavigate();
+  const scannerHref = snapshotId
+    ? adminRoute(`/business-cases/${id}/snapshot/${snapshotId}/frame/creator-scan`)
+    : adminRoute(`/business-cases/${id}/frame/creator-scan`);
+  return (
+    <InfoCard title="Creator Match Scanner first">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <p className="text-[13px] leading-6 text-[#6E6657]">
+          The {documentLabel} is written from the creators the Creator Match Scanner selects, so it stays closed until that step has run.
+          Open the scanner, select at least one creator, then come back.
+        </p>
+        <button
+          type="button"
+          onClick={() => navigate(scannerHref)}
+          className="v3-btn-primary flex-shrink-0"
+          data-testid="creator-scan-required-btn"
+        >
+          <ArrowRight className="w-3.5 h-3.5" /> Open Creator Match Scanner
+        </button>
+      </div>
+    </InfoCard>
+  );
+};
+
+// Page 7 of the flip book lays the selected creators out as a fixed grid.
+// Mirrors _DECK_MAX_CREATOR_IMAGES in backend/v3_routes.py - the upload is
+// trimmed to this so the admin is told up front instead of collecting a
+// rejection per file.
+const DECK_MAX_CREATOR_IMAGES = 12;
+
+// The header wraps rather than squeezing the title: a card with a wide action
+// row (the Pitch Deck has eight buttons) used to compress the heading column
+// until short titles broke mid-phrase - "PITCH DECK" rendered as "PITCH" over
+// "DECK". `flex-wrap` drops the action to its own line when there is no room,
+// and `flex-shrink-0` keeps the title at its natural width instead of being
+// narrowed to fit beside it. `max-w-full` still lets a genuinely long title
+// wrap against the card edge, so nothing overflows on a phone.
 const InfoCard = ({ title, children, action }) => (
   <div className="v3-card p-5">
-    <div className="flex items-center justify-between gap-3 mb-3">
-      <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{title}</h2>
+    <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+      <h2 className="max-w-full flex-shrink-0 text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">{title}</h2>
       {action}
     </div>
     {children}
@@ -823,7 +1047,7 @@ export const saveConnectTranscriptSessions = async ({ sessions, businessCaseId, 
   return savedSessions;
 };
 
-const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel = 'Promote to Frame Regardless' }) => {
+const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel = 'Promote to Frame Regardless', hideActions = false }) => {
   if (!result) return null;
   const reasons = Array.isArray(result.reasons) ? result.reasons : [];
   const missing = Array.isArray(result.missing_context) ? result.missing_context : [];
@@ -858,14 +1082,19 @@ const ConnectAnalysisResult = ({ result, onPromote, onReschedule, promoteLabel =
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 border-t border-[#E8E4DB] pt-4">
-        <button type="button" onClick={onReschedule} className="v3-btn-secondary flex items-center gap-1" data-testid="connect-schedule-another-call-btn">
-          <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
-        </button>
-        <button type="button" onClick={onPromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-regardless-btn">
-          <CheckCircle2 className="w-3.5 h-3.5" /> {promoteButtonLabel}
-        </button>
-      </div>
+      {/* Once this analysis has already produced an Alignment Snapshot there
+          is nothing to decide here any more, so the actions come off and the
+          admin moves on with the footer Next. */}
+      {!hideActions && (
+        <div className="flex flex-wrap gap-2 border-t border-[#E8E4DB] pt-4">
+          <button type="button" onClick={onReschedule} className="v3-btn-secondary flex items-center gap-1" data-testid="connect-schedule-another-call-btn">
+            <RotateCcw className="w-3.5 h-3.5" /> Schedule another call to gather missing info
+          </button>
+          <button type="button" onClick={onPromote} className="v3-btn-primary flex items-center gap-1" data-testid="connect-promote-regardless-btn">
+            <CheckCircle2 className="w-3.5 h-3.5" /> {promoteButtonLabel}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -937,9 +1166,6 @@ const creatorContact = (creator) => cleanV1Text(
   || creator?.handle
   || ''
 );
-const selectedCreatorQuery = (ids) => encodeURIComponent(ids.join(','));
-
-
 const briefPrintHtml = (title, body) => `<!doctype html><html><head><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;color:#1A1A1A;margin:48px;line-height:1.55}h1{font-size:24px}pre{white-space:pre-wrap;font-family:Arial,sans-serif;font-size:13px}</style></head><body><h1>${escapeHtml(title)}</h1><pre>${escapeHtml(body)}</pre></body></html>`;
 
 const cloneAlignmentSnapshot = (snapshot) => {
@@ -1163,7 +1389,7 @@ export const V3BusinessCaseConnect = () => {
   // Transcript" CTA on this page becomes "Next" - it is no longer the first
   // time they are adding one, just a way back into the schedule page.
   const connectMeetings = (Array.isArray(bundle?.meetings) ? bundle.meetings : [])
-    .filter((m) => (m.meeting_type === 'business_call' || m.type === 'business_call') && String(m.transcript || '').trim());
+    .filter((m) => (m.meeting_type === 'business_call' || m.type === 'business_call') && !m.is_transcript_aggregate && String(m.transcript || '').trim());
   const hasSavedConversations = connectMeetings.length > 0 || Number(bc.connect?.connect_sources_count || 0) > 0;
   const about = valueFrom(brand, ['about', 'brand_about', 'description', 'company_description', 'notes']);
   const marketingBudget = valueFrom(brand, ['marketing_budget', 'budget', 'budget_range']) || valueFrom(bc, ['marketing_budget', 'budget', 'estimated_value']);
@@ -1286,10 +1512,12 @@ export const V3BusinessCaseConnect = () => {
                   Brand email
                   <input value={meetingForm.contact_email} onChange={(e) => updateMeetingForm('contact_email', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" placeholder="brand@example.com" />
                 </label>
-                <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
-                  Meeting date and time
-                  <input type="datetime-local" value={_normaliseDateTimeLocal(meetingForm.scheduled_for)} onChange={(e) => updateMeetingForm('scheduled_for', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" />
-                </label>
+                <DateTimePickerField
+                  label="Meeting date and time"
+                  value={_normaliseDateTimeLocal(meetingForm.scheduled_for)}
+                  onChange={(next) => updateMeetingForm('scheduled_for', next)}
+                  testId="connect-meeting-scheduled-for"
+                />
                 <label className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">
                   Meeting link
                   <input value={meetingForm.meeting_link} onChange={(e) => updateMeetingForm('meeting_link', e.target.value)} className="mt-1 w-full rounded border border-[#D7CBB8] bg-white px-3 py-2 text-[12px] text-[#1A1A1A]" placeholder="https://meet.google.com/..." />
@@ -1366,7 +1594,7 @@ export const V3BusinessCaseConnectSchedule = () => {
     try {
       const list = await v3ListMeetings({ business_case_id: id, stage: 'connect' });
       const businessCallMeetings = (list || [])
-        .filter((meeting) => meeting.meeting_type === 'business_call' || meeting.type === 'business_call')
+        .filter((meeting) => (meeting.meeting_type === 'business_call' || meeting.type === 'business_call') && !meeting.is_transcript_aggregate)
         // Sort by call_date / scheduled_for / created_at ascending so the
         // earliest call appears first as "Session 1".
         .sort((a, b) => {
@@ -1503,7 +1731,7 @@ export const V3BusinessCaseConnectSchedule = () => {
           // the OpportunitiesPanel to refetch so users don't stare at the
           // "No opportunities yet" empty state after a successful run.
           setOpportunitiesRefreshToken((prev) => prev + 1);
-          const base = 'AI analysis complete from the saved Connect transcripts.';
+          const base = 'Analysis complete from the saved Connect transcripts.';
           setSaveNotice(partialFailure ? `${base} (Warning: ${partialFailure})` : base);
           setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: 'Analysis complete. Check below for the analysed transcript.' }));
           return;
@@ -1513,7 +1741,7 @@ export const V3BusinessCaseConnectSchedule = () => {
           if (fallbackRec) setAnalysisResult(fallbackRec);
           await reload();
           const errorMsg = job.error || job.message || 'unknown error';
-          setSaveNotice(`AI analysis failed - showing safe fallback. (${errorMsg})`);
+          setSaveNotice(`Analysis failed - showing safe fallback. (${errorMsg})`);
           setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: errorMsg, message: 'Analysis failed. A safe fallback is shown below.' }));
           return;
         }
@@ -1556,9 +1784,9 @@ export const V3BusinessCaseConnectSchedule = () => {
 
       const res = await v3AnalyzeAllTranscripts(id);
       if (!res?.ok) {
-        setSaveNotice('AI analysis failed.');
+        setSaveNotice('Analysis failed.');
         stopProgressTick();
-        setAnalysisPopup((prev) => ({ ...prev, status: 'failed', error: 'AI analysis failed.', message: 'Analysis failed. Please retry.' }));
+        setAnalysisPopup((prev) => ({ ...prev, status: 'failed', error: 'Analysis failed.', message: 'Analysis failed. Please retry.' }));
         return;
       }
       // Background-job mode → poll until completed/failed
@@ -1572,14 +1800,14 @@ export const V3BusinessCaseConnectSchedule = () => {
       stopProgressTick();
       if (res.recommendation) setAnalysisResult(res.recommendation);
       setSaveNotice(() => {
-        const base = 'AI analysis complete from the saved Connect transcripts.';
+        const base = 'Analysis complete from the saved Connect transcripts.';
         return savedSessions.partialFailure ? `${base} (Warning: ${savedSessions.partialFailure})` : base;
       });
       setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: 'Analysis complete. Check below for the analysed transcript.' }));
       setOpportunitiesRefreshToken((prev) => prev + 1);
       await reload();
     } catch (e) {
-      const msg = e?.response?.data?.detail || e?.message || 'AI analysis failed.';
+      const msg = e?.response?.data?.detail || e?.message || 'Analysis failed.';
       setSaveNotice(msg);
       stopProgressTick();
       setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: msg, message: 'Analysis failed. Please retry.' }));
@@ -1589,6 +1817,51 @@ export const V3BusinessCaseConnectSchedule = () => {
       inFlightRef.current = false;
     }
   };
+
+  /*
+   * Has this text already been analysed, and is that analysis still current?
+   *
+   * The backend stamps `connect.analyzed_at` and `connect.analysis_fingerprint`
+   * (a fingerprint of the transcripts it ran on) every time analyze-all
+   * completes. Recomputing that fingerprint from the transcripts on screen
+   * answers both questions: equal means the stored analysis already covers
+   * exactly this text, so the Analyze button stays away; different means a
+   * transcript was edited or added and the work needs doing again.
+   */
+  const savedFingerprint = String(bc?.connect?.analysis_fingerprint || '');
+  const savedFingerprintParts = savedFingerprint ? savedFingerprint.split('-') : [];
+  const analyzedAt = bc?.connect?.analyzed_at || '';
+  const currentFingerprint = contentFingerprint(transcriptSessions.map((session) => session.content));
+  const hasAnalysis = Boolean(analysisResult && analyzedAt && savedFingerprint);
+  const analysisStale = hasAnalysis && currentFingerprint !== savedFingerprint;
+  // The Alignment Snapshot this analysis fed. Once it exists there is nothing
+  // left to trigger on this page.
+  const snapshotGenerated = Boolean(
+    bundle?.alignment_snapshot?.id
+    || (Array.isArray(bundle?.alignment_snapshots) && bundle.alignment_snapshots.length)
+    || bc?.frame?.alignment_snapshot_id
+  );
+  // Conversations already stored on the project, each marked with whether the
+  // stored analysis covers its current text.
+  const savedConversations = transcriptSessions
+    .filter((session) => session.meetingId && transcriptHasContent(session))
+    .map((session) => ({
+      ...session,
+      analysed: savedFingerprintParts.includes(contentFingerprint([session.content])),
+    }));
+
+  const analyzeButton = (
+    <button
+      type="button"
+      onClick={runCombinedAnalysis}
+      disabled={analyzing || saving || !transcriptSessions.some(transcriptHasContent)}
+      className="v3-btn-primary flex items-center gap-1.5"
+      data-testid="connect-analyze-all-btn"
+    >
+      {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+      {analyzing ? 'Analyzing all transcripts...' : (hasAnalysis ? 'Re-analyze transcripts' : 'Analyze All Transcripts')}
+    </button>
+  );
 
   const handlePromote = () => {
     setSaving(true);
@@ -1636,6 +1909,38 @@ export const V3BusinessCaseConnectSchedule = () => {
         />
       )}
 
+      {/* Conversations already stored on this project. Nothing here is an
+          action - it is the receipt, so returning to this page shows at a
+          glance what has been saved and analysed instead of leaving the admin
+          guessing whether they still have work to do. A card flips to
+          "Edited" the moment its text no longer matches what the stored
+          analysis was run on. */}
+      {savedConversations.length > 0 && (
+        <InfoCard title="Saved conversations">
+          <div className="grid gap-2 sm:grid-cols-2" data-testid="connect-saved-conversations">
+            {savedConversations.map((session) => (
+              <div
+                key={session.id}
+                className={`flex items-start gap-2 rounded-lg border p-3 ${session.analysed ? 'border-[#C7D7CF] bg-[#EAF4EE]' : 'border-[#E5C99A] bg-[#FBF4E4]'}`}
+                data-testid={`connect-saved-conversation-${session.id}`}
+                data-analysed={session.analysed ? 'true' : 'false'}
+              >
+                {session.analysed
+                  ? <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#1F4A3A]" />
+                  : <PencilLine className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#8A6E2F]" />}
+                <div className="min-w-0">
+                  <p className="truncate text-[12px] font-semibold text-[#1A1A1A]">{session.session || 'Session'}</p>
+                  <p className={`mt-0.5 text-[11px] ${session.analysed ? 'text-[#4F6B5D]' : 'text-[#7A5A1E]'}`}>
+                    {session.analysed ? 'Analysed and saved' : 'Edited since the last analysis'}
+                    {session.date ? ` · ${session.date}` : ''}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </InfoCard>
+      )}
+
       {/* Conversation sources: transcripts, email chains, WhatsApp threads.
           Added over time; all of them feed the opportunity analysis below. */}
       <ConnectSourcesPanel businessCaseId={id} />
@@ -1648,24 +1953,45 @@ export const V3BusinessCaseConnectSchedule = () => {
       />
 
       <InfoCard title="Combined AI Transcript Analysis">
-        <p className="text-[12px] text-[#6E6657] mb-4">
-          Analyze transcripts from all Connect meetings to extract marketing intelligence, verify readiness criteria, and generate the stage recommendation.
-        </p>
-        <button
-          type="button"
-          onClick={runCombinedAnalysis}
-          disabled={analyzing || saving || !transcriptSessions.some(transcriptHasContent)}
-          className="v3-btn-primary flex items-center gap-1.5"
-          data-testid="connect-analyze-all-btn"
-        >
-          {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-          {analyzing ? 'Analyzing all transcripts...' : 'Analyze All Transcripts'}
-        </button>
+        {/* Three states. Never analysed: offer it. Analysed and still current:
+            say so and offer nothing - generating the Alignment Snapshot is the
+            only thing left, and once that exists even that goes. Edited since:
+            the amber card brings the action back. */}
+        {hasAnalysis && !analysisStale ? (
+          <SavedArtifactCard
+            title="Conversation analysis"
+            savedAt={analyzedAt}
+            detail={snapshotGenerated
+              ? 'The Alignment Snapshot has been generated from it.'
+              : 'Generate the Alignment Snapshot below when you are ready.'}
+            testId="connect-analysis-saved-card"
+          />
+        ) : (
+          <>
+            <p className="text-[12px] text-[#6E6657] mb-4">
+              Analyze transcripts from all Connect meetings to extract marketing intelligence, verify readiness criteria, and generate the stage recommendation.
+            </p>
+            {analysisStale && (
+              <div className="mb-3">
+                <SavedArtifactCard
+                  title="Conversation analysis"
+                  savedAt={analyzedAt}
+                  stale
+                  staleMessage="A transcript has been edited or added since this analysis ran. Analyze again so the Alignment Snapshot is built from the current text."
+                  action={analyzeButton}
+                  testId="connect-analysis-saved-card"
+                />
+              </div>
+            )}
+            {!analysisStale && analyzeButton}
+          </>
+        )}
 
         <ConnectAnalysisResult
           result={analysisResult}
           onPromote={handlePromote}
           onReschedule={() => navigate(adminRoute(`/business-cases/${id}/connect/reschedule`))}
+          hideActions={hasAnalysis && !analysisStale && snapshotGenerated}
         />
       </InfoCard>
 
@@ -2000,6 +2326,27 @@ export const V3BusinessCaseConnectReschedule = () => {
   );
 };
 
+// Priority is chosen in one place only: the Priority dropdown inside the
+// "Focus & Priority" section of the snapshot narrative. Everything else -
+// the tag at the top of the Alignment Snapshot page, the snapshot list, the
+// brand's copy - reads that choice rather than offering a second dropdown.
+// A section can hold several segments, so the snapshot takes the most urgent
+// of them: that is what tells TASCK when the work has to start.
+const PRIORITY_RANK = PRIORITY_OPTIONS.map((option) => option.value);
+
+const derivePriorityFromSections = (sections) => {
+  let best = -1;
+  (Array.isArray(sections) ? sections : []).forEach((section) => {
+    if (!section || section.type !== 'focus_priority') return;
+    (Array.isArray(section.segments) ? section.segments : []).forEach((segment) => {
+      const rank = PRIORITY_RANK.indexOf(String(segment?.priority || '').trim());
+      if (rank === -1) return;
+      if (best === -1 || rank < best) best = rank;
+    });
+  });
+  return best === -1 ? '' : PRIORITY_RANK[best];
+};
+
 const AlignmentSectionEditor = ({ section, index, onChange, readOnly = false }) => {
   const update = (patch) => onChange({ ...section, ...patch });
   const columns = Array.isArray(section.columns) && section.columns.length
@@ -2289,6 +2636,28 @@ export const V3BusinessCaseFrameSnapshot = () => {
   const brandEmail = brand?.email || brand?.contact_email || brand?.primary_contact_email || '';
   const activeSnapshot = draft || snapshot;
   const hasSnapshot = Boolean(activeSnapshot?.title || activeSnapshot?.meta || activeSnapshot?.sections?.length);
+  // Live from the draft, so the tag at the top follows the Focus & Priority
+  // dropdown as it is changed. Falls back to whatever is stored for snapshots
+  // that carry no Focus & Priority section, or that the brand ranked itself.
+  const activePriority = derivePriorityFromSections(activeSnapshot?.sections) || snapshot?.priority || '';
+  /*
+   * Generated-once state. `source_fingerprint` is stamped on the snapshot at
+   * generation time from the case's connect.analysis_fingerprint, so comparing
+   * the two says whether this snapshot still reflects the analysed
+   * conversations. Matching means it is stored and current - the card says so
+   * and Regenerate is not offered, because regenerating would overwrite the
+   * admin's own edits for nothing. Once the transcripts are edited and
+   * re-analysed the fingerprints diverge and the action returns.
+   */
+  const snapshotSourceFingerprint = String(snapshot?.source_fingerprint || '');
+  const connectFingerprint = String(bundle?.business_case?.connect?.analysis_fingerprint || '');
+  const snapshotStale = Boolean(
+    hasSnapshot && snapshotSourceFingerprint && connectFingerprint
+    && snapshotSourceFingerprint !== connectFingerprint
+  );
+  // A snapshot generated before this stamp existed carries no fingerprint;
+  // treat it as current rather than nagging for a regenerate it may not need.
+  const snapshotCurrent = hasSnapshot && !snapshotStale;
   const preparingFrame = Boolean(location.state?.preparingFrame);
   // Brand comments on the alignment snapshot, shown right on this page so
   // admin sees and works on them without hunting for the admin-review page.
@@ -2350,6 +2719,17 @@ export const V3BusinessCaseFrameSnapshot = () => {
       reviewer: 'admin',
     });
     setDraft(cloneAlignmentSnapshot(saved));
+    // Keep the snapshot's own priority field in step with the Focus & Priority
+    // section, so the snapshot list, the brand's copy and the Overview all
+    // show what was chosen here without a second dropdown to maintain.
+    const derived = derivePriorityFromSections(saved?.sections || draft?.sections);
+    if (derived && derived !== saved?.priority) {
+      try {
+        await v3SetSnapshotPriority(draft.id, derived, 'admin');
+      } catch (e) {
+        toast.error('Saved, but the priority could not be recorded.');
+      }
+    }
     await reload();
     return saved;
   };
@@ -2462,8 +2842,10 @@ export const V3BusinessCaseFrameSnapshot = () => {
       setNotice(`Brand review link: ${link}`);
       return;
     }
+    // A toast, not the notice: the notice sits at the top of the card, well
+    // above the share buttons, so a copy confirmed there went unseen.
     navigator.clipboard.writeText(link)
-      .then(() => setNotice('Brand review link copied.'))
+      .then(() => toast.success('Link copied to clipboard'))
       .catch(() => setNotice(`Brand review link: ${link}`));
   };
 
@@ -2575,6 +2957,19 @@ export const V3BusinessCaseFrameSnapshot = () => {
     }));
   };
 
+  // The assistant now writes to the database itself and hands back the SAVED
+  // snapshot, so this adopts what came back instead of mutating a local draft
+  // the admin then had to remember to save.
+  useAssistantSurface({
+    id: `alignment-snapshot:${activeSnapshot?.id || 'new'}`,
+    label: `Alignment Snapshot${brand?.company ? ` \u2014 ${brand.company}` : ''}`,
+    mode: activeSnapshot ? 'document' : 'readonly',
+    documentKind: 'alignment_snapshot',
+    documentId: activeSnapshot?.id,
+    projectId: id,
+    onDocumentChanged: (doc) => { setDraft(doc); reload(); },
+  });
+
   return (
     <FlowShell title="Alignment Snapshot" subtitle="Generate, edit, save, and send the snapshot to the Brand Portal and email for brand review, comments, or approval.">
       {alignmentComments.length > 0 && (
@@ -2607,9 +3002,8 @@ export const V3BusinessCaseFrameSnapshot = () => {
             {allSnapshots.map((snapshotItem) => {
               const isEditing = snapshot?.id === snapshotItem.id;
               return (
-                <React.Fragment>
+                <React.Fragment key={snapshotItem.id}>
                 <div
-                  key={snapshotItem.id}
                   role="button"
                   tabIndex={0}
                   onClick={() => setSelectedSnapshotId(snapshotItem.id)}
@@ -2633,21 +3027,9 @@ export const V3BusinessCaseFrameSnapshot = () => {
                       {snapshotItem.priority_set_by ? ` · ranked by ${snapshotItem.priority_set_by}` : ' · not ranked yet'}
                     </p>
                   </div>
-                  <div onClick={(e) => e.stopPropagation()}>
-                    <PrioritySelect
-                      snapshotId={snapshotItem.id}
-                      value={snapshotItem.priority}
-                      actor="admin"
-                      onChange={(next, error) => {
-                        if (error) {
-                          toast.error('Could not save the priority.');
-                          return;
-                        }
-                        toast.success('Priority updated.');
-                        reload();
-                      }}
-                    />
-                  </div>
+                  {/* Read-only: each snapshot's priority is set in its own
+                      Focus & Priority section, not from a dropdown here. */}
+                  <PriorityTag priority={isEditing ? (activePriority || snapshotItem.priority) : snapshotItem.priority} />
                 </div>
                 {/* Per-snapshot quick links: each snapshot owns its own Creator
                     Selector, Pitch Deck and Creative Brief, so deep-link into
@@ -2682,13 +3064,37 @@ export const V3BusinessCaseFrameSnapshot = () => {
         title="Alignment Snapshot"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
-            {snapshot?.id && <PrioritySelect snapshotId={snapshot.id} value={snapshot.priority} actor="admin" onChange={(next, error) => { if (error) { toast.error('Could not save the priority.'); return; } toast.success('Priority updated.'); reload(); }} />}
-            <button data-testid="alignment-generate-btn" onClick={generateSnapshot} disabled={generating} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"><Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> {generating ? 'Generating…' : (hasSnapshot ? 'Regenerate Snapshot' : 'Generate Snapshot')}</button>
+            {/* Reflects the Priority chosen in the Focus & Priority section
+                below - the only place it is set. Not editable here. */}
+            {snapshot?.id && (activePriority
+              ? <PriorityTag priority={activePriority} className="self-center" />
+              : <span className="self-center text-[10px] uppercase tracking-wider text-[#8A8A8A]" data-testid="alignment-priority-unset">Priority not set</span>
+            )}
+            {/* Generate shows until there is a snapshot, and comes back only
+                when the conversations have been re-analysed since. A stored,
+                current snapshot offers nothing to press - regenerating would
+                overwrite the admin's edits and re-spend an AI call to produce
+                the same document. */}
+            {(!snapshotCurrent || generating) && (
+              <button data-testid="alignment-generate-btn" onClick={generateSnapshot} disabled={generating} className="v3-btn-primary disabled:opacity-60 disabled:cursor-not-allowed"><Sparkles className={`w-3.5 h-3.5 ${generating ? 'animate-spin' : ''}`} /> {generating ? 'Generating…' : (hasSnapshot ? 'Regenerate Snapshot' : 'Generate Snapshot')}</button>
+            )}
             <button data-testid="alignment-preview-btn" onClick={openPreview} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Preview</button>
             <button data-testid="alignment-admin-approve-btn" onClick={approveSnapshot} className="v3-btn-secondary"><CheckCircle2 className="w-3.5 h-3.5" /> {snapshot?.brand_approved ? 'Admin approve & continue' : 'Admin approve'}</button>
           </div>
         )}
       >
+        {hasSnapshot && (
+          <div className="mb-3">
+            <SavedArtifactCard
+              title="Alignment Snapshot"
+              savedAt={snapshot?.generated_at || snapshot?.updated_at}
+              detail="Edit it below and Save - your edits are kept."
+              stale={snapshotStale}
+              staleMessage="The conversations have been re-analysed since this snapshot was generated. Use Regenerate Snapshot above to rebuild it from the current analysis - your edits to this document will be replaced."
+              testId="alignment-saved-card"
+            />
+          </div>
+        )}
         {notice && (
           <div data-testid="alignment-notice" className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 mb-3 text-[12px] text-[#7A5A1E]">
             {notice}{stage && stage !== 'frame' ? ` (Current stage: ${bundle?.business_case?.stage_label || stage})` : ''}
@@ -3026,6 +3432,34 @@ export const V1BusinessCaseFrameTranscripts = () => {
   const [notice, setNotice] = useState('');
   const [generating, setGenerating] = useState(false);
 
+  // Hydrate whatever transcripts were already saved for this business case
+  // on a previous visit, so revisiting this page never shows "No transcripts
+  // yet" for a project that already has some, and re-saving reuses the same
+  // meeting records instead of creating fresh duplicates (see backendId
+  // round-tripping in generateAlignmentSnapshot below).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await v3ListMeetings({ business_case_id: id, stage: 'connect' });
+        const existing = (list || [])
+          .filter((m) => (m.meeting_type === 'business_call' || m.type === 'business_call') && !m.is_transcript_aggregate)
+          .sort((a, b) => String(a.call_date || a.created_at || '').localeCompare(String(b.call_date || b.created_at || '')))
+          .map((m, idx) => ({
+            id: m.id,
+            backendId: m.id,
+            date: m.call_date || '',
+            session: m.session_label || `Session ${idx + 1}`,
+            content: m.transcript || '',
+          }));
+        if (!cancelled && existing.length > 0) setTranscripts(existing);
+      } catch (_) {
+        // Non-fatal: the page just starts from the blank "Add Transcript" state.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
+
   const saveTranscripts = (newTranscripts) => {
     setTranscripts(newTranscripts);
   };
@@ -3040,7 +3474,18 @@ export const V1BusinessCaseFrameTranscripts = () => {
     saveTranscripts([...transcripts, newTranscript]);
   };
 
-  const removeTranscript = (transcriptId) => {
+  const removeTranscript = async (transcriptId) => {
+    const target = transcripts.find((t) => t.id === transcriptId);
+    // A hydrated session is a real saved meeting - delete it server-side too,
+    // or it would just reappear the next time this page loads.
+    if (target?.backendId) {
+      try {
+        await v3DeleteConnectTranscript(target.backendId, { reason: 'Removed from Upload Call Transcripts page' });
+      } catch (e) {
+        setNotice(e?.response?.data?.detail || e?.message || 'Could not remove that transcript.');
+        return;
+      }
+    }
     saveTranscripts(transcripts.filter(t => t.id !== transcriptId));
   };
 
@@ -3063,7 +3508,7 @@ export const V1BusinessCaseFrameTranscripts = () => {
 
   const generateAlignmentSnapshot = async () => {
     setGenerating(true);
-    setNotice('Generating alignment snapshot from transcripts...');
+    setNotice('Analysing transcripts...');
     try {
       const brandId = bc.brand_id || brand.id;
       const cleanTranscripts = transcripts.filter((item) => item.content && item.content.trim());
@@ -3076,10 +3521,20 @@ export const V1BusinessCaseFrameTranscripts = () => {
         return;
       }
       const result = await v3GenerateAlignmentFromTranscripts(brandId, cleanTranscripts);
+      const bcId = result.business_case_id || id;
+
+      // Same next step as the "Move to Call" flow: detect campaign
+      // opportunities from what was just uploaded and let the admin pick
+      // which one(s) to turn into an Alignment Snapshot, instead of jumping
+      // straight to a snapshot no one chose an opportunity for.
+      setNotice('Finding the campaign opportunities in these transcripts...');
+      await v3DetectOpportunities(bcId, (job) => {
+        if (job?.message) setNotice(job.message);
+      });
 
       await reload();
-      setNotice('Alignment snapshot generated from all transcript sessions.');
-      navigate(adminRoute(`/business-cases/${result.business_case_id || id}/frame/snapshot`));
+      setNotice('Opportunities found. Opening review...');
+      navigate(adminRoute(`/business-cases/${bcId}/connect/opportunities`));
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Failed to generate alignment snapshot.');
     } finally {
@@ -3110,6 +3565,14 @@ export const V1BusinessCaseFrameTranscripts = () => {
           <p className="text-[13px] text-[#8A8A8A]">No transcripts yet. Click "Add Transcript" to get started.</p>
         ) : (
           <div className="space-y-4">
+            {(() => {
+              const savedCount = transcripts.filter((t) => t.backendId).length;
+              return savedCount > 0 ? (
+                <p className="text-[12px] text-[#6E6657]" data-testid="transcripts-existing-notice">
+                  {savedCount} transcript{savedCount === 1 ? '' : 's'} already uploaded for this project. Click "Add Transcript" to add another, or edit a session below.
+                </p>
+              ) : null;
+            })()}
             {transcripts.map((transcript) => (
               <div key={transcript.id} className="rounded-xl border border-[#E8E4DB] bg-white p-4 shadow-sm space-y-3">
                 <div className="flex items-center justify-between gap-2 border-b border-[#F1ECDF] pb-3">
@@ -3262,6 +3725,13 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [notice, setNotice] = useState('');
   const [popup, setPopup] = useState(null); // { status, message }
+  // Pasted / uploaded text is saved as a draft per snapshot so it is still
+  // here on the next visit, whether or not it was analyzed. `touchedRef`
+  // stops the saved copy from overwriting anything typed before it loads;
+  // `pendingDraftRef` holds an unsaved edit so leaving the page flushes it.
+  const touchedRef = useRef(false);
+  const pendingDraftRef = useRef(null);
+  const draftTimerRef = useRef(null);
 
   useEffect(() => {
     if (!id) return;
@@ -3270,11 +3740,67 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
       .catch(() => setQuestions([]));
   }, [id]);
 
+  useEffect(() => {
+    if (!id || !bundle) return;
+    let cancelled = false;
+    (async () => {
+      const draft = bundle?.business_case?.plan?.brainstorm_transcript_drafts?.[activeSnapshotId || 'default'];
+      let saved = typeof draft === 'string' ? draft : '';
+      if (typeof draft !== 'string' && activeSnapshotId) {
+        // No draft yet (transcript analyzed before drafts existed) - fall
+        // back to the transcript stored on the analyzed Creator Selector.
+        try {
+          const rows = await v3ListBrainstorms(id, activeSnapshotId);
+          const scoped = Array.isArray(rows) ? rows.filter((r) => r?.alignment_snapshot_id === activeSnapshotId) : [];
+          saved = pickActiveBrainstormRound(scoped)?.transcript || '';
+        } catch (e) { /* leave the box empty */ }
+      }
+      if (!cancelled && !touchedRef.current && saved) setTranscript(saved);
+    })();
+    return () => { cancelled = true; };
+  }, [id, activeSnapshotId, bundle]);
+
+  const flushDraft = useCallback(() => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = null;
+    const text = pendingDraftRef.current;
+    pendingDraftRef.current = null;
+    if (text === null || !id) return Promise.resolve();
+    return v3SaveBrainstormTranscriptDraft(id, text, activeSnapshotId).catch(() => {});
+  }, [id, activeSnapshotId]);
+
+  const editTranscript = (updater) => {
+    touchedRef.current = true;
+    setTranscript((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      pendingDraftRef.current = next;
+      return next;
+    });
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(flushDraft, 800);
+  };
+
+  useEffect(() => () => { flushDraft(); }, [flushDraft]);
+
+  // A reload or tab close skips React unmount - save any pending edit then.
+  useEffect(() => {
+    const onPageHide = () => {
+      const text = pendingDraftRef.current;
+      if (text === null || !id) return;
+      pendingDraftRef.current = null;
+      try {
+        v3SaveBrainstormTranscriptDraft(id, text, activeSnapshotId, { keepalive: true }).catch(() => {});
+      } catch (e) { /* best effort */ }
+    };
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
+  }, [id, activeSnapshotId]);
+
   const uploadFile = async (file) => {
     if (!file) return;
     try {
       const text = await file.text();
-      setTranscript((prev) => (prev ? `${prev}\n\n${text}` : text));
+      editTranscript(text);
       setNotice(`${file.name} loaded into the transcript box.`);
     } catch (e) {
       setNotice('Could not read that file. Paste the transcript text instead.');
@@ -3294,6 +3820,7 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
     setAnalyzing(true);
     setPopup({ status: 'running', message: 'Reading the transcript and filling the TTA Creator Selector…' });
     try {
+      await flushDraft();
       await v3AnalyzeBrainstormTranscript(id, transcript.trim(), activeSnapshotId,
         (job) => setPopup({ status: 'running', message: job?.message || 'Reading the transcript…' }));
       setPopup({ status: 'complete', message: 'Creator Selector filled from the transcript. Opening it to review and edit.' });
@@ -3341,28 +3868,17 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
         )}
       </InfoCard>
 
-      <InfoCard
-        title="Upload / paste the creator selection transcript"
-        action={(
-          <label htmlFor="brainstorm-transcript-file" className="v3-btn-secondary text-[11px] cursor-pointer">
-            <Upload className="w-3.5 h-3.5" /> Upload file
-            <input
-              id="brainstorm-transcript-file"
-              type="file"
-              accept=".txt,.md,.vtt,.srt,text/plain"
-              className="hidden"
-              onChange={(e) => { uploadFile(e.target.files?.[0]); e.target.value = ''; }}
-            />
-          </label>
-        )}
-      >
-        <textarea
+      <InfoCard title="Upload / paste the creator selection transcript">
+        {/* Paste OR upload: the choice shows only while the box is empty. */}
+        <TranscriptEntry
           value={transcript}
-          onChange={(e) => setTranscript(e.target.value)}
+          onChange={(text) => editTranscript(text)}
+          onFile={uploadFile}
           rows={12}
-          placeholder="Paste the full creator selection transcript here, or use Upload file above. The more complete the transcript, the richer the auto-filled Creator Selector."
-          className="w-full text-[13px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none leading-relaxed"
-          data-testid="brainstorm-transcript-input"
+          accept=".txt,.md,.vtt,.srt,text/plain"
+          placeholder="Paste the full creator selection transcript here. The more complete the transcript, the richer the auto-filled Creator Selector."
+          textareaClassName="w-full text-[13px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none leading-relaxed"
+          testId="brainstorm-transcript"
         />
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-[11px] text-[#6E6657]">{transcript.trim().length} characters</p>
@@ -3427,7 +3943,7 @@ const CREATOR_SELECTOR_FIELDS = [
   { key: 'risks', label: 'Risks', hint: 'The biggest risks to this working - audience, creator, market, or execution risks.', placeholder: 'e.g. audience distrust of app promos; creator availability...' },
   { key: 'risk_mitigation', label: 'Risk Mitigation', hint: 'How each named risk is reduced or handled.', placeholder: 'e.g. proof-led content first; back-up creator shortlist...' },
   { key: 'budget_assumption', label: 'Budget Assumption', hint: 'The working budget level and what it is expected to buy.', placeholder: 'e.g. mid-level budget covering 3 creators + boosted posts...' },
-  { key: 'creator_matches', label: 'Creator Matches', hint: 'Creators discussed for this project - one per line. The Creator Match Scanner auto-selects these from the database.', placeholder: 'One creator per line, e.g. Temi Adebayo / Chef Kanyin / Streetstyle Lagos' },
+  { key: 'creator_matches', label: 'Creator Matches', hint: 'The creators or types of creator this project wants - one per line. The Creator Match Scanner reads each line, finds the creators in the database that fit it, and selects them for you.', placeholder: 'One per line - a type ("Food reviewers", "Lifestyle creators") or a name ("Temi Adebayo")' },
 ];
 
 export const V3BusinessCasePlanBrainstorm = () => {
@@ -3461,12 +3977,12 @@ export const V3BusinessCasePlanBrainstorm = () => {
       }
       try {
         const rows = await v3ListBrainstorms(id, activeSnapshotId);
-        // Prefer a round whose alignment_snapshot_id matches the active one;
-        // fall back to the newest matching row.
+        // Only rounds for the active snapshot; if there are several, open the
+        // one holding the saved / AI-filled work (same pick the analyzer uses).
         const scoped = Array.isArray(rows)
           ? rows.filter((r) => r?.alignment_snapshot_id === activeSnapshotId)
           : [];
-        const latest = scoped.length ? scoped[scoped.length - 1] : null;
+        const latest = pickActiveBrainstormRound(scoped);
         if (cancelled) return;
         if (latest) {
           setRound(latest);
@@ -3622,7 +4138,6 @@ export const V3BusinessCasePlanCreatorScan = () => {
     v3GetCreators().then((rows) => {
       const list = Array.isArray(rows) ? rows : [];
       setCreators(list);
-      setManualCreatorId(list[0]?.id || '');
     }).catch(() => setCreators([]));
   }, []);
   // Whenever the case loads/reloads, sync the local selection from the case
@@ -3655,6 +4170,90 @@ export const V3BusinessCasePlanCreatorScan = () => {
     persistSelectedIds(next);
     return next;
   });
+  // ---- Manual creator picker popup -------------------------------------
+  // "Add creator" opens a form instead of silently adding whatever the
+  // dropdown happened to be showing. Two modes:
+  //   existing - a creator was chosen in the dropdown; show their details for
+  //              confirmation and just add the id (no write).
+  //   new      - nothing chosen (or the database is empty); the admin fills
+  //              the form, we create the creator, then select it. The brief
+  //              and pitch deck resolve creators by id out of the database,
+  //              so a picked creator has to exist there.
+  const blankCreatorForm = {
+    name: '', genre: '', tier: 'rising', location: 'Lagos', email: '', phone: '',
+    rate_card: '', manager_name: '', manager_email: '', audience: '',
+    platforms: '', categories: '', notes: '',
+  };
+  const formFromCreator = (creator) => ({
+    ...blankCreatorForm,
+    name: creatorName(creator),
+    genre: creatorSpecialty(creator),
+    tier: creator?.tier || 'rising',
+    location: creator?.location || '',
+    email: creator?.email || '',
+    phone: creator?.phone || '',
+    rate_card: creator?.rate_card || '',
+    manager_name: creator?.manager_name || '',
+    manager_email: creator?.manager_email || '',
+    audience: creator?.audience || '',
+    platforms: (creator?.platforms || []).join(', '),
+    categories: (creator?.categories || []).join(', '),
+    notes: creator?.notes || '',
+  });
+  const [addPopup, setAddPopup] = useState(null);
+  const openAddCreator = () => {
+    const existing = creatorById(manualCreatorId);
+    setAddPopup(existing
+      ? { mode: 'existing', creatorId: existing.id, form: formFromCreator(existing), saving: false, error: '' }
+      : { mode: 'new', creatorId: null, form: { ...blankCreatorForm }, saving: false, error: '' });
+  };
+  const setAddField = (field, value) => setAddPopup((prev) => (
+    prev ? { ...prev, form: { ...prev.form, [field]: value }, error: '' } : prev
+  ));
+  // Comma-separated text -> the string[] the API expects.
+  const toList = (value) => String(value || '').split(',').map((part) => part.trim()).filter(Boolean);
+  const submitAddCreator = async () => {
+    if (!addPopup || addPopup.saving) return;
+    if (addPopup.mode === 'existing') {
+      addCreator(addPopup.creatorId);
+      setAddPopup(null);
+      return;
+    }
+    const form = addPopup.form;
+    const name = form.name.trim();
+    const genre = form.genre.trim();
+    if (!name) { setAddPopup((prev) => ({ ...prev, error: 'Creator name is required.' })); return; }
+    if (!genre) { setAddPopup((prev) => ({ ...prev, error: 'Specialty / genre is required.' })); return; }
+    setAddPopup((prev) => ({ ...prev, saving: true, error: '' }));
+    try {
+      const created = await v3CreateCreator({
+        name,
+        genre,
+        tier: form.tier || 'rising',
+        location: form.location.trim() || 'Lagos',
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        rate_card: form.rate_card.trim() || 'TBD',
+        manager_name: form.manager_name.trim() || null,
+        manager_email: form.manager_email.trim() || null,
+        audience: form.audience.trim() || null,
+        platforms: toList(form.platforms),
+        categories: toList(form.categories),
+        notes: form.notes.trim() || null,
+        source: 'manual_creator_picker',
+      });
+      if (!created?.id) throw new Error('The creator was not created.');
+      setCreators((current) => [...current, created]);
+      // Back to "No creators selected" so the next click opens a blank form -
+      // the usual case here is onboarding several creators in a row.
+      setManualCreatorId('');
+      addCreator(created.id);
+      setAddPopup(null);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e?.message || 'The creator could not be added.';
+      setAddPopup((prev) => (prev ? { ...prev, saving: false, error: String(msg) } : prev));
+    }
+  };
   // analysisSource records which engine produced the current matches.
   // Possible values:
   //   "emergent:gemini/..." | "anthropic:claude-..." | "openai:..."
@@ -3672,18 +4271,26 @@ export const V3BusinessCasePlanCreatorScan = () => {
     try {
       const data = await v3SuggestCreatorMatches(id);
       stopScanTick();
-      setMatches(Array.isArray(data?.matches) ? data.matches : []);
+      const scannedMatches = Array.isArray(data?.matches) ? data.matches : [];
+      setMatches(scannedMatches);
       setAnalysisSource(data?.analysis_source || '');
       // Creators the team NAMED in the Creator Selector "Creator Matches"
-      // field come back matched against the database - auto-select them so
-      // admin only has to confirm. The AI list below is additions on top.
+      // field come back matched against the database. The AI list below is
+      // additions on top for anyone the admin did not remember.
       const named = Array.isArray(data?.named_matches) ? data.named_matches : [];
       setNamedMatches(named);
       setNamedUnmatched(Array.isArray(data?.named_unmatched) ? data.named_unmatched : []);
-      if (named.length) {
+      // The scan IS the selection. Both the named picks and the ranked
+      // best-fit matches are selected here, so the admin never has to
+      // re-pick in the AI Database Scan list - they only untick what they
+      // do not want. `matches` is the scanner's ranked top set; the
+      // placeholder cards shown before a scan are not in it and are never
+      // auto-selected.
+      const autoSelect = [...named, ...scannedMatches];
+      if (autoSelect.length) {
         setSelectedIds((current) => {
           const next = [...current];
-          named.forEach((m) => {
+          autoSelect.forEach((m) => {
             const creatorId = m?.creator?.id;
             if (creatorId && !next.includes(creatorId)) next.push(creatorId);
           });
@@ -3691,37 +4298,35 @@ export const V3BusinessCasePlanCreatorScan = () => {
           return next;
         });
       }
-      const found = (data?.matches || []).length + (named || []).length;
-      setScanPopup({ open: true, progress: 100, status: 'complete', message: found ? `Found ${found} creator${found === 1 ? '' : 's'} matching accurately.` : 'Scan complete.' });
+      const found = scannedMatches.length + (named || []).length;
+      setScanPopup({ open: true, progress: 100, status: 'complete', message: found ? `Selected ${found} best-fit creator${found === 1 ? '' : 's'}.` : 'Scan complete.' });
       // Auto-close shortly after completion so the admin lands on the results.
       setTimeout(() => setScanPopup((prev) => ({ ...prev, open: false })), 1100);
     } catch (e) {
       stopScanTick();
-      const msg = e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.';
+      const msg = e?.response?.data?.detail || e?.message || 'The creator scan could not run yet.';
       setNotice(msg);
       setScanPopup({ open: true, progress: 100, status: 'failed', message: msg });
     } finally {
       setScanning(false);
     }
   };
+  // Which engine ran is not the admin's problem. The only distinction worth
+  // showing is whether the matches were ranked against the brief with cited
+  // evidence, or nothing ranked them and they fell back to keyword overlap.
+  // `analysisSource` still carries the provider and model for diagnostics.
   const analysisSourceLabel = (() => {
     if (!analysisSource) return '';
-    if (analysisSource === 'deterministic_keyword_overlap') return 'Deterministic keyword fallback (no LLM key configured or the LLM did not respond in time).';
-    if (analysisSource.startsWith('emergent:')) return `LLM ranking via Emergent (${analysisSource.replace('emergent:', '')}) - evidence-cited.`;
-    if (analysisSource.startsWith('anthropic:')) return `AI ranking (${analysisSource.replace('anthropic:', '')}) - evidence-cited.`;
-    if (analysisSource.startsWith('openai:')) return `LLM ranking via OpenAI (${analysisSource.replace('openai:', '')}) - evidence-cited.`;
-    return `Ranking source: ${analysisSource}.`;
+    if (analysisSource === 'deterministic_keyword_overlap') return 'Ranked on keyword overlap only - the ranking engine was unavailable or did not respond in time.';
+    return 'Ranked - evidence-cited.';
   })();
-  const continueToBrief = () => {
-    if (selectedIds.length === 0) {
-      setNotice('Select at least one creator before generating briefs.');
-      return;
-    }
-    // Entering the Brief FIRST: the Brief page links to the Pitch Deck, and
-    // the Pitch Deck (second) page moves on to the Business Case.
-    setFrameEntry(id, 'brief');
-    navigate(adminRoute(`/business-cases/${id}/frame/brief?creators=${selectedCreatorQuery(selectedIds)}`));
-  };
+  // Everything the match produced, in one list: creators whose NAME was typed
+  // into the Creator Matches field first, then the profiles matched to the
+  // requested creator TYPES. All of them are selected when the scan resolves.
+  const scanMatches = [...namedMatches, ...matches];
+  // `analysisSource` is only set once a scan has actually run, so it - not the
+  // match count - is what tells an empty result apart from "not run yet".
+  const scanned = Boolean(analysisSource) || scanMatches.length > 0;
   const continueToPitchDeck = () => {
     if (selectedIds.length === 0) {
       setNotice('Select at least one creator before opening the Pitch Deck.');
@@ -3733,9 +4338,36 @@ export const V3BusinessCasePlanCreatorScan = () => {
     navigate(adminRoute(`/business-cases/${id}/frame/pitch-deck`));
   };
   const selectedCreators = selectedIds.map(creatorById).filter(Boolean);
+
+  // Let the global admin assistant widget rewrite each matched creator's fit
+  // reasons on request, same as the Alignment Snapshot editor. `scanMatches`
+  // is namedMatches followed by matches, so an index maps back the same way.
+  const creatorAssistantSections = scanMatches.map((match) => ({
+    heading: creatorName(match.creator || {}) || 'Creator match',
+    type: 'bullets',
+    content: (match.reasons || []).join('\n'),
+  }));
+  const applyCreatorMatchUpdate = (index, section) => {
+    const reasons = String(section.content || '').split('\n').map((line) => line.trim()).filter(Boolean);
+    if (index < namedMatches.length) {
+      setNamedMatches((current) => current.map((m, i) => (i === index ? { ...m, reasons } : m)));
+    } else {
+      const matchIndex = index - namedMatches.length;
+      setMatches((current) => current.map((m, i) => (i === matchIndex ? { ...m, reasons } : m)));
+    }
+  };
+  // Read-only surface: the creator list is not a sections document, so the
+  // assistant can answer questions and navigate here but must not be handed
+  // edit_section - a tool it could only fail with.
+  useAssistantSurface({
+    id: `creator-scan:${id}${snapshotId ? `:${snapshotId}` : ''}`,
+    label: 'Creator Selector',
+    mode: 'readonly',
+    projectId: id,
+  });
+
   return (
-    <FlowShell title="Creator Match Scanner" subtitle="Scan creators, manually choose creatives from the full database, and prepare one or more creators for briefing." nextAction="Pick one or more creators, then generate editable briefs for each selected creator.">
-      {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+    <FlowShell title="Creator Match Scanner" subtitle="Run the scan to have the best-fit creators selected for you, add anyone else by hand, and prepare them for briefing." nextAction="Review the selected creators, untick any you do not want, then generate editable briefs.">
       <InfoCard title="Matching criteria">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[12px] text-[#4F3E2F]">
           <div className="rounded-md border border-[#E8E4DB] bg-[#FBFAF7] p-3"><strong>Audience and market fit:</strong> The scan compares the brand audience, buyer behavior, target geography, and culture cues from the Alignment Snapshot against creator audience and category data.</div>
@@ -3750,50 +4382,29 @@ export const V3BusinessCasePlanCreatorScan = () => {
           <label className="flex-1 space-y-1">
             <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Creator database</span>
             <select value={manualCreatorId} onChange={(e) => setManualCreatorId(e.target.value)} className="w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="creator-manual-select">
+              {/* Always present, so the field is never blank and the picker
+                  still works when the creator database is empty. */}
+              <option value="">No creators selected</option>
               {creators.map((creator) => <option key={creator.id} value={creator.id}>{creatorName(creator)} - {creatorSpecialty(creator)}</option>)}
             </select>
           </label>
-          <button onClick={() => addCreator(manualCreatorId)} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
+          <button onClick={openAddCreator} className="v3-btn-primary" data-testid="creator-add-btn"><Plus className="w-3.5 h-3.5" /> Add creator</button>
         </div>
+        <p className="mt-2 text-[11px] text-[#6E6657]">
+          {creatorById(manualCreatorId)
+            ? 'Opens the creator’s details so you can confirm them before adding to the shortlist.'
+            : 'Nothing selected, so this opens a blank form - fill it in to create the creator and add them to the shortlist.'}
+        </p>
       </InfoCard>
-      {(namedMatches.length > 0 || namedUnmatched.length > 0) && (
-        <InfoCard title={`From your Creator Selector (${namedMatches.length} matched)`}>
-          <p className="text-[12px] text-[#6E6657] mb-3">
-            Creators you named in the Creator Selector "Creator Matches" field, found in the TASCK database and
-            auto-selected below - untick any you no longer want before continuing.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {namedMatches.map((match) => {
-              const creator = match.creator || {};
-              const picked = selectedIds.includes(creator.id);
-              return (
-                <div key={creator.id} className={`rounded-lg border p-3 ${picked ? 'border-[#1F4A3A] bg-[#EAF4EE]' : 'border-[#E8E4DB] bg-white'}`} data-testid={`named-match-${creator.id}`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-[13px] font-semibold text-[#1F1B18]">{creatorName(creator)}</p>
-                      <p className="text-[11px] text-[#8A8A8A]">{creatorSpecialty(creator)}</p>
-                      <p className="text-[11px] text-[#1F4A3A] mt-1">Named by your team as "{match.matched_from}"</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => (picked ? removeCreator(creator.id) : addCreator(creator.id))}
-                      className={picked ? 'v3-btn-secondary text-[11px]' : 'v3-btn-primary text-[11px]'}
-                    >
-                      {picked ? 'Remove' : 'Add back'}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {namedUnmatched.length > 0 && (
-            <p className="mt-3 text-[11px] rounded-md border border-[#E5C99A] bg-[#FBF4E4] px-2.5 py-1.5 text-[#7A5A1E]">
-              Not found in the creator database: {namedUnmatched.join(', ')}. Add them manually below or onboard them first.
-            </p>
-          )}
-        </InfoCard>
-      )}
-      <InfoCard title="AI database scan" action={<button onClick={runScan} disabled={scanning} className="v3-btn-primary" data-testid="creator-ai-scan-btn"><Sparkles className="w-3.5 h-3.5" /> {scanning ? 'Scanning...' : 'Run AI scan'}</button>}>
+      {/* One card for everything the scan produced. The Creator Matches field
+          drives it: the model reads each requested creator TYPE, finds the
+          database profiles that belong to it, and those become the selection.
+          The old separate "AI database scan" list is gone - it asked the admin
+          to pick creators the model had already chosen. */}
+      <InfoCard
+        title="From your Creator Selector"
+        action={<button onClick={runScan} disabled={scanning} className="v3-btn-primary" data-testid="creator-ai-scan-btn"><Sparkles className="w-3.5 h-3.5" /> {scanning ? 'Scanning...' : (scanned ? 'Re-run match' : 'Match creators')}</button>}
+      >
         {analysisSourceLabel && (
           <p
             className={`mb-3 text-[11px] rounded-md border px-2.5 py-1.5 ${analysisSource === 'deterministic_keyword_overlap' ? 'border-[#E5C99A] bg-[#FBF4E4] text-[#7A5A1E]' : 'border-[#CFE0D6] bg-[#EFF5F1] text-[#1F4A3A]'}`}
@@ -3802,37 +4413,65 @@ export const V3BusinessCasePlanCreatorScan = () => {
             {analysisSourceLabel}
           </p>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {(matches.length ? matches : creators.slice(0, 8).map((creator) => ({ creator, score: creator.fit_score || creator.reliability || 70, reasons: [creatorSpecialty(creator)] }))).map((match) => {
-            const creator = match.creator || match;
-            const score = match.score || creator.fit_score || creator.fitScore || 70;
-            const selected = selectedIds.includes(creator.id);
-            return (
-              <div key={creator.id} className="rounded-[8px] border border-[#E8E4DB] bg-white p-3" data-testid="creator-match-card">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-[13px] text-[#1A1A1A]">{creatorName(creator)}</p>
-                    <p className="text-[12px] text-[#6E6657]">{creatorSpecialty(creator)}</p>
+        <p className="text-[12px] text-[#6E6657] mb-3" data-testid="creator-ai-scan-intro">
+          {scanMatches.length > 0
+            ? `Creators matched to the types you listed in the Creator Selector "Creator Matches" field and selected for you - untick any you do not want before continuing.`
+            : 'Reads the creator types you listed in the Creator Selector "Creator Matches" field, finds the creators in the database that fit them, and selects those for you.'}
+        </p>
+        {scanMatches.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {scanMatches.map((match) => {
+              const creator = match.creator || {};
+              const picked = selectedIds.includes(creator.id);
+              return (
+                <div key={creator.id} className={`rounded-lg border p-3 ${picked ? 'border-[#1F4A3A] bg-[#EAF4EE]' : 'border-[#E8E4DB] bg-white'}`} data-testid={`named-match-${creator.id}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-semibold text-[#1F1B18]">{creatorName(creator)}</p>
+                      <p className="text-[11px] text-[#8A8A8A]">{creatorSpecialty(creator)}</p>
+                      {match.matched_from
+                        ? <p className="text-[11px] text-[#1F4A3A] mt-1" data-testid={`creator-matched-from-${creator.id}`}>Matched to "{match.matched_from}"</p>
+                        : <p className="text-[11px] text-[#6E6657] mt-1">Strong fit for this brand.</p>}
+                      {(match.reasons || []).length > 0 && (
+                        <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-[11px] text-[#6E6657]">
+                          {(match.reasons || []).slice(0, 2).map((reason) => <li key={reason}>{reason}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
+                      {typeof match.score === 'number' && <span className="rounded-full bg-[#E8F3ED] px-2 py-1 text-[11px] font-semibold text-[#1F4A3A]">Fit {match.score}</span>}
+                      <button
+                        type="button"
+                        onClick={() => (picked ? removeCreator(creator.id) : addCreator(creator.id))}
+                        className={picked ? 'v3-btn-secondary text-[11px]' : 'v3-btn-primary text-[11px]'}
+                        data-testid={picked ? `creator-remove-${creator.id}` : `creator-select-${creator.id}`}
+                      >
+                        {picked ? 'Remove' : 'Add back'}
+                      </button>
+                    </div>
                   </div>
-                  <span className="rounded-full bg-[#E8F3ED] px-2 py-1 text-[11px] font-semibold text-[#1F4A3A]">Fit {score}</span>
                 </div>
-                <ul className="mt-2 list-disc space-y-1 pl-4 text-[12px] text-[#6E6657]">
-                  {(match.reasons || [match.reason || 'Strong profile fit for admin review.']).slice(0, 3).map((reason) => <li key={reason}>{reason}</li>)}
-                </ul>
-                <button onClick={() => addCreator(creator.id)} className="v3-btn-secondary mt-3 text-[11px]" disabled={selected} data-testid={`creator-select-${creator.id}`}>
-                  <CheckCircle2 className="w-3.5 h-3.5" /> {selected ? 'Selected' : 'Select creator'}
-                </button>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-[12px] text-[#8A8A8A]" data-testid="creator-ai-scan-empty">
+            {scanned
+              ? 'No creator in the database fits the requested types yet. Add them with the manual picker above, or onboard them first.'
+              : 'Nothing matched yet.'}
+          </p>
+        )}
+        {namedUnmatched.length > 0 && (
+          <p className="mt-3 text-[11px] rounded-md border border-[#E5C99A] bg-[#FBF4E4] px-2.5 py-1.5 text-[#7A5A1E]" data-testid="creator-unmatched-note">
+            Nothing in the creator database fits: {namedUnmatched.join(', ')}. Add a creator for these with the manual picker above, or onboard them first.
+          </p>
+        )}
       </InfoCard>
       <InfoCard title="Selected creators" action={(
         <div className="flex flex-wrap justify-end gap-2">
-          {/* Either can be opened first; approving one opens the other, and
-              when both are done the flow moves into Planning. */}
-          <button onClick={continueToPitchDeck} className="v3-btn-secondary" data-testid="creator-open-pitch-deck-btn"><Presentation className="w-3.5 h-3.5" /> Open Pitch Deck</button>
-          <button onClick={continueToBrief} className="v3-btn-primary" data-testid="creator-continue-brief-btn"><FileText className="w-3.5 h-3.5" /> Open Creator Brief</button>
+          {/* One path forward: Pitch Deck next, then its own "Next step" card
+              carries on to the Creative Brief before Planning. */}
+          <button onClick={continueToPitchDeck} className="v3-btn-primary" data-testid="creator-open-pitch-deck-btn"><Presentation className="w-3.5 h-3.5" /> Open Pitch Deck</button>
         </div>
       )}>
         {selectedCreators.length === 0 ? (
@@ -3851,6 +4490,101 @@ export const V3BusinessCasePlanCreatorScan = () => {
           </div>
         )}
       </InfoCard>
+
+      {addPopup && (() => {
+        const readOnly = addPopup.mode === 'existing';
+        const field = (label, key, { type = 'text', placeholder = '', required = false, span = 1 } = {}) => (
+          <label className={`space-y-1 ${span === 2 ? 'sm:col-span-2' : ''}`}>
+            <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">{label}{required && <span className="text-[#B54A37]"> *</span>}</span>
+            <input
+              type={type}
+              value={addPopup.form[key]}
+              placeholder={placeholder}
+              readOnly={readOnly}
+              disabled={addPopup.saving}
+              onChange={(e) => setAddField(key, e.target.value)}
+              className={`w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] ${readOnly ? 'bg-[#FBFAF7] text-[#6E6657]' : 'bg-white'}`}
+              data-testid={`creator-add-field-${key}`}
+            />
+          </label>
+        );
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4 py-8" data-testid="creator-add-popup">
+            <div className="w-full max-w-2xl max-h-full overflow-y-auto rounded-[10px] border border-[#D7CBB8] bg-white p-5 shadow-2xl">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EFF5F1] text-[#1F4A3A]"><UserRound className="h-4 w-4" /></span>
+                <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }} data-testid="creator-add-popup-title">
+                  {readOnly ? 'Confirm creator' : 'Add a creator'}
+                </h3>
+                <button type="button" onClick={() => setAddPopup(null)} disabled={addPopup.saving} className="ml-auto rounded-md p-1.5 text-[#6E6657] hover:bg-[#F4F2EC]" aria-label="Close" data-testid="creator-add-popup-close"><X className="h-4 w-4" /></button>
+              </div>
+              <p className="mb-4 text-[12px] text-[#6E6657]">
+                {readOnly
+                  ? 'These details come from the creator database. Confirm to add them to your shortlist.'
+                  : 'Fill in the creator’s details. They are saved to the creator database and added to your shortlist, so the Creator Brief and Pitch Deck can resolve them.'}
+              </p>
+              {addPopup.error && (
+                <div className="mb-3 rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="creator-add-popup-error">{addPopup.error}</div>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {field('Creator name', 'name', { required: true, placeholder: 'e.g. Amaka Okafor' })}
+                {field('Specialty / genre', 'genre', { required: true, placeholder: 'e.g. Food reviewer' })}
+                <label className="space-y-1">
+                  <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Tier</span>
+                  <select
+                    value={addPopup.form.tier}
+                    disabled={readOnly || addPopup.saving}
+                    onChange={(e) => setAddField('tier', e.target.value)}
+                    className={`w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] ${readOnly ? 'bg-[#FBFAF7] text-[#6E6657]' : 'bg-white'}`}
+                    data-testid="creator-add-field-tier"
+                  >
+                    <option value="rising">Rising</option>
+                    <option value="established">Established</option>
+                    <option value="premium">Premium</option>
+                  </select>
+                </label>
+                {field('Location', 'location', { placeholder: 'e.g. Lagos' })}
+                {field('Email', 'email', { type: 'email', placeholder: 'creator@example.com' })}
+                {field('Phone', 'phone', { placeholder: '+234 ...' })}
+                {field('Rate card', 'rate_card', { placeholder: 'e.g. ₦2,500,000 per campaign' })}
+                {field('Audience', 'audience', { placeholder: 'e.g. 18-34 urban Nigeria' })}
+                {field('Manager name', 'manager_name')}
+                {field('Manager email', 'manager_email', { type: 'email' })}
+                {field('Platforms (comma separated)', 'platforms', { placeholder: 'Instagram, TikTok', span: 2 })}
+                {field('Categories (comma separated)', 'categories', { placeholder: 'Food, Lifestyle', span: 2 })}
+                <label className="space-y-1 sm:col-span-2">
+                  <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Notes</span>
+                  <textarea
+                    rows={3}
+                    value={addPopup.form.notes}
+                    readOnly={readOnly}
+                    disabled={addPopup.saving}
+                    onChange={(e) => setAddField('notes', e.target.value)}
+                    className={`w-full rounded-lg border border-[#E8E4DB] px-3 py-2 text-[13px] ${readOnly ? 'bg-[#FBFAF7] text-[#6E6657]' : 'bg-white'}`}
+                    data-testid="creator-add-field-notes"
+                  />
+                </label>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                {readOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setAddPopup({ mode: 'new', creatorId: null, form: { ...blankCreatorForm }, saving: false, error: '' })}
+                    className="mr-auto text-[12px] text-[#1F4A3A] underline"
+                    data-testid="creator-add-popup-switch-new"
+                  >
+                    Add a different creator instead
+                  </button>
+                )}
+                <button type="button" onClick={() => setAddPopup(null)} disabled={addPopup.saving} className="v3-btn-secondary" data-testid="creator-add-popup-cancel">Cancel</button>
+                <button type="button" onClick={submitAddCreator} disabled={addPopup.saving} className="v3-btn-primary" data-testid="creator-add-popup-submit">
+                  {addPopup.saving ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Adding...</> : <><Plus className="w-3.5 h-3.5" /> {readOnly ? 'Add to shortlist' : 'Create and add'}</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {scanPopup.open && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="creator-scan-popup">
@@ -3892,7 +4626,6 @@ export const V3BusinessCasePlanBrief = () => {
   const [creators, setCreators] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [manualCreatorId, setManualCreatorId] = useState('');
-  const [briefEmails, setBriefEmails] = useState({});
   const [sentBriefs, setSentBriefs] = useState({});
   const [sendPopup, setSendPopup] = useState(null);
   const [notice, setNotice] = useState('');
@@ -3918,13 +4651,14 @@ export const V3BusinessCasePlanBrief = () => {
   };
   useEffect(() => () => stopGenTick(), []);
 
-  // Brand contact (kept available for other flows).
-  const brand = getBrand(bundle);
-  const brandEmail = brand?.email || brand?.contact_email || brand?.primary_contact_email || '';
-
   // If the admin landed here without going through the scanner buttons,
   // this page counts as the FIRST of the Pitch Deck / Brief pair.
   useEffect(() => { if (id && !getFrameEntry(id)) setFrameEntry(id, 'brief'); }, [id]);
+
+  // Same precondition as the Pitch Deck: the briefs are written per selected
+  // creator, so the Creator Match Scanner has to have run. An existing brief
+  // keeps the page open, so a finished project is never locked out.
+  const scanDone = creatorsSelected(bundle) || Boolean(bundle?.creative_brief?.id || bundle?.business_case?.plan?.generated_brief);
 
   // Adopt a brief generated earlier (persisted on the case).
   useEffect(() => {
@@ -3936,7 +4670,7 @@ export const V3BusinessCasePlanBrief = () => {
   const generateTemplateBrief = async () => {
     setGeneratingBrief(true);
     setBriefProgress('Queued: writing the Creative Brief…');
-    setGenPopup({ open: true, progress: 4, status: 'running', message: 'AI is writing the brief in the approved TASCK template…' });
+    setGenPopup({ open: true, progress: 4, status: 'running', message: 'Writing the brief in the approved TASCK template…' });
     startGenTick();
     try {
       const result = await v3GenerateCreativeBrief(id, (job) => {
@@ -3973,63 +4707,43 @@ export const V3BusinessCasePlanBrief = () => {
   useEffect(() => {
     if (autoRanRef.current) return;
     if (!bundle?.business_case?.id) return;
-    if (templateBrief || bundle?.business_case?.plan?.generated_brief) { autoRanRef.current = true; return; }
+    // No creators picked yet means no brief to write - see scanDone above.
+    if (!scanDone) return;
+    // Write it once, never again on a re-visit and never on a closed project.
+    // shouldAutoGenerate also reads the marker the case itself keeps, so this
+    // still holds when the snapshot-scoped lookup that feeds the page misses.
+    if (!shouldAutoGenerate({ bundle, stage: 'creative_brief', loadedLocally: Boolean(templateBrief) })) {
+      autoRanRef.current = true;
+      return;
+    }
     autoRanRef.current = true;
     generateTemplateBrief().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bundle?.business_case?.id, bundle?.business_case?.plan?.generated_brief]);
+  }, [bundle?.business_case?.id, bundle?.business_case?.plan?.generated_brief, scanDone]);
 
-  // Top-level "Send to creator" card (mirrors the Pitch Deck page): admin can
-  // type or change the recipient email, then email the Creative Brief (.docx)
-  // to that creator address. Reuses the component's existing sendPopup.
-  // Derive the default recipient inline (from creators/selectedIds, both
-  // declared above) so we avoid any temporal-dead-zone ordering issues.
-  const firstSelectedCreator = selectedIds.map((cid) => creators.find((c) => c.id === cid)).filter(Boolean)[0];
-  const defaultRecipient = creatorEmail(firstSelectedCreator) || brandEmail;
-  const [recipientEmail, setRecipientEmail] = useState(defaultRecipient);
-  useEffect(() => {
-    if (defaultRecipient && !recipientEmail) setRecipientEmail(defaultRecipient);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultRecipient]);
-
-  const sendCreativeBriefToEmail = async () => {
-    if (!templateBrief) {
-      setSendPopup({ title: 'Generate first', message: 'Generate the Creative Brief before sending it.', tone: 'warning' });
-      return;
-    }
-    const recipient = recipientEmail.trim() || defaultRecipient || brandEmail;
-    if (!recipient) {
-      setSendPopup({ title: 'Add an email', message: 'Enter a recipient email to send the Creative Brief to.', tone: 'warning' });
-      return;
-    }
-    const subject = templateBrief?.title || `Creative Brief - ${getCase(bundle).title || 'Creative Brief'}`;
-    setSendPopup({ title: 'Sending', message: `Sending the Creative Brief to ${recipient}…`, tone: 'pending' });
-    try {
-      const result = await v3SendCreativeBriefToEmail(id, {
-        recipient_email: recipient,
-        subject,
-        alignment_snapshot_id: snapshotId || undefined,
-      });
-      const status = result?.email?.status || 'queued';
-      if (status === 'sent') {
-        setSendPopup({ title: 'Sent', message: `Creative Brief sent to ${result?.to || recipient} with the formatted document attached.`, tone: 'success' });
-      } else {
-        setSendPopup({ title: status === 'delivery_failed' ? 'Email not delivered' : 'Email queued', message: result?.email?.delivery_error || `Creative Brief queued for ${recipient}.`, tone: 'warning' });
-      }
-    } catch (e) {
-      setSendPopup({ title: 'Email not sent', message: e?.response?.data?.detail || e?.message || 'Could not send the Creative Brief. Generate it first.', tone: 'warning' });
-    }
-  };
   useEffect(() => {
     const ids = (new URLSearchParams(location.search).get('creators') || '').split(',').map((value) => value.trim()).filter(Boolean);
     if (ids.length) setSelectedIds(ids);
   }, [location.search]);
+  // Without ?creators= in the URL the brief is for the creators picked in the
+  // Creator Match Scanner. It used to fall to the first creator in the whole
+  // database, so the Studio could show someone nobody selected.
+  const scannerSeededRef = useRef(false);
+  const scannerIdsKey = (bundle?.selected_creator_ids || []).join(',');
+  useEffect(() => {
+    if (scannerSeededRef.current || !scannerIdsKey) return;
+    if (new URLSearchParams(location.search).get('creators')) return;
+    scannerSeededRef.current = true;
+    setSelectedIds(scannerIdsKey.split(','));
+  }, [scannerIdsKey, location.search]);
   useEffect(() => {
     v3GetCreators().then((rows) => {
       const list = Array.isArray(rows) ? rows : [];
       setCreators(list);
       setManualCreatorId(list[0]?.id || '');
-      setSelectedIds((current) => (current.length ? current : (list[0]?.id ? [list[0].id] : [])));
+      // Last resort only - the scanner's picks (above) take over once the
+      // case has loaded.
+      setSelectedIds((current) => (current.length || scannerSeededRef.current ? current : (list[0]?.id ? [list[0].id] : [])));
     }).catch(() => setCreators([]));
     v3ListBriefs({ business_case_id: id }).then((rows) => {
       const next = {};
@@ -4053,10 +4767,9 @@ export const V3BusinessCasePlanBrief = () => {
       setSendPopup({ title: 'Generate first', message: 'Generate the TASCK Creative Brief above, then send it to each creator.', tone: 'warning' });
       return;
     }
-    const overrideEmail = isRealEmail((briefEmails[creator.id] || '').trim());
-    const recipient = overrideEmail || creatorEmail(creator);
+    const recipient = creatorEmail(creator);
     if (!recipient) {
-      setSendPopup({ title: 'Add an email', message: `${creatorName(creator)} has no valid email on file. Type the creator's email address before sending.`, tone: 'warning' });
+      setSendPopup({ title: 'Add an email', message: `${creatorName(creator)} has no valid email on file. Add it to the creator's details before sending.`, tone: 'warning' });
       return;
     }
     setNotice(`Sending creative brief to ${creatorName(creator)}...`);
@@ -4067,7 +4780,7 @@ export const V3BusinessCasePlanBrief = () => {
       const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, creator_contact_email: recipient, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
       setSentBriefs((current) => ({ ...current, [creator.id]: doc }));
       const status = doc?.email?.status || doc?.email_status || 'queued';
-      const sentTo = doc?.email?.to || doc?.creator_contact_email || overrideEmail || creatorContact(creator) || creatorName(creator);
+      const sentTo = doc?.email?.to || doc?.creator_contact_email || creatorContact(creator) || creatorName(creator);
       if (status === 'sent') {
         setNotice(`Creative brief sent to ${sentTo} with creator portal login details.`);
         setSendPopup({ title: 'Sent', message: `Creative brief sent to ${sentTo}. The Google Docs-compatible brief is attached.`, tone: 'success' });
@@ -4108,6 +4821,14 @@ export const V3BusinessCasePlanBrief = () => {
     const text = `${getCase(bundle).title || 'Creative Brief'}\n${v3TemplateBriefPreviewUrl(id, snapshotId, creator.id)}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
+  if (!scanDone) {
+    return (
+      <FlowShell title="Creative Brief Studio" subtitle="A brief per selected creator, written from the Alignment Snapshot and the Creator Selector.">
+        <CreatorScanRequired id={id} snapshotId={snapshotId} documentLabel="Creative Brief" />
+      </FlowShell>
+    );
+  }
+
   return (
     <FlowShell title="Creative Brief Studio" subtitle="Generate, edit, send, download, and make each selected creator brief visible to the creator." nextAction="Review each AI-generated brief before sending it to creators.">
       {/* The brand-tailored Creative Brief in the approved TASCK template
@@ -4118,36 +4839,52 @@ export const V3BusinessCasePlanBrief = () => {
         title="TASCK Creative Brief (approved template)"
         action={(
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={generateTemplateBrief}
-              disabled={generatingBrief}
-              className="v3-btn-primary text-[12px]"
-              data-testid="brief-generate-template-btn"
-            >
-              {generatingBrief ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {generatingBrief ? 'Writing…' : (templateBrief ? 'Regenerate brief' : 'Generate brief')}
-            </button>
+            {/* Same rule as the Pitch Deck: once the brief is stored the
+                primary Generate goes and Regenerate sits in the saved card. */}
+            {(!templateBrief || generatingBrief) && (
+              <button
+                type="button"
+                onClick={generateTemplateBrief}
+                disabled={generatingBrief}
+                className="v3-btn-primary text-[12px]"
+                data-testid="brief-generate-template-btn"
+              >
+                {generatingBrief ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {generatingBrief ? 'Writing…' : 'Generate brief'}
+              </button>
+            )}
+            {/* Downloads live on each creator card below (Download Google
+                Docs), addressed to that creator - one place, one button. */}
             {templateBrief && (
-              <>
-                <a
-                  href={v3TemplateBriefPreviewUrl(id, snapshotId)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="v3-btn-secondary text-[12px]"
-                  title="Open a printable, shareable browser preview of this brief - no Google account needed."
-                  data-testid="brief-open-preview"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" /> Open in browser preview
-                </a>
-                <a href={v3TemplateBriefDocxUrl(id, snapshotId)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid="brief-download-docx">
-                  <Download className="w-3.5 h-3.5" /> Download (.docx)
-                </a>
-              </>
+              <a
+                href={v3TemplateBriefPreviewUrl(id, snapshotId)}
+                target="_blank"
+                rel="noreferrer"
+                className="v3-btn-secondary text-[12px]"
+                title="Open a printable, shareable browser preview of this brief - no Google account needed."
+                data-testid="brief-open-preview"
+              >
+                <ExternalLink className="w-3.5 h-3.5" /> Open in browser preview
+              </a>
             )}
           </div>
         )}
       >
+        {templateBrief && !generatingBrief && (
+          <div className="mb-3">
+            <SavedArtifactCard
+              title="Creative Brief"
+              savedAt={templateBrief.generated_at || templateBrief.updated_at}
+              detail="Download or send it below."
+              action={(
+                <button type="button" onClick={generateTemplateBrief} className="v3-btn-secondary text-[12px]" data-testid="brief-regenerate-btn">
+                  <Sparkles className="w-3.5 h-3.5" /> Regenerate
+                </button>
+              )}
+              testId="brief-saved-card"
+            />
+          </div>
+        )}
         {generatingBrief && briefProgress && (
           <p className="text-[12px] text-[#1F4A3A] mb-3 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> {briefProgress}</p>
         )}
@@ -4215,28 +4952,11 @@ export const V3BusinessCasePlanBrief = () => {
           </TtaLetterhead>
         )}
       </InfoCard>
-      {templateBrief && (
-        <InfoCard title="Send to creator">
-          <p className="text-[12px] text-[#6E6657] mb-2">
-            Emails the formatted Creative Brief (TASCK-branded .docx attached) and makes it reviewable in the creator portal.
-            The creator can review, comment, and confirm it from their portal.
-          </p>
-          <div className="flex flex-col gap-2 md:flex-row md:items-center">
-            <input
-              value={recipientEmail}
-              onChange={(e) => setRecipientEmail(e.target.value)}
-              placeholder="creator@email.com"
-              className="flex-1 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"
-              data-testid="brief-recipient-input"
-            />
-            <button onClick={sendCreativeBriefToEmail} className="v3-btn-primary rounded-full text-[12px] whitespace-nowrap" data-testid="brief-send-btn"><Send className="w-3.5 h-3.5" /> Send Creative Brief</button>
-          </div>
-        </InfoCard>
-      )}
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Selected creator briefs">
         <p className="mb-3 text-[12px] text-[#6E6657]">
           One brief per business case in the approved 4-page template - each creator gets that same document with their name on it.
+          Sending emails the formatted brief (TASCK-branded .docx attached) and makes it reviewable in the creator portal.
         </p>
         <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end">
           <label className="flex-1 space-y-1">
@@ -4261,28 +4981,7 @@ export const V3BusinessCasePlanBrief = () => {
                   </div>
                   <button onClick={() => setSelectedIds((current) => current.filter((value) => value !== creator.id))} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove ${creatorName(creator)}`}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
-                <div className="rounded-[8px] border border-[#E8E4DB] bg-white p-3">
-                  <p className="text-[12px] text-[#4F3E2F]">
-                    {templateBrief
-                      ? <>This creator receives the same 4-page TASCK Creative Brief for <span className="font-semibold">{getCase(bundle).title || 'this project'}</span>, addressed to <span className="font-semibold">{creatorName(creator)}</span>.</>
-                      : 'Generate the TASCK Creative Brief above - every creator receives that same 4-page document, addressed to them.'}
-                  </p>
-                  {templateBrief && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <a href={v3TemplateBriefPreviewUrl(id, snapshotId, creator.id)} target="_blank" rel="noreferrer" className="v3-btn-secondary text-[12px]" data-testid={`brief-preview-${creator.id}`}>
-                        <ExternalLink className="w-3.5 h-3.5" /> Preview 4-page brief
-                      </a>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <input
-                    value={briefEmails[creator.id] ?? creatorEmail(creator) ?? ''}
-                    onChange={(e) => setBriefEmails({ ...briefEmails, [creator.id]: e.target.value })}
-                    placeholder="creator@email.com"
-                    className="flex-1 rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] focus:outline-none focus:border-[#1F4A3A]"
-                    data-testid={`brief-email-input-${creator.id}`}
-                  />
+                <div className="flex flex-wrap gap-2">
                   <button onClick={() => send(creator)} className="v3-btn-primary rounded-full text-[12px] whitespace-nowrap" data-testid={`brief-email-${creator.id}`}><Send className="w-3.5 h-3.5" /> Send to creator</button>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -4329,7 +5028,7 @@ export const V3BusinessCasePlanBrief = () => {
               />
             </div>
             <p className="mt-3 text-[13px] leading-6 text-[#4F3E2F]" data-testid="brief-gen-popup-message">
-              {genPopup.message || 'AI is writing the brief in the approved TASCK template…'}
+              {genPopup.message || 'Writing the brief in the approved TASCK template…'}
             </p>
             {genPopup.status === 'running' && (
               <p className="mt-1 text-[11px] text-[#6E6657]">
@@ -4394,6 +5093,10 @@ export const V3BusinessCasePitchDeck = () => {
   const { id, snapshotId, bundle, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
+  // The Creator Match Scanner is this page's precondition - see
+  // CreatorScanRequired. A deck that already exists stays reachable, so a
+  // finished project is never locked out of its own document.
+  const scanDone = creatorsSelected(bundle) || Boolean(bundle?.pitch_deck?.id || bc?.plan?.pitch_deck_id);
   const [deck, setDeck] = useState(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -4430,13 +5133,13 @@ export const V3BusinessCasePitchDeck = () => {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [sendPopup, setSendPopup] = useState(null);
   const brandEmail = brand?.email || brand?.contact_email || '';
-  // The Creative Brief is "done" once at least one brief was sent.
-  const briefDone = Boolean(bc?.plan?.creative_brief_id);
   // Entry order decides this page's next step: if the Brief was opened FIRST
   // (from the scanner or directly), this page is the second stop and moves on
-  // to the Business Case; otherwise it links to the Brief.
+  // to the Business Case; otherwise it links to the Brief. An existing brief
+  // does not count as "opened first" - on a second walk through the stages
+  // that sent the admin from here straight to Planning, skipping the Brief.
   useEffect(() => { if (id && !getFrameEntry(id)) setFrameEntry(id, 'pitch'); }, [id]);
-  const briefWasFirst = getFrameEntry(id) === 'brief' || briefDone;
+  const briefWasFirst = getFrameEntry(id) === 'brief';
 
   useEffect(() => {
     const persisted = bundle?.pitch_deck;
@@ -4455,11 +5158,19 @@ export const V3BusinessCasePitchDeck = () => {
   useEffect(() => {
     if (autoRanRef.current) return;
     if (!bundle?.business_case?.id) return;   // wait for the bundle
-    if (bundle?.pitch_deck || deck) { autoRanRef.current = true; return; }
+    // Never write a deck before the Creator Match Scanner has picked anyone -
+    // the deck is built from those creators, so auto-writing here is how a
+    // skipped scanner turned into a finished-looking deck with no creators.
+    if (!scanDone) return;
+    // Write it once, never again on a re-visit and never on a closed project.
+    if (!shouldAutoGenerate({ bundle, stage: 'pitch_deck', loadedLocally: Boolean(deck) })) {
+      autoRanRef.current = true;
+      return;
+    }
     autoRanRef.current = true;
     generate(1200).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bundle?.business_case?.id, bundle?.pitch_deck]);
+  }, [bundle?.business_case?.id, bundle?.pitch_deck, scanDone]);
 
   // popupDelayMs: the manual button shows the loader immediately; the
   // automatic load on page open stays quiet for 5s and only raises the
@@ -4515,11 +5226,93 @@ export const V3BusinessCasePitchDeck = () => {
     }));
   };
 
+  // Decks written on the 16-slide template carry `slides`; only pre-template
+  // decks fall back to the flat `sections` editor.
+  const hasSlides = Boolean(deck?.slides && typeof deck.slides === 'object' && Object.keys(deck.slides).length);
+
+  // Path-addressed write into the nested slides payload, cloning each node on
+  // the way down so React sees a new object and the inputs stay controlled.
+  const updateSlideValue = (path, value) => {
+    setDeck((current) => {
+      const next = { ...(current || {}) };
+      next.slides = Array.isArray(current?.slides) ? [...current.slides] : { ...(current?.slides || {}) };
+      let node = next.slides;
+      for (let i = 0; i < path.length - 1; i += 1) {
+        const key = path[i];
+        const child = node[key];
+        node[key] = Array.isArray(child) ? [...child] : { ...(child || {}) };
+        node = node[key];
+      }
+      node[path[path.length - 1]] = value;
+      return next;
+    });
+  };
+
+  // Let the global admin assistant widget rewrite deck text on request, same
+  // as the Alignment Snapshot editor. Flatten `slides` into the same
+  // {heading, type, content} shape the assistant expects - one entry per
+  // editable leaf (skipping group headers), heading combining the slide name
+  // and field name so the model (and the admin) can tell sections apart. The
+  // flattening logic is shared with PitchDeckSlideEditor so both stay in
+  // sync with whatever fields the template adds later.
+  const pitchAssistantSections = useMemo(() => {
+    if (!deck) return [];
+    if (hasSlides) {
+      const rows = [];
+      PITCH_SLIDE_ORDER_UI
+        .filter((key) => deck.slides?.[key] && typeof deck.slides[key] === 'object')
+        .forEach((key) => {
+          flattenSlide(deck.slides[key], [key], 0, [])
+            .filter((row) => row.kind !== 'group')
+            .forEach((row) => rows.push(row));
+        });
+      return rows.map((row) => ({
+        heading: `${PITCH_SLIDE_LABELS[row.path[0]] || humanizeKey(row.path[0])} - ${row.label}`,
+        type: row.kind === 'lines' ? 'bullets' : 'prose',
+        content: row.kind === 'lines' ? row.value.join('\n') : row.value,
+        __path: row.path,
+        __kind: row.kind,
+      }));
+    }
+    return (deck.sections || []).map((section) => ({
+      heading: section.heading || 'Section',
+      type: 'prose',
+      content: section.content || '',
+    }));
+  }, [deck, hasSlides]);
+  const applyPitchAssistantUpdate = (index, section) => {
+    const row = pitchAssistantSections[index];
+    if (!row) return;
+    if (hasSlides && row.__path) {
+      const value = row.__kind === 'lines'
+        ? String(section.content || '').split('\n').map((line) => line.trim()).filter(Boolean)
+        : (section.content || '');
+      updateSlideValue(row.__path, value);
+    } else {
+      updateSection(index, section.content || '');
+    }
+  };
+  useAssistantSurface({
+    id: `pitch-deck:${deck?.id || snapshotId || id}`,
+    label: 'Pitch Deck',
+    // Decks on the 16-slide template keep their content in `slides`, which the
+    // section tools cannot address. Offering edit tools there would hand the
+    // model tools it can only fail with, so those decks are read-only to it.
+    mode: deck && !hasSlides ? 'document' : 'readonly',
+    documentKind: 'pitch_deck',
+    documentId: deck?.id,
+    projectId: id,
+    onDocumentChanged: (doc) => setDeck(doc),
+  });
+
   const persist = async () => {
     if (!deck?.id) return null;
     const saved = await v3UpdatePitchDeck(deck.id, {
       title: deck.title || '',
-      sections: deck.sections || [],
+      // Send `slides` when the deck has them: that is what the flip book and
+      // the slide view render, and the backend re-derives `sections` from it
+      // so the .docx stays in step. Older decks still save their sections.
+      ...(hasSlides ? { slides: deck.slides } : { sections: deck.sections || [] }),
       cover_option: deck.cover_option || 'photo_studio',
       reviewer: 'admin',
     });
@@ -4544,7 +5337,7 @@ export const V3BusinessCasePitchDeck = () => {
     setSendPopup({ title: 'Approving', message: 'Approving the Pitch Deck…', tone: 'pending' });
     try {
       await persist();
-      await v3ApprovePitchDeckAs(id, 'admin', 'admin');
+      await v3ApprovePitchDeckAs(id, 'admin', 'admin', deck?.id);
       await reload();
       const nextLabel = briefWasFirst ? 'the Business Case' : 'the Creative Brief';
       setSendPopup({ title: 'Approved', message: `Pitch Deck approved. Opening ${nextLabel}…`, tone: 'success' });
@@ -4562,7 +5355,7 @@ export const V3BusinessCasePitchDeck = () => {
     setSendPopup({ title: 'Sending', message: `Sending the Pitch Deck to ${recipient}…`, tone: 'pending' });
     try {
       await persist();
-      const result = await v3SendPitchDeckToBrand(id, { recipient_email: recipientEmail.trim() || undefined });
+      const result = await v3SendPitchDeckToBrand(id, { recipient_email: recipientEmail.trim() || undefined, deck_id: deck?.id });
       await reload();
       const status = result?.email?.status || 'queued';
       if (status === 'sent') {
@@ -4577,6 +5370,27 @@ export const V3BusinessCasePitchDeck = () => {
 
   // ---- Deck imagery: per-brand cover art + page 7 creator portraits ----
   const [imageBusy, setImageBusy] = useState('');
+  // {done, total} while a multi-file creator upload is running, else null.
+  const [imageProgress, setImageProgress] = useState(null);
+
+  // Reload the case and copy the saved imagery back onto the local deck.
+  //
+  // The effect that hydrates `deck` from the bundle is guarded with `!deck`,
+  // so once the deck is in state it never takes another bundle - that guard
+  // protects section text the admin has typed but not saved yet. It also
+  // meant an uploaded image stayed invisible until a hard refresh. Copying
+  // just the two imagery fields keeps the guard's purpose (unsaved section
+  // edits survive) while letting the gallery reflect what was stored.
+  const refreshDeckImagery = async () => {
+    const refreshed = await reload();
+    const persisted = refreshed?.pitch_deck;
+    if (!persisted) return;
+    setDeck((current) => (current ? {
+      ...current,
+      cover_image: persisted.cover_image,
+      creator_images: persisted.creator_images,
+    } : persisted));
+  };
 
   const uploadCoverImage = async (file) => {
     if (!file || !deck?.id) return;
@@ -4584,7 +5398,7 @@ export const V3BusinessCasePitchDeck = () => {
     try {
       const dataUri = await v3ReadFileAsDataUri(file);
       await v3SetPitchDeckCoverImage(deck.id, dataUri);
-      await reload();
+      await refreshDeckImagery();
       toast.success('Cover image updated. It shows on page 1 of the flip book.');
     } catch (e) {
       toast.error(e?.response?.data?.detail || e?.message || 'Could not upload that cover image.');
@@ -4598,7 +5412,7 @@ export const V3BusinessCasePitchDeck = () => {
     setImageBusy('cover');
     try {
       await v3ClearPitchDeckCoverImage(deck.id);
-      await reload();
+      await refreshDeckImagery();
       toast.success('Cover image removed. The default TASCK cover is back.');
     } catch (e) {
       toast.error(e?.response?.data?.detail || e?.message || 'Could not remove the cover image.');
@@ -4607,20 +5421,48 @@ export const V3BusinessCasePitchDeck = () => {
     }
   };
 
-  const addCreatorImage = async (file) => {
-    if (!file || !deck?.id) return;
+  // Accepts a whole FileList so the picker can take several creators at once.
+  const addCreatorImages = async (fileList) => {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length || !deck?.id) return;
+    const room = DECK_MAX_CREATOR_IMAGES - (deck.creator_images || []).length;
+    if (room <= 0) {
+      toast.error(`Page 7 already holds ${DECK_MAX_CREATOR_IMAGES} creator images. Remove one before adding more.`);
+      return;
+    }
+    // Trim to what page 7 can still hold rather than firing uploads the
+    // backend would reject one by one.
+    const queued = files.slice(0, room);
+    const overflow = files.length - queued.length;
     setImageBusy('creator');
+    let added = 0;
     try {
-      const dataUri = await v3ReadFileAsDataUri(file);
-      // Filename (minus extension) seeds the caption; admin can rename after.
-      const guessedName = String(file.name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
-      await v3AddPitchDeckCreatorImage(deck.id, { image: dataUri, name: guessedName });
-      await reload();
-      toast.success('Creator image added to page 7.');
+      for (const file of queued) {
+        setImageProgress({ done: added, total: queued.length });
+        const dataUri = await v3ReadFileAsDataUri(file);
+        // Filename (minus extension) seeds the caption; admin can rename after.
+        const guessedName = String(file.name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+        // Sequential on purpose: the endpoint rewrites the whole
+        // `creator_images` array per call, so parallel uploads would
+        // overwrite each other and only the last one would survive.
+        await v3AddPitchDeckCreatorImage(deck.id, { image: dataUri, name: guessedName });
+        added += 1;
+      }
+      const addedLabel = `${added} creator image${added === 1 ? '' : 's'} added to page 7.`;
+      if (overflow > 0) {
+        toast.success(`${addedLabel} ${overflow} skipped - page 7 holds up to ${DECK_MAX_CREATOR_IMAGES}.`);
+      } else {
+        toast.success(addedLabel);
+      }
     } catch (e) {
-      toast.error(e?.response?.data?.detail || e?.message || 'Could not add that creator image.');
+      const detail = e?.response?.data?.detail || e?.message || 'Could not add that creator image.';
+      // Report what did land so a part-way failure is not read as "nothing happened".
+      toast.error(added ? `${added} of ${queued.length} added, then: ${detail}` : detail);
     } finally {
+      setImageProgress(null);
       setImageBusy('');
+      // Refresh once at the end - every upload that succeeded is already saved.
+      await refreshDeckImagery();
     }
   };
 
@@ -4629,7 +5471,7 @@ export const V3BusinessCasePitchDeck = () => {
     setImageBusy(imageId);
     try {
       await v3RemovePitchDeckCreatorImage(deck.id, imageId);
-      await reload();
+      await refreshDeckImagery();
       toast.success('Creator image removed.');
     } catch (e) {
       toast.error(e?.response?.data?.detail || e?.message || 'Could not remove that image.');
@@ -4668,32 +5510,58 @@ export const V3BusinessCasePitchDeck = () => {
   // Preview + download both use the server-rendered flip book: one source of
   // truth, TASCK-blue design, and the brand fonts are EMBEDDED in the file so
   // it looks identical when a client opens it offline.
-  const openPreview = () => {
-    if (!deck?.id) return;
-    window.open(v3PitchDeckFlipbookUrl(deck.id), '_blank', 'noopener,noreferrer');
+  // Save first, then open. Previewing without saving showed the last SAVED
+  // deck, so an edit looked like it had not applied. The rendered HTML is also
+  // cached for 60s at the browser, so the deck's updated_at rides along as a
+  // cache buster. The stamp comes from the save's OWN response - `deck` in
+  // this closure still holds the pre-save updated_at, so reading it here would
+  // build a stale buster and defeat the point.
+  const withBust = (url, saved) => {
+    const stamp = encodeURIComponent(saved?.pitch_deck?.updated_at || deck?.updated_at || '');
+    return `${url}${url.includes('?') ? '&' : '?'}v=${stamp}`;
   };
+  const saveThenOpen = async (buildUrl) => {
+    if (!deck?.id) return;
+    let saved = null;
+    try {
+      saved = await persist();
+    } catch {
+      // Saving failed - still open, showing the last good copy rather than
+      // nothing, and the failed save has already toasted.
+    }
+    window.open(withBust(buildUrl(deck.id), saved), '_blank', 'noopener,noreferrer');
+  };
+  const openPreview = () => saveThenOpen(v3PitchDeckFlipbookUrl);
 
   // Slide view of the same deck. One document carries both presentations, so
   // this only decides which one opens first.
-  const openSlides = () => {
-    if (!deck?.id) return;
-    window.open(v3PitchDeckSlidesUrl(deck.id), '_blank', 'noopener,noreferrer');
-  };
+  const openSlides = () => saveThenOpen(v3PitchDeckSlidesUrl);
 
-  const downloadFlipbook = () => {
+  // Downloads go through the same save-first path: a file sent to a client
+  // must not be a version behind what the admin is looking at.
+  const downloadFlipbook = async () => {
     if (!deck?.id) return;
-    window.open(v3PitchDeckFlipbookUrl(deck.id, true), '_blank', 'noopener,noreferrer');
+    await saveThenOpen((deckId) => v3PitchDeckFlipbookUrl(deckId, true));
     toast.success('Flip book downloading - a single HTML file you can send to the client.');
   };
 
-  // Client-side print-to-PDF: opens the flipbook with ?print=1 so it auto-
-  // triggers the browser's Print dialog. Users choose "Save as PDF" to
-  // download a proper multi-page PDF of the deck.
-  const downloadPdf = () => {
+  // Real PDF download from the server (Content-Disposition: attachment), so
+  // it saves a file instead of opening the flipbook. Saves first like the
+  // other downloads, so the file matches what the admin is looking at.
+  const downloadPdf = async () => {
     if (!deck?.id) return;
-    const url = `${v3PitchDeckFlipbookUrl(deck.id)}?print=1`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-    toast.success('Preparing PDF - choose "Save as PDF" in the print dialog.');
+    try {
+      await persist();
+    } catch {
+      // Failed save already toasted; still download the last good copy.
+    }
+    const link = document.createElement('a');
+    link.href = v3PitchDeckPdfUrl(deck.id);
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    toast.success('Pitch Deck PDF downloading.');
   };
 
   const setCoverOption = async (option) => {
@@ -4712,6 +5580,17 @@ export const V3BusinessCasePitchDeck = () => {
 
   const deckComments = Array.isArray(deck?.brand_comments) ? deck.brand_comments : [];
 
+  if (!scanDone) {
+    return (
+      <FlowShell
+        title="Pitch Deck"
+        subtitle="The brand-facing pitch: ten sections written by the AI from the Alignment Snapshot, Creator Selector, and your selected creators."
+      >
+        <CreatorScanRequired id={id} snapshotId={snapshotId} documentLabel="Pitch Deck" />
+      </FlowShell>
+    );
+  }
+
   return (
     <FlowShell
       title="Pitch Deck"
@@ -4722,10 +5601,16 @@ export const V3BusinessCasePitchDeck = () => {
         title="Pitch Deck"
         action={(
           <div className="flex flex-wrap justify-end gap-2">
-            <button onClick={() => generate(0)} disabled={generating} className="v3-btn-primary text-[12px]" data-testid="pitch-generate-btn">
-              {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-              {generating ? 'Writing…' : (deck ? 'Regenerate' : 'Generate Pitch Deck')}
-            </button>
+            {/* Generate is the primary action only until a deck exists.
+                After that the deck is stored, the saved card below says so,
+                and Regenerate lives inside it - out of the way of an admin
+                who came back only to read or to move on. */}
+            {(!deck || generating) && (
+              <button onClick={() => generate(0)} disabled={generating} className="v3-btn-primary text-[12px]" data-testid="pitch-generate-btn">
+                {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                {generating ? 'Writing…' : 'Generate Pitch Deck'}
+              </button>
+            )}
             {deck && (
               <>
                 <button onClick={saveEdits} disabled={saving} className="v3-btn-secondary text-[12px]" data-testid="pitch-save-btn"><Save className="w-3.5 h-3.5" /> {saving ? 'Saving…' : 'Save edits'}</button>
@@ -4743,6 +5628,21 @@ export const V3BusinessCasePitchDeck = () => {
           </div>
         )}
       >
+        {deck && (
+          <div className="mb-3">
+            <SavedArtifactCard
+              title="Pitch Deck"
+              savedAt={deck.generated_at || deck.updated_at}
+              detail="Edit any section below and Save - your edits are kept."
+              action={(
+                <button onClick={() => generate(0)} disabled={generating} className="v3-btn-secondary text-[12px]" data-testid="pitch-regenerate-btn">
+                  {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Regenerate
+                </button>
+              )}
+              testId="pitch-saved-card"
+            />
+          </div>
+        )}
         {!deck && !generating && (
           <p className="text-[12px] text-[#6E6657]">
             Generates the ten-section Pitch Deck - About The Organisation, Context & Core Focus, The Problem, The
@@ -4790,17 +5690,21 @@ export const V3BusinessCasePitchDeck = () => {
                 })}
               </div>
             </div>
-            {(deck.sections || []).map((section, index) => (
-              <div key={index} className="v3-card p-4" data-testid={`pitch-section-${index}`}>
-                <p className="text-[12px] font-semibold text-[#1A1A1A] mb-2">{index + 1}. {section.heading}</p>
-                <textarea
-                  rows={4}
-                  value={section.content || ''}
-                  onChange={(e) => updateSection(index, e.target.value)}
-                  className="w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed"
-                />
-              </div>
-            ))}
+            {hasSlides ? (
+              <PitchDeckSlideEditor slides={deck.slides} onChange={updateSlideValue} />
+            ) : (
+              (deck.sections || []).map((section, index) => (
+                <div key={index} className="v3-card p-4" data-testid={`pitch-section-${index}`}>
+                  <p className="text-[12px] font-semibold text-[#1A1A1A] mb-2">{index + 1}. {section.heading}</p>
+                  <textarea
+                    rows={4}
+                    value={section.content || ''}
+                    onChange={(e) => updateSection(index, e.target.value)}
+                    className="w-full rounded-md border border-[#E8E4DB] px-3 py-2 text-[13px] focus:border-[#1F4A3A] outline-none leading-relaxed"
+                  />
+                </div>
+              ))
+            )}
           </div>
         )}
       </InfoCard>
@@ -4849,17 +5753,21 @@ export const V3BusinessCasePitchDeck = () => {
               <div>
                 <p className="text-[12px] font-semibold text-[#1F1B18]">Page 7 - selected creators</p>
                 <p className="text-[11px] text-[#6E6657] mt-0.5">
-                  {(deck.creator_images || []).length} of 12 added. These render as a clean grid on page 7.
+                  {(deck.creator_images || []).length} of {DECK_MAX_CREATOR_IMAGES} added. Pick several at once. These render as a clean grid on page 7.
                 </p>
               </div>
-              <label className="v3-btn-secondary text-[11px] cursor-pointer">
+              <label className={`v3-btn-secondary text-[11px] ${imageBusy === 'creator' ? 'cursor-default opacity-70' : 'cursor-pointer'}`}>
                 <Upload className="w-3.5 h-3.5" />
-                {imageBusy === 'creator' ? 'Adding…' : 'Add creator image'}
+                {imageBusy === 'creator'
+                  ? (imageProgress ? `Adding ${imageProgress.done + 1} of ${imageProgress.total}…` : 'Adding…')
+                  : 'Add creator images'}
+                {/* `Array.from` before clearing the input: `e.target.files`
+                    is live, and resetting `value` empties it. */}
                 <input
-                  type="file" accept="image/*" className="hidden"
+                  type="file" accept="image/*" multiple className="hidden"
                   data-testid="pitch-creator-input"
                   disabled={imageBusy === 'creator'}
-                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; addCreatorImage(f); }}
+                  onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ''; addCreatorImages(files); }}
                 />
               </label>
             </div>
@@ -5106,7 +6014,9 @@ export const V3BusinessCasePlanCreatorBriefingCall = () => {
   const [meeting, setMeeting] = useState(null);
   const [transcript, setTranscript] = useState('');
   const [analysis, setAnalysis] = useState(null);
-  const creatorId = getCase(bundle).creator_id || bundle?.creator?.id || '';
+  // bundle.creator is the scanner's pick (falling back to the case's link);
+  // the case's own creator_id alone can name a different creator.
+  const creatorId = bundle?.creator?.id || getCase(bundle).creator_id || '';
   const schedule = async () => setMeeting(await v3CreateMeeting({ title: `Creator Briefing Call: ${getCase(bundle).title}`, meeting_type: 'creator_briefing', entity_type: 'creator', stage: 'plan', business_case_id: id, creator_id: creatorId, business_case_title: getCase(bundle).title, entity_name: bundle?.creator?.name || '' }));
   const analyze = async () => { if (!meeting?.id) return; await v3UploadMeetingTranscript(meeting.id, { transcript }); setAnalysis(await v3AnalyzeMeetingTranscript(meeting.id, {})); };
   return (
@@ -5147,9 +6057,48 @@ const numericProjectValue = (value) => {
   if (!match) return 0;
   const amount = Number(match[0]);
   if (!Number.isFinite(amount)) return 0;
-  if (/\bm\b|million/.test(text)) return Math.round(amount * 1000000);
-  if (/\bk\b|thousand/.test(text)) return Math.round(amount * 1000);
+  // "1.45m" as well as "1.45 m" / "1.45 million" (\bm\b missed the first).
+  if (/\d\s*(?:bn|b)\b|billion/.test(text)) return Math.round(amount * 1000000000);
+  if (/\d\s*m\b|million/.test(text)) return Math.round(amount * 1000000);
+  if (/\d\s*k\b|thousand/.test(text)) return Math.round(amount * 1000);
   return Math.round(amount);
+};
+
+// The currency an admin typed a value in: $ / USD / dollars, or ₦ / N /
+// NGN / naira. null when the text names none.
+const projectValueCurrency = (value) => {
+  const text = String(value || '').toLowerCase();
+  if (/\$|\busd\b|dollar/.test(text)) return 'USD';
+  if (/₦|\bngn\b|naira|^\s*n\s*\d|\d\s*n\b/.test(text)) return 'NGN';
+  return null;
+};
+
+// Exact amount in its currency (₦1,450,000 / $25,000). The compact
+// formatNairaV3 rounds ("₦1M" for 1,450,000), wrong for an approved value.
+const formatProjectMoney = (amount, currency) => `${currency === 'USD' ? '$' : '₦'}${Number(amount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+
+// Debounced save for a typed field: schedule(value) saves it shortly after
+// typing stops, and anything still pending is saved when the page unmounts,
+// so leaving the page never loses what was typed.
+const useDebouncedPersist = (save, delay = 700) => {
+  const timer = useRef(null);
+  const pending = useRef(null);
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  const flush = useCallback(() => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    if (pending.current === null) return undefined;
+    const value = pending.current;
+    pending.current = null;
+    return Promise.resolve(saveRef.current(value)).catch(() => {});
+  }, []);
+  useEffect(() => () => { flush(); }, [flush]);
+  const schedule = useCallback((value) => {
+    pending.current = value;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(flush, delay);
+  }, [delay, flush]);
+  return { schedule, flush };
 };
 
 const valueFromStrategySnapshot = (snapshot) => {
@@ -5617,17 +6566,64 @@ export const V3BusinessCasePlanWaitingBrand = () => {
 // ============================================================================
 export const V3BusinessCasePlanFeedback = () => {
   const navigate = useNavigate();
-  const { id, bundle } = useBusinessCaseBundle();
+  const { id, bundle, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
   const brand = getBrand(bundle);
   const creator = bundle?.creator || {};
   const brandEmail = brand?.email || bc?.brand_contact_snapshot?.email || '';
-  const creatorEmail = creator?.email || creator?.contact_email || '';
+
+  // The one way onward from Planning: Contract Studio -> this page -> Delivery.
+  // Delivery stays locked until Planning is marked complete, so the first
+  // press completes Planning (as the Planning page's old "Complete Planning &
+  // Open Delivery" button did); once it is complete this just opens Delivery.
+  const [openingDelivery, setOpeningDelivery] = useState(false);
+  const [deliveryNotice, setDeliveryNotice] = useState('');
+  const openDelivery = async () => {
+    const deliverablesPath = adminRoute(`/business-cases/${id}/delivery/deliverables`);
+    setDeliveryNotice('');
+    if (bc.plan?.planning_completed_at) {
+      navigate(deliverablesPath);
+      return;
+    }
+    setOpeningDelivery(true);
+    try {
+      await v3CompleteSubphase(id, 'planning');
+      await reload();
+      navigate(deliverablesPath);
+    } catch (e) {
+      setDeliveryNotice(e?.response?.data?.detail || e?.message || 'Could not complete Planning.');
+    } finally {
+      setOpeningDelivery(false);
+    }
+  };
+  // Who can be asked: the brand, and each creator picked in the Creator Match
+  // Scanner (not the case's original creator link, which can be someone
+  // else). Checkboxes, so one send can reach the brand and creators together.
+  // Without a scanner selection the case's creator is offered, as before.
+  const feedbackCreators = Array.isArray(bundle?.selected_creators) && bundle.selected_creators.length
+    ? bundle.selected_creators.map((person) => ({ person, creatorId: person.id }))
+    : (creator.id ? [{ person: creator, creatorId: null }] : []);
+  const recipients = [
+    { key: 'brand', target: 'brand', label: `Brand${brandEmail ? ` (${brandEmail})` : ' (no email on file)'}` },
+    ...feedbackCreators.map(({ person, creatorId }) => {
+      const email = person.email || person.contact_email || '';
+      return {
+        key: creatorId ? `creator:${creatorId}` : 'creator',
+        target: 'creator',
+        creatorId,
+        label: `Creator - ${creatorName(person)}${email ? ` (${email})` : ' (no email on file)'}`,
+      };
+    }),
+  ];
 
   // Compose state. We deliberately keep these as local component state so
   // navigating away from /plan/feedback and coming back resets the form,
   // but the history (from the backend) re-fetches and stays accurate.
-  const [target, setTarget] = useState('brand');
+  const [targets, setTargets] = useState(['brand']);
+  const chosen = recipients.filter((option) => targets.includes(option.key));
+  const toggleTarget = (key) => setTargets((prev) => (
+    prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+  ));
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
@@ -5681,32 +6677,44 @@ export const V3BusinessCasePlanFeedback = () => {
       setNotice('Write a short message before sending.');
       return;
     }
-    setSending(true);
-    try {
-      const result = await v3SendFeedbackRequest(id, {
-        target,
-        body: trimmed,
-        ...(subject.trim() ? { subject: subject.trim() } : {}),
-      });
-      // Keep the admin on this page. Clear the body but keep the target +
-      // subject so they can fire a follow-up message quickly.
-      setBody('');
-      const status = result?.email?.status || 'queued';
-      const recipient = result?.feedback_request?.recipient || target;
-      const deliveryError = result?.email?.delivery_error;
-      if (status === 'sent') {
-        setNotice(`Feedback request sent to ${recipient}.`);
-      } else if (status === 'delivery_failed') {
-        setNotice(`Email queued but delivery failed: ${deliveryError || 'unknown reason'}.`);
-      } else {
-        setNotice(`Feedback request queued for ${recipient} (status: ${status}).`);
-      }
-      await loadHistory();
-    } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not send the feedback request.');
-    } finally {
-      setSending(false);
+    if (!chosen.length) {
+      setNotice('Tick the brand, a creator, or both before sending.');
+      return;
     }
+    setSending(true);
+    // One request per recipient, each exactly as a single send was before, so
+    // every recipient gets their own email and history row.
+    const lines = [];
+    let anySent = false;
+    for (const option of chosen) {
+      try {
+        const result = await v3SendFeedbackRequest(id, {
+          target: option.target,
+          ...(option.creatorId ? { creator_id: option.creatorId } : {}),
+          body: trimmed,
+          ...(subject.trim() ? { subject: subject.trim() } : {}),
+        });
+        anySent = true;
+        const status = result?.email?.status || 'queued';
+        const recipient = result?.feedback_request?.recipient || option.target;
+        const deliveryError = result?.email?.delivery_error;
+        if (status === 'sent') {
+          lines.push(`Feedback request sent to ${recipient}.`);
+        } else if (status === 'delivery_failed') {
+          lines.push(`Email to ${recipient} queued but delivery failed: ${deliveryError || 'unknown reason'}.`);
+        } else {
+          lines.push(`Feedback request queued for ${recipient} (status: ${status}).`);
+        }
+      } catch (e) {
+        lines.push(e?.response?.data?.detail || e?.message || `Could not send the feedback request to the ${option.target}.`);
+      }
+    }
+    // Keep the admin on this page. Clear the body once something went out, but
+    // keep the recipients + subject so they can fire a follow-up quickly.
+    if (anySent) setBody('');
+    setNotice(lines.join(' '));
+    await loadHistory();
+    setSending(false);
   };
 
   return (
@@ -5719,28 +6727,17 @@ export const V3BusinessCasePlanFeedback = () => {
       <InfoCard title="Send a feedback request">
         {/* Recipient picker */}
         <div className="flex flex-wrap items-center gap-3 mb-2">
-          <label className="text-[12px] flex items-center gap-1.5" data-testid="feedback-target-brand-label">
-            <input
-              type="radio"
-              name="feedback-target"
-              value="brand"
-              checked={target === 'brand'}
-              onChange={() => setTarget('brand')}
-              data-testid="feedback-target-brand"
-            />
-            Brand{brandEmail ? ` (${brandEmail})` : ' (no email on file)'}
-          </label>
-          <label className="text-[12px] flex items-center gap-1.5" data-testid="feedback-target-creator-label">
-            <input
-              type="radio"
-              name="feedback-target"
-              value="creator"
-              checked={target === 'creator'}
-              onChange={() => setTarget('creator')}
-              data-testid="feedback-target-creator"
-            />
-            Creator{creatorEmail ? ` (${creatorEmail})` : ' (no email on file)'}
-          </label>
+          {recipients.map((option) => (
+            <label key={option.key} className="text-[12px] flex items-center gap-1.5" data-testid={`feedback-target-${option.key}-label`}>
+              <input
+                type="checkbox"
+                checked={targets.includes(option.key)}
+                onChange={() => toggleTarget(option.key)}
+                data-testid={`feedback-target-${option.key}`}
+              />
+              {option.label}
+            </label>
+          ))}
         </div>
 
         {/* Optional subject override */}
@@ -5789,7 +6786,7 @@ export const V3BusinessCasePlanFeedback = () => {
             className="v3-btn-primary text-[12px]"
             data-testid="feedback-send"
           >
-            <Mail className="w-3.5 h-3.5" /> {sending ? 'Sending…' : `Send to ${target}`}
+            <Mail className="w-3.5 h-3.5" /> {sending ? 'Sending…' : (chosen.length > 1 ? `Send to ${chosen.length} recipients` : `Send to ${chosen[0]?.target || '…'}`)}
           </button>
           <button
             type="button"
@@ -5842,6 +6839,19 @@ export const V3BusinessCasePlanFeedback = () => {
           </ul>
         )}
       </InfoCard>
+      <InfoCard title="Next">
+        {deliveryNotice && <p className="mb-2 text-[11px] text-[#B54A37]" data-testid="feedback-open-delivery-notice">{deliveryNotice}</p>}
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">
+            {bc.plan?.planning_completed_at
+              ? 'Planning is complete. The Delivery phase is unlocked.'
+              : 'Confirm the budget, timelines, invoicing, and contracts are handled. Opening Delivery marks Planning complete.'}
+          </p>
+          <button onClick={openDelivery} disabled={openingDelivery} className="v3-btn-primary flex-shrink-0 disabled:opacity-60" data-testid="feedback-open-delivery-btn">
+            <ArrowRight className="w-3.5 h-3.5" /> {openingDelivery ? 'Opening…' : 'Open Delivery'}
+          </button>
+        </div>
+      </InfoCard>
     </FlowShell>
   );
 };
@@ -5867,25 +6877,14 @@ export const V3BusinessCaseDeliverySummary = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
   const bc = getCase(bundle);
-  const planningDone = Boolean(bc.plan?.planning_completed_at);
-  const [completingPlanning, setCompletingPlanning] = useState(false);
-  const [planningNotice, setPlanningNotice] = useState('');
-  const completePlanning = async () => {
-    setPlanningNotice('');
-    setCompletingPlanning(true);
-    try {
-      await v3CompleteSubphase(id, 'planning');
-      await reload();
-      navigate(adminRoute(`/business-cases/${id}/delivery/deliverables`));
-    } catch (e) {
-      setPlanningNotice(e?.response?.data?.detail || e?.message || 'Could not complete Planning.');
-    } finally {
-      setCompletingPlanning(false);
-    }
-  };
   const brand = getBrand(bundle);
   const contact = bc.brand_contact_snapshot || {};
   const creator = bundle?.creator || {};
+  // The creators picked in the Creator Match Scanner, not the case's
+  // original creator link, which can name someone else entirely.
+  const plannedCreators = Array.isArray(bundle?.selected_creators) && bundle.selected_creators.length
+    ? bundle.selected_creators
+    : (creator.id ? [creator] : []);
   const snapshot = bundle?.creative_snapshot || {};
   const alignment = bundle?.alignment_snapshot || {};
   const brainstorm = bundle?.brainstorm_round || {};
@@ -5893,8 +6892,19 @@ export const V3BusinessCaseDeliverySummary = () => {
   const approvedValue = numericProjectValue(bc.estimated_value);
   const strategyValue = valueFromStrategySnapshot(snapshot);
   const projectValue = approvedValue || strategyValue;
-  const [projectValueInput, setProjectValueInput] = useState(projectValue ? String(projectValue) : '');
+  const valueCurrency = bc.value_currency === 'USD' ? 'USD' : 'NGN';
+  // What the admin typed, approved or not (case.plan.project_value_draft),
+  // else the approved value.
+  const savedValueText = (bc.plan && typeof bc.plan.project_value_draft === 'string')
+    ? bc.plan.project_value_draft
+    : (projectValue ? String(projectValue) : '');
+  const [projectValueInput, setProjectValueInput] = useState(savedValueText);
   const [valueNotice, setValueNotice] = useState('');
+  const valueDraftSave = useDebouncedPersist((text) => v3UpdatePlanningText(id, { project_value_draft: text }));
+  const editValueInput = (text) => {
+    setProjectValueInput(text);
+    valueDraftSave.schedule(text);
+  };
   // Timelines: prefer the admin-edited case.plan.timeline_plan (saved from the
   // editable textarea below), then fall back to Phase 5 execution plan or any
   // stored timeline string on the brainstorm round.
@@ -5908,26 +6918,51 @@ export const V3BusinessCaseDeliverySummary = () => {
   const fallbackTimelineText = brainstormTimelineText;
 
   // ----- Editable Timelines state -----
+  // Saved as the admin types (no Save button); drafted from the Pitch Deck's
+  // Go To Market slide until the admin edits it.
   const [timelineDraft, setTimelineDraft] = useState(persistedTimeline || fallbackTimelineText);
-  const [timelineSaving, setTimelineSaving] = useState(false);
   const [timelineNotice, setTimelineNotice] = useState('');
+  const timelineTouched = useRef(false);
   useEffect(() => {
-    // Keep the textarea in sync when the bundle reloads (e.g. after save).
-    setTimelineDraft(persistedTimeline || fallbackTimelineText);
+    // Keep the textarea in sync with the bundle until the admin types.
+    if (!timelineTouched.current) setTimelineDraft(persistedTimeline || fallbackTimelineText);
   }, [persistedTimeline, fallbackTimelineText]);
-  const saveTimeline = async () => {
-    setTimelineNotice('');
-    setTimelineSaving(true);
+  const timelineSave = useDebouncedPersist(async (text) => {
+    setTimelineNotice('Saving…');
     try {
-      await v3UpdatePlanningText(id, { timeline_plan: timelineDraft });
-      await reload();
-      setTimelineNotice('Timeline saved.');
+      await v3UpdatePlanningText(id, { timeline_plan: text });
+      setTimelineNotice('Saved.');
     } catch (e) {
       setTimelineNotice(e?.response?.data?.detail || e?.message || 'Could not save the timeline.');
-    } finally {
-      setTimelineSaving(false);
     }
+  });
+  const editTimeline = (text) => {
+    timelineTouched.current = true;
+    setTimelineDraft(text);
+    timelineSave.schedule(text);
   };
+
+  // ----- Concept + timeline from the Pitch Deck -----
+  // Concept: slides 3 (Context & Core Focus) + 6 (The Market / Core
+  // Audience); timeline: slide 8 (Go To Market / Campaign). The server caches
+  // it until the deck changes and never overwrites a timeline the admin wrote.
+  const [deckDigest, setDeckDigest] = useState(null);
+  const [deckDigestBusy, setDeckDigestBusy] = useState(false);
+  const hasPitchDeck = Boolean(bundle?.pitch_deck?.id);
+  useEffect(() => {
+    if (!id || !hasPitchDeck) return undefined;
+    let live = true;
+    setDeckDigestBusy(true);
+    v3PlanningFromPitchDeck(id)
+      .then((result) => {
+        if (!live) return;
+        setDeckDigest(result);
+        if (!timelineTouched.current && result?.timeline_plan) setTimelineDraft(result.timeline_plan);
+      })
+      .catch(() => {})
+      .finally(() => { if (live) setDeckDigestBusy(false); });
+    return () => { live = false; };
+  }, [id, hasPitchDeck, bundle?.pitch_deck?.updated_at]);
 
   // ----- Editable Invoicing state -----
   // Per-row drafts so admin can tweak inline; an empty draft means no pending edit.
@@ -6029,16 +7064,10 @@ export const V3BusinessCaseDeliverySummary = () => {
   // to /invoices/upload (base64 encoded inline) and reload the bundle once.
   const [invoiceUploading, setInvoiceUploading] = useState(false);
   const [invoiceUploadProgress, setInvoiceUploadProgress] = useState(''); // "3 of 5 uploaded"
-  const fileToBase64 = (file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error || new Error('Could not read file'));
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      const comma = result.indexOf(',');
-      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-    };
-    reader.readAsDataURL(file);
-  });
+  // Files the backend's legibility check rejected (blank scan, unreadable
+  // photo, wrong/irrelevant image) - shown as a dedicated popup rather than
+  // buried in the small inline notice, since it needs a real re-upload.
+  const [illegibleUploadPopup, setIllegibleUploadPopup] = useState(null);
   const uploadInvoiceFiles = async (fileList) => {
     const files = Array.from(fileList || []).filter(Boolean);
     if (files.length === 0) return;
@@ -6047,6 +7076,7 @@ export const V3BusinessCaseDeliverySummary = () => {
     setInvoiceUploadProgress(`0 of ${files.length} uploaded`);
     let success = 0;
     let firstError = '';
+    const rejected = [];
     for (let i = 0; i < files.length; i += 1) {
       const file = files[i];
       try {
@@ -6060,39 +7090,58 @@ export const V3BusinessCaseDeliverySummary = () => {
         success += 1;
         setInvoiceUploadProgress(`${success} of ${files.length} uploaded`);
       } catch (e) {
-        if (!firstError) firstError = e?.response?.data?.detail || e?.message || `Could not upload ${file.name}.`;
+        const detail = e?.response?.data?.detail;
+        // The backend inspects each upload and rejects it with this shape
+        // when the document isn't legible/identifiable - surface those
+        // separately in a popup instead of the small inline notice.
+        if (detail && typeof detail === 'object' && detail.code === 'illegible_upload') {
+          rejected.push({ name: detail.file_name || file.name, reason: detail.reason || 'This file could not be read.' });
+        } else if (!firstError) {
+          firstError = (typeof detail === 'string' && detail) || e?.message || `Could not upload ${file.name}.`;
+        }
       }
     }
     await reload();
     setInvoiceUploading(false);
     setInvoiceUploadProgress('');
-    if (success === 0) {
+    if (rejected.length) {
+      setIllegibleUploadPopup(rejected);
+    }
+    if (success === 0 && !rejected.length) {
       setInvoiceNotice(firstError || 'No invoice files were uploaded.');
-    } else if (success < files.length) {
+    } else if (success < files.length && firstError) {
       setInvoiceNotice(`${success} of ${files.length} files uploaded. First error: ${firstError}`);
-    } else {
+    } else if (success > 0) {
       setInvoiceNotice(`${success} invoice ${success === 1 ? 'file' : 'files'} uploaded.`);
     }
   };
+  // Adopt the saved text once the case has loaded (the page mounts before
+  // the bundle arrives); after that the input is the admin's to edit.
+  const valueHydratedFor = useRef(null);
   useEffect(() => {
-    setProjectValueInput(projectValue ? String(projectValue) : '');
-  }, [projectValue]);
+    if (!bc.id || valueHydratedFor.current === bc.id) return;
+    valueHydratedFor.current = bc.id;
+    setProjectValueInput(savedValueText);
+  }, [bc.id, savedValueText]);
   const saveProjectValue = async () => {
     const nextValue = numericProjectValue(projectValueInput);
     if (!nextValue) {
       setValueNotice('Enter a real project value before approval.');
       return;
     }
+    const currency = projectValueCurrency(projectValueInput) || valueCurrency;
     setValueNotice('Saving approved project value...');
     try {
-      await v3UpdateBusinessCaseValue(id, { estimated_value: nextValue, approved_by: 'admin' });
+      await valueDraftSave.flush();
+      await v3UpdateBusinessCaseValue(id, { estimated_value: nextValue, value_currency: currency, approved_by: 'admin' });
       await reload();
-      setValueNotice('Project value approved and saved to the real V3 business case.');
+      setValueNotice(`Project value approved: ${formatProjectMoney(nextValue, currency)}.`);
     } catch (e) {
       setValueNotice(e?.response?.data?.detail || e?.message || 'Could not save the project value.');
     }
   };
-  const conceptBlock = cleanV1Text(snapshot.concept || alignment.concept || '-');
+  const conceptBlock = cleanV1Text(deckDigest?.concept || bc.plan?.planning_concept || snapshot.concept || alignment.concept
+    || (deckDigestBusy ? 'Drafting from the Pitch Deck…' : '-'));
   const executiveRows = (() => {
     const exec = (snapshot.sections || []).find((s) => /executive/i.test(s.heading || ''));
     return Array.isArray(exec?.rows) ? exec.rows : [];
@@ -6103,6 +7152,30 @@ export const V3BusinessCaseDeliverySummary = () => {
       subtitle="Planning phase landing. Confirm the project value, review brand & creator details, lock timelines, manage invoicing, and open the Contract Studio or Feedback page when needed."
       nextAction="Lock the timeline and invoicing here, generate contracts in Contract Studio, request feedback from the Feedback page. Move to Delivery when deliverables start."
     >
+      {illegibleUploadPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4" data-testid="illegible-upload-popup">
+          <div className="v3-card w-full max-w-sm bg-white p-5 text-center shadow-2xl">
+            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[#FBF4E4] text-[#7A5A1E]">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <h3 className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>
+              {illegibleUploadPopup.length === 1 ? "This file couldn't be read" : `${illegibleUploadPopup.length} files couldn't be read`}
+            </h3>
+            <div className="mt-2 space-y-2 text-left">
+              {illegibleUploadPopup.map((item, index) => (
+                <div key={`${item.name}-${index}`} className="rounded-md border border-[#F1ECDF] bg-[#FBFAF7] px-3 py-2">
+                  <p className="text-[12px] font-medium text-[#1A1A1A] break-words">{item.name}</p>
+                  <p className="mt-0.5 text-[12px] leading-5 text-[#6E6657]">{item.reason}</p>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[12px] leading-5 text-[#6E6657]">Please upload a clearer copy so it can be identified.</p>
+            <button type="button" onClick={() => setIllegibleUploadPopup(null)} className="v3-btn-primary mt-4 w-full justify-center text-[12px]" data-testid="illegible-upload-popup-dismiss">
+              Try another upload
+            </button>
+          </div>
+        </div>
+      )}
       <InfoCard title="Project at a glance">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Title</span>{cleanV1Text(bc.title)}</div>
@@ -6111,14 +7184,14 @@ export const V3BusinessCaseDeliverySummary = () => {
             <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
               <input
                 value={projectValueInput}
-                onChange={(event) => setProjectValueInput(event.target.value)}
+                onChange={(event) => editValueInput(event.target.value)}
                 className="w-full rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[13px] text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
-                placeholder="Enter project value, e.g. 100000000"
+                placeholder="e.g. ₦1,450,000, N1.45m, $25,000 or 25k USD"
                 data-testid="delivery-project-value-input"
               />
               <button type="button" onClick={saveProjectValue} className="v3-btn-secondary whitespace-nowrap" data-testid="delivery-project-value-approve-btn">Approve value</button>
             </div>
-            <p className="mt-1 text-[11px] text-[#6E6657]">Current value: {projectValue ? formatNairaV3(projectValue) : 'Not approved yet'}</p>
+            <p className="mt-1 text-[11px] text-[#6E6657]">Current value: {projectValue ? formatProjectMoney(projectValue, valueCurrency) : 'Not approved yet'}</p>
             {valueNotice && <p className="mt-1 text-[11px] text-[#1F4A3A]">{valueNotice}</p>}
           </div>
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{humanStatus(bc.engagement_track || '-')}</div>
@@ -6135,15 +7208,15 @@ export const V3BusinessCaseDeliverySummary = () => {
         </div>
       </InfoCard>
       <InfoCard title="Creator details">
-        {creator?.id ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Name</span>{creatorName(creator)}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{cleanV1Text(creator.email || '-')}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{cleanV1Text(creator.phone || '-')}</div>
-            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Platforms</span>{cleanV1Text((creator.platforms || []).join(', ') || '-')}</div>
-            <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Niche / Content type</span>{cleanV1Text(creator.niche || creator.content_type || '-')}</div>
+        {plannedCreators.length ? plannedCreators.map((person, index) => (
+          <div key={person.id || index} className={`grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px] ${index ? 'mt-4 pt-4 border-t border-[#E8E4DB]' : ''}`} data-testid={`planning-creator-${person.id || index}`}>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Name</span>{creatorName(person)}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Email</span>{cleanV1Text(person.email || '-')}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Phone</span>{cleanV1Text(person.phone || '-')}</div>
+            <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Platforms</span>{cleanV1Text((person.platforms || []).join(', ') || '-')}</div>
+            <div className="md:col-span-2"><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Niche / Content type</span>{/* The Specialty / genre the Creator Match Scanner showed for this creator. */}{creatorSpecialty(person) === 'Creator profile' ? '-' : creatorSpecialty(person)}</div>
           </div>
-        ) : (
+        )) : (
           <p className="text-[13px] text-[#8A8A8A]">No primary creator linked to this Business Case yet.</p>
         )}
       </InfoCard>
@@ -6163,34 +7236,23 @@ export const V3BusinessCaseDeliverySummary = () => {
         )}
       </InfoCard>
       {/* Timelines (Planning) - editable. Lock the schedule before Delivery starts. */}
-      <InfoCard
-        title="Timelines"
-        action={(
-          <button
-            type="button"
-            onClick={saveTimeline}
-            disabled={timelineSaving}
-            className="v3-btn-primary text-[11px] disabled:opacity-60"
-            data-testid="planning-timeline-save"
-          >
-            <Save className="w-3.5 h-3.5" /> {timelineSaving ? 'Saving…' : 'Save timeline'}
-          </button>
-        )}
-      >
+      <InfoCard title="Timelines">
         <label className="block text-[11px] text-[#6E6657] mb-1">
-          Edit the timeline directly here. Saved to this Business Case.
+          {deckDigestBusy && !timelineTouched.current && !persistedTimeline
+            ? 'Drafting the timeline from the Pitch Deck (Go To Market / Campaign)…'
+            : 'Drafted from the Pitch Deck (Go To Market / Campaign). Edit freely - changes save as you type.'}
         </label>
         <textarea
           value={timelineDraft}
-          onChange={(e) => setTimelineDraft(e.target.value)}
+          onChange={(e) => editTimeline(e.target.value)}
           rows={6}
           placeholder="Add the launch window, approval rhythm, production windows, and reporting period. Use plain text or bullets - anything that helps Delivery run the schedule."
           className="w-full text-[12px] rounded-md border border-[#D7CBB8] bg-white px-3 py-2 text-[#1A1A1A] focus:border-[#1F4A3A] focus:outline-none"
           data-testid="planning-timeline-input"
         />
-        {!persistedTimeline && fallbackTimelineText && (
+        {!persistedTimeline && !hasPitchDeck && fallbackTimelineText && (
           <p className="mt-2 text-[11px] text-[#6E6657]">
-            Loaded from the Brainstorm round as a starting point. Edit and save to lock it on this Business Case.
+            Loaded from the Brainstorm round as a starting point. Edit it to keep it on this Business Case.
           </p>
         )}
         {timelineNotice && (
@@ -6408,82 +7470,25 @@ export const V3BusinessCaseDeliverySummary = () => {
         <p className="mt-2 text-[11px] text-[#6E6657]">Upload each invoice document above. Amount and status can be edited inline; click the file name to download. Mark paid stamps the paid date. Invoices can be paid off-platform.</p>
       </InfoCard>
 
-      {/* Other Planning pages */}
-      <InfoCard title="Other Planning pages">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/contracts`))} className="v3-btn-primary justify-start" data-testid="planning-open-contract-btn">
+      {/* One way onward, one page at a time: Planning -> Contract Studio ->
+          Feedback -> Delivery. Contract Studio carries "Open Feedback page"
+          and Feedback carries "Open Delivery", so this page only offers the
+          first step. */}
+      <InfoCard title="Next planning page">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <p className="text-[13px] text-[#6E6657]">Contract Studio generates the brand & creator agreements from the approved templates. The Feedback page follows it.</p>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/contracts`))} className="v3-btn-primary" data-testid="planning-open-contract-btn">
             <FileSignature className="w-3.5 h-3.5" /> Open Contract Studio
-          </button>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/feedback`))} className="v3-btn-secondary justify-start" data-testid="planning-open-feedback-btn">
-            <Mail className="w-3.5 h-3.5" /> Open Feedback page
-          </button>
-        </div>
-        <p className="mt-2 text-[11px] text-[#6E6657]">Contract Studio generates brand & creator agreements from approved templates. The Feedback page is reusable - admin can return at any time to send fresh feedback requests.</p>
-      </InfoCard>
-
-      {/* Planning gate: Delivery stays locked until Planning is marked complete. */}
-      <InfoCard title="Complete Planning">
-        {planningNotice && <p className="mb-2 text-[11px] text-[#B54A37]">{planningNotice}</p>}
-        {planningDone ? (
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <p className="text-[13px] text-[#1F4A3A]">Planning is complete. The Delivery phase is now unlocked.</p>
-            <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/deliverables`))} className="v3-btn-primary" data-testid="planning-open-delivery-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Delivery</button>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <p className="text-[13px] text-[#6E6657]">Confirm the budget, timelines, invoicing, and contracts are handled. Delivery stays locked until Planning is marked complete.</p>
-            <button onClick={completePlanning} disabled={completingPlanning} className="v3-btn-primary disabled:opacity-60" data-testid="planning-complete-btn"><CheckCircle2 className="w-3.5 h-3.5" /> {completingPlanning ? 'Completing…' : 'Complete Planning & Open Delivery'}</button>
-          </div>
-        )}
-      </InfoCard>
-
-      {/* Framing artifacts shortcuts. Even after the Business Case has moved
-          into Planning / Delivery / Reporting, admin should be able to jump
-          back to any of the Framing documents from one place. */}
-      <InfoCard title="Framing artifacts">
-        <p className="text-[12px] text-[#6E6657] mb-3">Open any of the Framing documents drafted earlier in this Business Case.</p>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/snapshot`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-alignment-btn">
-            <FileText className="w-3.5 h-3.5" /> Alignment Snapshot
-          </button>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brainstorm`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-brainstorm-btn">
-            <Sparkles className="w-3.5 h-3.5" /> Creator Selector
-          </button>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/creator-scan`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-creator-scan-btn">
-            <Eye className="w-3.5 h-3.5" /> Creator Match
-          </button>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/brief`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-brief-btn">
-            <FileText className="w-3.5 h-3.5" /> Creative Brief
-          </button>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/connect`))} className="v3-btn-secondary justify-start text-[11px]" data-testid="planning-open-connect-btn">
-            <Eye className="w-3.5 h-3.5" /> Connect
           </button>
         </div>
       </InfoCard>
     </FlowShell>
   );
 };
-const buildFeedbackPreviewSections = (fb) => {
-  if (!fb) return [];
-  const sections = [];
-  if (fb.email_template) sections.push({ heading: 'Tab 1 - Email Template', content: fb.email_template });
-  [['brand_partner', 'Brand Partner Feedback'], ['creative_partner', 'Creative Partner Feedback']].forEach(([key, fallback]) => {
-    const block = fb[key];
-    if (!block) return;
-    sections.push({ heading: block.form_title || fallback, content: block.form_description || '' });
-    const header = [`Project name: ${block.project_name || '-'}`, `Date: ${block.date || '-'}`];
-    if (block.google_form_link !== undefined) header.push(`Google form link: ${block.google_form_link || '-'}`);
-    sections.push({ content: header.join('\n') });
-    (block.questions || []).forEach((q, idx) => {
-      sections.push({ heading: `${idx + 1}. ${q.label}`, content: `${q.question}\nRating: ${q.rating ?? '-'} / 10` });
-    });
-    sections.push({ content: `Optional comment: ${block.optional_comment || '-'}` });
-  });
-  if ((fb.internal_use || []).length) sections.push({ heading: 'Internal Use (Not Shown to Client)', content: fb.internal_use.map((l) => `- ${l}`).join('\n') });
-  return sections;
-};
-
-const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
+// viewUrl: the document's letterhead web page (TASCK logo, curves, footer) -
+// shown as-is so the preview looks like the PDF. Without one, the sections
+// are laid out plainly.
+const PreviewModal = ({ open, onClose, title, pdfUrl, viewUrl, sections, testId }) => {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose} data-testid={testId || 'preview-modal'}>
@@ -6492,11 +7497,14 @@ const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
           <p className="text-[14px] font-semibold text-[#1A1A1A] truncate" style={{ fontFamily: "'Fraunces', serif" }}>{title}</p>
           <div className="flex items-center gap-2 shrink-0">
             {pdfUrl && (
-              <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="v3-btn-secondary text-[11px]" data-testid="preview-download-pdf"><Download className="w-3.5 h-3.5" /> Download PDF</a>
+              <button type="button" onClick={() => downloadFile(pdfUrl)} className="v3-btn-secondary text-[11px]" data-testid="preview-download-pdf"><Download className="w-3.5 h-3.5" /> Download PDF</button>
             )}
             <button onClick={onClose} className="v3-btn-secondary text-[11px]" data-testid="preview-close-btn"><X className="w-3.5 h-3.5" /> Close</button>
           </div>
         </div>
+        {viewUrl ? (
+          <iframe src={viewUrl} title={title} className="flex-1 w-full border-0 bg-[#EEE]" data-testid="preview-letterhead-frame" />
+        ) : (
         <div className="flex-1 overflow-y-auto px-8 py-8 bg-[#FBFAF7]">
           <div className="max-w-3xl mx-auto bg-white rounded-lg border border-[#E8E4DB] shadow-sm px-10 py-10 space-y-6">
             <h2 className="text-[22px] font-semibold text-[#1F4A3A] mb-2" style={{ fontFamily: "'Fraunces', serif" }}>{title}</h2>
@@ -6512,10 +7520,17 @@ const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
             )}
           </div>
         </div>
+        )}
       </div>
     </div>
   );
 };
+
+// The feedback template holds two independent forms - the Brand Partner form
+// and the Creative Partner form. Everything that leaves the studio is
+// addressed to one of them, so the audience travels with the share action
+// instead of both forms going out to whoever was clicked.
+const FEEDBACK_FORM_LABELS = { brand: 'Brand Partner form', creator: 'Creative Partner form' };
 
 const SHARE_OPTIONS = (label, brandEmail, creatorEmail, includeCreator = false) => {
   const normalized = String(label || '').toLowerCase();
@@ -6533,9 +7548,15 @@ const SHARE_OPTIONS = (label, brandEmail, creatorEmail, includeCreator = false) 
 };
 
 const ShareMenu = ({ open, onClose, options, onSelect }) => {
+  // Every ShareMenu is rendered as a sibling of its toggle button inside the
+  // caller's `relative` wrapper, so "inside" has to mean that wrapper - the
+  // panel's parent - and not the panel alone. Measuring the panel only would
+  // count the toggle button as outside: mousedown would close the menu and
+  // the button's own onClick would reopen it, so it would never shut.
+  const menuRef = useClickOutside(open, onClose, (panel) => panel.parentElement);
   if (!open) return null;
   return (
-    <div className="absolute right-0 mt-2 w-80 rounded-lg border border-[#E8E4DB] bg-white shadow-xl z-30" onClick={(e) => e.stopPropagation()}>
+    <div ref={menuRef} className="absolute right-0 mt-2 w-80 rounded-lg border border-[#E8E4DB] bg-white shadow-xl z-30" onClick={(e) => e.stopPropagation()}>
       <div className="p-2">
         {options.map((opt) => {
           const Icon = opt.icon;
@@ -6558,6 +7579,17 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
   const [saving, setSaving] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // "Mark signed" gave no sign it had been pressed - its only feedback was the
+  // notice at the top of the page - so it was clicked over and over, each
+  // click re-stamping the signature. It now shows it is working, then settles
+  // into the page-background style once the contract is signed.
+  const [signing, setSigning] = useState(false);
+  const isSigned = contract.status === 'signed' || Boolean(contract.signed_at);
+  const markSigned = async () => {
+    if (signing || isSigned) return;
+    setSigning(true);
+    try { await onSign(contract); } finally { setSigning(false); }
+  };
   const startEdit = () => {
     setDraftTitle(cleanV1Text(contract.title || ''));
     setDraftSections((contract.sections || []).map((s) => ({ ...s })));
@@ -6610,7 +7642,16 @@ const ContractCard = ({ contract, brandEmail, creatorEmail, onUpdate, onSign, on
                   onSelect={(opt) => onShare(contract, opt)}
                 />
               </div>
-              <button onClick={() => onSign(contract)} className="v3-btn-primary text-[11px]"><CheckCircle2 className="w-3.5 h-3.5" /> Mark signed</button>
+              <button
+                onClick={markSigned}
+                disabled={signing || isSigned}
+                aria-pressed={isSigned}
+                className={`${isSigned ? 'v3-btn-secondary' : 'v3-btn-primary active:scale-95'} text-[11px] transition-transform disabled:cursor-default ${isSigned ? 'disabled:opacity-100' : ''}`}
+                data-testid={`contract-${contract.id}-sign-btn`}
+              >
+                {signing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                {isSigned ? 'Signed' : signing ? 'Marking signed…' : 'Mark signed'}
+              </button>
             </>
           )}
         </div>
@@ -6707,8 +7748,12 @@ export const V3BusinessCaseContractStudio = () => {
   const regenerate = async (template) => {
     setNotice('');
     try {
+      // The server replaces the contract in place (same id), so it keeps its
+      // spot: still one brand and one creator contract.
       const doc = await createOne(template);
-      setContracts((prev) => [doc, ...prev.filter((c) => c.template !== template)]);
+      setContracts((prev) => (prev.some((c) => c.template === template)
+        ? prev.map((c) => (c.template === template ? doc : c))
+        : [...prev, doc]));
       setNotice(`${template === 'brand_msa' ? 'Brand Service Agreement' : 'Creator Agreement'} regenerated. Edit if needed before sending.`);
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not regenerate contract.');
@@ -6725,19 +7770,19 @@ export const V3BusinessCaseContractStudio = () => {
   };
   const handleShare = async (contract, option) => {
     if (option.key === 'copy_link') {
-      const link = `${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`)}#${contract.id}`;
-      navigator.clipboard?.writeText(link);
-      setNotice('Contract link copied to clipboard.');
+      // Opens just this contract in a browser - the same link WhatsApp shares.
+      navigator.clipboard?.writeText(v3ContractViewUrl(contract.id));
+      setNotice('Contract link copied. It opens the contract on its own in any browser.');
       return;
     }
     if (option.key === 'download_google_docs' || option.key === 'download_pdf') {
-      window.open(option.key === 'download_google_docs' ? v3ContractDocxUrl(contract.id) : v3ContractPdfUrl(contract.id), '_blank');
-      setNotice(option.key === 'download_google_docs' ? 'Contract Google Docs-compatible document opened in a new tab.' : 'Contract PDF opened in a new tab.');
+      downloadFile(option.key === 'download_google_docs' ? v3ContractDocxUrl(contract.id) : v3ContractPdfUrl(contract.id));
+      setNotice(option.key === 'download_google_docs' ? 'Contract Google Docs-compatible document downloading.' : 'Contract PDF downloading.');
       return;
     }
     if (option.key === 'whatsapp') {
       const text = encodeURIComponent(`Contract ready for review: ${contract.title}
-${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`)}`);
+${v3ContractViewUrl(contract.id)}`);
       window.open(`https://wa.me/?text=${text}`, '_blank');
       return;
     }
@@ -6825,10 +7870,12 @@ ${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`
           </div>
         </InfoCard>
       )}
-      <InfoCard title="Next delivery page">
+      {/* One way onward: Contract Studio -> Feedback page -> Delivery. The
+          Feedback page carries the Open Delivery button. */}
+      <InfoCard title="Next planning page">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[13px] text-[#6E6657]">Open Deliverables once contracts have been sent.</p>
-          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/delivery/deliverables`))} className="v3-btn-primary" data-testid="contracts-open-deliverables-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Deliverables</button>
+          <p className="text-[13px] text-[#6E6657]">Open the Feedback page once contracts have been sent.</p>
+          <button onClick={() => navigate(adminRoute(`/business-cases/${id}/plan/feedback`))} className="v3-btn-primary" data-testid="contracts-open-feedback-btn"><ArrowRight className="w-3.5 h-3.5" /> Open Feedback page</button>
         </div>
       </InfoCard>
 
@@ -6887,6 +7934,27 @@ ${window.location.origin}${adminRoute(`/business-cases/${id}/delivery/contracts`
 
 export const V3BusinessCaseDeliveryWaitingSignatures = () => <FlowShell title="Waiting for Contract Approval / Signatures" subtitle="Track brand and creator contract statuses, comments, reminders, and resend loops."><InfoCard title="Signature tracker"><p className="text-[13px] text-[#6E6657]">Use Contract Studio to generate, download, send, and mark signed drafts. Reminder emails can be queued from the contract list.</p></InfoCard></FlowShell>;
 
+// Deliverable status pill. The PENDING UPLOAD badge is deliberately only
+// shown while the row is still waiting for a file - it disappears as soon as
+// the admin uploads something, and again once the deliverable is approved.
+const DELIVERABLE_STATUS_STYLES = {
+  pending_upload: 'bg-[#FBF4E4] text-[#7A5A1E]',
+  pending_rm_review: 'bg-[#EEF2FB] text-[#2F4A7A]',
+  approved: 'bg-[#E8F3ED] text-[#1F4A3A]',
+};
+const deliverableStatusLabel = (status) => {
+  if (status === 'approved') return 'Approved';
+  if (status === 'pending_upload' || !status) return 'Pending upload';
+  return 'Awaiting approval';
+};
+const formatFileSize = (bytes) => {
+  const size = Number(bytes || 0);
+  if (!size) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+};
+
 export const V3BusinessCaseDeliverables = () => {
   const navigate = useNavigate();
   const { id, bundle, reload } = useBusinessCaseBundle();
@@ -6897,7 +7965,17 @@ export const V3BusinessCaseDeliverables = () => {
   const [deliveryTimeframe, setDeliveryTimeframe] = useState('');
   const [rows, setRows] = useState([]);
   const [notice, setNotice] = useState('');
+  const [approving, setApproving] = useState(false);
+  // Which deliverable is mid-upload, and how far through a multi-file pick.
+  const [uploadingId, setUploadingId] = useState('');
+  const [uploadProgress, setUploadProgress] = useState('');
+  // The approval gate. Lives on the business case as
+  // deliver.deliverables_approved_at: set when the admin approves, cleared by
+  // the backend on any later add/edit/delete/upload. Reporting stays locked
+  // until it is set again.
+  const [approvedAt, setApprovedAt] = useState(null);
   useEffect(() => { v3ListDeliverables(id).then((data) => setRows(Array.isArray(data) ? data : [])); }, [id]);
+  useEffect(() => { setApprovedAt((getCase(bundle).deliver || {}).deliverables_approved_at || null); }, [bundle]);
   // Mark this Business Case as being in the Delivery sub-phase so clicking the
   // brand from the Business Case list later lands here, not on Planning.
   useEffect(() => {
@@ -6907,42 +7985,164 @@ export const V3BusinessCaseDeliverables = () => {
       v3UpdateBusinessCasePhase(id, 'delivery').catch(() => { /* non-blocking */ });
     }
   }, [id, bundle]);
-  // Persist the current form to the backend. Used by both buttons:
-  //   - "Add deliverable"  : save + clear form (so admin can type the next).
-  //   - "Save deliverable" : save + keep form populated for review.
-  const persistDeliverable = async ({ clearForm }) => {
+  // The two buttons do different jobs:
+  //   - "Save deliverable": keeps what is typed in the form, saved on the
+  //     case (plan.deliverable_draft), so it is still there after leaving the
+  //     page. It does NOT add a row (it used to, so Save + Add made two).
+  //   - "Add deliverable": turns the form into a deliverable in the list
+  //     below and empties the form (and the saved draft) for the next one.
+  const savedDraft = (getCase(bundle).plan || {}).deliverable_draft;
+  const draftRestored = useRef(false);
+  useEffect(() => {
+    if (draftRestored.current || !getCase(bundle).id) return;
+    draftRestored.current = true;
+    if (!savedDraft) return;
+    setTitle(savedDraft.title || '');
+    setNotes(savedDraft.notes || '');
+    setDeliveryDate(savedDraft.delivery_date || '');
+    setDeliveryTime(savedDraft.delivery_time || '');
+    setDeliveryTimeframe(savedDraft.delivery_timeframe || '');
+  }, [bundle, savedDraft]);
+  const formDraft = () => ({ title, notes, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_timeframe: deliveryTimeframe });
+  const save = async () => {
+    setNotice('');
+    try {
+      await v3UpdatePlanningText(id, { deliverable_draft: formDraft() });
+      setNotice('Deliverable saved. It stays in the form, even if you leave this page. Click Add deliverable to add it to the list.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not save the deliverable.');
+    }
+  };
+  const add = async () => {
     if (!title.trim()) { setNotice('Add a deliverable title first.'); return; }
     setNotice('');
     try {
-      const row = await v3AddDeliverable({ business_case_id: id, title, notes, delivery_date: deliveryDate, delivery_time: deliveryTime, delivery_timeframe: deliveryTimeframe });
+      const row = await v3AddDeliverable({ business_case_id: id, ...formDraft() });
       setRows([row, ...rows]);
-      setNotice(clearForm ? 'Deliverable added.' : 'Deliverable saved.');
-      if (clearForm) {
-        setTitle('');
-        setNotes('');
-        setDeliveryDate('');
-        setDeliveryTime('');
-        setDeliveryTimeframe('');
-      }
+      // Mirrors the backend: a new deliverable voids any earlier approval.
+      setApprovedAt(null);
+      setTitle('');
+      setNotes('');
+      setDeliveryDate('');
+      setDeliveryTime('');
+      setDeliveryTimeframe('');
+      await v3UpdatePlanningText(id, { deliverable_draft: {} }).catch(() => {});
+      setNotice('Deliverable added. Approve it when you are ready to release it to the brand.');
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'Could not save deliverable.');
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not add the deliverable.');
     }
   };
-  const add = () => persistDeliverable({ clearForm: true });
-  const save = () => persistDeliverable({ clearForm: false });
   const deleteRow = async (row) => {
     if (typeof window !== 'undefined' && !window.confirm(`Delete deliverable "${row.title || 'this row'}"? This cannot be undone.`)) return;
     setNotice('');
     try {
       await v3DeleteDeliverable(row.id);
       setRows((current) => current.filter((r) => r.id !== row.id));
+      setApprovedAt(null);
       setNotice('Deliverable deleted.');
     } catch (e) {
       setNotice(e?.response?.data?.detail || e?.message || 'Could not delete deliverable.');
     }
   };
+  const outstanding = rows.filter((row) => row.status !== 'approved').length;
+  // Reporting only opens once every deliverable is approved AND no edit has
+  // happened since. Both halves matter: the row statuses cover a half-done
+  // approval, the timestamp covers an edit made after approving.
+  const approvalComplete = rows.length > 0 && outstanding === 0 && Boolean(approvedAt);
+  // Delivery has been passed once the project has moved into Reporting. From
+  // then on the footer's Next is the way forward (see v1FlowSteps), so the
+  // page's own "Move to Reporting Phase" card is hidden rather than sitting
+  // next to it as a second, competing button.
+  const deliveryPassed = Boolean(
+    (getCase(bundle).plan || {}).delivery_completed_at
+    || getCase(bundle).reporting_started_at
+    || getCase(bundle).final_report_sent_at
+  );
+  const approveDeliverables = async () => {
+    if (rows.length === 0) { setNotice('Add a deliverable before approving.'); return; }
+    setNotice('');
+    setApproving(true);
+    try {
+      // Approving re-notifies the brand every single time, by design - the
+      // backend re-stamps the notification timestamp on each click.
+      const result = await v3ApproveDeliverables(id, { actor: 'admin' });
+      if (Array.isArray(result?.deliverables)) setRows(result.deliverables);
+      setApprovedAt(result?.approved_at || null);
+      await reload();
+      const count = result?.approved_count || rows.length;
+      setNotice(`${count} deliverable${count === 1 ? '' : 's'} approved. The brand has been notified in their portal, and Reporting is now unlocked.`);
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not approve the deliverables.');
+    } finally {
+      setApproving(false);
+    }
+  };
+  // Upload one or more files against a single deliverable. One POST per file,
+  // same as the Planning invoice uploader.
+  const uploadDeliverableFiles = async (row, fileList) => {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (files.length === 0) return;
+    setNotice('');
+    setUploadingId(row.id);
+    setUploadProgress(`0 of ${files.length} uploaded`);
+    let latest = null;
+    let done = 0;
+    let firstError = '';
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      try {
+        const b64 = await fileToBase64(file);
+        latest = await v3UploadDeliverableFile(row.id, {
+          file_name: file.name,
+          mime_type: file.type || 'application/octet-stream',
+          file_data_base64: b64,
+        });
+        done += 1;
+        setUploadProgress(`${done} of ${files.length} uploaded`);
+      } catch (e) {
+        const detail = e?.response?.data?.detail;
+        const message = (detail && typeof detail === 'object' && detail.message)
+          || (typeof detail === 'string' && detail)
+          || e?.message
+          || `Could not upload ${file.name}.`;
+        if (!firstError) firstError = message;
+      }
+    }
+    if (latest) setRows((current) => current.map((r) => (r.id === latest.id ? latest : r)));
+    // An upload is an edit, so the approval gate drops - matches the backend.
+    if (done > 0) setApprovedAt(null);
+    setUploadingId('');
+    setUploadProgress('');
+    if (done === 0) {
+      setNotice(firstError || 'No files were uploaded.');
+    } else if (firstError) {
+      setNotice(`${done} of ${files.length} files uploaded. First error: ${firstError}`);
+    } else {
+      setNotice(`${done} file${done === 1 ? '' : 's'} uploaded. Approve the deliverable to release it to the brand.`);
+    }
+  };
+  const removeAttachment = async (file) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Remove "${file.file_name}" from this deliverable? This cannot be undone.`)) return;
+    setNotice('');
+    try {
+      await v3DeleteDeliverableFile(file.id);
+      const data = await v3ListDeliverables(id);
+      setRows(Array.isArray(data) ? data : []);
+      setApprovedAt(null);
+      setNotice('File removed.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not remove that file.');
+    }
+  };
   const openReporting = async () => {
     setNotice('');
+    // Front-of-house half of the gate; the backend refuses the same move.
+    if (!approvalComplete) {
+      setNotice(rows.length === 0
+        ? 'Add at least one deliverable and approve it before moving to Reporting.'
+        : 'Approve the deliverables before moving to Reporting. Any edit made after an approval needs a fresh approval.');
+      return;
+    }
     try {
       // Mark Delivery complete (unlocks Reporting in the stepper). Does NOT
       // close the Business Case - the Final Report page's Close Project does.
@@ -6956,6 +8156,40 @@ export const V3BusinessCaseDeliverables = () => {
   return (
     <FlowShell title="Deliverables" subtitle="Add, edit, assign, status, link, and send multiple deliverables to portals/emails.">
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
+      {/* Approval gate, kept at the top of the page: nothing moves on to
+          Reporting until the admin approves here, and each approval tells the
+          brand in their portal that the deliverable is available. */}
+      <InfoCard title="Approval">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <p className="text-[13px] text-[#6E6657]">
+              {rows.length === 0
+                ? 'Add a deliverable first. Approving releases it to the brand portal and unlocks the Reporting phase.'
+                : approvalComplete
+                  ? `Approved ${formatDateTime(approvedAt)}. The brand has been notified, and Reporting is unlocked.`
+                  : 'Approve to notify the brand that the deliverables are available and unlock Reporting. Adding, editing, deleting or uploading after an approval clears it, so approve again once you are done.'}
+            </p>
+            {rows.length > 0 && !approvalComplete && (
+              <p className="mt-1 text-[11px] text-[#8A8A8A]" data-testid="deliverables-approval-outstanding">
+                {outstanding > 0
+                  ? `${outstanding} of ${rows.length} deliverable${rows.length === 1 ? '' : 's'} not approved yet.`
+                  : 'Changes were made after the last approval.'}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={approveDeliverables}
+            disabled={approving || rows.length === 0}
+            className="v3-btn-primary flex-shrink-0 disabled:opacity-60"
+            data-testid="deliverables-approve-btn"
+          >
+            {approving
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Approving…</>
+              : <><CheckCircle2 className="w-3.5 h-3.5" /> {approvalComplete ? 'Approve again' : 'Approve'}</>}
+          </button>
+        </div>
+      </InfoCard>
       <InfoCard title="Add deliverable">
         <div className="space-y-3">
           <label className="block">
@@ -6968,24 +8202,28 @@ export const V3BusinessCaseDeliverables = () => {
           </label>
           <div className="rounded-lg border border-[#E8E4DB] bg-[#FBFAF7] p-3" data-testid="deliverable-schedule-panel">
             <p className="mb-3 text-[10px] uppercase tracking-wider text-[#8A8A8A]">Delivery date, time, and timeframe</p>
-            <div className="grid gap-3 md:grid-cols-3">
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Scheduled date</span>
-                <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className="mt-1 w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="deliverable-date-input" />
-              </label>
-              <label className="block">
-                <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Scheduled time</span>
-                <input type="time" value={deliveryTime} onChange={(e) => setDeliveryTime(e.target.value)} className="mt-1 w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" data-testid="deliverable-time-input" />
-              </label>
+            <div className="grid gap-3 md:grid-cols-2">
+              {/* Same picker as Connect's meeting date and time. It speaks
+                  `YYYY-MM-DDTHH:mm`, so split it back into the delivery_date /
+                  delivery_time fields the API already stores. */}
+              <DateTimePickerField
+                label="Scheduled date and time"
+                value={deliveryDate ? (deliveryTime ? `${deliveryDate}T${deliveryTime}` : deliveryDate) : ''}
+                onChange={(next) => {
+                  const [nextDate = '', nextTime = ''] = String(next || '').split('T');
+                  setDeliveryDate(nextDate);
+                  setDeliveryTime(nextTime.slice(0, 5));
+                }}
+                testId="deliverable-scheduled-for"
+              />
               <label className="block">
                 <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Delivery timeframe</span>
                 <input value={deliveryTimeframe} onChange={(e) => setDeliveryTimeframe(e.target.value)} className="mt-1 w-full rounded-lg border border-[#E8E4DB] bg-white px-3 py-2 text-[13px]" placeholder="e.g., 2 production days / Launch week" data-testid="deliverable-timeframe-input" />
               </label>
             </div>
           </div>
-          {/* Side-by-side Add + Save. Add clears the form ready for the next
-              entry; Save keeps the form populated so admin can keep tweaking
-              the same row. Both persist immediately to the backend. */}
+          {/* Save keeps the typed form (saved on the case); Add turns it into
+              a deliverable in the list below and clears the form. */}
           <div className="flex flex-wrap justify-end gap-2">
             <button onClick={save} className="v3-btn-secondary" data-testid="deliverable-save-btn">
               <Save className="w-3.5 h-3.5" /> Save deliverable
@@ -7014,7 +8252,12 @@ export const V3BusinessCaseDeliverables = () => {
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-2 flex-shrink-0">
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-[#F4F2EC] text-[#6E6657] uppercase tracking-wider">{humanStatus(row.status)}</span>
+                    <span
+                      className={`text-[10px] px-2 py-0.5 rounded uppercase tracking-wider ${DELIVERABLE_STATUS_STYLES[row.status] || 'bg-[#F4F2EC] text-[#6E6657]'}`}
+                      data-testid={`deliverable-${row.id}-status`}
+                    >
+                      {deliverableStatusLabel(row.status)}
+                    </span>
                     <button
                       type="button"
                       onClick={() => deleteRow(row)}
@@ -7025,54 +8268,162 @@ export const V3BusinessCaseDeliverables = () => {
                     </button>
                   </div>
                 </div>
+                {/* Optional upload: attach the finished document or image to
+                    the deliverable. The first file clears PENDING UPLOAD. */}
+                <div className="mt-3 border-t border-[#E8E4DB] pt-3">
+                  {(row.attachments || []).length > 0 && (
+                    <ul className="mb-2 space-y-1" data-testid={`deliverable-${row.id}-files`}>
+                      {(row.attachments || []).map((file) => (
+                        <li key={file.id} className="flex items-center justify-between gap-3 rounded bg-[#FBFAF7] px-2.5 py-1.5">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <Paperclip className="w-3 h-3 text-[#6E6657] flex-shrink-0" />
+                            <a
+                              href={v3DeliverableFileUrl(file.id)}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="truncate text-[12px] text-[#1F4A3A] hover:underline"
+                            >
+                              {file.file_name}
+                            </a>
+                            {formatFileSize(file.file_size_bytes) && (
+                              <span className="flex-shrink-0 text-[10px] text-[#8A8A8A]">{formatFileSize(file.file_size_bytes)}</span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeAttachment(file)}
+                            className="flex-shrink-0 text-[11px] text-[#B54A37] hover:underline"
+                            data-testid={`deliverable-file-${file.id}-remove-btn`}
+                          >
+                            Remove
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <label
+                    htmlFor={`deliverable-${row.id}-file-input`}
+                    className={`block rounded-md border-2 border-dashed bg-[#FBFAF7] p-3 text-center cursor-pointer transition-colors ${uploadingId === row.id ? 'border-[#D7CBB8] opacity-70' : 'border-[#D7CBB8] hover:border-[#1F4A3A]'}`}
+                    data-testid={`deliverable-${row.id}-upload-zone`}
+                  >
+                    <Upload className="w-4 h-4 text-[#1F4A3A] inline-block" />
+                    <p className="mt-1 text-[12px] font-medium text-[#4F3E2F]">
+                      {uploadingId === row.id ? `Uploading… ${uploadProgress}` : 'Click to upload the finished deliverable'}
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-[#6E6657]">PDF, Word, PNG, JPG. Optional, and you can attach more than one. Up to 10MB per file.</p>
+                    <input
+                      id={`deliverable-${row.id}-file-input`}
+                      type="file"
+                      accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.gif,application/pdf,image/*"
+                      multiple
+                      className="hidden"
+                      disabled={Boolean(uploadingId)}
+                      onChange={(e) => {
+                        uploadDeliverableFiles(row, e.target.files);
+                        // Clear the input so re-picking the same file re-fires onChange.
+                        e.target.value = '';
+                      }}
+                      data-testid={`deliverable-${row.id}-file-input`}
+                    />
+                  </label>
+                </div>
               </div>
             ))}
           </div>
         )}
       </InfoCard>
-      <InfoCard title="Move to Reporting">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <p className="text-[13px] text-[#6E6657]">When delivery is complete, open Reporting to generate the final report and feedback for brand and creator review.</p>
-          <button onClick={openReporting} className="v3-btn-primary" data-testid="delivery-open-reporting-btn"><FileText className="w-3.5 h-3.5" /> Move to Reporting Phase</button>
-        </div>
-      </InfoCard>
+      {!deliveryPassed && (
+        <InfoCard title="Move to Reporting">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <p className="text-[13px] text-[#6E6657]">
+              {approvalComplete
+                ? 'When delivery is complete, open Reporting to generate the final report and feedback for brand and creator review.'
+                : 'Locked until the deliverables are approved above. Any edit made after an approval needs a fresh approval before Reporting opens.'}
+            </p>
+            <button
+              onClick={openReporting}
+              disabled={!approvalComplete}
+              title={approvalComplete ? '' : 'Approve the deliverables first'}
+              className="v3-btn-primary flex-shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
+              data-testid="delivery-open-reporting-btn"
+            >
+              {approvalComplete ? <FileText className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />} Move to Reporting Phase
+            </button>
+          </div>
+        </InfoCard>
+      )}
     </FlowShell>
   );
 };
 
-const FeedbackQuestion = ({ q, idx, editing, onChange }) => (
-  <div className="rounded-lg border border-[#E8E4DB] bg-white p-4 space-y-2" data-testid={`feedback-q-${q.key}`}>
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0 flex-1">
-        <p className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}. {cleanV1Text(q.label)}</p>
-        <p className="text-[11px] text-[#6E6657] mt-1">{cleanV1Text(q.question)}</p>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        {editing ? (
-          <>
-            <input
-              type="number"
-              min={1}
-              max={10}
-              value={q.rating ?? ''}
-              onChange={(e) => onChange(idx, 'rating', e.target.value ? Number(e.target.value) : null)}
-              className="w-20 text-right rounded border border-[#E8E4DB] px-2 py-1 text-[12px]"
-            />
-            <span className="text-[11px] text-[#8A8A8A]">/ 10</span>
-          </>
-        ) : (
-          <span className="text-[14px] font-semibold text-[#1F4A3A] bg-[#DDF0E1] border border-[#A4D4B0] rounded-full px-3 py-0.5">{q.rating ?? '-'}/10</span>
-        )}
+// Same 5-point scale as the public feedback form. Internally a rating still
+// stores on the original 1-10 scale (the public form maps its 5 options onto
+// 2/4/6/8/10, so PDF export and the "average score below 7" internal-use
+// trigger keep working unchanged) - this only converts for display/editing.
+const FEEDBACK_LIKERT_LABELS = ['Strongly Disagree', 'Disagree', 'Neutral', 'Agree', 'Strongly Agree'];
+const ratingToLikertIndex = (rating) => {
+  const n = Number(rating);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(5, Math.max(1, Math.round(n / 2)));
+};
+
+// Editing a form means editing what it ASKS - each question's title and
+// wording. The answers are the brand's / creator's to give on the online
+// form, so the scale is shown but never selectable here (it used to be, and
+// admins could fill a form in on the respondent's behalf).
+const FeedbackQuestion = ({ q, idx, editing, onChange }) => {
+  const selectedIndex = ratingToLikertIndex(q.rating);
+  return (
+    <div className="rounded-lg border border-[#E8E4DB] bg-white p-4 space-y-2.5" data-testid={`feedback-q-${q.key}`}>
+      {editing ? (
+        <div className="space-y-1.5">
+          <label className="flex items-center gap-2">
+            <span className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}.</span>
+            <input value={q.label || ''} onChange={(e) => onChange(idx, 'label', e.target.value)} className="flex-1 rounded border border-[#E8E4DB] px-2 py-1.5 text-[12px] font-semibold" placeholder="Question title" data-testid={`feedback-q-${q.key}-label`} />
+          </label>
+          <textarea value={q.question || ''} onChange={(e) => onChange(idx, 'question', e.target.value)} rows={2} className="w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[11px]" placeholder="The question asked" data-testid={`feedback-q-${q.key}-question`} />
+        </div>
+      ) : (
+        <div>
+          <p className="text-[12px] font-semibold text-[#1A1A1A]">{idx + 1}. {cleanV1Text(q.label)}</p>
+          <p className="text-[11px] text-[#6E6657] mt-1">{cleanV1Text(q.question)}</p>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1.5" aria-label="Answer scale (filled in by the respondent)">
+        {FEEDBACK_LIKERT_LABELS.map((label, optionIdx) => {
+          const selected = selectedIndex === optionIdx + 1;
+          return (
+            <div
+              key={label}
+              className={`flex-1 min-w-[92px] rounded-lg border px-2 py-2 text-center text-[11px] font-medium leading-tight ${
+                selected ? 'border-[#1F4A3A] bg-[#1F4A3A] text-white' : 'border-[#E8E4DB] bg-white text-[#4F3E2F]'
+              } ${editing ? 'opacity-60' : ''}`}
+            >
+              {label}
+            </div>
+          );
+        })}
       </div>
     </div>
-  </div>
-);
+  );
+};
 
-const FeedbackFormBlock = ({ title, description, project, date, link, comment, questions, editing, onUpdateField, onUpdateQuestion, average, accent }) => (
+const FeedbackFormBlock = ({ title, description, project, date, link, comment, questions, editing, onUpdateField, onUpdateQuestion, average, accent, submittedAt, submittedBy }) => (
   <div className={`rounded-xl border ${accent || 'border-[#E8E4DB]'} bg-white shadow-sm`}>
     <div className="px-6 py-4 border-b border-[#E8E4DB] bg-[#FBFAF7] rounded-t-xl">
-      <p className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{cleanV1Text(title)}</p>
+      {editing ? (
+        <input value={title || ''} onChange={(e) => onUpdateField('form_title', e.target.value)} className="w-full rounded border border-[#E8E4DB] px-2 py-1.5 text-[14px] font-semibold" placeholder="Form title" data-testid="feedback-form-title-input" />
+      ) : (
+        <p className="text-[15px] font-semibold text-[#1A1A1A]" style={{ fontFamily: "'Fraunces', serif" }}>{cleanV1Text(title)}</p>
+      )}
       <p className="text-[11px] text-[#6E6657] mt-1">{cleanV1Text(description)}</p>
+      {submittedAt ? (
+        <p className="text-[11px] text-[#1F4A3A] mt-1.5 inline-flex items-center gap-1" data-testid="feedback-submitted-status">
+          <CheckCircle2 className="w-3 h-3" /> Submitted by the {submittedBy || 'recipient'} on {submittedAt.slice(0, 19).replace('T', ' ')}
+        </p>
+      ) : (
+        <p className="text-[11px] text-[#8A8A8A] mt-1.5">Not submitted yet - send the link so they can fill this in.</p>
+      )}
     </div>
     <div className="px-6 py-5 space-y-5">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-[12px]">
@@ -7105,9 +8456,8 @@ const FeedbackFormBlock = ({ title, description, project, date, link, comment, q
       </div>
       <label className="block">
         <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Optional comment (one line)</span>
-        {editing ? (
-          <input value={comment || ''} onChange={(e) => onUpdateField('optional_comment', e.target.value)} className="mt-1 w-full rounded border border-[#E8E4DB] px-2 py-2 text-[12px]" placeholder="Anything else to share?" />
-        ) : <p className="mt-1 text-[12px] text-[#4F3E2F]">{comment ? cleanV1Text(comment) : <span className="text-[#8A8A8A]">No comment.</span>}</p>}
+        {/* The respondent's own comment - read-only here, like the ratings. */}
+        <p className="mt-1 text-[12px] text-[#4F3E2F]">{comment ? cleanV1Text(comment) : <span className="text-[#8A8A8A]">No comment.</span>}</p>
       </label>
       {average != null && <p className="text-[12px] text-[#1F4A3A] font-semibold">Average score: {average}/10</p>}
     </div>
@@ -7155,12 +8505,42 @@ export const V3BusinessCaseFinalReport = () => {
   const [closing, setClosing] = useState(false);
   const [closePopup, setClosePopup] = useState(null);
   const [previewType, setPreviewType] = useState(null); // 'report' | 'feedback' | null
+  // Confirms a report / feedback email went out (same popup as the brief and
+  // pitch deck sends).
+  const [sendPopup, setSendPopup] = useState(null);
   const [shareFeedbackBrandOpen, setShareFeedbackBrandOpen] = useState(false);
   const [shareFeedbackCreatorOpen, setShareFeedbackCreatorOpen] = useState(false);
   const autoReportRequest = useRef('');
 
   const reportSent = Boolean(report?.report_sent_at);
   const feedbackSent = Boolean(report?.feedback_sent_at);
+  const feedbackBrandSent = Boolean(report?.feedback_sent_brand_at);
+  const feedbackCreatorSent = Boolean(report?.feedback_sent_creator_at);
+  const brandSubmittedAt = report?.feedback?.brand_partner?.submitted_at;
+  const creatorSubmittedAt = report?.feedback?.creative_partner?.submitted_at;
+
+  // Poll while a feedback link has been sent but not answered yet, so a
+  // submission that lands while the admin is sitting on this page shows up
+  // on its own instead of needing a manual reload. Stops as soon as both
+  // outstanding forms are answered (or neither was sent), so this page
+  // doesn't keep polling forever once there's nothing left to wait for.
+  useEffect(() => {
+    const brandPending = feedbackBrandSent && !brandSubmittedAt;
+    const creatorPending = feedbackCreatorSent && !creatorSubmittedAt;
+    if (!brandPending && !creatorPending) return undefined;
+    const t = setInterval(() => {
+      reload().then((data) => {
+        const fb = data?.final_report?.feedback || {};
+        if (brandPending && fb.brand_partner?.submitted_at) {
+          toast.success(`Brand feedback received from ${fb.brand_partner.submitted_by || 'the brand'}.`);
+        }
+        if (creatorPending && fb.creative_partner?.submitted_at) {
+          toast.success(`Creator feedback received from ${fb.creative_partner.submitted_by || 'the creator'}.`);
+        }
+      });
+    }, 20000);
+    return () => clearInterval(t);
+  }, [feedbackBrandSent, feedbackCreatorSent, brandSubmittedAt, creatorSubmittedAt, reload]);
 
   const computeAverage = (questions) => {
     const ratings = (questions || []).map((q) => Number(q.rating)).filter((n) => Number.isFinite(n));
@@ -7171,7 +8551,21 @@ export const V3BusinessCaseFinalReport = () => {
   useEffect(() => {
     let cancelled = false;
     const generateOnOpen = async () => {
+      // `bundle` starts null and only resolves once useBusinessCaseBundle's
+      // own fetch completes. Without this guard, `report` is undefined on
+      // the very first effect run (before that fetch has had a chance to
+      // reveal an existing report), so this unconditionally regenerated a
+      // brand-new report - wiping any already-submitted brand/creator
+      // feedback - on every single page open, not just when one was
+      // genuinely missing.
+      if (!bundle) return;
       if (report?.id || autoReportRequest.current === id) return;
+      // Same rule as the other stages: a project that already has a report,
+      // or that is closed, never spends credits writing another one.
+      if (!shouldAutoGenerate({ bundle, stage: 'final_report' })) {
+        autoReportRequest.current = id;
+        return;
+      }
       autoReportRequest.current = id;
       try {
         await v3GenerateFinalReport(id, {});
@@ -7188,8 +8582,25 @@ export const V3BusinessCaseFinalReport = () => {
     };
     generateOnOpen();
     return () => { cancelled = true; };
-  }, [id, report?.id, reload]);
+  }, [id, report?.id, reload, bundle]);
 
+  // Rewrites the report's content from the project's pages (the report
+  // itself, its feedback forms and send history are kept).
+  const [rebuildingReport, setRebuildingReport] = useState(false);
+  const rebuildReport = async () => {
+    if (typeof window !== 'undefined' && !window.confirm('Rebuild the report from the project? This replaces the report text, including any edits made to it. Feedback forms and anything already submitted are kept.')) return;
+    setRebuildingReport(true);
+    setNotice('Rebuilding the report from the Pitch Deck, Planning, Deliverables and Contracts...');
+    try {
+      await v3GenerateFinalReport(id, {});
+      await reload();
+      setNotice('Report rebuilt from the project. Review it before sending.');
+    } catch (e) {
+      setNotice(e?.response?.data?.detail || e?.message || 'Could not rebuild the report.');
+    } finally {
+      setRebuildingReport(false);
+    }
+  };
   const startEditReport = () => {
     setDraftReportTitle(report?.title || '');
     setDraftReportSections((report?.sections || []).map((s) => ({ ...s })));
@@ -7236,25 +8647,63 @@ export const V3BusinessCaseFinalReport = () => {
     });
   };
 
-  const handleShare = async (which, option) => {
+  // `audience` is required for feedback shares ('brand' | 'creator') and is
+  // unused for the report. It decides which of the two forms is attached and
+  // downloaded, so "Send to Brand" can never hand over the Creative Partner
+  // form and "Send to Creator" can never hand over the Brand Partner one.
+  const handleShare = async (which, option, audience) => {
     const isReport = which === 'report';
+    const docLabel = isReport ? 'Report' : (FEEDBACK_FORM_LABELS[audience] || 'Feedback');
     if (!report?.id) {
       setNotice('The final report is still being generated. Please wait a moment.');
       return;
     }
+    // The recipient of a feedback share must land on the public form, not on
+    // this admin page (which needs a login and is not the form). One helper so
+    // Copy link, WhatsApp and the emailed link can never drift apart again.
+    const feedbackFormLink = async () => {
+      const { url } = await v3GetFeedbackPublicLink(report.id, audience || 'brand');
+      return url;
+    };
     if (option.key === 'copy_link') {
-      navigator.clipboard?.writeText(window.location.origin + adminRoute('/business-cases/' + id + '/reporting/final-report') + '#' + which);
-      setNotice((isReport ? 'Report' : 'Feedback') + ' link copied to clipboard.');
+      if (isReport) {
+        navigator.clipboard?.writeText(v3FinalReportViewUrl(report.id));
+        setNotice('Report link copied. It opens the report on its own in any browser.');
+        return;
+      }
+      try {
+        const link = await feedbackFormLink();
+        try {
+          await navigator.clipboard.writeText(link);
+          setNotice(docLabel + ' link copied. It opens the form itself - no login needed.');
+        } catch {
+          // Clipboard access can be refused after an await (the browser no
+          // longer counts the click as user activation) - show the link so it
+          // is still usable rather than losing it.
+          setNotice(docLabel + ' link: ' + link);
+        }
+      } catch (e) {
+        setNotice(e?.response?.data?.detail || 'Could not build the feedback form link. Please try again.');
+      }
       return;
     }
     if (option.key === 'download_pdf') {
-      const url = isReport ? v3FinalReportPdfUrl(report.id) : v3FeedbackPdfUrl(report.id);
-      window.open(url, '_blank');
-      setNotice((isReport ? 'Report' : 'Feedback') + ' PDF opened in a new tab.');
+      const url = isReport ? v3FinalReportPdfUrl(report.id) : v3FeedbackPdfUrl(report.id, audience);
+      downloadFile(url);
+      setNotice(docLabel + ' PDF downloading.');
       return;
     }
     if (option.key === 'whatsapp') {
-      const shareText = encodeURIComponent((isReport ? 'Final Report' : 'Feedback') + ' ready: ' + cleanV1Text(report?.title || '') + '\n' + window.location.origin + adminRoute('/business-cases/' + id + '/reporting/final-report'));
+      let link = v3FinalReportViewUrl(report.id);
+      if (!isReport) {
+        try {
+          link = await feedbackFormLink();
+        } catch (e) {
+          setNotice(e?.response?.data?.detail || 'Could not build the feedback form link. Please try again.');
+          return;
+        }
+      }
+      const shareText = encodeURIComponent((isReport ? 'Final Report' : docLabel) + ' ready: ' + cleanV1Text(report?.title || '') + '\n' + link);
       window.open('https://wa.me/?text=' + shareText, '_blank');
       return;
     }
@@ -7265,14 +8714,26 @@ export const V3BusinessCaseFinalReport = () => {
         setNotice(option.key === 'email_creator' ? 'Creator email is missing in the creator database.' : 'Brand email is missing. Add the email in CRM Brand details before sending.');
         return;
       }
-      setNotice('Sending ' + (isReport ? 'final report' : 'feedback') + ' to ' + toEmail + '...');
+      const sentLabel = isReport ? 'Final report' : docLabel;
+      setNotice('Sending ' + (isReport ? 'final report' : docLabel) + ' to ' + toEmail + '...');
+      setSendPopup({ tone: 'pending', title: 'Sending', message: 'Sending the ' + sentLabel.toLowerCase() + ' to ' + toEmail + '...' });
       try {
-        const sendEmail = isReport ? v3SendFinalReportEmail : v3SendFeedbackEmail;
-        await sendEmail(report.id, { to_email: toEmail, recipient_name: recipientName });
+        if (isReport) {
+          await v3SendFinalReportEmail(report.id, { to_email: toEmail, recipient_name: recipientName });
+        } else {
+          await v3SendFeedbackEmail(report.id, {
+            to_email: toEmail,
+            recipient_name: recipientName,
+            audience: audience || (option.key === 'email_creator' ? 'creator' : 'brand'),
+          });
+        }
         await reload();
-        setNotice((isReport ? 'Final report' : 'Feedback') + ' sent to ' + toEmail + '.');
+        setNotice(sentLabel + ' sent to ' + toEmail + '.');
+        setSendPopup({ tone: 'success', title: sentLabel + ' sent', message: sentLabel + ' sent to ' + recipientName + ' (' + toEmail + ').' });
       } catch (e) {
-        setNotice(e?.response?.data?.detail || e?.message || ('Could not send ' + (isReport ? 'final report' : 'feedback') + ' to ' + toEmail + '.'));
+        const message = e?.response?.data?.detail || e?.message || ('Could not send ' + (isReport ? 'final report' : docLabel) + ' to ' + toEmail + '.');
+        setNotice(message);
+        setSendPopup({ tone: 'warning', title: 'Not sent', message });
       }
       return;
     }
@@ -7314,8 +8775,32 @@ export const V3BusinessCaseFinalReport = () => {
           </div>
         </div>
       )}
-      <PreviewModal open={previewType === 'report'} onClose={() => setPreviewType(null)} title={report?.title || 'Final Report preview'} pdfUrl={report ? v3FinalReportPdfUrl(report.id) : ''} sections={report?.sections} testId="final-report-preview" />
-      <PreviewModal open={previewType === 'feedback'} onClose={() => setPreviewType(null)} title="Feedback preview" pdfUrl={report ? v3FeedbackPdfUrl(report.id) : ''} sections={buildFeedbackPreviewSections(report?.feedback)} testId="feedback-preview" />
+      {sendPopup && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/35 px-4" data-testid="report-sent-popup">
+          <div className="w-full max-w-sm rounded-[8px] border border-[#D7CBB8] bg-[#FBFAF7] p-5 shadow-2xl">
+            <div className="mb-3 flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full ${sendPopup.tone === 'success' ? 'bg-[#E8F3ED] text-[#1F4A3A]' : 'bg-[#FBF4E4] text-[#7A5A1E]'}`}>
+                {sendPopup.tone === 'success' ? <CheckCircle2 className="h-4 w-4" /> : sendPopup.tone === 'pending' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+              </span>
+              <h3 className="text-[16px] font-semibold text-[#1A1A1A]">{sendPopup.title}</h3>
+            </div>
+            <p className="text-[13px] leading-6 text-[#4F3E2F]">{sendPopup.message}</p>
+            {sendPopup.tone !== 'pending' && <div className="mt-4 flex justify-end"><button type="button" onClick={() => setSendPopup(null)} className="v3-btn-primary">OK</button></div>}
+          </div>
+        </div>
+      )}
+      <PreviewModal open={previewType === 'report'} onClose={() => setPreviewType(null)} title={report?.title || 'Final Report preview'} pdfUrl={report ? v3FinalReportPdfUrl(report.id) : ''} viewUrl={report ? v3FinalReportViewUrl(report.id, true) : ''} sections={report?.sections} testId="final-report-preview" />
+      {['brand', 'creator'].map((audience) => (
+        <PreviewModal
+          key={audience}
+          open={previewType === `feedback-${audience}`}
+          onClose={() => setPreviewType(null)}
+          title={audience === 'brand' ? 'TTA Project Feedback - Brand Partner' : 'TTA Project Feedback - Creative Partner'}
+          pdfUrl={report ? v3FeedbackPdfUrl(report.id, audience) : ''}
+          viewUrl={report ? v3FeedbackViewUrl(report.id, audience, true) : ''}
+          testId={`feedback-preview-${audience}`}
+        />
+      ))}
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]" data-testid="final-report-notice">{notice}</div>}
 
       {(brandPortalFeedback || creatorPortalFeedback) && (
@@ -7434,6 +8919,9 @@ export const V3BusinessCaseFinalReport = () => {
                   </>
                 ) : (
                   <>
+                    <button onClick={rebuildReport} disabled={rebuildingReport} className="v3-btn-secondary text-[11px] disabled:opacity-60" data-testid="report-rebuild-btn" title="Rewrite the report from the project's pages - Pitch Deck, Planning, Deliverables, Contracts">
+                      {rebuildingReport ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} {rebuildingReport ? 'Rebuilding…' : 'Rebuild from project'}
+                    </button>
                     <button onClick={startEditReport} className="v3-btn-secondary text-[11px]" data-testid="report-edit-btn"><Edit3 className="w-3.5 h-3.5" /> Edit Report</button>
                     <button onClick={() => setPreviewType('report')} className="v3-btn-secondary text-[11px]" data-testid="report-preview-btn"><Eye className="w-3.5 h-3.5" /> Preview</button>
                     <div className="relative">
@@ -7467,7 +8955,11 @@ export const V3BusinessCaseFinalReport = () => {
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Feedback Template</p>
                 <h3 className="text-[18px] font-semibold text-[#1A1A1A] mt-0.5" style={{ fontFamily: "'Fraunces', serif" }}>Brand & Creative Partner Feedback</h3>
-                <p className="text-[11px] text-[#8A8A8A] mt-1">{feedbackSent ? `Sent ${report.feedback_sent_at?.slice(0, 19)?.replace('T', ' ')}` : 'Not sent yet'}</p>
+                <p className="text-[11px] text-[#8A8A8A] mt-1" data-testid="feedback-sent-status">
+                  Brand Partner form: {feedbackBrandSent ? `sent ${report.feedback_sent_brand_at?.slice(0, 19)?.replace('T', ' ')}` : 'not sent'}
+                  {' \u00b7 '}
+                  Creative Partner form: {feedbackCreatorSent ? `sent ${report.feedback_sent_creator_at?.slice(0, 19)?.replace('T', ' ')}` : 'not sent'}
+                </p>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 {editingFeedback ? (
@@ -7478,14 +8970,16 @@ export const V3BusinessCaseFinalReport = () => {
                 ) : (
                   <>
                     <button onClick={startEditFeedback} className="v3-btn-secondary text-[11px]" data-testid="feedback-edit-btn"><Edit3 className="w-3.5 h-3.5" /> Edit Feedback</button>
-                    <button onClick={() => setPreviewType('feedback')} className="v3-btn-secondary text-[11px]" data-testid="feedback-preview-btn"><Eye className="w-3.5 h-3.5" /> Preview</button>
+                    {/* One form per preview: the brand never sees the creator's questions and vice versa. */}
+                    <button onClick={() => setPreviewType('feedback-brand')} className="v3-btn-secondary text-[11px]" data-testid="feedback-preview-brand-btn"><Eye className="w-3.5 h-3.5" /> Preview brand form</button>
+                    <button onClick={() => setPreviewType('feedback-creator')} className="v3-btn-secondary text-[11px]" data-testid="feedback-preview-creator-btn"><Eye className="w-3.5 h-3.5" /> Preview creator form</button>
                     <div className="relative">
                       <button onClick={() => setShareFeedbackBrandOpen((v) => !v)} className="v3-btn-primary text-[11px]" data-testid="feedback-send-brand-btn"><Send className="w-3.5 h-3.5" /> Send to Brand</button>
-                      <ShareMenu open={shareFeedbackBrandOpen} onClose={() => setShareFeedbackBrandOpen(false)} options={SHARE_OPTIONS('feedback', brandEmail, '', false)} onSelect={(opt) => handleShare('feedback', opt)} />
+                      <ShareMenu open={shareFeedbackBrandOpen} onClose={() => setShareFeedbackBrandOpen(false)} options={SHARE_OPTIONS('Brand Partner form', brandEmail, '', false)} onSelect={(opt) => handleShare('feedback', opt, 'brand')} />
                     </div>
                     <div className="relative">
                       <button onClick={() => setShareFeedbackCreatorOpen((v) => !v)} className="v3-btn-primary text-[11px]" data-testid="feedback-send-creator-btn"><Send className="w-3.5 h-3.5" /> Send to Creator</button>
-                      <ShareMenu open={shareFeedbackCreatorOpen} onClose={() => setShareFeedbackCreatorOpen(false)} options={SHARE_OPTIONS('feedback', '', creatorEmail, true).filter((o) => o.key !== 'email_brand')} onSelect={(opt) => handleShare('feedback', opt)} />
+                      <ShareMenu open={shareFeedbackCreatorOpen} onClose={() => setShareFeedbackCreatorOpen(false)} options={SHARE_OPTIONS('Creative Partner form', '', creatorEmail, true).filter((o) => o.key !== 'email_brand')} onSelect={(opt) => handleShare('feedback', opt, 'creator')} />
                     </div>
                   </>
                 )}
@@ -7504,7 +8998,7 @@ export const V3BusinessCaseFinalReport = () => {
 
               {/* Brand Partner Feedback */}
               <FeedbackFormBlock
-                title={feedback?.brand_partner?.form_title || 'TTA Project Feedback - Brand Partner'}
+                title={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.form_title || 'TTA Project Feedback - Brand Partner'}
                 description={feedback?.brand_partner?.form_description}
                 project={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.project_name}
                 date={(editingFeedback ? draftFeedback : feedback)?.brand_partner?.date}
@@ -7515,11 +9009,27 @@ export const V3BusinessCaseFinalReport = () => {
                 onUpdateQuestion={(i, f, v) => updateFeedbackQuestion('brand_partner', i, f, v)}
                 average={feedback?.brand_average_score}
                 accent="border-[#A4D4B0]"
+                submittedAt={feedback?.brand_partner?.submitted_at}
+                submittedBy={feedback?.brand_partner?.submitted_by}
               />
+
+              {/* Alignment: only meaningful once BOTH sides have submitted -
+                  each side's own average is a satisfaction score, this is
+                  how close the two are to each other. Admin-only, same as
+                  the rest of this page. */}
+              {feedback?.alignment_pct != null && (
+                <div className="rounded-lg border border-[#D7CBB8] bg-[#FBF4E4] px-5 py-4 flex flex-wrap items-center justify-between gap-3" data-testid="feedback-alignment-score">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-wider font-semibold text-[#7A5A1E]">Brand / Creator alignment</p>
+                    <p className="text-[11px] text-[#6E6657] mt-0.5">Brand {Math.round((feedback.brand_average_score / 10) * 100)}% satisfied &middot; Creator {Math.round((feedback.creative_average_score / 10) * 100)}% satisfied</p>
+                  </div>
+                  <span className="text-[20px] font-semibold text-[#7A5A1E]">{feedback.alignment_pct}% aligned</span>
+                </div>
+              )}
 
               {/* Creative Partner Feedback */}
               <FeedbackFormBlock
-                title={feedback?.creative_partner?.form_title || 'TTA Project Feedback - Creative Partner'}
+                title={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.form_title || 'TTA Project Feedback - Creative Partner'}
                 description={feedback?.creative_partner?.form_description}
                 project={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.project_name}
                 date={(editingFeedback ? draftFeedback : feedback)?.creative_partner?.date}
@@ -7531,6 +9041,8 @@ export const V3BusinessCaseFinalReport = () => {
                 onUpdateQuestion={(i, f, v) => updateFeedbackQuestion('creative_partner', i, f, v)}
                 average={feedback?.creative_average_score}
                 accent="border-[#F5D88A]"
+                submittedAt={feedback?.creative_partner?.submitted_at}
+                submittedBy={feedback?.creative_partner?.submitted_by}
               />
 
               {/* Internal Use */}

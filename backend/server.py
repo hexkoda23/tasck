@@ -18,12 +18,40 @@ from models import (
     DemoLoginRequest, DemoLoginResponse
 )
 from seed_data import get_seed_data
+<<<<<<< refs/remotes/requested/main
 from v3_routes import make_v3_router
 from v3_workbook_import import WorkbookImporter
 from chat_error_handling import chat_error_for
+=======
+from v3_routes import make_v3_router, REQUEST_PUBLIC_ORIGIN
+from migration_export import make_migration_export_router
+>>>>>>> HEAD
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+APP_ENV = (os.environ.get("APP_ENV") or "development").strip().lower()
+LOCAL_ENVS = {"development", "dev", "local", "test"}
+IS_LOCAL_ENV = APP_ENV in LOCAL_ENVS
+
+# A checked-in dotenv file must never become a production fallback. Azure injects
+# configuration through the process environment (App Settings / Key Vault
+# references); dotenv is strictly a local-development convenience and, even
+# locally, never overrides a value already present in the process environment.
+if IS_LOCAL_ENV:
+    load_dotenv(ROOT_DIR / '.env', override=False)
+
+
+def _flag(name: str, default: bool) -> bool:
+    raw = (os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+# The V1 admin / staff / creative sign-in is a passwordless role login. It is
+# how the client signs in on the current production deployment, so it stays
+# available by default on Azure to preserve existing behaviour. Set
+# ENABLE_DEMO_LOGIN=false once a credentialed admin login replaces it.
+ENABLE_DEMO_LOGIN = _flag("ENABLE_DEMO_LOGIN", default=True)
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -85,6 +113,53 @@ async def startup_event():
     probe timeout and causing 'deployment failed to become ready'."""
 
     async def _hydrate():
+        # One-time demo-data wipe. Each environment has its own database, so a
+        # cleanup run in preview cannot reach production - this lets the wipe
+        # travel with a deploy. It runs once per token value: the marker in
+        # `v3_system_meta` means a later deploy (or restart) never repeats it,
+        # so the client's real data is safe. Change WIPE_DEMO_DATA_ONCE to a new
+        # value to request another wipe.
+        wipe_token = (os.environ.get("WIPE_DEMO_DATA_ONCE") or "").strip()
+        if wipe_token:
+            marker_id = f"demo-wipe:{wipe_token}"
+            try:
+                if await db.v3_system_meta.find_one({"id": marker_id}):
+                    logger.info("Demo-data wipe '%s' already applied - skipping.", wipe_token)
+                else:
+                    from cleanup_demo_data import cleanup as _seed_cleanup, full_reset as _full_reset
+                    report = await _seed_cleanup(db, False)
+                    report.update(await _full_reset(db, False))
+                    await db.v3_system_meta.insert_one({
+                        "id": marker_id,
+                        "applied_at": datetime.now(timezone.utc).isoformat(),
+                        "removed": report,
+                        "total_removed": sum(report.values()),
+                    })
+                    logger.warning("Demo-data wipe '%s' removed %s records: %s",
+                                   wipe_token, sum(report.values()), report)
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Demo-data wipe failed: {exc}")
+        # Safety net, runs once regardless of environment variables: remove any
+        # row the CRM workbook importer wrote. Those rows all carry
+        # `created_from_crm_template: True`, a flag client-entered records never
+        # have, so this cannot touch real data. This is what clears a deployed
+        # environment whose env vars are managed outside backend/.env.
+        try:
+            if not await db.v3_system_meta.find_one({"id": "workbook-wipe:v1"}):
+                from cleanup_demo_data import workbook_reset as _workbook_reset
+                wb_report = await _workbook_reset(db, False)
+                await db.v3_system_meta.insert_one({
+                    "id": "workbook-wipe:v1",
+                    "applied_at": datetime.now(timezone.utc).isoformat(),
+                    "removed": wb_report,
+                    "total_removed": sum(wb_report.values()),
+                })
+                if wb_report:
+                    logger.warning("Workbook-import wipe removed %s records: %s",
+                                   sum(wb_report.values()), wb_report)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Workbook-import wipe failed: {exc}")
+
         try:
             await seed_database()
         except Exception as exc:  # noqa: BLE001
@@ -105,19 +180,26 @@ async def startup_event():
                 await repair()
         except Exception as exc:  # noqa: BLE001
             logger.warning(f"Brand document visibility repair skipped or failed: {exc}")
-        try:
-            await WorkbookImporter.import_all(db)
-            logger.info("Workbook import completed.")
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(f"Workbook import skipped or failed: {exc}")
+        # The CRM workbook importer used to run here on every boot, which meant
+        # the workbook's brands, creators, projects and their derived records
+        # were recreated after any cleanup. The client is entering their own
+        # brands now, so nothing imports automatically. To load the workbook
+        # deliberately: POST /api/v3/admin/import-crm-workbook
         # The four demo Brand Portal accounts (Coca-Cola, MTN, Nigerian
-        # Breweries, Test Brand) used to be recreated here on every boot.
-        # That seeding has been removed so the database stays clean; brand
-        # portal accounts are now issued from the CRM against real brands.
+        # Breweries, Test Brand) used to be recreated here too. That seeding
+        # has been removed as well; portal accounts are issued from the CRM
+        # against real brands.
         logger.info("Background hydration completed.")
 
-    asyncio.create_task(_hydrate())
-    logger.info("TASCK OS API started successfully (v1+v2+v3) - hydration running in background")
+    # Azure staging and production start with exactly the database supplied to
+    # them. Never seed, wipe, import, or repair customer data on boot outside
+    # an explicitly local/demo environment.
+    bootstrap_enabled = IS_LOCAL_ENV and _flag("ENABLE_DEMO_BOOTSTRAP", default=True)
+    if bootstrap_enabled:
+        asyncio.create_task(_hydrate())
+        logger.info("TASCK OS API started with local demo hydration enabled")
+    else:
+        logger.info("TASCK OS API started with production-safe bootstrap disabled")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
@@ -127,7 +209,9 @@ async def shutdown_db_client():
 
 @api_router.post("/auth/demo-login", response_model=DemoLoginResponse)
 async def demo_login(request: DemoLoginRequest):
-    """Demo login - returns user based on role selection"""
+    """Role-based login - returns the account for the selected role."""
+    if not ENABLE_DEMO_LOGIN:
+        raise HTTPException(status_code=404, detail="Not found")
     role = request.role
     
     if role == UserRole.STAFF:
@@ -736,21 +820,31 @@ async def get_feedback(page_url: Optional[str] = None):
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
+# TEMPORARY migration-only export mechanism. Inert unless DB_EXPORT_TOKEN is set.
+# Remove this router and the migration_export module after the Azure migration.
+api_router.include_router(make_migration_export_router())
+
 # Include router
 app.include_router(api_router)
 
 # v3 router - separate /api/v3 namespace, isolated from v1/v2 collections
 app.include_router(v3_router)
 
+# Assistant router - the tool-calling admin agent. Lives in its own package
+# (backend/assistant) rather than v3_routes so it stays independently testable.
+# A failure to mount must never take the API down with it: without the
+# assistant the portal still works, so it is logged and skipped.
+try:
+    from assistant import make_assistant_router
+
+    app.include_router(make_assistant_router(db))
+    logger.info("TASCK assistant mounted at /api/v3/assistant")
+except Exception as _assistant_exc:  # noqa: BLE001
+    logger.warning("TASCK assistant not mounted: %s: %s",
+                   type(_assistant_exc).__name__, _assistant_exc)
+
 # CORS
-_default_cors_origins = [
-    "http://localhost:7159",
-    "http://localhost:3000",
-    "https://thcodemo.space",
-    "https://www.thcodemo.space",
-    "https://tasck-live-demo-1.emergent.host",
-    "https://tasck-live-demo-1.preview.emergentagent.com",
-]
+_default_cors_origins = ["http://localhost:7159", "http://localhost:3000"] if IS_LOCAL_ENV else []
 _env_cors_origins = [origin.strip() for origin in os.environ.get('CORS_ORIGINS', '').split(',') if origin.strip()]
 # Note: CORS spec forbids Access-Control-Allow-Origin='*' when credentials are
 # allowed. If the env asks for '*' we drop it and rely on the explicit list +
@@ -761,7 +855,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=allow_origins,
-    allow_origin_regex=r"https://.*\.(?:emergent\.host|emergentagent\.com)$",
+    allow_origin_regex=r"https://.*\.(?:emergent\.host|emergentagent\.com)$" if IS_LOCAL_ENV else None,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
@@ -773,6 +867,60 @@ app.add_middleware(
 # strip CORS and trigger a misleading browser CORS error).
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
+from urllib.parse import urlparse
+
+
+_INTERNAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "backend", "host.docker.internal"}
+
+
+def _public_origin_of(request: Request) -> str:
+    """The domain the caller is actually using, for links we put in emails.
+
+    Preference order: the browser's Origin header, then Referer, then the
+    proxy's X-Forwarded-* pair, then Host. Internal hostnames are ignored -
+    "http://localhost:8001/brand/login" in an email is as useless as a
+    relative path.
+    """
+    candidates = []
+    origin = (request.headers.get("origin") or "").strip()
+    if origin and origin.lower() != "null":
+        candidates.append(origin)
+    referer = (request.headers.get("referer") or "").strip()
+    if referer:
+        candidates.append(referer)
+    forwarded_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+    if forwarded_host:
+        scheme = (request.headers.get("x-forwarded-proto") or "https").split(",")[0].strip()
+        candidates.append(f"{scheme}://{forwarded_host}")
+    host = (request.headers.get("host") or "").strip()
+    if host:
+        candidates.append(f"{request.url.scheme}://{host}")
+    for candidate in candidates:
+        parsed = urlparse(candidate if "://" in candidate else f"https://{candidate}")
+        hostname = (parsed.hostname or "").lower()
+        if not hostname or hostname in _INTERNAL_HOSTS or "." not in hostname:
+            continue
+        port = f":{parsed.port}" if parsed.port and parsed.port not in (80, 443) else ""
+        # A public host reached over plain http is almost always the proxy's
+        # internal hop; emailing an http:// link to a brand invites a browser
+        # warning, so trust the forwarded scheme and default to https.
+        scheme = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip() or parsed.scheme
+        if scheme != "https" and not port:
+            scheme = "https"
+        return f"{scheme}://{hostname}{port}"
+    return ""
+
+
+@app.middleware("http")
+async def capture_public_origin(request: Request, call_next):
+    # Lets app_base_url() fall back to the domain in use instead of a
+    # hardcoded host, so a missing FRONTEND_URL can never put the preview
+    # domain into a brand's or creator's email.
+    token = REQUEST_PUBLIC_ORIGIN.set(_public_origin_of(request))
+    try:
+        return await call_next(request)
+    finally:
+        REQUEST_PUBLIC_ORIGIN.reset(token)
 
 
 def _cors_origin_for_request(request: Request) -> Optional[str]:
@@ -782,7 +930,7 @@ def _cors_origin_for_request(request: Request) -> Optional[str]:
     if origin in allow_origins:
         return origin
     import re as _re
-    if _re.match(r"https://.*\.(?:emergent\.host|emergentagent\.com)$", origin):
+    if IS_LOCAL_ENV and _re.match(r"https://.*\.(?:emergent\.host|emergentagent\.com)$", origin):
         return origin
     return None
 

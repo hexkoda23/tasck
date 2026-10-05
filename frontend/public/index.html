@@ -4,7 +4,7 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#000000" />
-        <meta name="description" content="A product of emergent.sh" />
+        <meta name="description" content="TASCK OS | Creativity, Managed." />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap" rel="stylesheet" />
@@ -25,31 +25,6 @@
         <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
         <link rel="icon" type="image/png" sizes="64x64" href="%PUBLIC_URL%/favicon-64.png" />
         <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-        <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
-        <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
-        <!--
-        These two scripts have been added for the Visual Edits, please do not edit or remove them
-        -->
-        <script>
-            // Only load visual edit scripts when inside an iframe
-            if (window.self !== window.top) {
-                // Load debug monitor script
-                var debugMonitorScript = document.createElement('script');
-                debugMonitorScript.src = 'https://assets.emergent.sh/scripts/debug-monitor.js';
-                document.head.appendChild(debugMonitorScript);
-
-                // Configure Tailwind
-                window.tailwind = window.tailwind || {};
-                tailwind.config = {
-                    corePlugins: { preflight: false },
-                };
-
-                // Load Tailwind CDN
-                var tailwindScript = document.createElement('script');
-                tailwindScript.src = 'https://cdn.tailwindcss.com';
-                document.head.appendChild(tailwindScript);
-            }
-        </script>
     </head>
     <body>
         <noscript>You need to enable JavaScript to run this app.</noscript>
@@ -129,9 +104,22 @@
             posthog.init("phc_xAvL2Iq4tFmANRE7kzbKwaSqp1HJjN7x48s3vr0CMjs", {
                 api_host: "https://us.i.posthog.com",
                 person_profiles: "identified_only", // or 'always' to create profiles for anonymous users as well,
+                // capture_performance is a TOP-LEVEL option. It used to sit
+                // inside session_recording, where PostHog ignores it - so
+                // performance capture stayed on, its PerformanceObserver picked
+                // up entries carrying PerformanceServerTiming (any response with
+                // a Server-Timing header), and the recorder tried to postMessage
+                // them. PerformanceServerTiming is not structured-cloneable, so
+                // every such entry threw
+                // "DataCloneError: PerformanceServerTiming object could not be cloned".
+                capture_performance: false,
                 session_recording: {
-                    recordCrossOriginIframes: true,
-                    capturePerformance: false,
+                    // recordCrossOriginIframes IS the postMessage relay in that
+                    // stack trace, and PostHog only supports it when you control
+                    // both parent and child frame. Our iframes are the generated
+                    // flipbook and third-party embeds, so the relay bought us
+                    // nothing and threw on every performance entry.
+                    recordCrossOriginIframes: false,
                 },
             });
         </script>

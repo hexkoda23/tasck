@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import Logo from '../../components/shared/Logo';
 import {
@@ -16,18 +16,24 @@ const roleCards = [
 
 const V1RoleSelector = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [loading, setLoading] = useState(null);
 
   const handleRoleSelect = async (card) => {
     setLoading(card.id);
     try {
+      // A guard may have sent someone here from the page they actually
+      // wanted; carry that through so they land on it rather than the portal
+      // home. Only honoured when it belongs to the portal being entered.
+      const from = location.state?.from;
       if (card.requiresLogin) {
-        navigate(card.path);
+        // The login form itself makes the final hop, so hand it the target.
+        navigate(card.path, from ? { state: { from } } : undefined);
         return;
       }
       await login(card.role);
-      navigate(card.path);
+      navigate(typeof from === 'string' && from.startsWith(card.path) ? from : card.path);
     } catch (error) {
       console.error('Login failed:', error);
     } finally {

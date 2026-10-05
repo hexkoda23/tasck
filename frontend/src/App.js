@@ -1,7 +1,8 @@
 ﻿import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuthProvider } from './context/AuthContext';
+import ProtectedRoute from './components/shared/ProtectedRoute';
 import FeedbackPopup from './components/shared/FeedbackPopup'; // eslint-disable-line no-unused-vars
 
 // Layout
@@ -116,6 +117,7 @@ import {
   V1BusinessCaseOpportunities,
 } from './pages/admin/V1ConnectSources';
 import V3BrandInreach from './pages/v3/V3BrandInreach';
+import V1PublicFeedbackForm from './pages/public/V1PublicFeedbackForm';
 
 // V3 Brand Portal Pages
 import V3BrandOverview from './pages/v3/brand/V3BrandOverview';
@@ -206,28 +208,15 @@ import ReportsPage from './pages/shared/ReportsPage';
 import SettingsPage from './pages/shared/SettingsPage';
 
 // Protected Route wrapper
-const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user, isAuthenticated, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="dashboard-bg min-h-screen flex items-center justify-center">
-        <div className="text-white">Loading...</div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/" replace />;
-  }
-
-  if (allowedRoles && !allowedRoles.includes(user?.role)) {
-    return <Navigate to="/" replace />;
-  }
-
-  return children;
-};
-
+// `loginPath` is where someone who is NOT signed in gets sent. It used to be
+// the landing page for every guarded area, which is why a brand following the
+// "Alignment Snapshot ready for review" email link to /brand/approvals never
+// reached a login form - they were bounced to the marketing page with no way
+// to sign in and no sign of what went wrong. The path they asked for travels
+// with them in `state.from`, so the login screen can finish the journey.
+//
+// A signed-in user with the wrong ROLE is a different case and still goes to
+// the landing page, exactly as before.
 function AppRoutes() {
   return (
     <Routes>
@@ -315,7 +304,19 @@ function AppRoutes() {
       <Route path="/brand/login" element={<V1BrandLogin />} />
 
       {/* V1 Brand Portal */}
-      <Route path="/brand" element={<V1PortalLayout portal="brand" />}>
+      <Route
+        path="/brand"
+        element={(
+          // Brand sessions only. The way in is the brand's own email and
+          // password - anyone else (an admin who pastes a copied snapshot
+          // link, say) is sent to the brand login with the page they asked
+          // for, not shown a portal with no brand behind it, which fell back
+          // to demo data.
+          <ProtectedRoute allowedRoles={['brand']} wrongRoleToLogin loginPath="/brand/login">
+            <V1PortalLayout portal="brand" />
+          </ProtectedRoute>
+        )}
+      >
         <Route index element={<V1BrandOverview />} />
         <Route path="projects" element={<V1BrandProjects />} />
         <Route path="projects/:id" element={<V1BrandProjectDetail />} />
@@ -388,7 +389,7 @@ function AppRoutes() {
       <Route 
         path="/admin" 
         element={
-          <ProtectedRoute allowedRoles={['admin']}>
+          <ProtectedRoute allowedRoles={['admin']} loginPath="/v1">
             <V1AdminLayout />
           </ProtectedRoute>
         }
@@ -504,6 +505,11 @@ function AppRoutes() {
       {/* V3 Brand Inreach (public form) */}
       <Route path="/v3/enquiry" element={<V3BrandInreach />} />
 
+      {/* Public project feedback form (no login - token in the URL is the
+          access control). Reached via the link emailed from the Final
+          Report page's "Send to Brand" / "Send to Creator" buttons. */}
+      <Route path="/feedback/:token" element={<V1PublicFeedbackForm />} />
+
       {/* V3 Role Selector */}
       <Route path="/v3" element={<V3RoleSelector />} />
 
@@ -614,9 +620,20 @@ function App() {
     <AuthProvider>
       <BrowserRouter>
         <AppRoutes />
-        <Toaster 
+        <Toaster
           position="top-right"
+          duration={3000}
+          closeButton
+          style={{
+            // Sonner's close button defaults to the top-left corner of each
+            // toast; pin it to the top-right instead so it's always in the
+            // same corner the toast itself appears in.
+            '--toast-close-button-start': 'unset',
+            '--toast-close-button-end': '0',
+            '--toast-close-button-transform': 'translate(35%, -35%)',
+          }}
           toastOptions={{
+            duration: 3000,
             style: {
               background: '#FFFFFF',
               color: '#0F172A',

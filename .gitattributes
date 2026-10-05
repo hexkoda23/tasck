@@ -1,0 +1,11 @@
+# Normalise text to LF in the repository so images built from a Windows
+# checkout and from CI contain the same bytes.
+* text=auto
+
+# Files executed or parsed inside Linux containers keep LF in every checkout.
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+*.sh text eol=lf
+*.template text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

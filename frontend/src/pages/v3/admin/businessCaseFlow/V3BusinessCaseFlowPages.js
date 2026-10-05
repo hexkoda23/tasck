@@ -3,6 +3,8 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import AnalyzerSourceBanner from '../../../../components/v3/AnalyzerSourceBanner';
 import StrategyDraftEditor from '../../../../components/admin/StrategyDraftEditor';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../../../lib/readinessFieldFormat';
+import { useClickOutside } from '../../../../hooks/useClickOutside';
+import { downloadFile } from '../../../../lib/downloadFile';
 
 // Detect a cell that contains a KPI list (real array of dicts OR a
 // stringified Python-repr dict) and render it cleanly. Falls back to plain
@@ -1395,7 +1397,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
       const data = await v3SuggestCreatorMatches(id);
       setMatches(Array.isArray(data?.matches) ? data.matches : []);
     } catch (e) {
-      setNotice(e?.response?.data?.detail || e?.message || 'AI creator scan could not run yet.');
+      setNotice(e?.response?.data?.detail || e?.message || 'The creator scan could not run yet.');
     } finally {
       setScanning(false);
     }
@@ -1539,7 +1541,7 @@ export const V3BusinessCasePlanBrief = () => {
       next[creator.id] = draft;
     });
     setBriefs(next);
-    setNotice('AI generated a draft brief for every selected creator.');
+    setNotice('Drafted a brief for every selected creator.');
   };
   const send = async (creator) => {
     setNotice('');
@@ -2097,7 +2099,7 @@ const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
           <p className="text-[14px] font-semibold text-[#1A1A1A] truncate" style={{ fontFamily: "'Fraunces', serif" }}>{title}</p>
           <div className="flex items-center gap-2 shrink-0">
             {pdfUrl && (
-              <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="v3-btn-secondary text-[11px]" data-testid="preview-download-pdf"><Download className="w-3.5 h-3.5" /> Download PDF</a>
+              <button type="button" onClick={() => downloadFile(pdfUrl)} className="v3-btn-secondary text-[11px]" data-testid="preview-download-pdf"><Download className="w-3.5 h-3.5" /> Download PDF</button>
             )}
             <button onClick={onClose} className="v3-btn-secondary text-[11px]" data-testid="preview-close-btn"><X className="w-3.5 h-3.5" /> Close</button>
           </div>
@@ -2122,6 +2124,11 @@ const PreviewModal = ({ open, onClose, title, pdfUrl, sections, testId }) => {
   );
 };
 
+// The feedback template holds two independent forms. Everything that leaves
+// the studio is addressed to one of them, so the audience travels with the
+// share action instead of being inferred from the button that was clicked.
+const FEEDBACK_FORM_LABELS = { brand: 'Brand Partner form', creator: 'Creative Partner form' };
+
 const SHARE_OPTIONS = (label, brandEmail, creatorEmail, includeCreator = false) => [
   { key: 'email_brand', icon: Mail, label: brandEmail ? `Email to brand (${brandEmail})` : 'Email to brand' },
   ...(includeCreator ? [{ key: 'email_creator', icon: Mail, label: creatorEmail ? `Email to creator (${creatorEmail})` : 'Email to creator' }] : []),
@@ -2131,9 +2138,13 @@ const SHARE_OPTIONS = (label, brandEmail, creatorEmail, includeCreator = false) 
 ];
 
 const ShareMenu = ({ open, onClose, options, onSelect }) => {
+  // Same as the V1 admin copy: the panel is a sibling of its toggle button
+  // inside the caller's `relative` wrapper, so the wrapper is what "inside"
+  // has to mean.
+  const menuRef = useClickOutside(open, onClose, (panel) => panel.parentElement);
   if (!open) return null;
   return (
-    <div className="absolute right-0 mt-2 w-80 rounded-lg border border-[#E8E4DB] bg-white shadow-xl z-30" onClick={(e) => e.stopPropagation()}>
+    <div ref={menuRef} className="absolute right-0 mt-2 w-80 rounded-lg border border-[#E8E4DB] bg-white shadow-xl z-30" onClick={(e) => e.stopPropagation()}>
       <div className="p-2">
         {options.map((opt) => {
           const Icon = opt.icon;
@@ -2278,8 +2289,8 @@ export const V3BusinessCaseContractStudio = () => {
       return;
     }
     if (option.key === 'download_pdf') {
-      window.open(v3ContractPdfUrl(contract.id), '_blank');
-      setNotice('Contract PDF opened in a new tab.');
+      downloadFile(v3ContractPdfUrl(contract.id));
+      setNotice('Contract PDF downloading.');
       return;
     }
     if (option.key === 'whatsapp') {
@@ -2526,6 +2537,8 @@ export const V3BusinessCaseFinalReport = () => {
 
   const reportSent = Boolean(report?.report_sent_at);
   const feedbackSent = Boolean(report?.feedback_sent_at);
+  const feedbackBrandSent = Boolean(report?.feedback_sent_brand_at);
+  const feedbackCreatorSent = Boolean(report?.feedback_sent_creator_at);
   const canClose = Boolean(report) && reportSent && feedbackSent && bc.stage !== 'closed';
 
   const computeAverage = (questions) => {
@@ -2591,33 +2604,39 @@ export const V3BusinessCaseFinalReport = () => {
     });
   };
 
-  const handleShare = async (which, option) => {
+  // `audience` is required for feedback shares ('brand' | 'creator') and
+  // unused for the report. It decides which of the two forms is attached,
+  // downloaded and stamped as sent, so "Send to Brand" can never hand over the
+  // Creative Partner form and "Send to Creator" can never hand over the
+  // Brand Partner one.
+  const handleShare = async (which, option, audience) => {
     const isReport = which === 'report';
+    const docLabel = isReport ? 'Report' : (FEEDBACK_FORM_LABELS[audience] || 'Feedback');
     if (option.key === 'copy_link') {
       navigator.clipboard?.writeText(`${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report#${which}`);
-      setNotice(`${isReport ? 'Report' : 'Feedback'} link copied to clipboard.`);
+      setNotice(`${docLabel} link copied to clipboard.`);
     } else if (option.key === 'download_pdf') {
-      const url = isReport ? v3FinalReportPdfUrl(report.id) : v3FeedbackPdfUrl(report.id);
-      window.open(url, '_blank');
-      setNotice(`${isReport ? 'Report' : 'Feedback'} PDF opened in a new tab.`);
+      const url = isReport ? v3FinalReportPdfUrl(report.id) : v3FeedbackPdfUrl(report.id, audience);
+      downloadFile(url);
+      setNotice(`${docLabel} PDF downloading.`);
     } else if (option.key === 'whatsapp') {
-      const text = encodeURIComponent(`${isReport ? 'Final Report' : 'Feedback'} ready: ${report?.title || ''}\n${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report`);
+      const text = encodeURIComponent(`${isReport ? 'Final Report' : docLabel} ready: ${report?.title || ''}\n${window.location.origin}/v3/admin/business-cases/${id}/reporting/final-report`);
       window.open(`https://wa.me/?text=${text}`, '_blank');
     } else if (option.key === 'email_brand' || option.key === 'email_creator') {
       const isCreatorRecipient = option.key === 'email_creator';
       const defaultTo = isCreatorRecipient ? creatorEmail : brandEmail;
       const recipientName = isCreatorRecipient ? (bundle?.creator?.name || '') : (brand?.company || brand?.name || '');
-      const toEmail = window.prompt(`Send ${isReport ? 'report' : 'feedback'} via email to ${isCreatorRecipient ? 'creator' : 'brand'}:`, defaultTo || '');
+      const toEmail = window.prompt(`Send ${isReport ? 'the report' : `the ${docLabel}`} via email to ${isCreatorRecipient ? 'creator' : 'brand'}:`, defaultTo || '');
       if (!toEmail) return;
-      setNotice(`Sending ${isReport ? 'report' : 'feedback'} to ${toEmail}…`);
+      setNotice(`Sending ${isReport ? 'report' : docLabel} to ${toEmail}…`);
       try {
         if (isReport) {
           await v3SendFinalReportEmail(report.id, { to_email: toEmail, recipient_name: recipientName });
         } else {
-          await v3SendFeedbackEmail(report.id, { to_email: toEmail, recipient_name: recipientName });
+          await v3SendFeedbackEmail(report.id, { to_email: toEmail, recipient_name: recipientName, audience: audience || (isCreatorRecipient ? 'creator' : 'brand') });
         }
         await reload();
-        setNotice(`${isReport ? 'Report' : 'Feedback'} emailed to ${toEmail}.`);
+        setNotice(`${docLabel} emailed to ${toEmail}.`);
       } catch (e) {
         setNotice(e?.response?.data?.detail || e?.message || 'Could not send the email.');
       }
@@ -2625,13 +2644,16 @@ export const V3BusinessCaseFinalReport = () => {
     } else {
       setNotice(`${option.label} - queued.`);
     }
-    // Mark sent on any email_brand/email_creator/copy_link/download/whatsapp action
+    // Mark sent on any copy_link/download/whatsapp action. Each form carries
+    // its own stamp, so sharing the brand form never marks the creative form
+    // as sent.
     try {
       if (isReport && !reportSent) {
         await v3MarkReportSent(report.id);
       }
-      if (!isReport && !feedbackSent) {
-        await v3MarkFeedbackSent(report.id);
+      if (!isReport) {
+        const alreadySent = audience === 'creator' ? feedbackCreatorSent : feedbackBrandSent;
+        if (!alreadySent) await v3MarkFeedbackSent(report.id, audience);
       }
       await reload();
     } catch (_err) { /* swallow */ }
@@ -2724,7 +2746,11 @@ export const V3BusinessCaseFinalReport = () => {
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Feedback Template</p>
                 <h3 className="text-[18px] font-semibold text-[#1A1A1A] mt-0.5" style={{ fontFamily: "'Fraunces', serif" }}>Brand & Creative Partner Feedback</h3>
-                <p className="text-[11px] text-[#8A8A8A] mt-1">{feedbackSent ? `Sent ${report.feedback_sent_at?.slice(0, 19)?.replace('T', ' ')}` : 'Not sent yet'}</p>
+                <p className="text-[11px] text-[#8A8A8A] mt-1" data-testid="feedback-sent-status">
+                  Brand Partner form: {feedbackBrandSent ? `sent ${report.feedback_sent_brand_at?.slice(0, 19)?.replace('T', ' ')}` : 'not sent'}
+                  {' · '}
+                  Creative Partner form: {feedbackCreatorSent ? `sent ${report.feedback_sent_creator_at?.slice(0, 19)?.replace('T', ' ')}` : 'not sent'}
+                </p>
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 {editingFeedback ? (
@@ -2738,11 +2764,11 @@ export const V3BusinessCaseFinalReport = () => {
                     <button onClick={() => setPreviewType('feedback')} className="v3-btn-secondary text-[11px]" data-testid="feedback-preview-btn"><Eye className="w-3.5 h-3.5" /> Preview</button>
                     <div className="relative">
                       <button onClick={() => setShareFeedbackBrandOpen((v) => !v)} className="v3-btn-primary text-[11px]" data-testid="feedback-send-brand-btn"><Send className="w-3.5 h-3.5" /> Send to Brand</button>
-                      <ShareMenu open={shareFeedbackBrandOpen} onClose={() => setShareFeedbackBrandOpen(false)} options={SHARE_OPTIONS('feedback', brandEmail, '', false)} onSelect={(opt) => handleShare('feedback', opt)} />
+                      <ShareMenu open={shareFeedbackBrandOpen} onClose={() => setShareFeedbackBrandOpen(false)} options={SHARE_OPTIONS('Brand Partner form', brandEmail, '', false)} onSelect={(opt) => handleShare('feedback', opt, 'brand')} />
                     </div>
                     <div className="relative">
                       <button onClick={() => setShareFeedbackCreatorOpen((v) => !v)} className="v3-btn-primary text-[11px]" data-testid="feedback-send-creator-btn"><Send className="w-3.5 h-3.5" /> Send to Creator</button>
-                      <ShareMenu open={shareFeedbackCreatorOpen} onClose={() => setShareFeedbackCreatorOpen(false)} options={SHARE_OPTIONS('feedback', '', creatorEmail, true).filter((o) => o.key !== 'email_brand')} onSelect={(opt) => handleShare('feedback', opt)} />
+                      <ShareMenu open={shareFeedbackCreatorOpen} onClose={() => setShareFeedbackCreatorOpen(false)} options={SHARE_OPTIONS('Creative Partner form', '', creatorEmail, true).filter((o) => o.key !== 'email_brand')} onSelect={(opt) => handleShare('feedback', opt, 'creator')} />
                     </div>
                   </>
                 )}

@@ -1,12 +1,14 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useThemeMode } from '../../lib/useThemeMode';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, FolderInput, Home, LogIn, LogOut, MessageSquare, Moon, PanelLeftClose, Search, Settings, Sun, Trash2 } from 'lucide-react';
+import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, FolderInput, Home, Loader2, LogIn, LogOut, MessageSquare, Moon, PanelLeftClose, Search, Settings, Sun, Trash2, X } from 'lucide-react';
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
+import { AssistantProvider } from '../../assistant/AssistantProvider';
 import { useAdminNotifications } from '../../hooks/useAdminNotifications';
-import { v3AdminMessagesUnreadCount, v3BusinessCaseDuplicatesCount } from '../../lib/v3api';
+import { v3AdminMessagesUnreadCount, v3BusinessCaseDuplicatesCount, v3GetBrands, v3ListBusinessCases } from '../../lib/v3api';
+import AssistantWidget from '../../assistant/AssistantWidget';
 
 // Per Chioma's clarification: Connect + Framing (Alignment Snapshot,
 // Brainstorm, Creator Selection, Creative Brief, Strategy Snapshot) belong
@@ -26,7 +28,6 @@ const navItems = [
     // Framing sub-pages still live under /admin/business-cases/:id/(connect|frame)/...
     matchesPath: (pathname) => CRM_BC_SUBPATH_RE.test(pathname),
   },
-  { path: '/admin/import-project', label: 'Import Project', icon: FolderInput },
   {
     path: '/admin/business-cases',
     label: 'Business Cases',
@@ -43,6 +44,7 @@ const navItems = [
     // don't accidentally light this tab up.
     suppressDefaultStartsWith: true,
   },
+  { path: '/admin/import-project', label: 'Import Project', icon: FolderInput },
   {
     path: '/admin/brand-communications',
     label: 'Messages',
@@ -71,6 +73,77 @@ const V1AdminLayout = () => {
   const [messagesUnread, setMessagesUnread] = useState(0);
   const [duplicatesCount, setDuplicatesCount] = useState(0);
   const notificationsBoxRef = useRef(null);
+  // Topbar search. The box used to be a plain <span>, so it looked like a
+  // search field but could not be typed into. It is now a real input over a
+  // small client-side index of CRM brands + business cases, loaded once on
+  // first focus so it costs nothing on pages the admin never searches from.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchIndex, setSearchIndex] = useState(null); // { brands, cases }
+  const [searchLoading, setSearchLoading] = useState(false);
+  const searchBoxRef = useRef(null);
+  const searchInputRef = useRef(null);
+
+  const loadSearchIndex = useCallback(async () => {
+    if (searchIndex || searchLoading) return;
+    setSearchLoading(true);
+    try {
+      const [brands, cases] = await Promise.all([
+        v3GetBrands().catch(() => []),
+        v3ListBusinessCases().catch(() => []),
+      ]);
+      setSearchIndex({
+        brands: Array.isArray(brands) ? brands : [],
+        cases: Array.isArray(cases) ? cases : [],
+      });
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [searchIndex, searchLoading]);
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q || !searchIndex) return [];
+    const brandNameById = new Map(
+      searchIndex.brands.map((b) => [b.id, b.company || b.name || 'Brand']),
+    );
+    const matches = [];
+    for (const brand of searchIndex.brands) {
+      const label = brand.company || brand.name || 'Brand';
+      const contact = brand.primary_contact || brand.contact_name || '';
+      if (label.toLowerCase().includes(q) || String(contact).toLowerCase().includes(q)) {
+        matches.push({
+          key: `brand-${brand.id}`,
+          kind: 'Brand',
+          icon: Building2,
+          label,
+          sub: contact || 'CRM brand',
+          path: `/admin/crm-brands/${brand.id}`,
+        });
+      }
+    }
+    for (const bc of searchIndex.cases) {
+      const label = bc.title || 'Business case';
+      const brandLabel = brandNameById.get(bc.brand_id) || '';
+      if (label.toLowerCase().includes(q) || brandLabel.toLowerCase().includes(q)) {
+        matches.push({
+          key: `case-${bc.id}`,
+          kind: 'Business case',
+          icon: BriefcaseBusiness,
+          label,
+          sub: brandLabel || 'Business case',
+          path: `/admin/business-cases/${bc.id}`,
+        });
+      }
+    }
+    return matches.slice(0, 10);
+  }, [searchQuery, searchIndex]);
+
+  const openSearchResult = (result) => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    navigate(result.path);
+  };
 
   // Poll the admin unread-messages count + duplicate-flagger count every 45s
   // so the sidebar badges stay fresh without hammering the API. Also refresh
@@ -113,7 +186,6 @@ const V1AdminLayout = () => {
   const handleNewNotification = useCallback((item) => {
     toast(item.title || 'Brand action', {
       description: item.message,
-      duration: 8000,
       action: item.link ? {
         label: 'Open',
         onClick: () => navigate(item.link),
@@ -121,7 +193,7 @@ const V1AdminLayout = () => {
     });
   }, [navigate]);
 
-  const { items: notifications, unseen, markSeen, markAllSeen, dismiss } = useAdminNotifications({ onNewItem: handleNewNotification });
+  const { unseen, markSeen, markAllSeen, dismiss } = useAdminNotifications({ onNewItem: handleNewNotification });
 
   // Close the notifications dropdown when clicking elsewhere.
   useEffect(() => {
@@ -135,6 +207,18 @@ const V1AdminLayout = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, [notificationsOpen]);
 
+  // Same for the search results dropdown.
+  useEffect(() => {
+    if (!searchOpen) return undefined;
+    const handler = (event) => {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(event.target)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [searchOpen]);
+
   const formatNotificationWhen = (iso) => {
     if (!iso) return '';
     const date = new Date(iso);
@@ -143,6 +227,7 @@ const V1AdminLayout = () => {
   };
 
   return (
+    <AssistantProvider>
     <div className={`v3-shell ${darkMode ? 'v3-dark' : ''}`} data-testid="v1-admin-layout">
       <aside className={`v3-sidebar ${sidebarCollapsed ? 'v3-sidebar--collapsed' : ''}`} data-testid="v1-admin-sidebar">
         <div className={sidebarCollapsed ? 'p-3 pb-2 flex flex-col items-center' : 'p-5 pb-3'}>
@@ -218,9 +303,71 @@ const V1AdminLayout = () => {
 
       <div className={`v3-main ${sidebarCollapsed ? 'v3-main--collapsed' : ''}`}>
         <div className="v3-topbar sticky top-0 z-20 bg-[#FAFAF7]/80 backdrop-blur-md border-b border-[#E8E4DB] px-6 py-2.5 flex items-center gap-3 min-w-0">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#E8E4DB] bg-white min-w-0">
-            <Search className="w-3.5 h-3.5 text-[#8A8A8A]" />
-            <span className="text-[12px] text-[#D4CDBF]">Search CRM brands or business cases...</span>
+          <div className="relative min-w-0" ref={searchBoxRef}>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#E8E4DB] bg-white min-w-0 focus-within:border-[#1F4A3A] transition-colors">
+              <Search className="w-3.5 h-3.5 text-[#8A8A8A] flex-shrink-0" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onFocus={() => { setSearchOpen(true); loadSearchIndex(); }}
+                onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') { setSearchOpen(false); searchInputRef.current?.blur(); }
+                  if (e.key === 'Enter' && searchResults.length > 0) openSearchResult(searchResults[0]);
+                }}
+                placeholder="Search CRM brands or business cases..."
+                aria-label="Search CRM brands or business cases"
+                className="w-[260px] max-w-full min-w-0 bg-transparent text-[12px] text-[#1A1A1A] outline-none placeholder:text-[#D4CDBF]"
+                data-testid="v1-admin-search-input"
+              />
+              {searchLoading && <Loader2 className="w-3.5 h-3.5 text-[#8A8A8A] animate-spin flex-shrink-0" />}
+              {!searchLoading && searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
+                  className="flex-shrink-0 text-[#8A8A8A] hover:text-[#1A1A1A]"
+                  aria-label="Clear search"
+                  data-testid="v1-admin-search-clear"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {searchOpen && searchQuery.trim() && (
+              <div
+                className="absolute left-0 top-full mt-2 w-[320px] max-w-[80vw] rounded-[10px] border border-[#E8E4DB] bg-white shadow-2xl z-50 overflow-hidden"
+                data-testid="v1-admin-search-results"
+              >
+                {searchLoading ? (
+                  <p className="px-3 py-4 text-[12px] text-[#8A8A8A]">Loading…</p>
+                ) : searchResults.length === 0 ? (
+                  <p className="px-3 py-4 text-[12px] text-[#8A8A8A]">No brands or business cases match “{searchQuery.trim()}”.</p>
+                ) : (
+                  <div className="max-h-[360px] overflow-y-auto">
+                    {searchResults.map((result) => {
+                      const Icon = result.icon;
+                      return (
+                        <button
+                          key={result.key}
+                          type="button"
+                          onClick={() => openSearchResult(result)}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 text-left border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7]"
+                          data-testid={`v1-admin-search-result-${result.key}`}
+                        >
+                          <Icon className="w-3.5 h-3.5 text-[#1F4A3A] flex-shrink-0" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-[12px] font-medium text-[#1A1A1A] truncate">{result.label}</span>
+                            <span className="block text-[11px] text-[#6E6657] truncate">{result.sub}</span>
+                          </span>
+                          <span className="flex-shrink-0 text-[10px] uppercase tracking-wider text-[#8A8A8A]">{result.kind}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="flex-1" />
           {/* Bell + unseen badge + dropdown of recent brand/creator actions. */}
@@ -253,40 +400,37 @@ const V1AdminLayout = () => {
                   )}
                 </div>
                 <div className="max-h-[360px] overflow-y-auto">
-                  {notifications.length === 0 ? (
-                    <p className="px-3 py-4 text-[12px] text-[#8A8A8A]">No brand or creator actions yet.</p>
+                  {unseen.length === 0 ? (
+                    <p className="px-3 py-4 text-[12px] text-[#8A8A8A]">No new brand or creator actions.</p>
                   ) : (
-                    notifications.slice(0, 12).map((item) => {
-                      const isUnseen = unseen.some((u) => u.id === item.id);
-                      return (
-                        <div
-                          key={item.id}
-                          className={`w-full flex items-stretch border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] ${isUnseen ? 'bg-[#FBF4E4]/60' : ''}`}
-                          data-testid={`v1-admin-notification-${item.id}`}
+                    unseen.slice(0, 12).map((item) => (
+                      <div
+                        key={item.id}
+                        className="w-full flex items-stretch border-b border-[#F4F2EC] last:border-b-0 hover:bg-[#FBFAF7] bg-[#FBF4E4]/60"
+                        data-testid={`v1-admin-notification-${item.id}`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => { markSeen(item.id); setNotificationsOpen(false); if (item.link) navigate(item.link); }}
+                          className="flex-1 text-left px-3 py-2 min-w-0"
+                          data-testid={`v1-admin-notification-open-${item.id}`}
                         >
-                          <button
-                            type="button"
-                            onClick={() => { markSeen(item.id); setNotificationsOpen(false); if (item.link) navigate(item.link); }}
-                            className="flex-1 text-left px-3 py-2 min-w-0"
-                            data-testid={`v1-admin-notification-open-${item.id}`}
-                          >
-                            <p className="text-[12px] font-medium text-[#1A1A1A] truncate">{item.title}</p>
-                            <p className="text-[11px] text-[#6E6657] truncate">{item.message}</p>
-                            <p className="text-[10px] text-[#8A8A8A] mt-0.5">{formatNotificationWhen(item.when)}{isUnseen && ' · NEW'}</p>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); dismiss(item.id); }}
-                            className="px-2 flex items-center text-[#8A8A8A] hover:text-[#B54A37] hover:bg-[#FBEDEA] border-l border-[#F4F2EC]"
-                            title="Dismiss this notification"
-                            aria-label="Dismiss notification"
-                            data-testid={`v1-admin-notification-dismiss-${item.id}`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      );
-                    })
+                          <p className="text-[12px] font-medium text-[#1A1A1A] truncate">{item.title}</p>
+                          <p className="text-[11px] text-[#6E6657] truncate">{item.message}</p>
+                          <p className="text-[10px] text-[#8A8A8A] mt-0.5">{formatNotificationWhen(item.when)} · NEW</p>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); dismiss(item.id); }}
+                          className="px-2 flex items-center text-[#8A8A8A] hover:text-[#B54A37] hover:bg-[#FBEDEA] border-l border-[#F4F2EC]"
+                          title="Dismiss this notification"
+                          aria-label="Dismiss notification"
+                          data-testid={`v1-admin-notification-dismiss-${item.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))
                   )}
                 </div>
               </div>
@@ -306,7 +450,9 @@ const V1AdminLayout = () => {
           <Outlet />
         </main>
       </div>
+      <AssistantWidget />
     </div>
+    </AssistantProvider>
   );
 };
 

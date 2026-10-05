@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Mail, MessageCircle, FileText, Trash2, Upload, Sparkles, Merge, Check, X, Plus, CheckCircle2 } from 'lucide-react';
+import { Loader2, Mail, MessageCircle, FileText, Trash2, Upload, Sparkles, Merge, Check, X, Plus, CheckCircle2, PencilLine, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   v3ListConnectSources,
@@ -12,10 +12,13 @@ import {
   v3DeleteOpportunity,
   v3GenerateOpportunitySnapshots,
   v3ListMeetings,
-  v3DeleteBusinessCall,
+  v3DeleteConnectTranscript,
 } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { FlowShell, saveConnectTranscriptSessions, useBusinessCaseBundle } from './V1BusinessCaseFlowPages';
+import SavedArtifactCard from '../../components/admin/SavedArtifactCard';
+import TranscriptEntry from '../../components/admin/TranscriptEntry';
+import { contentFingerprint } from '../../lib/contentFingerprint';
 
 // The three things admin drips in over time. A Connect call is rarely the only
 // conversation - the real detail often lives in the WhatsApp thread or the
@@ -267,9 +270,9 @@ export const OpportunitiesPanel = ({ businessCaseId, onGenerated, refreshToken }
       setDetectedAt(data?.detected_at || '');
       setSelected([]);
       const count = (data?.opportunities || []).length;
-      toast.success(count === 1 ? 'The AI found 1 opportunity.' : `The AI found ${count} opportunities.`);
+      toast.success(count === 1 ? 'Found 1 opportunity.' : `Found ${count} opportunities.`);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || e?.message || 'The AI could not analyse the conversations.');
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not analyse the conversations.');
     } finally {
       setDetecting(false);
       setDetectMessage('');
@@ -526,6 +529,10 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
   const contact = bc.brand_contact_snapshot || {};
   const contactName = contact.primary_contact || brand.primary_contact || '';
   const contactEmail = contact.email || brand.email || '';
+  // The business call's date is decided on the Call & Connect page. The
+  // first call transcript here is that call, so it takes that date instead
+  // of asking for it again.
+  const scheduledCallDate = String(bc.connect?.scheduled_for || '').slice(0, 10);
 
   const reload = useCallback(async () => {
     if (!businessCaseId) return;
@@ -538,7 +545,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
         v3ListConnectSources(businessCaseId).catch(() => ({ sources: [] })),
       ]);
       const meetingRows = (Array.isArray(meetingsRes) ? meetingsRes : meetingsRes?.meetings || [])
-        .filter((m) => m.meeting_type === 'business_call' || m.type === 'business_call')
+        .filter((m) => (m.meeting_type === 'business_call' || m.type === 'business_call') && !m.is_transcript_aggregate)
         .map((meeting, idx) => {
           const rawDate = meeting.call_date || meeting.scheduled_for || '';
           return createConversationRow(idx, {
@@ -563,7 +570,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
       const merged = [...meetingRows, ...sourceRows].sort((a, b) => String(a.date).localeCompare(String(b.date)));
       setRows(merged.length ? merged : [createConversationRow(0)]);
       setDirty(false);
-      if (typeof onChangedRef.current === 'function') onChangedRef.current({ count: merged.length });
+      if (typeof onChangedRef.current === 'function') onChangedRef.current({ count: merged.length, rows: merged });
     } catch (e) {
       // Non-fatal: show an empty editor rather than blocking the page.
       setRows([createConversationRow(0)]);
@@ -608,7 +615,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
         if (row.backend === 'source') {
           await v3DeleteConnectSource(businessCaseId, row.backendId);
         } else if (row.backend === 'meeting') {
-          await v3DeleteBusinessCall(row.backendId, { reason: 'Removed from Connect conversations panel' });
+          await v3DeleteConnectTranscript(row.backendId, { reason: 'Removed from Connect conversations panel' });
         }
       } catch (e) {
         toast.error('Could not remove that conversation from the server.');
@@ -617,10 +624,13 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
     }
     setRows((current) => {
       const next = current.filter((r) => r.id !== rowId);
-      return next.length ? next : [createConversationRow(0)];
+      const finalRows = next.length ? next : [createConversationRow(0)];
+      // Same shape reload() uses ({count, rows}) - a count-only payload here
+      // used to wipe out the parent's row list the same way saveAll's did.
+      if (typeof onChanged === 'function') onChanged({ count: finalRows.length, rows: finalRows });
+      return finalRows;
     });
     setSaveNotice(row.backendId ? 'Conversation removed.' : '');
-    if (typeof onChanged === 'function') onChanged({ count: rows.length - 1 });
   };
 
   const readFile = async (rowId, file) => {
@@ -633,6 +643,9 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
       toast.error('Could not read that file. Paste the text instead.');
     }
   };
+
+  const firstCallRowId = rows.find((r) => r.kind === 'transcript')?.id || '';
+  const usesScheduledDate = (row) => Boolean(scheduledCallDate) && row.id === firstCallRowId;
 
   const saveAll = async () => {
     const withContent = rows.filter(conversationHasContent);
@@ -654,7 +667,7 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
         const sessions = meetingRows.map((r) => ({
           id: r.backend === 'meeting' ? r.backendId : undefined,
           meetingId: r.backend === 'meeting' ? r.backendId : '',
-          date: r.date,
+          date: usesScheduledDate(r) ? scheduledCallDate : r.date,
           session: r.label || `Session ${rows.indexOf(r) + 1}`,
           content: r.content,
         }));
@@ -704,9 +717,12 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
       setDirty(false);
       if (typeof onContentChange === 'function') onContentChange(false);
     }
-    // Re-hydrate so backend ids line up with what's on screen.
+    // Re-hydrate so backend ids line up with what's on screen. reload()
+    // already calls onChanged with the full {count, rows} - a second,
+    // count-only onChanged call here used to fire right after and overwrite
+    // it with a rows-less payload, wiping out the parent's row list and
+    // silently breaking "select conversations to analyze" below.
     await reload();
-    if (typeof onChanged === 'function') onChanged({ count: rows.length });
   };
 
   const totalSaved = rows.filter((r) => r.backendId).length;
@@ -764,16 +780,26 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
                     </div>
                   </label>
                   {/* Date */}
-                  <label className="block">
-                    <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Date</span>
-                    <input
-                      type="date"
-                      value={row.date}
-                      onChange={(e) => updateRow(row.id, { date: e.target.value })}
-                      className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#1F4A3A]"
-                      data-testid={`conversation-date-${row.id}`}
-                    />
-                  </label>
+                  {usesScheduledDate(row) ? (
+                    <div className="block">
+                      <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Call date</span>
+                      <p className="mt-1 rounded-md border border-[#E8E4DB] bg-[#FBFAF7] px-3 py-2 text-[13px] text-[#1A1A1A]" data-testid={`conversation-date-fixed-${row.id}`}>
+                        {new Date(`${scheduledCallDate}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                        <span className="ml-1 text-[11px] text-[#8A8A8A]">· from Call &amp; Connect</span>
+                      </p>
+                    </div>
+                  ) : (
+                    <label className="block">
+                      <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">Date</span>
+                      <input
+                        type="date"
+                        value={row.date}
+                        onChange={(e) => updateRow(row.id, { date: e.target.value })}
+                        className="mt-1 w-full rounded-md border border-[#E8E4DB] bg-white px-3 py-2 text-[13px] outline-none focus:border-[#1F4A3A]"
+                        data-testid={`conversation-date-${row.id}`}
+                      />
+                    </label>
+                  )}
                   {/* Session index / saved badge */}
                   <div>
                     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A]">#{index + 1}</span>
@@ -817,28 +843,18 @@ export const ConversationsPanel = ({ businessCaseId, bundle, onChanged, onConten
                     <span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] flex items-center gap-1.5">
                       <Icon className="w-3 h-3" /> {kindMeta(row.kind).label} content
                     </span>
-                    <label className="v3-btn-secondary cursor-pointer text-[11px] inline-flex items-center gap-1">
-                      <Upload className="w-3 h-3" /> Upload file
-                      <input
-                        type="file"
-                        accept=".txt,.md,.csv,.log,.json"
-                        className="hidden"
-                        onChange={(event) => {
-                          const file = event.target.files?.[0];
-                          if (file) readFile(row.id, file);
-                          event.target.value = '';
-                        }}
-                        data-testid={`conversation-upload-${row.id}`}
-                      />
-                    </label>
                   </div>
-                  <textarea
+                  {/* Paste OR upload: the choice shows only while empty. */}
+                  <TranscriptEntry
                     value={row.content}
-                    onChange={(e) => updateRow(row.id, { content: e.target.value })}
+                    onChange={(text) => updateRow(row.id, { content: text })}
+                    onFile={(file) => readFile(row.id, file)}
                     rows={6}
+                    accept=".txt,.md,.csv,.log,.json"
+                    pasteLabel={row.kind === 'transcript' ? 'Paste transcript' : 'Paste conversation'}
                     placeholder={kindMeta(row.kind).hint}
-                    className="w-full rounded-md border border-[#E8E4DB] bg-[#FBFAF7] px-3 py-2 text-[13px] leading-6 outline-none focus:border-[#1F4A3A] focus:bg-white"
-                    data-testid={`conversation-content-${row.id}`}
+                    textareaClassName="w-full rounded-md border border-[#E8E4DB] bg-[#FBFAF7] px-3 py-2 text-[13px] leading-6 outline-none focus:border-[#1F4A3A] focus:bg-white"
+                    testId={`conversation-content-${row.id}`}
                   />
                 </div>
               </div>
@@ -890,25 +906,95 @@ export const V1BusinessCaseConnectSchedulePage = () => {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisPopup, setAnalysisPopup] = useState({ open: false, progress: 0, message: '', status: 'running' });
   const [hasContent, setHasContent] = useState(false);
-  const [conversationCount, setConversationCount] = useState(0);
+  // ConversationsPanel reports { count, rows } after every load/save. The rows
+  // are what this page fingerprints to answer "is the stored analysis still
+  // about this text?".
+  const [conversations, setConversations] = useState({ count: 0, rows: [] });
   const inFlightRef = useRef(false);
-  const stableSetConversationCount = useCallback(setConversationCount, []);
+  const stableSetConversations = useCallback(setConversations, []);
   const stableSetHasContent = useCallback(setHasContent, []);
+
+  const bc = bundle?.business_case || {};
+  const connect = bc.connect || {};
+  /*
+   * Generated-once state for this page.
+   *
+   * Opportunity detection stamps `connect.opportunities_fingerprint` with a
+   * fingerprint of every conversation it read. Recomputing it from the rows on
+   * screen says whether the stored analysis already covers exactly this text.
+   * Matching means the work is done and the Analyze button stays away; a
+   * difference means a conversation was edited or added and it needs running
+   * again.
+   */
+  const savedFingerprint = String(connect.opportunities_fingerprint || '');
+  const savedFingerprintParts = savedFingerprint ? savedFingerprint.split('-') : [];
+  const analyzedAt = connect.opportunities_detected_at || '';
+  const conversationRows = Array.isArray(conversations.rows) ? conversations.rows : [];
+  const conversationCount = Number(conversations.count) || 0;
+  const currentFingerprint = contentFingerprint(conversationRows.map((row) => row.content));
+  const hasAnalysis = Boolean(analyzedAt && savedFingerprint);
+  const analysisStale = hasAnalysis && currentFingerprint !== savedFingerprint;
+  const opportunityCount = (connect.opportunities || []).length;
+  // The Alignment Snapshots these opportunities produced. Once they exist this
+  // page has nothing left to trigger - the footer Next carries the admin on.
+  const snapshotGenerated = Boolean(
+    (Array.isArray(bundle?.alignment_snapshots) && bundle.alignment_snapshots.length)
+    || bundle?.alignment_snapshot?.id
+    || bc?.frame?.alignment_snapshot_id
+  );
+  const savedConversations = conversationRows
+    .filter((row) => row.backendId && String(row.content || '').trim())
+    .map((row) => ({
+      ...row,
+      analysed: savedFingerprintParts.includes(contentFingerprint([row.content])),
+    }));
+
+  // Which saved conversations the next analysis run should read. Defaults to
+  // whatever hasn't been analysed yet (new or edited since the last run), so
+  // adding one new conversation to a project that already has several
+  // analysed ones doesn't quietly re-run the analysis over everything again -
+  // the admin can still check/uncheck any row before running it.
+  const [selectedIds, setSelectedIds] = useState([]);
+  const toggleSelected = (rowId) => setSelectedIds((prev) => (
+    prev.includes(rowId) ? prev.filter((x) => x !== rowId) : [...prev, rowId]
+  ));
+  const savedConversationIdsKey = savedConversations.map((row) => row.id).join(',');
+  useEffect(() => {
+    setSelectedIds(savedConversations.filter((row) => !row.analysed).map((row) => row.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedConversationIdsKey]);
 
   const go = (path) => navigate(adminRoute(path));
 
+  // Both routes to an Alignment Snapshot start here: analysing, and reviewing
+  // an analysis that is already stored. Neither may run on a selection of
+  // none - an analysed conversation is unticked by default, and without this
+  // the admin could generate from it without ever choosing it.
+  const hasSelection = savedConversations.some((row) => selectedIds.includes(row.id));
+  const requireSelection = () => {
+    if (hasSelection) return true;
+    toast.error('Select at least one saved conversation before generating the Alignment Snapshot.');
+    return false;
+  };
+
   const runAnalyze = async () => {
+    if (!requireSelection()) return;
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     setAnalyzing(true);
-    setAnalysisPopup({ open: true, progress: 5, message: 'Reading every saved conversation…', status: 'running', error: undefined });
+    const selectedRows = savedConversations.filter((row) => selectedIds.includes(row.id));
+    const selection = {
+      meeting_ids: selectedRows.filter((row) => row.backend === 'meeting').map((row) => row.backendId),
+      source_ids: selectedRows.filter((row) => row.backend === 'source').map((row) => row.backendId),
+    };
+    setAnalysisPopup({ open: true, progress: 5, message: `Reading ${selectedRows.length} selected conversation${selectedRows.length === 1 ? '' : 's'}…`, status: 'running', error: undefined });
     try {
       // The ConversationsPanel saves on its own button; detection reads from
-      // the same backend collections, so we just kick off the analysis.
+      // the same backend collections, scoped to whatever the admin selected.
       const data = await v3DetectOpportunities(id, (job) => {
         const progress = Math.max(0, Math.min(95, job?.progress || 0));
         setAnalysisPopup((prev) => prev.open ? { ...prev, progress: Math.max(prev.progress, progress), message: job?.message || prev.message } : prev);
-      });
+      }, selection);
       const count = (data?.opportunities || []).length;
       setAnalysisPopup((prev) => ({ ...prev, open: true, progress: 100, status: 'complete', message: count ? `Found ${count} opportunities. Opening review…` : 'Analysis complete. Opening review…' }));
       await reload();
@@ -917,7 +1003,7 @@ export const V1BusinessCaseConnectSchedulePage = () => {
         go(`/business-cases/${id}/connect/opportunities`);
       }, 700);
     } catch (e) {
-      const msg = e?.response?.data?.detail || e?.message || 'The AI could not analyze the conversations.';
+      const msg = e?.response?.data?.detail || e?.message || 'Could not analyze the conversations.';
       setAnalysisPopup((prev) => ({ ...prev, open: true, status: 'failed', error: msg, message: 'Analysis failed. You can retry from this page.' }));
     } finally {
       setAnalyzing(false);
@@ -933,39 +1019,134 @@ export const V1BusinessCaseConnectSchedulePage = () => {
       <ConversationsPanel
         businessCaseId={id}
         bundle={bundle}
-        onChanged={stableSetConversationCount}
+        onChanged={stableSetConversations}
         onContentChange={stableSetHasContent}
       />
 
-      <div className="v3-card p-5 mt-5" data-testid="connect-analyze-card">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Analyze conversations</h2>
-            <p className="text-[12px] text-[#6E6657] mt-1 max-w-2xl">
-              One click reads every saved transcript, email and WhatsApp chat, then splits them into separate
-              campaigns. After that you can merge any that are really the same job and move them into Alignment
-              Snapshots for the brand to rank.
-            </p>
-            <p className="text-[11px] text-[#8A8A8A] mt-1">
-              {conversationCount > 0
-                ? `${conversationCount} conversation(s) on file.`
-                : hasContent
-                  ? 'Save your conversations first so they are included in the analysis.'
-                  : 'Add and save at least one conversation above before analyzing.'}
-            </p>
+      {/* The receipt for what is already stored. Coming back to this page used
+          to show the same Analyze button as a blank project, with nothing to
+          say the work had been done. Each card carries whether the stored
+          analysis still covers that conversation's current text. */}
+      {savedConversations.length > 0 && (
+        <div className="v3-card p-5 mt-5" data-testid="connect-saved-conversations-card">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">Saved conversations</h2>
+              <p className="text-[12px] text-[#6E6657] mt-1">
+                Stored on this project. Pick which ones the next analysis should read - {hasAnalysis ? 'the ones marked analysed were read by the last run.' : 'nothing has been analysed yet.'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelectedIds(savedConversations.map((row) => row.id))}
+                className="text-[11px] text-[#1F4A3A] underline hover:no-underline"
+                data-testid="connect-select-all-conversations"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedIds([])}
+                className="text-[11px] text-[#8A8A8A] underline hover:no-underline"
+                data-testid="connect-clear-selected-conversations"
+              >
+                Clear
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={runAnalyze}
-            disabled={analyzing}
-            className="v3-btn-primary inline-flex items-center gap-1.5 whitespace-nowrap"
-            data-testid="connect-analyze-btn"
-          >
-            {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {analyzing ? 'Analyzing…' : 'Analyze conversations'}
-          </button>
+          <div className="grid gap-2 sm:grid-cols-2 mt-3" data-testid="connect-saved-conversations">
+            {savedConversations.map((row) => (
+              <label
+                key={row.id}
+                className={`flex items-start gap-2 rounded-lg border p-3 cursor-pointer ${row.analysed ? 'border-[#C7D7CF] bg-[#EAF4EE]' : 'border-[#E5C99A] bg-[#FBF4E4]'}`}
+                data-testid={`connect-saved-conversation-${row.id}`}
+                data-analysed={row.analysed ? 'true' : 'false'}
+                data-selected={selectedIds.includes(row.id) ? 'true' : 'false'}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(row.id)}
+                  onChange={() => toggleSelected(row.id)}
+                  className="mt-0.5 flex-shrink-0"
+                  data-testid={`connect-select-conversation-${row.id}`}
+                />
+                {row.analysed
+                  ? <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#1F4A3A]" />
+                  : <PencilLine className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#8A6E2F]" />}
+                <div className="min-w-0">
+                  <p className="truncate text-[12px] font-semibold text-[#1A1A1A]">{row.label || kindMeta(row.kind).label}</p>
+                  <p className={`mt-0.5 text-[11px] ${row.analysed ? 'text-[#4F6B5D]' : 'text-[#7A5A1E]'}`}>
+                    {row.analysed
+                      ? 'Analysed and saved'
+                      : (hasAnalysis ? 'Edited since the last analysis' : 'Saved, not yet analysed')}
+                    {row.date ? ' \u00b7 ' + row.date : ''}
+                  </p>
+                </div>
+              </label>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Three states. Analysed and current with snapshots already generated:
+          nothing to press, the footer Next moves on. Analysed and current
+          without snapshots: the only thing left is reviewing the opportunities
+          and generating. Never analysed, or edited since: the Analyze action. */}
+      {hasAnalysis && !analysisStale ? (
+        <div className="mt-5" data-testid="connect-analyze-card">
+          <SavedArtifactCard
+            title="Conversation analysis"
+            savedAt={analyzedAt}
+            detail={snapshotGenerated
+              ? 'The Alignment Snapshot has been generated from it.'
+              : `${opportunityCount} opportunit${opportunityCount === 1 ? 'y' : 'ies'} found. Review them to generate the Alignment Snapshot.`}
+            action={snapshotGenerated ? null : (
+              <button
+                type="button"
+                onClick={() => { if (requireSelection()) go(`/business-cases/${id}/connect/opportunities`); }}
+                className="v3-btn-primary text-[12px] whitespace-nowrap"
+                data-testid="connect-review-opportunities-btn"
+              >
+                Review opportunities <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+            testId="connect-analysis-saved-card"
+          />
+        </div>
+      ) : (
+        <div className="v3-card p-5 mt-5" data-testid="connect-analyze-card">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[#1A1A1A]">
+                {analysisStale ? 'Re-analyze conversations' : 'Analyze conversations'}
+              </h2>
+              <p className="text-[12px] text-[#6E6657] mt-1 max-w-2xl">
+                {analysisStale
+                  ? 'A conversation has been edited or added since the last analysis. Pick which ones to include above, then run it again.'
+                  : 'Reads the selected transcripts, emails and WhatsApp chats above and splits them into separate campaigns. After that you can merge any that are really the same job and move them into Alignment Snapshots for the brand to rank.'}
+              </p>
+              <p className="text-[11px] text-[#8A8A8A] mt-1">
+                {conversationCount > 0
+                  ? `${selectedIds.length} of ${conversationCount} conversation${conversationCount === 1 ? '' : 's'} selected.`
+                  : hasContent
+                    ? 'Save your conversations first so they are included in the analysis.'
+                    : 'Add and save at least one conversation above before analyzing.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={runAnalyze}
+              disabled={analyzing || savedConversations.length === 0}
+              className="v3-btn-primary inline-flex items-center gap-1.5 whitespace-nowrap"
+              data-testid="connect-analyze-btn"
+            >
+              {analyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {analyzing ? 'Analyzing…' : (analysisStale ? 'Re-analyze selected' : 'Analyze selected')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {analysisPopup.open && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4" data-testid="connect-analysis-popup">

@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Download, MessageSquare, RefreshCw, Send } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { DocumentIcon, ErrorState, LoadingState, SnapshotSections, approveDocument, brandContact, BrandSentHistory, cleanPortalText, documentGroupsFromBundles, formatDate, latestRevisionInfo, sectionsFromSnapshot, sendDocumentComment, sendReportFeedback, sentenceCaseStatus, snapshotRevision, documentStatusLabel, documentStatusTone, useV1BrandPortalData } from './V1BrandPortalData';
 import { v3AlignmentDocxUrl, v3ContractDocxUrl, v3FinalReportPdfUrl, v3PitchDeckDocxUrl, v3StrategySnapshotDocxUrl, v3MarkAlignmentViewed } from '../../lib/v3api';
@@ -11,7 +12,9 @@ const downloadUrlFor = (doc) => { if (doc.kind === 'alignment' && doc.snapshot?.
 
 const DocumentReview = ({ kind, title, emptyLabel }) => {
   const data = useV1BrandPortalData();
-  const [selectedId, setSelectedId] = useState('');
+  // ?deck=<id> (the Pitch Deck email link) opens that document directly.
+  const [searchParams] = useSearchParams();
+  const [selectedId, setSelectedId] = useState(() => searchParams.get('deck') || searchParams.get('doc') || '');
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState('');
   const [sectionDrafts, setSectionDrafts] = useState({});

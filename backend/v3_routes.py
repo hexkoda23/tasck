@@ -27,22 +27,32 @@ import html
 import threading
 import smtplib
 import ssl
-from email.message import EmailMessage
 import json
 import logging
 import os
 import re
 import requests
-import smtplib
 import uuid
 import base64
 import zipfile
+from contextvars import ContextVar
 
 from v3_seed import get_v3_seed_data
+import official_brand_logo as _official_logo
+import tasck_pdf
 import v3_tracker_v33
 import v3_tracker_dedupe
 
 logger = logging.getLogger("tasck.v3")
+
+_SECRET_QUERY_PARAM = re.compile(r"(api_key|apikey|key|token|password)=([^&\s'\"]+)", re.IGNORECASE)
+
+
+def _redact_secrets(text: str) -> str:
+    """Strip credential-bearing query parameters from text destined for logs or
+    stored error fields. `requests` embeds the full request URL (including
+    ?api_key=...) in its exception messages."""
+    return _SECRET_QUERY_PARAM.sub(r"\1=<redacted>", text or "")
 
 
 def _now_iso():
@@ -137,18 +147,28 @@ def creator_login_url() -> str:
 # default exists only so we never ship a RELATIVE link ("/brand/login"), which
 # is what happened when the env was unset: the brand received a dead link they
 # could not click. Override it per environment rather than editing this value.
-DEFAULT_PUBLIC_APP_URL = (os.getenv("DEFAULT_PUBLIC_APP_URL") or "https://thcodemo.space").strip().rstrip("/")
+DEFAULT_PUBLIC_APP_URL = (os.getenv("DEFAULT_PUBLIC_APP_URL") or "https://tasck-live-demo-1.preview.emergentagent.com").strip().rstrip("/")
 
+
+# Public origin of the request currently being served, set by middleware in
+# server.py. Lets app_base_url() fall back to the domain actually in use
+# instead of a hardcoded host.
+REQUEST_PUBLIC_ORIGIN: ContextVar[str] = ContextVar("tasck_request_origin", default="")
 
 def app_base_url() -> str:
     """Single source of truth for the frontend URL used in emails and portal links.
 
     Resolution order:
       1. FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL (explicit override).
-      2. http://localhost:7159 when APP_ENV is "local" or "dev".
-      3. DEFAULT_PUBLIC_APP_URL - an absolute URL, never "". A relative link in
-         an email is always broken for the recipient, so a possibly-stale
-         absolute host beats a guaranteed-dead relative path.
+      2. The host of the request being served - i.e. the domain the admin is
+         actually using. This is the safeguard: a forgotten env var used to mean
+         every emailed link carried the preview host ("…emergentagent.com") even
+         though the platform was being used on its own domain. Deriving it from
+         the live request makes that impossible.
+      3. http://localhost:7159 when APP_ENV is "local" or "dev".
+      4. DEFAULT_PUBLIC_APP_URL - reached only with no env var AND no request
+         context (a background job). An absolute URL, never "": a relative link
+         in an email is always broken for the recipient.
     """
     raw = (
         os.getenv("FRONTEND_URL")
@@ -158,12 +178,15 @@ def app_base_url() -> str:
     ).strip().rstrip("/")
     if raw:
         return raw
+    from_request = (REQUEST_PUBLIC_ORIGIN.get() or "").strip().rstrip("/")
+    if from_request:
+        return from_request
     env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
     if env in {"local", "dev", "development"}:
         return "http://localhost:7159"
     logger.warning(
-        "No FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL set - email links fall back to %s. "
-        "Set one of these env vars for this environment.",
+        "No FRONTEND_URL / PUBLIC_APP_URL / APP_BASE_URL set and no request context "
+        "(background job?) - links fall back to %s. Set one of these env vars.",
         DEFAULT_PUBLIC_APP_URL,
     )
     return DEFAULT_PUBLIC_APP_URL
@@ -190,6 +213,39 @@ _PUBLIC_EMAIL_DOMAINS = {
     "icloud.com", "me.com", "aol.com", "proton.me", "protonmail.com", "zoho.com",
 }
 
+_AGENCY_BLOCKED_DOMAINS = {
+    "tasck.com", "thetasck.com", "thcodemo.space",
+    "emergent.host", "emergentagent.com", "preview.emergentagent.com",
+}
+
+_BRAND_NAME_NOISE_TOKENS = {
+    "ltd", "limited", "inc", "incorporated", "co", "company", "corp", "corporation",
+    "group", "global", "intl", "international", "nigeria", "ng", "africa", "plc",
+    "holdings", "the", "and", "&",
+}
+
+_MARKETPLACE_REJECT_DOMAINS = {
+    "apps.apple.com", "itunes.apple.com", "play.google.com", "play.google.com.ng", "market.android.com",
+    "instagram.com", "facebook.com", "x.com", "twitter.com", "tiktok.com", "linkedin.com",
+    "snapchat.com", "youtube.com", "youtu.be", "crunchbase.com", "producthunt.com", "indeed.com",
+    "glassdoor.com", "yelp.com", "google.com", "bing.com", "duckduckgo.com", "wikipedia.org",
+    "wikidata.org", "amazon.com", "amazon.co.uk", "etsy.com", "ebay.com", "alibaba.com",
+    "jiji.ng", "konga.com", "github.com", "medium.com", "substack.com", "wordpress.com",
+    "wix.com", "godaddy.com", "namecheap.com",
+}
+
+_LOGO_REJECT_URL_FRAGMENTS = (
+    "apps.apple.com/assets/", "itunes.apple.com/", "play.google.com/intl/", "play.google.com/static/",
+    "googleusercontent.com/play-", "static.xx.fbcdn.net/rsrc.php", "static.licdn.com/",
+    "abs.twimg.com/", "abs-0.twimg.com/", "scontent.cdninstagram.com/static",
+)
+
+_LOGO_REJECT_ALT_HINTS = (
+    "app store", "app-store", "download on the app store", "google play", "get it on google play",
+    "google-play", "appstore-badge", "googleplay-badge", "download badge", "instagram icon",
+    "facebook icon", "twitter icon",
+)
+
 
 def _normalise_website_url(value: Any) -> str:
     raw = str(value or "").strip()
@@ -204,7 +260,95 @@ def _normalise_website_url(value: Any) -> str:
     return ""
 
 
-def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "") -> str:
+def _normalise_brand_token(value: Any) -> str:
+    text = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())
+    return "".join(token for token in text.split() if token and token not in _BRAND_NAME_NOISE_TOKENS)
+
+
+def _email_domain_matches_brand(email_domain: str, brand_name: str) -> bool:
+    domain_token = _normalise_brand_token((email_domain or "").split(".")[0])
+    brand_token = _normalise_brand_token(brand_name)
+    return bool(domain_token and brand_token and (domain_token in brand_token or brand_token in domain_token))
+
+
+def _is_marketplace_domain(domain: str) -> bool:
+    value = str(domain or "").lower().removeprefix("www.")
+    if any(value == rejected or value.endswith("." + rejected) for rejected in _MARKETPLACE_REJECT_DOMAINS):
+        return True
+    return _official_logo.is_third_party_domain(value)
+
+
+def _is_bad_logo_url(candidate: str, official_domain: str = "", alt_hint: str = "") -> bool:
+    if not candidate or str(candidate).startswith("data:"):
+        return True
+    lowered = str(candidate).lower()
+    if any(fragment in lowered for fragment in _LOGO_REJECT_URL_FRAGMENTS):
+        return True
+    if any(hint in str(alt_hint or "").lower() for hint in _LOGO_REJECT_ALT_HINTS):
+        return True
+    logo_domain = _domain_from_url(candidate)
+    if official_domain and logo_domain and _is_marketplace_domain(logo_domain):
+        if not _is_marketplace_domain(str(official_domain).removeprefix("www.")):
+            return True
+    return False
+
+
+def _score_brand_candidate(url: str, brand_name: str, declared_website: str = "") -> Dict[str, Any]:
+    candidate = _normalise_website_url(url)
+    domain = _domain_from_url(candidate)
+    declared_domain = _domain_from_url(declared_website)
+    brand_token = _normalise_brand_token(brand_name)
+    domain_token = _normalise_brand_token((domain or "").split(".")[0])
+    if not candidate or not domain:
+        return {"url": url, "domain": domain, "source_type": "invalid", "score": 0, "reason": "Empty or unparseable URL."}
+    if declared_domain and domain == declared_domain:
+        return {"url": candidate, "domain": domain, "source_type": "official_website", "score": 100, "reason": "Matches the explicit website provided by admin."}
+    if _is_marketplace_domain(domain):
+        return {"url": candidate, "domain": domain, "source_type": "marketplace", "score": 5, "reason": "Marketplace, social, or directory page."}
+    score = 30
+    if brand_token and domain_token and (domain_token in brand_token or brand_token in domain_token):
+        score += 50
+    if brand_token and brand_token in candidate.lower().replace(".", "").replace("-", ""):
+        score += 5
+    if domain.endswith((".app", ".io", ".co", ".com", ".ng")):
+        score += 5
+    return {"url": candidate, "domain": domain, "source_type": "candidate_website", "score": score, "reason": "Scored search candidate."}
+
+
+def _looks_like_bad_logo_url(value: Any) -> bool:
+    text = str(value or "").strip()
+    if text.lower().startswith("data:"):
+        return False
+    return not text or not text.lower().startswith(("http://", "https://")) or _is_bad_logo_url(text)
+
+
+def _canonical_brand_logo(brand: Dict[str, Any]) -> str:
+    if not isinstance(brand, dict):
+        return ""
+    keys = ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url")
+    for key in keys:
+        value = brand.get(key)
+        if isinstance(value, str) and not _looks_like_bad_logo_url(value):
+            return value.strip()
+    return ""
+
+
+def _normalise_brand_payload(brand: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(brand, dict):
+        return brand
+    payload = {**brand}
+    logo = _canonical_brand_logo(payload)
+    if logo:
+        payload["logo_url"] = logo
+        payload["brand_logo_url"] = logo
+    else:
+        for key in ("logo_url", "brand_logo_url", "logoUrl", "brandLogoUrl", "logo", "scraped_logo_url", "image_url", "avatar_url"):
+            if payload.get(key) and _looks_like_bad_logo_url(payload[key]):
+                payload[key] = ""
+    return payload
+
+
+def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url: Any = "", brand_name: Any = "") -> str:
     direct = _normalise_website_url(website)
     if direct:
         return direct
@@ -213,8 +357,37 @@ def _website_from_brand_inputs(*, website: Any = "", email: Any = "", source_url
         return source
     email_domain = str(email or "").strip().lower().rsplit("@", 1)[-1] if "@" in str(email or "") else ""
     if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS and "." in email_domain:
+        if email_domain in _AGENCY_BLOCKED_DOMAINS:
+            return ""
+        if brand_name and not _email_domain_matches_brand(email_domain, str(brand_name)):
+            return ""
         return f"https://{email_domain}"
     return ""
+
+
+def resolve_brand_enrichment_target(brand: Dict[str, Any]) -> Dict[str, Any]:
+    warnings: List[str] = []
+    raw_website = brand.get("website") or brand.get("url") or brand.get("brand_url") or brand.get("source_url") or ""
+    brand_name = str(brand.get("company") or brand.get("name") or brand.get("brand_name") or "").strip()
+    email = str(brand.get("email") or brand.get("primary_email") or "").strip().lower()
+    email_domain = email.rsplit("@", 1)[-1] if "@" in email else ""
+    explicit_website = _normalise_website_url(raw_website)
+    if explicit_website:
+        if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS:
+            website_domain = _domain_from_url(explicit_website)
+            if email_domain != website_domain:
+                warnings.append(f"Ignored contact email domain {email_domain} because explicit website {website_domain} exists.")
+        return {"target_type": "website", "target_value": explicit_website, "confidence": "high", "warnings": warnings}
+    if email_domain and email_domain not in _PUBLIC_EMAIL_DOMAINS:
+        if email_domain in _AGENCY_BLOCKED_DOMAINS:
+            warnings.append(f"Ignored contact email domain {email_domain} because it is on the agency block list.")
+        elif brand_name and _email_domain_matches_brand(email_domain, brand_name):
+            return {"target_type": "email_domain", "target_value": f"https://{email_domain}", "confidence": "high", "warnings": warnings}
+        elif brand_name:
+            warnings.append(f"Ignored contact email domain {email_domain} because it does not match brand name {brand_name}.")
+    if brand_name:
+        return {"target_type": "brand_name", "target_value": brand_name, "confidence": "medium", "warnings": warnings}
+    return {"target_type": "none", "target_value": "", "confidence": "low", "warnings": warnings + ["No usable brand identity."]}
 
 
 def _compact_text(value: Any, limit: int = 900) -> str:
@@ -267,6 +440,36 @@ PRIORITY_COLORS = {
     "Long Term Priority": {"bg": "#2A6A6A", "fg": "#FFFFFF"},
 }
 DEFAULT_SNAPSHOT_PRIORITY = ""  # brand has not ranked it yet
+
+
+def content_fingerprint(texts) -> str:
+    """Order-independent fingerprint of a set of texts.
+
+    Stamped onto a record when something is generated from those texts, so the
+    admin page can tell whether what is on screen is still what the artifact
+    was built from: equal means "already generated from exactly this" and the
+    Generate button stays hidden; different means the text was edited and the
+    action comes back.
+
+    Mirrors frontend/src/lib/contentFingerprint.js - FNV-1a over UTF-16 code
+    units, whitespace collapsed, per-text hashes sorted. Not a security hash;
+    it only has to agree with the JavaScript implementation.
+    """
+    parts = []
+    for value in (texts if isinstance(texts, (list, tuple)) else [texts]):
+        text = " ".join(str(value or "").split()).strip()
+        if not text:
+            continue
+        # Iterate UTF-16 code units so the hash matches charCodeAt() in JS.
+        h = 2166136261
+        raw = text.encode("utf-16-le", "surrogatepass")
+        for i in range(0, len(raw), 2):
+            unit = raw[i] | (raw[i + 1] << 8)
+            h ^= unit
+            h = (h * 16777619) & 0xFFFFFFFF
+        parts.append(format(h, "x"))
+    parts.sort()
+    return "-".join(parts)
 
 
 def focus_priority_narrative(segments, priority_options=None) -> str:
@@ -713,6 +916,79 @@ Use ALL of the CRM context above, not just the transcripts. The about_the_organi
 
 
 # ============================================================================
+# Admin Assistant - global chat widget (bottom-right, every admin page)
+# ============================================================================
+#
+# One endpoint, two modes, decided by whether the calling page registered
+# itself as an "edit target" (see frontend AdminAssistantContext):
+#   - "general": no sections were handed over. The assistant can only answer
+#     questions; asked to perform an action, it declines.
+#   - "edit": the page (Alignment Snapshot, Pitch Deck, Creator Selector)
+#     passed its sections. The assistant may return a rewritten replacement
+#     for ONE section, which the frontend applies to its own local draft
+#     state only - this endpoint never touches the database. Saving stays a
+#     manual, explicit action on the page itself.
+# ============================================================================
+
+def _admin_assistant_system_prompt(
+    mode: str,
+    sections: Optional[List[Dict[str, Any]]],
+    rewritable_types: Optional[List[str]],
+) -> str:
+    if mode != "edit":
+        return """
+You are the TASCK admin portal's built-in assistant, embedded as a chat widget available on every admin page. Answer the admin's question about TASCK, their work, or how to use the product as helpfully and accurately as you can.
+
+You have NO ability to take actions or make edits from this page - you can only talk. If the admin asks you to do something (edit content, change a record, send something, delete something), politely explain that you can't do that here.
+
+Return JSON only, no markdown, with exactly these keys:
+{
+  "reply": "string - your answer or explanation, written directly to the admin",
+  "can_fulfill": false
+}
+""".strip()
+
+    rewritable = ", ".join(rewritable_types or []) or "(none)"
+    sections_json = json.dumps(
+        [
+            {"index": i, "heading": s.get("heading"), "type": s.get("type"), "content": s.get("content")}
+            for i, s in enumerate(sections or [])
+        ],
+        ensure_ascii=False,
+    )
+    return f"""
+You are the TASCK admin portal's built-in assistant, embedded in the Alignment Snapshot editor. The admin describes a change to a section's text (tone, wording, or content) and you rewrite that ONE section to match, without inventing facts the admin didn't ask for and that aren't already in the section.
+
+CURRENT SECTIONS (0-indexed):
+{sections_json}
+
+You may only rewrite sections whose "type" is one of: {rewritable}. If the admin's request targets a section whose type is not in that list, or a section that does not exist, do NOT attempt it - explain in "reply" that this type of section can't be edited from chat yet and the admin should edit it directly on the page.
+
+When you DO rewrite a section, return its full object back (same "heading" and "type" - never change those - "content" updated to the new text). Change only what the admin asked for; keep the rest of the writing consistent with the section's existing tone unless told otherwise.
+
+If the admin asks a plain question instead of requesting an edit, just answer it in "reply" and leave "section_update" null.
+
+Return JSON only, no markdown, with exactly these keys:
+{{
+  "reply": "string - a short confirmation of what you changed, your answer, or your explanation for why you couldn't",
+  "can_fulfill": true or false,
+  "section_update": {{"index": integer, "section": {{"heading": "string", "type": "string", "content": "string"}}}} or null
+}}
+""".strip()
+
+
+def _admin_assistant_user_message(history: List[Dict[str, str]], message: str) -> str:
+    lines = []
+    for turn in history or []:
+        role = "Admin" if (turn.get("role") == "user") else "Assistant"
+        text = str(turn.get("text") or "").strip()
+        if text:
+            lines.append(f"{role}: {text}")
+    lines.append(f"Admin: {message}")
+    return "\n".join(lines)
+
+
+# ============================================================================
 # AI provider switch (shared by every LLM call in the codebase)
 # ============================================================================
 #
@@ -920,6 +1196,109 @@ def _anthropic_json_call(anthropic_key: Optional[str], model: str, system_prompt
         raise RuntimeError(f"anthropic:{model} returned no JSON object ({len(text or '')} chars)")
     parsed["analysis_source"] = f"anthropic:{model}"
     return parsed
+
+
+# ============================================================================
+# Upload legibility check - reject an unreadable/unidentifiable document
+# before it's saved, instead of admin discovering a blank scan later.
+# ============================================================================
+#
+# Best-effort on purpose: a missing AI key, a network blip, or an unsupported
+# file type must never block a legitimate upload. Every branch below falls
+# back to (True, "") - "allow it" - when the check itself can't run.
+# ============================================================================
+
+_LEGIBILITY_SYSTEM_PROMPT = (
+    "You inspect a single uploaded document image for a finance/admin team. Judge ONLY "
+    "whether the image is legible enough that a human could identify what document it is "
+    "and read its key details (an invoice, receipt, contract, or similar business document "
+    "- it does not need to be perfect, just readable). Reply with ONE JSON object only, no "
+    'markdown fences: {"legible": true|false, "reason": "one short, polite sentence"}. Set '
+    "legible=false only for real problems: a fully blank/black page, extreme blur, "
+    "unreadably low resolution, a wrong/irrelevant image (a selfie, a meme, an unrelated "
+    "screenshot), or the frame being cut off so no content is visible. When in doubt, set "
+    "legible=true - never reject for minor glare, slight skew, or informal phone-photo quality."
+)
+
+
+def _inspect_pdf_legibility(raw: bytes) -> Tuple[bool, str]:
+    from pypdf import PdfReader
+    reader = PdfReader(BytesIO(raw))
+    text = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
+    if len(text) < 25:
+        return False, "This PDF has no readable text - it looks like a blank page or an unreadable scan."
+    return True, ""
+
+
+def _inspect_docx_legibility(raw: bytes) -> Tuple[bool, str]:
+    from docx import Document as _DocxDocument
+    d = _DocxDocument(BytesIO(raw))
+    text = "\n".join(p.text for p in d.paragraphs).strip()
+    if len(text) < 10:
+        return False, "This document looks empty - no readable text was found in it."
+    return True, ""
+
+
+async def _inspect_image_legibility(raw: bytes, mime_type: str) -> Tuple[bool, str]:
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if not anthropic_key or len(raw) > 5 * 1024 * 1024:
+        # No key configured, or the file is too large for a quick vision call -
+        # skip the check rather than fail a legitimate upload.
+        return True, ""
+    media_type = mime_type if mime_type in ("image/png", "image/jpeg", "image/webp", "image/gif") else "image/png"
+    b64 = base64.b64encode(raw).decode("ascii")
+    model = os.getenv("LEGIBILITY_CHECK_MODEL") or "claude-sonnet-4-5"
+
+    def _call() -> Dict[str, Any]:
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": anthropic_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={
+                "model": model,
+                "max_tokens": 300,
+                "temperature": 0,
+                "system": _LEGIBILITY_SYSTEM_PROMPT,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
+                        {"type": "text", "text": "Inspect this uploaded document image."},
+                    ],
+                }],
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = "\n".join(part.get("text", "") for part in data.get("content", []) if part.get("type") == "text")
+        parsed = _parse_json_object(text)
+        return parsed if isinstance(parsed, dict) else {}
+
+    try:
+        result = await asyncio.to_thread(_call)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Legibility vision check failed, allowing upload: %s", exc)
+        return True, ""
+    if result.get("legible") is False:
+        reason = str(result.get("reason") or "").strip() or "This image doesn't look readable enough to identify."
+        return False, reason
+    return True, ""
+
+
+async def _inspect_document_legibility(raw: bytes, mime_type: str, filename: str) -> Tuple[bool, str]:
+    """Returns (legible, reason). reason is only meaningful when legible is False."""
+    mime = (mime_type or "").lower()
+    name = (filename or "").lower()
+    try:
+        if mime.startswith("image/") or name.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+            return await _inspect_image_legibility(raw, mime or "image/png")
+        if mime == "application/pdf" or name.endswith(".pdf"):
+            return await asyncio.to_thread(_inspect_pdf_legibility, raw)
+        if name.endswith(".docx"):
+            return await asyncio.to_thread(_inspect_docx_legibility, raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Legibility check failed for %s (%s), allowing upload: %s", filename, mime, exc)
+    return True, ""
 
 
 # ============================================================================
@@ -1359,9 +1738,47 @@ async def _call_alignment_analysis_tool(
 # the deterministic ranking.
 # ============================================================================
 
+# Words that appear in nearly every creator profile, so they carry no signal
+# when deciding whether a requested creator TYPE matches a database record.
+_GENERIC_CREATOR_WORDS = {
+    "creator", "creators", "content", "people", "person", "account", "accounts",
+    "page", "pages", "user", "users", "profile", "profiles", "influencer",
+    "influencers", "talent", "talents",
+}
+
+
+def _match_tokens(text: Any) -> set:
+    """Significant, loosely-stemmed words used to compare a requested creator
+    type ("Food reviewers") against a database profile ("Food reviewer")."""
+    words = re.findall(r"[a-z]+", str(text or "").lower())
+    tokens = set()
+    for word in words:
+        if len(word) < 4 or word in _GENERIC_CREATOR_WORDS:
+            continue
+        # Crude singularisation so "reviewers" meets "reviewer".
+        tokens.add(word[:-1] if len(word) > 4 and word.endswith("s") else word)
+    return tokens
+
+
+def _creator_profile_text(cr: Dict[str, Any]) -> str:
+    return " ".join([
+        str(cr.get("name") or ""),
+        str(cr.get("genre") or ""),
+        str(cr.get("audience") or ""),
+        " ".join(cr.get("platforms") or []),
+        " ".join(cr.get("categories") or []),
+        str(cr.get("notes") or ""),
+        str(cr.get("tier") or ""),
+    ])
+
+
 def _creator_match_system_prompt() -> str:
     return """
 You are TASCK's Creator Match Analyst. Your job is to rank creators for a brand opportunity using ONLY the evidence in the brief and the creator profiles given. Do not invent facts or audiences. If a creator's fit is weak or unclear, say so in the reasons and lower the score.
+
+REQUESTED CREATOR TYPES take priority. The brief may list the kinds of creator the team wants ("Food reviewers", "Lifestyle creators", "Everyday-life storytellers"). These are descriptions of a TYPE of creator, not names to look up. Read each database profile - genre, categories, audience, platforms, notes - and decide which profiles genuinely belong to each requested type. A creator who fits one of the requested types should outrank a creator who is merely a good general fit for the brand.
+
+For every creator you return, set "matched_from" to the requested type it satisfies, copied EXACTLY as written in the brief. Use "" when the creator fits the brand well but none of the requested types. Never stretch a profile to fit a type it does not support - leaving a requested type with no creator is the correct answer when the database has nobody suitable.
 
 For each creator you decide to include, write 1 to 3 SHORT reasons that cite specific words from the brief (audience, channel, category, focus) and from the creator profile (categories, platforms, audience, genre). Each reason should be one sentence.
 
@@ -1376,7 +1793,7 @@ Score band guidance:
 Return JSON only, no markdown, with exactly this shape:
 {
   "matches": [
-    {"creator_id": "string (must match an id from the input)", "score": 0-100 integer, "reasons": ["string", ...], "risk_notes": ["string", ...]}
+    {"creator_id": "string (must match an id from the input)", "score": 0-100 integer, "matched_from": "the requested creator type this profile satisfies, copied exactly, or \"\"", "reasons": ["string", ...], "risk_notes": ["string", ...]}
   ]
 }
 
@@ -1384,7 +1801,7 @@ Sort matches descending by score. Return at most 8. Never include a creator_id t
 """.strip()
 
 
-def _creator_match_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi: Dict[str, Any], creators: List[Dict[str, Any]]) -> str:
+def _creator_match_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi: Dict[str, Any], creators: List[Dict[str, Any]], requested_types: Optional[List[str]] = None) -> str:
     def _safe(value: Any) -> str:
         text = "" if value is None else str(value).strip()
         return text or "(not captured)"
@@ -1405,13 +1822,26 @@ def _creator_match_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi:
             "categories": cr.get("categories") or [],
             "platforms": cr.get("platforms") or [],
             "audience": cr.get("audience") or "",
+            "notes": (str(cr.get("notes") or "")[:280]),
+            "tier": cr.get("tier") or "",
             "fit_score_baseline": cr.get("fit_score"),
             "reliability": cr.get("reliability"),
             "rate_card": cr.get("rate_card") or "TBD",
             "has_contact": bool(cr.get("manager_email") or cr.get("email")),
         })
 
+    wanted = [str(t).strip() for t in (requested_types or []) if str(t).strip()]
+    if wanted:
+        requested_block = (
+            "REQUESTED CREATOR TYPES (from the Creator Selector \"Creator Matches\" field)" + "\n"
+            + "\n".join(f"- {t}" for t in wanted)
+            + "\nMatch these against the profiles below and set matched_from accordingly." + "\n"
+        )
+    else:
+        requested_block = "REQUESTED CREATOR TYPES\n- (none given; rank on brand fit alone)\n"
+
     return f"""
+{requested_block}
 BRAND OPPORTUNITY
 - Brand: {_safe(brand.get("company") or brand.get("name") or case.get("brand_name"))}
 - Industry / category: {_safe(brand.get("category") or brand.get("industry") or brand.get("sector"))}
@@ -1434,12 +1864,13 @@ async def _call_creator_match_tool(
     case: Dict[str, Any],
     mi: Dict[str, Any],
     candidate_creators: List[Dict[str, Any]],
+    requested_types: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     if not candidate_creators:
         return None
 
     system_prompt = _creator_match_system_prompt()
-    user_message = _creator_match_user_message(brand, case, mi, candidate_creators)
+    user_message = _creator_match_user_message(brand, case, mi, candidate_creators, requested_types)
     emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("CREATOR_MATCH_EMERGENT_LLM_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
@@ -1570,6 +2001,27 @@ CREATOR_SELECTOR_FIELDS = [
 
 def _creator_selector_default() -> Dict[str, str]:
     return {field["key"]: "" for field in CREATOR_SELECTOR_FIELDS}
+
+
+def _pick_active_brainstorm_round(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A snapshot can end up with more than one Creator Selector round (legacy
+    rows, double page loads). Pick the one holding the admin's work: rounds
+    with a transcript or any filled selector field beat empty ones, then the
+    most recently touched wins. Mirrors pickActiveBrainstormRound in
+    V1BusinessCaseFlowPages.js - keep the two in sync."""
+    def _key(doc: Dict[str, Any]):
+        selector = doc.get("creator_selector") or {}
+        has_content = bool(str(doc.get("transcript") or "").strip()) or any(
+            str(v or "").strip() for v in selector.values()
+        )
+        stamp = doc.get("updated_at") or doc.get("transcript_analyzed_at") or doc.get("created_at") or ""
+        return (has_content, str(stamp))
+    rows = [r for r in (rows or []) if isinstance(r, dict)]
+    if not rows:
+        return None
+    # max() keeps the first of equal keys; iterate newest-inserted first so
+    # ties go to the latest row, matching the old "last row" behaviour.
+    return max(reversed(rows), key=_key)
 
 BRAINSTORM_SUGGESTED_QUESTIONS = [
     "Where is this audience? (Platform)",
@@ -2002,6 +2454,474 @@ def build_creative_brief_document(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def is_signature_heading(heading: Any) -> bool:
+    """A contract's signature section ("13. Sign", "Signatures")."""
+    return bool(re.search(r"\bsign(?:atures?|ing|\b)", str(heading or ""), re.IGNORECASE)) and len(str(heading)) <= 40
+
+
+def signature_groups(content: Any) -> List[List[str]]:
+    """A signature section's content split into one block per signatory
+    ("For Gucci" + its Name / Title / Signature / Date lines), on the blank
+    lines between them - the way the Contract Studio preview lays it out."""
+    groups: List[List[str]] = [[]]
+    for line in str(content or "").split("\n"):
+        if line.strip():
+            groups[-1].append(line.strip())
+        elif groups[-1]:
+            groups.append([])
+    return [g for g in groups if g]
+
+
+_CB_DURATION_PLACEHOLDERS = {"", "to be confirmed", "tbc", "tbd", "to be determined"}
+
+# A journey stage line in the Pitch Deck's "Three-Stage Conversion Journey":
+# "(Week 1-2) - Awareness & Interest - ..." or "(1-2 weeks) - ...".
+_CB_STAGE_RE = re.compile(
+    r"^\s*\(\s*(?:(?P<unit_a>weeks?|months?)\s*(?P<a1>\d+)(?:\s*(?:-|–|to)\s*(?P<a2>\d+))?"
+    r"|(?P<b1>\d+)(?:\s*(?:-|–|to)\s*(?P<b2>\d+))?\s*(?P<unit_b>weeks?|months?)"
+    r"|(?P<ongoing>ongoing))\s*\)\s*[-–:]?\s*(?P<name>[^-–\n]*)",
+    re.IGNORECASE,
+)
+
+
+def creative_brief_duration_is_placeholder(value: Any) -> bool:
+    return str(value or "").strip().rstrip(".").lower() in _CB_DURATION_PLACEHOLDERS
+
+
+def creative_brief_duration(timelines: Any, deck: Optional[Dict[str, Any]]) -> str:
+    """The brief's Duration, taken from what the project already agreed rather
+    than left to the model (which wrote "To be confirmed" whenever the
+    Creator Selector timelines named no length): the stage windows of the
+    Pitch Deck's conversion journey, plus the opening line of the Creator
+    Selector's Timelines (e.g. "Campaign timed ahead of Fashion Week").
+    Returns "" when neither says anything usable."""
+    stages: List[tuple] = []
+    ongoing = False
+    unit = "week"
+    for section in (deck or {}).get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        for line in str(section.get("content") or "").splitlines():
+            m = _CB_STAGE_RE.match(line)
+            if not m:
+                continue
+            if m.group("ongoing"):
+                ongoing = True
+                continue
+            start = int(m.group("a1") or m.group("b1"))
+            end = int(m.group("a2") or m.group("b2") or start)
+            unit = (m.group("unit_a") or m.group("unit_b") or "week").lower().rstrip("s")
+            name = m.group("name").split("&")[0].strip(" .,")
+            stages.append((start, end, name))
+        if stages:
+            break  # the first section holding the journey is the journey
+
+    parts: List[str] = []
+    if stages:
+        first = min(s[0] for s in stages)
+        last = max(s[1] for s in stages)
+        span = last - first + 1
+        total = f"{span} {unit}{'s' if span != 1 else ''}"
+        label = "Wk" if unit == "week" else "Month"
+        windows = ", ".join(
+            f"{name} ({label} {a}-{b})" if a != b else f"{name} ({label} {a})"
+            for a, b, name in stages if name
+        )
+        text = f"{total} - {windows}" if windows else total
+        if ongoing:
+            text += ", then ongoing optimisation"
+        parts.append(text + ".")
+
+    # Only the first sentence of the Timelines answer: the rest tends to be
+    # admin logistics ("SOW to be sent end of day") not meant for creators.
+    anchor = re.split(r"(?<=[.!?])\s+", str(timelines or "").strip(), maxsplit=1)[0].strip()
+    if anchor and len(anchor.split()) <= 14 and not creative_brief_duration_is_placeholder(anchor):
+        parts.append(anchor if anchor.endswith((".", "!", "?")) else anchor + ".")
+    return " ".join(parts).strip()
+
+
+# ---------------------------------------------------------------------------
+# Planning page digest of the Pitch Deck
+# The Planning page's "Concept" and its timeline come from the Pitch Deck the
+# brand saw, not from fields most cases never fill. Numbering follows the
+# admin Pitch Deck page (1 Cover, 2 About, 3 Context & Core Focus ... 6 The
+# Market / Core Audience ... 8 Go To Market / Campaign).
+# ---------------------------------------------------------------------------
+_DECK_SLIDE_HEADINGS = {
+    "context": "context & core focus",
+    "market": "the market / core audience",
+    "journey": "go-to-market / campaign",
+}
+
+
+def _deck_text(value: Any) -> str:
+    """Flatten a slide (or any part of one) to readable lines."""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return "\n".join(t for t in (_deck_text(v) for v in value) if t)
+    if isinstance(value, dict):
+        skip = {"image", "bg_image", "profiles", "creator_images", "kicker"}
+        return "\n".join(t for k, v in value.items() if k not in skip for t in [_deck_text(v)] if t)
+    return ""
+
+
+def pitch_deck_slide_text(deck: Optional[Dict[str, Any]], key: str) -> str:
+    """One slide's text: the structured slide when the deck has one, else the
+    flattened section with that heading (older decks)."""
+    slide = ((deck or {}).get("slides") or {}).get(key)
+    if isinstance(slide, dict):
+        return _deck_text(slide)
+    wanted = _DECK_SLIDE_HEADINGS.get(key, key).replace("-", " ")
+    for section in (deck or {}).get("sections") or []:
+        heading = str((section or {}).get("heading") or "").lower().replace("-", " ")
+        if heading == wanted:
+            return str(section.get("content") or "").strip()
+    return ""
+
+
+def planning_concept_from_deck(deck: Optional[Dict[str, Any]]) -> str:
+    """No-AI fallback for the Planning Concept: the deck's own words from
+    Context & Core Focus (the campaign goal) and The Market / Core Audience."""
+    slides = (deck or {}).get("slides") or {}
+    context, market = slides.get("context") or {}, slides.get("market") or {}
+    parts: List[str] = []
+    if isinstance(context, dict) and context:
+        headline = " ".join(str(context.get(k) or "").strip() for k in ("title", "accent_title")).strip()
+        if headline:
+            parts.append(headline.rstrip(".") + ".")
+        goal = next((c.get("body") for c in context.get("columns") or []
+                     if isinstance(c, dict) and "goal" in str(c.get("label") or "").lower()), "")
+        if goal:
+            parts.append(str(goal).strip())
+    if isinstance(market, dict) and market.get("title"):
+        audience = str(market["title"]).strip()
+        lead = str(market.get("lead") or "").strip()
+        parts.append(f"Core audience: {audience}" + (f" - {lead}" if lead else "."))
+    if parts:
+        return " ".join(parts)
+    # Older decks: first lines of the two sections.
+    text = " ".join(pitch_deck_slide_text(deck, k).split("\n")[0] for k in ("context", "market"))
+    return text.strip()
+
+
+def planning_timeline_from_deck(deck: Optional[Dict[str, Any]]) -> str:
+    """No-AI fallback for the Planning timeline: the Go To Market journey's
+    stages with their windows and activities, as plain lines."""
+    journey = ((deck or {}).get("slides") or {}).get("journey") or {}
+    stages = journey.get("stages") if isinstance(journey, dict) else None
+    if not stages:
+        return pitch_deck_slide_text(deck, "journey")
+    blocks: List[str] = []
+    for stage in stages:
+        if not isinstance(stage, dict):
+            continue
+        window = str(stage.get("window") or "").strip().strip("()")
+        title = str(stage.get("title") or "").strip()
+        head = " - ".join(p for p in (window, title) if p)
+        lines = [head] if head else []
+        if stage.get("goal"):
+            lines.append(f"Goal: {str(stage['goal']).strip()}")
+        lines += [f"- {str(a).strip()}" for a in stage.get("activities") or [] if str(a).strip()]
+        if lines:
+            blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+# ---------------------------------------------------------------------------
+# Final report, written from the project's own pages
+# Every section is taken from what the project already holds - Pitch Deck,
+# Planning (concept, timeline, approved value), Creator Match Scanner,
+# Deliverables, Contracts, Invoices - instead of stock sentences and
+# made-up KPI results. The AI only writes the prose sections (summary,
+# strategy, learnings, recommendations) from those same facts; without it
+# the report uses the pages' own words.
+# ---------------------------------------------------------------------------
+def _slide(ctx: Dict[str, Any], key: str) -> Dict[str, Any]:
+    slide = ((ctx.get("deck") or {}).get("slides") or {}).get(key)
+    return slide if isinstance(slide, dict) else {}
+
+
+def report_money(amount: Any, currency: Optional[str]) -> str:
+    try:
+        value = float(amount or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    if not value:
+        return "Not approved yet"
+    return f"{'$' if currency == 'USD' else chr(0x20A6)}{value:,.0f}"
+
+
+def report_kpis_from_deck(ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """KPI rows from the Pitch Deck's Campaign Projections: the targets the
+    brand agreed to. Actuals stay pending until real results are entered -
+    the old report filled them with the target and a fixed "+18%"."""
+    rows: List[Dict[str, Any]] = []
+    for column in _slide(ctx, "projections").get("columns") or []:
+        if not isinstance(column, dict):
+            continue
+        items = [str(i).strip() for i in column.get("items") or [] if str(i).strip()]
+        if column.get("label") and items:
+            rows.append({"kpi": str(column["label"]).strip(), "target": "; ".join(items),
+                         "actual": "Pending results", "variance": ""})
+    return rows
+
+
+def final_report_facts(ctx: Dict[str, Any]) -> str:
+    """The project, as plain text, for the AI - the only material it may use."""
+    lines = [
+        f"PROJECT: {ctx.get('project_title')}", f"BRAND: {ctx.get('brand_name')}",
+        "CREATORS: " + (", ".join(f"{c['name']} ({c['specialty']})" if c.get("specialty") else c["name"]
+                                  for c in ctx.get("creators") or []) or "Not selected"),
+        f"APPROVED VALUE: {report_money(ctx.get('value'), ctx.get('currency'))}",
+        f"CAMPAIGN DURATION: {ctx.get('duration') or 'Not set'}",
+        f"CONCEPT: {ctx.get('concept') or 'Not set'}",
+    ]
+    for key, label in (("problem", "THE PROBLEM"), ("objective", "THE OBJECTIVE"), ("market", "CORE AUDIENCE"),
+                       ("solution", "CREATOR STRATEGY"), ("journey", "GO TO MARKET"), ("projections", "SUCCESS METRICS")):
+        text = _deck_text(_slide(ctx, key))
+        if text:
+            lines.append(f"{label} (Pitch Deck):\n{text[:1500]}")
+    if ctx.get("timeline_plan"):
+        lines.append(f"PLANNING TIMELINE:\n{str(ctx['timeline_plan'])[:1500]}")
+    for d in ctx.get("deliverables") or []:
+        lines.append(f"DELIVERABLE: {d.get('title')} - status {d.get('status')}; "
+                     f"scheduled {d.get('scheduled_for') or 'n/a'}; timeframe {d.get('delivery_timeframe') or 'n/a'}; "
+                     f"{str(d.get('notes') or '')[:400]}")
+    for c in ctx.get("contracts") or []:
+        lines.append(f"CONTRACT: {c.get('title')} - {c.get('status')}")
+    for comment in (ctx.get("comments") or [])[:8]:
+        lines.append(f"BRAND COMMENT: {str(comment)[:300]}")
+    return "\n".join(lines)
+
+
+def build_final_report_sections(ctx: Dict[str, Any], prose: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """The ten report sections from the project's own content. `prose` is the
+    AI's writing for the narrative sections; missing pieces fall back to the
+    deck's own words (never to invented claims)."""
+    prose = prose or {}
+    project, brand = ctx.get("project_title") or "Project", ctx.get("brand_name") or "Brand"
+    creators = ctx.get("creators") or []
+    creator_names = ", ".join(c["name"] for c in creators) or "Not selected"
+    deliverables = ctx.get("deliverables") or []
+    approved = [d for d in deliverables if d.get("status") == "approved"]
+    objective, problem = _slide(ctx, "objective"), _slide(ctx, "problem")
+    market, solution = _slide(ctx, "market"), _slide(ctx, "solution")
+
+    def text(value: Any) -> str:
+        return str(value or "").strip()
+
+    def bullets(items: Any) -> str:
+        return "\n".join(f"- {text(i)}" for i in items or [] if text(i))
+
+    summary = text(prose.get("executive_summary")) or " ".join(p for p in [
+        f"{project} brought {brand} together with {creator_names}"
+        + (f" to {text(objective.get('title')).rstrip('.').lower()}." if objective.get("title") else "."),
+        text(objective.get("lead")),
+        f"{len(approved)} of {len(deliverables)} deliverables have been approved." if deliverables else "",
+    ] if p)
+
+    overview = [f"Brand: {brand}", f"Project Title: {project}",
+                f"Creator: {creator_names}",
+                f"Engagement Track: {text(ctx.get('engagement_track')).title() or 'Not set'}",
+                f"Approved Value: {report_money(ctx.get('value'), ctx.get('currency'))}"]
+    if ctx.get("duration"):
+        overview.append(f"Campaign Duration: {ctx['duration']}")
+    if text(prose.get("objectives_summary")):
+        overview.append(f"Objective: {text(prose['objectives_summary'])}")
+    elif objective.get("title"):
+        overview.append(f"Objective: {text(objective['title'])}" + (f" - {text(objective.get('lead'))}" if objective.get("lead") else ""))
+    for column in objective.get("columns") or []:
+        if isinstance(column, dict) and column.get("items"):
+            overview.append(f"{text(column.get('label'))}:\n{bullets(column['items'])}")
+    if problem.get("title"):
+        overview.append(f"The Problem: {text(problem['title'])}")
+    if market.get("title"):
+        overview.append(f"Core Audience: {text(market['title'])}" + (f" - {text(market.get('lead'))}" if market.get("lead") else ""))
+
+    strategy = []
+    if text(prose.get("strategy_summary")):
+        strategy.append(text(prose["strategy_summary"]))
+    if ctx.get("concept"):
+        strategy.append(f"Concept: {ctx['concept']}")
+    if solution.get("title"):
+        strategy.append(f"Creator Strategy: {text(solution['title'])}")
+        if not prose.get("strategy_summary"):
+            strategy += [text(p) for p in solution.get("paragraphs") or [] if text(p)]
+    for c in creators:
+        strategy.append(f"Creator: {c['name']}" + (f" ({c['specialty']})" if c.get("specialty") else "")
+                        + (f" - {c['role']}" if c.get("role") else ""))
+    stages = (_slide(ctx, "journey").get("stages") or [])
+    if stages:
+        strategy.append("Campaign Journey:\n" + "\n".join(
+            f"- {text(s.get('window')).strip('()')} - {text(s.get('title'))}" for s in stages if isinstance(s, dict)))
+    elif ctx.get("timeline_plan"):
+        strategy.append(f"Timeline:\n{text(ctx['timeline_plan'])[:1200]}")
+
+    deliverable_lines = []
+    for d in deliverables:
+        status = "Approved" if d.get("status") == "approved" else text(d.get("status")).replace("_", " ").capitalize() or "Pending"
+        head = f"- {text(d.get('title'))} ({status})"
+        detail = ", ".join(p for p in [f"scheduled {d['scheduled_for']}" if d.get("scheduled_for") else "",
+                                       f"timeframe {d['delivery_timeframe']}" if d.get("delivery_timeframe") else ""] if p)
+        notes = text(d.get("notes"))
+        deliverable_lines.append(head + (f" - {detail}" if detail else "") + (f"\n  {notes[:500]}" if notes else ""))
+
+    kpis = ctx.get("kpis") or []
+    kpi_text = "\n".join(
+        f"- {k.get('kpi')}: Target: {k.get('target')} | Actual: {k.get('actual') or 'Pending results'}"
+        + (f" | Variance: {k['variance']}" if k.get("variance") else "") for k in kpis
+    ) or "Success metrics were not set in the Pitch Deck."
+
+    invoices = ctx.get("invoices") or []
+    budget = [f"Approved Budget: {report_money(ctx.get('value'), ctx.get('currency'))}"]
+    if invoices:
+        paid = [i for i in invoices if i.get("status") == "paid"]
+        total = sum(float(i.get("amount") or 0) for i in invoices)
+        budget.append(f"Invoices on file: {len(invoices)} ({len(paid)} paid)"
+                      + (f", totalling {report_money(total, ctx.get('currency'))}" if total else ""))
+    else:
+        budget.append("Invoices on file: none yet.")
+    includes = _slide(ctx, "budget").get("includes") or []
+    if includes:
+        budget.append("Budget covers:\n" + bullets(includes))
+
+    learnings = prose.get("learnings") or []
+    recommendations = prose.get("recommendations") or []
+    if not recommendations:
+        ongoing = next((s for s in stages if isinstance(s, dict) and "ongoing" in text(s.get("window")).lower()), None)
+        if ongoing:
+            recommendations = [text(ongoing.get("goal"))] + list(ongoing.get("activities") or [])
+
+    return [
+        {"heading": "1. Title Page", "content": (
+            f"{project} - Final Campaign Report\nBrand: {brand}\nCreator: {creator_names}\n"
+            f"Prepared by TASCK Creative Company Limited\nDate: {ctx.get('date')}")},
+        {"heading": "2. Executive Summary", "content": summary},
+        {"heading": "3. Project Overview & Objectives", "content": "\n".join(overview)},
+        {"heading": "4. Strategy Summary", "content": "\n".join(strategy) or "Strategy follows the approved Pitch Deck."},
+        {"heading": "5. Deliverables", "content": "\n".join(deliverable_lines) or "No deliverables recorded against this project yet."},
+        {"heading": "6. Performance / KPIs", "content": kpi_text},
+        {"heading": "7. Budget & Spend", "content": "\n".join(budget)},
+        {"heading": "8. Learnings", "content": bullets(learnings) or "To be completed with the brand's and creator's feedback."},
+        {"heading": "9. Recommendations & Next Steps", "content": bullets(recommendations) or "To be agreed with the brand at close-out."},
+        {"heading": "10. Closure Sign-off", "content": (
+            "By acknowledging this report below, the Brand confirms receipt and acceptance of all delivered work "
+            "and the closure of the Project under the executed Service Agreement.")},
+    ]
+
+
+async def _call_final_report_tool(facts: str, failures: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    """AI prose for the report's narrative sections, from `facts` only."""
+    failures = failures if failures is not None else []
+    emergent_key = os.getenv("EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if not emergent_key and not anthropic_key:
+        failures.append("no AI provider is configured")
+        return None
+    system_prompt = """
+You write the narrative parts of a TASCK creator campaign's Final Report for
+the brand. Use ONLY the project facts given - the Pitch Deck, Planning,
+deliverables and contracts. Never invent results, numbers, percentages or
+events; where results are not in the facts, speak to what was planned and
+delivered. Polished Nigerian business English, plain text, no markdown.
+
+Return JSON only, no fences:
+{
+  "executive_summary": "3-4 sentences, max 90 words: what the campaign set out to do, with whom, and where delivery stands.",
+  "objectives_summary": "One sentence: the campaign objective.",
+  "strategy_summary": "2-3 sentences, max 70 words: the concept and creator strategy as executed.",
+  "learnings": ["3-4 short points grounded in the facts (e.g. what the plan got right, what depended on the brand)"],
+  "recommendations": ["3-4 concrete next steps drawn from the plan's ongoing / scale stage and the deliverables"]
+}
+""".strip()
+
+    async def _call_emergent() -> Optional[Dict[str, Any]]:
+        if not emergent_key:
+            raise RuntimeError("EMERGENT_LLM_KEY is not set")
+        provider = os.getenv("CREATIVE_BRIEF_EMERGENT_PROVIDER") or "gemini"
+        model = os.getenv("CREATIVE_BRIEF_EMERGENT_MODEL") or "gemini-2.5-flash"
+        text = await _emergent_chat(emergent_key, f"report-{uuid.uuid4()}", system_prompt, provider, model, facts)
+        parsed = _parse_json_object(text)
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"emergent:{provider}/{model}"
+            return parsed
+        raise RuntimeError(f"emergent:{provider}/{model} returned no JSON object")
+
+    def _call_http_model() -> Optional[Dict[str, Any]]:
+        model = os.getenv("CREATIVE_BRIEF_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
+        return _anthropic_json_call(anthropic_key, model, system_prompt, facts, max_tokens=3000, temperature=0.3)
+
+    def _problem_with(result: Dict[str, Any]) -> Optional[str]:
+        return None if str(result.get("executive_summary") or "").strip() else "the reply carried no executive summary"
+
+    order = [_call_http_model, _call_emergent] if _resolve_ai_provider("CREATIVE_BRIEF_PROVIDER") else [_call_emergent, _call_http_model]
+    return await _run_ai_provider_chain(order, _problem_with, failures, "Final report")
+
+
+def _planning_digest_prompts(brand_name: str, deck: Dict[str, Any]) -> tuple:
+    system_prompt = """
+You write the Planning page summary for a TASCK creator campaign, working
+only from the approved Pitch Deck text you are given. Never invent dates,
+figures or activities that are not in it. Plain text, no markdown.
+
+Return JSON only, no fences:
+{
+  "concept": "2-3 sentences, max 70 words: the campaign concept - what the campaign does, for which audience, and why it works. Drawn from the Context & Core Focus and The Market / Core Audience slides.",
+  "timeline": "The campaign timeline collated from the Go To Market / Campaign slide: one block per stage, each starting with its window and stage name on one line (e.g. 'Week 1-2 - Awareness & Interest'), followed by its key activities as '- ' lines. Blocks separated by a blank line."
+}
+""".strip()
+    user_message = (
+        f"BRAND: {brand_name or 'Not provided'}\n\n"
+        f"SLIDE 3 - CONTEXT & CORE FOCUS:\n{pitch_deck_slide_text(deck, 'context')[:2500] or 'Not provided'}\n\n"
+        f"SLIDE 6 - THE MARKET / CORE AUDIENCE:\n{pitch_deck_slide_text(deck, 'market')[:2500] or 'Not provided'}\n\n"
+        f"SLIDE 8 - GO TO MARKET / CAMPAIGN:\n{pitch_deck_slide_text(deck, 'journey')[:4000] or 'Not provided'}"
+    )
+    return system_prompt, user_message
+
+
+async def _call_planning_digest_tool(brand_name: str, deck: Dict[str, Any],
+                                     failures: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+    """AI concept + timeline for the Planning page (see _planning_digest_prompts).
+    None when no provider answers; callers fall back to the deck's own text."""
+    failures = failures if failures is not None else []
+    system_prompt, user_message = _planning_digest_prompts(brand_name, deck)
+    emergent_key = os.getenv("EMERGENT_LLM_KEY")
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if not emergent_key and not anthropic_key:
+        failures.append("no AI provider is configured")
+        return None
+
+    async def _call_emergent() -> Optional[Dict[str, Any]]:
+        if not emergent_key:
+            raise RuntimeError("EMERGENT_LLM_KEY is not set")
+        provider = os.getenv("CREATIVE_BRIEF_EMERGENT_PROVIDER") or "gemini"
+        model = os.getenv("CREATIVE_BRIEF_EMERGENT_MODEL") or "gemini-2.5-flash"
+        text = await _emergent_chat(emergent_key, f"planning-{uuid.uuid4()}", system_prompt,
+                                    provider, model, user_message)
+        parsed = _parse_json_object(text)
+        if isinstance(parsed, dict):
+            parsed["analysis_source"] = f"emergent:{provider}/{model}"
+            return parsed
+        raise RuntimeError(f"emergent:{provider}/{model} returned no JSON object")
+
+    def _call_http_model() -> Optional[Dict[str, Any]]:
+        model = os.getenv("CREATIVE_BRIEF_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
+        return _anthropic_json_call(anthropic_key, model, system_prompt, user_message,
+                                    max_tokens=2000, temperature=0.3)
+
+    def _problem_with(result: Dict[str, Any]) -> Optional[str]:
+        if not str(result.get("concept") or "").strip():
+            return "the reply carried no concept"
+        if not str(result.get("timeline") or "").strip():
+            return "the reply carried no timeline"
+        return None
+
+    prefer_anthropic = _resolve_ai_provider("CREATIVE_BRIEF_PROVIDER")
+    order = [_call_http_model, _call_emergent] if prefer_anthropic else [_call_emergent, _call_http_model]
+    return await _run_ai_provider_chain(order, _problem_with, failures, "Planning digest")
+
+
 def personalize_creative_brief(brief: Dict[str, Any], creator_name: str = "") -> Dict[str, Any]:
     """Weave the creator's name into the fixed brief without changing its shape:
     a 'Prepared for' line under the duration and a named closing line."""
@@ -2230,6 +3150,11 @@ Ground everything in the inputs (Alignment Snapshot, Creator Selector data,
 selected creators). Use the brand's own numbers where given. Where a number is
 not given, keep it directional rather than inventing one.
 
+Never invent a person. The audience persona is a SEGMENT, not an individual -
+"Urban Commuters (25-40)", never a made-up name and age. The only people who
+may be named anywhere in this deck are the creators actually selected for this
+campaign.
+
 Return JSON only, no markdown fences, with EXACTLY this shape:
 
 {
@@ -2280,7 +3205,7 @@ Return JSON only, no markdown fences, with EXACTLY this shape:
       "title": "the audience in a phrase, e.g. 'Urban Millennials (30-40)'",
       "lead": "one line describing them",
       "persona_label": "Audience Persona",
-      "persona": {"name": "a plausible persona name", "age": "e.g. 34"},
+      "persona": {"name": "the audience segment in 2-4 words, e.g. 'Urban Commuters'", "age": "the age range, e.g. '25-40'"},
       "traits": ["5-7 short persona traits"],
       "market_size_label": "Market Size",
       "market_size": "the size of the opportunity, directional if unknown",
@@ -2982,11 +3907,43 @@ def make_v3_router(db):
         display_stack = "'Bebas Neue', 'BebasNeue', Impact, 'Arial Narrow', sans-serif"
         body_stack = "'Century Gothic', 'CenturyGothic', AppleGothic, Verdana, sans-serif"
 
+        # A bare URL typed into a plain-text email body (a feedback link, a
+        # brand login link, ...) must render as a real clickable <a> in the
+        # HTML alternative - most clients do NOT auto-linkify plain text
+        # sitting inside arbitrary HTML, so without this the recipient has to
+        # select and copy the URL by hand. URLs contain none of the characters
+        # html.escape() touches, so it's safe to escape first and linkify the
+        # already-escaped text.
+        def _linkify(escaped_text: str) -> str:
+            def _wrap(match: 're.Match') -> str:
+                url = match.group(1)
+                trailing = ''
+                while url and url[-1] in '.,;:!?)':
+                    trailing = url[-1] + trailing
+                    url = url[:-1]
+                if not url:
+                    return match.group(1)
+                return f'<a href="{url}" style="color:#1F4A3A;text-decoration:underline;">{url}</a>{trailing}'
+            return re.sub(r'(https?://[^\s<>"]+)', _wrap, escaped_text)
+
         def render_line(raw_line: str) -> str:
             stripped = raw_line.strip()
             if not stripped:
                 return '<br />'
-            escaped = html.escape(stripped)
+            # A line that IS just a URL (a feedback link, a login link, ...) -
+            # render as a prominent button rather than inline text. Must be
+            # checked before the "Label: value" branch below, which would
+            # otherwise treat "https" (up to its first ':') as the label and
+            # cut the scheme off the link.
+            if re.fullmatch(r'https?://\S+', stripped):
+                safe_url = html.escape(stripped, quote=True)
+                return (
+                    f'<div style="margin:10px 0;">'
+                    f'<a href="{safe_url}" style="display:inline-block;background:#1F4A3A;color:#FFFFFF;'
+                    'text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:bold;">'
+                    f'{html.escape(stripped)}</a></div>'
+                )
+            escaped = _linkify(html.escape(stripped))
             # Section title? Short line ending with ':' - render as Bebas display heading.
             if len(stripped) <= 60 and stripped.endswith(':') and ' ' in stripped:
                 return (
@@ -2998,14 +3955,14 @@ def make_v3_router(db):
             if stripped.startswith('- '):
                 return (
                     f'<div style="margin:0 0 4px;padding-left:14px;'
-                    f'text-indent:-10px;">• {html.escape(stripped[2:])}</div>'
+                    f'text-indent:-10px;">• {_linkify(html.escape(stripped[2:]))}</div>'
                 )
             # "Label: value" inline → bold the label so scanning is quick.
             if ':' in stripped and stripped.index(':') <= 32:
                 label, _, value = stripped.partition(':')
                 return (
                     f'<div style="margin:0 0 4px;"><strong>{html.escape(label)}:</strong> '
-                    f'{html.escape(value.strip())}</div>'
+                    f'{_linkify(html.escape(value.strip()))}</div>'
                 )
             return f'<div style="margin:0 0 6px;">{escaped}</div>'
 
@@ -3249,7 +4206,7 @@ def make_v3_router(db):
         x_admin_role: Optional[str] = Header(None, alias="X-Admin-Role"),
         x_admin_id: Optional[str] = Header(None, alias="X-Admin-ID"),
     ):
-        query: Dict[str, Any] = {}
+        query: Dict[str, Any] = {"merged_into": {"$exists": False}}
         if engagement:
             query["engagement_track_default"] = engagement
         if status:
@@ -3307,7 +4264,7 @@ def make_v3_router(db):
                 for brand in enriched:
                     projects = sorted(by_brand.get(brand["id"], []), key=_proj_rank)
                     brand["alignment_projects"] = projects
-        return enriched
+        return [_normalise_brand_payload(brand) for brand in enriched]
 
     @router.get("/brands/{brand_id}")
     async def get_brand(brand_id: str):
@@ -3360,7 +4317,7 @@ def make_v3_router(db):
             ))
 
         return {
-            "brand": brand,
+            "brand": _normalise_brand_payload(brand),
             "contacts": contacts,
             "business_cases": cases,
             "alignment_projects": alignment_projects,
@@ -3403,11 +4360,21 @@ def make_v3_router(db):
     @router.delete("/brands/{brand_id}")
     async def delete_brand(brand_id: str):
         """Delete a brand and ALL its linked records (contacts, business cases,
-        interactions, email outbox, opportunities, brand account, meetings).
-        Returns the counts of removed records per collection."""
+        interactions, email outbox, opportunities, brand account, meetings, and
+        every business-case-scoped document - deliverables, contracts,
+        alignment snapshots, etc.). Returns the counts of removed records per
+        collection."""
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
+
+        # Business cases are about to be deleted by brand_id below - capture
+        # their ids first so the documents keyed by business_case_id (not
+        # brand_id) can be cascade-deleted too, instead of being orphaned.
+        case_ids = [
+            case["id"]
+            for case in await db.v3_business_cases.find({"brand_id": brand_id}, {"id": 1}).to_list(None)
+        ]
 
         # Cascade delete linked records
         removed: Dict[str, int] = {}
@@ -3421,7 +4388,6 @@ def make_v3_router(db):
             ("v3_opportunities", {"brand_id": brand_id}),
             ("v3_meetings", {"brand_id": brand_id}),
             ("v3_projects", {"brand_id": brand_id}),
-            ("v3_contracts", {"brand_id": brand_id}),
             ("v3_fees", {"brand_id": brand_id}),
             ("v3_wallet", {"brand_id": brand_id}),
             ("v3_reports", {"brand_id": brand_id}),
@@ -3431,6 +4397,29 @@ def make_v3_router(db):
             result = await db[collection].delete_many(query)
             if result.deleted_count:
                 removed[collection] = result.deleted_count
+
+        # These collections carry business_case_id, not brand_id (v3_contracts
+        # in particular has no brand_id field at all), so they must be matched
+        # against the case ids captured above rather than brand_id.
+        if case_ids:
+            case_scoped_collections = [
+                "v3_deliverables",
+                "v3_contracts",
+                "v3_alignment_snapshots",
+                "v3_invoices",
+                "v3_creative_snapshots",
+                "v3_pitch_decks",
+                "v3_brainstorm_rounds",
+                "v3_connect_sources",
+                "v3_final_reports",
+                "v3_briefs",
+                "v3_analysis_jobs",
+            ]
+            for collection in case_scoped_collections:
+                result = await db[collection].delete_many({"business_case_id": {"$in": case_ids}})
+                if result.deleted_count:
+                    removed[collection] = result.deleted_count
+
         return {"ok": True, "brand_id": brand_id, "removed": removed}
 
     @router.patch("/brands/{brand_id}")
@@ -3441,7 +4430,8 @@ def make_v3_router(db):
             raise HTTPException(404, "Brand not found")
         allowed = {
             "about", "brand_about", "description", "company_description",
-            "logo_url", "brand_logo_url", "website", "source_url", "source", "lead_source", "scrape_source", "notes",
+            "logo_url", "brand_logo_url", "logo_source", "logo_source_page",
+            "website", "source_url", "source", "lead_source", "scrape_source", "notes",
             "primary_contact", "role", "email", "phone", "hq",
             "industry", "company", "name", "brand_name",
             "marketing_budget", "budget", "budget_range",
@@ -3460,6 +4450,169 @@ def make_v3_router(db):
         await db.v3_brands.update_one({"id": brand_id}, {"$set": updates})
         updated = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         return {"ok": True, "brand": updated}
+
+    async def _find_official_brand_logo(brand: Dict[str, Any], budget_left=None, cap_seconds: float = 15.0) -> Dict[str, Any]:
+        """Verify the brand's official site and take its logo (see
+        official_brand_logo.py). Never raises; returns the finder's result
+        dict, empty when nothing could be verified in time."""
+        import httpx
+        import time as _time
+        empty = {"official_url": "", "logo_url": "", "logo_source": "", "logo_kind": "", "tried": []}
+        started = _time.monotonic()
+
+        def has_budget() -> bool:
+            if _time.monotonic() - started > cap_seconds - 3:
+                return False
+            return budget_left is None or budget_left() > 12
+
+        extra_urls: List[str] = []
+        name = brand.get("company") or brand.get("name") or brand.get("brand_name") or ""
+        # candidate_sites already drops third-party pages, so this is "the
+        # brand has a website or email domain of its own to check".
+        has_own_site = any(kind in ("declared", "email")
+                           for _url, kind in _official_logo.candidate_sites(brand, (), _is_marketplace_domain))
+        # No usable site of its own (none given, or only a page such as a
+        # Pinterest pin): ask search for the brand's site, when a key is set.
+        if not has_own_site and name and os.getenv("SERPAPI_API_KEY", "").strip() and has_budget():
+            try:
+                params = {"engine": "google", "q": f"{name} official website", "num": 5,
+                          "api_key": os.getenv("SERPAPI_API_KEY", "").strip()}
+                search = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=8)
+                if search.ok:
+                    for result in (search.json().get("organic_results") or [])[:5]:
+                        scored = _score_brand_candidate(str(result.get("link") or ""), name)
+                        if scored["score"] > 5:
+                            extra_urls.append(scored["url"])
+            except Exception as exc:  # noqa: BLE001 - search is optional
+                logger.warning("Official-site search failed for %s: %s", name, exc)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(**_SCRAPE_HTTP_TIMEOUT_ARGS), follow_redirects=True) as client:
+                remaining = max(3.0, cap_seconds - (_time.monotonic() - started))
+                return await asyncio.wait_for(
+                    _official_logo.find_official_logo(client, brand, extra_urls=extra_urls,
+                                                      is_marketplace=_is_marketplace_domain, has_budget=has_budget),
+                    timeout=remaining,
+                )
+        except Exception as exc:  # noqa: BLE001 - timeouts and network errors mean "not found"
+            logger.warning("Official logo lookup for %s stopped: %s", name, exc)
+            return empty
+
+    async def _official_site_favicon(official_url: str) -> Optional[Tuple[str, str, str]]:
+        """Secondary source: Google's favicon for the VERIFIED official domain,
+        used only when the site itself offers no logo. Checked to be a real
+        image (the 16px generic globe is rejected)."""
+        import httpx
+        domain = _official_logo.domain_of(official_url)
+        if not domain:
+            return None
+        url = f"https://www.google.com/s2/favicons?sz=256&domain={domain}"
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(**_SCRAPE_HTTP_TIMEOUT_ARGS), follow_redirects=True) as client:
+                if await _official_logo._image_ok(client, url):
+                    return url, f"Google's favicon service for {domain}", official_url
+        except Exception:  # noqa: BLE001
+            return None
+        return None
+
+    # ------------------------------------------------------------------
+    # Brand logo backfill: re-check stored brand logos against the brand's
+    # official website (official_brand_logo.py). Run on demand - production
+    # never repairs data on boot - as a background job:
+    #   POST /api/v3/admin/brand-logo-backfill {"dry_run": true}   -> job_id
+    #   GET  /api/v3/admin/brand-logo-backfill/{job_id}           -> report
+    # Only logo_url / brand_logo_url / logo_source / logo_source_page are
+    # ever written. Kept untouched: logos an admin typed or uploaded, logos
+    # already taken from the brand's own site, and the pinned We Yan logo.
+    # ------------------------------------------------------------------
+    class BrandLogoBackfillPayload(BaseModel):
+        dry_run: bool = True
+        brand_ids: Optional[List[str]] = None
+
+    async def _backfill_one_brand_logo(brand: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
+        entry = {"brand_id": brand.get("id"), "company": brand.get("company") or brand.get("name") or "",
+                 "before": _backfill_logo_label(brand.get("logo_url") or brand.get("brand_logo_url"))}
+        if _is_weyan_brand(entry["company"]):
+            return {**entry, "action": "kept", "reason": "pinned We Yan logo"}
+        reason = _official_logo.logo_review_reason(brand, _is_marketplace_domain)
+        if not reason:
+            return {**entry, "action": "kept", "reason": "logo already from an admin or the brand's own site"}
+        found = await _find_official_brand_logo(brand, cap_seconds=20.0)
+        entry.update(reason=reason, official_website=found.get("official_url") or "")
+        stored = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
+        new_logo, new_source, new_page = found.get("logo_url") or "", found.get("logo_source") or "", found.get("official_url") or ""
+        if not new_logo and not stored and found.get("official_url"):
+            # Nothing saved and the official site shows no logo: the same
+            # secondary source a fresh scrape would use.
+            secondary = await _official_site_favicon(found["official_url"])
+            if secondary:
+                new_logo, new_source, new_page = secondary
+        if new_logo and new_logo != stored:
+            action = "updated"
+            fields = {"logo_url": new_logo, "brand_logo_url": new_logo,
+                      "logo_source": new_source, "logo_source_page": new_page}
+        elif stored and "third-party" in reason:
+            # A logo belonging to a site that only mentions the brand, and no
+            # official one to replace it with: remove it rather than show it.
+            action = "cleared"
+            fields = {"logo_url": "", "brand_logo_url": "", "logo_source": "", "logo_source_page": ""}
+        else:
+            return {**entry, "action": "unchanged",
+                    "note": "official site offers no usable logo" if found.get("official_url") else "no official site could be verified"}
+        if not dry_run:
+            await db.v3_brands.update_one({"id": brand.get("id")}, {"$set": fields})
+        return {**entry, "action": action, "after": _backfill_logo_label(fields["logo_url"]), "logo_source": fields["logo_source"]}
+
+    def _backfill_logo_label(value: Any) -> str:
+        text = str(value or "")
+        if text.startswith("data:image/svg+xml"):
+            return "inline SVG (%d bytes)" % len(text)
+        if text.startswith("data:"):
+            return "inline image"
+        return text[:160]
+
+    @router.post("/admin/brand-logo-backfill")
+    async def start_brand_logo_backfill(payload: BrandLogoBackfillPayload = Body(default=BrandLogoBackfillPayload())):
+        query: Dict[str, Any] = {"merged_into": {"$exists": False}}
+        if payload.brand_ids:
+            query["id"] = {"$in": payload.brand_ids}
+        brands = await db.v3_brands.find(query, {"_id": 0}).to_list(5000)
+        job_id = f"logo-backfill-{uuid.uuid4().hex[:10]}"
+        await db.v3_analysis_jobs.insert_one({
+            "id": job_id, "kind": "brand_logo_backfill", "status": "running", "dry_run": payload.dry_run,
+            "total": len(brands), "done": 0, "results": [], "created_at": _now_iso(), "updated_at": _now_iso(),
+        })
+
+        async def _run():
+            semaphore = asyncio.Semaphore(3)
+            results: List[Dict[str, Any]] = []
+
+            async def one(brand):
+                async with semaphore:
+                    try:
+                        item = await _backfill_one_brand_logo(brand, payload.dry_run)
+                    except Exception as exc:  # noqa: BLE001 - one brand never stops the rest
+                        item = {"brand_id": brand.get("id"), "company": brand.get("company"), "action": "error", "error": str(exc)[:300]}
+                    results.append(item)
+                    await db.v3_analysis_jobs.update_one(
+                        {"id": job_id}, {"$set": {"done": len(results), "updated_at": _now_iso()}})
+
+            await asyncio.gather(*[one(b) for b in brands])
+            summary: Dict[str, int] = {}
+            for item in results:
+                summary[item["action"]] = summary.get(item["action"], 0) + 1
+            await db.v3_analysis_jobs.update_one({"id": job_id}, {"$set": {
+                "status": "completed", "results": results, "summary": summary, "updated_at": _now_iso()}})
+            logger.info("Brand logo backfill %s (dry_run=%s): %s", job_id, payload.dry_run, summary)
+
+        asyncio.create_task(_run())
+        return {"ok": True, "job_id": job_id, "dry_run": payload.dry_run, "total": len(brands)}
+
+    @router.get("/admin/brand-logo-backfill/{job_id}")
+    async def get_brand_logo_backfill(job_id: str):
+        job = await db.v3_analysis_jobs.find_one({"id": job_id, "kind": "brand_logo_backfill"}, {"_id": 0})
+        if not job:
+            raise HTTPException(404, "Backfill job not found")
+        return job
 
     @router.post("/brands/{brand_id}/scrape")
     async def scrape_brand_details(brand_id: str):
@@ -3516,10 +4669,17 @@ def make_v3_router(db):
         source_url = brand.get("source_url") or brand.get("source") or brand.get("lead_source") or brand.get("scrape_source") or ""
         raw_website = brand.get("website") or brand.get("url") or brand.get("brand_url")
         raw_website = _strip_tracking_params(raw_website or "") or raw_website
-        website = _website_from_brand_inputs(website=raw_website, email=brand.get("email"), source_url=_strip_tracking_params(source_url))
         brand_name = brand.get("company") or brand.get("name") or brand.get("brand_name") or "Brand"
+        website = _website_from_brand_inputs(
+            website=raw_website,
+            email=brand.get("email"),
+            source_url=_strip_tracking_params(source_url),
+            brand_name=brand_name,
+        )
         scraped_about = ""
         scraped_logo = ""
+        # Where the chosen logo came from, shown next to it on the brand page.
+        scraped_logo_source = ""
         scraped_budget = ""
         # Tracks where scraped_about came from. Useful for diagnosing when the
         # admin sees rubbish in the field:
@@ -3528,6 +4688,25 @@ def make_v3_router(db):
         #   "none"     - no trustworthy source, scraped_about left empty
         about_source = "none"
         final_url = website
+        # Why the scrape came back empty, in words an admin can act on. The
+        # endpoint used to swallow every failure and return 200 with blank
+        # fields, so a dead domain and a site with no description looked
+        # identical from the CRM - both just said "Not captured yet".
+        scrape_error = ""
+
+        def _fetch_failure_reason(exc: Exception, target: str) -> str:
+            text = str(exc) or exc.__class__.__name__
+            lowered = text.lower()
+            host = _domain_from_url(target) or target
+            if "certificate" in lowered and ("expired" in lowered or "verify failed" in lowered):
+                return f"{host} has an invalid or expired security certificate, so its pages could not be read."
+            if "timed out" in lowered or "timeout" in lowered:
+                return f"{host} did not respond in time."
+            if "name or service not known" in lowered or "nodename nor servname" in lowered or "getaddrinfo" in lowered:
+                return f"{host} does not resolve - check the website address on this brand."
+            if "connect" in lowered:
+                return f"{host} could not be reached."
+            return f"{host} could not be read ({text})."
 
         if not website and os.getenv("SERPAPI_API_KEY", "").strip():
             try:
@@ -3535,16 +4714,26 @@ def make_v3_router(db):
                 search_response = await asyncio.to_thread(requests.get, "https://serpapi.com/search.json", params=params, timeout=min(12, max(3, _budget_left() - 8)))
                 search_response.raise_for_status()
                 search_data = search_response.json()
-                blocked_domains = {"facebook.com", "instagram.com", "x.com", "twitter.com", "linkedin.com", "wikipedia.org", "youtube.com"}
-                for result in search_data.get("organic_results") or []:
-                    link = str(result.get("link") or "")
-                    domain = _domain_from_url(link)
-                    if domain and not any(domain.endswith(blocked) for blocked in blocked_domains):
-                        website = _normalise_website_url(link)
-                        final_url = website
-                        break
+                scored_candidates = [
+                    _score_brand_candidate(str(result.get("link") or ""), brand_name)
+                    for result in search_data.get("organic_results") or []
+                ]
+                accepted = [item for item in scored_candidates if item["score"] > 5]
+                if accepted:
+                    selected = max(accepted, key=lambda item: item["score"])
+                    website = selected["url"]
+                    final_url = website
             except requests.RequestException as exc:
                 logger.warning("Brand website search failed for %s: %s", brand_name, exc)
+
+        # ---- Official logo: verify the brand's own website, take its logo ----
+        # Done first, on its own short budget, so the logo never depends on
+        # the page the brand was merely found on (e.g. a Pinterest pin).
+        # A logo an admin typed or uploaded is their choice - kept as it is.
+        admin_logo = (str(brand.get("logo_source") or "") in _official_logo.ADMIN_LOGO_SOURCES
+                      and bool(brand.get("logo_url") or brand.get("brand_logo_url")))
+        official = {} if admin_logo else await _find_official_brand_logo(
+            {**brand, "website": website or brand.get("website")}, budget_left=_budget_left)
 
         if website:
             url = website if website.startswith("http") else f"https://{website}"
@@ -3687,21 +4876,26 @@ def make_v3_router(db):
                                 scraped_about = max(phrases, key=len)[:700]
                                 break
 
-                    def _add_logo(candidate: str, score: int = 0):
+                    selected_domain = _domain_from_url(final_url)
+
+                    def _add_logo(candidate: str, score: int = 0, alt_hint: str = "", source: str = ""):
                         candidate = str(candidate or "").strip()
                         if not candidate or candidate.startswith("data:"):
                             return
                         lowered = candidate.lower()
                         if any(blocked in lowered for blocked in ["sprite", "placeholder", "tracking", "pixel", "avatar", "blank", "vite.svg", "react.svg"]):
                             return
-                        logo_candidates.append((score, urljoin(final_url, candidate)))
+                        full_url = urljoin(final_url, candidate)
+                        if _is_bad_logo_url(full_url, selected_domain, alt_hint):
+                            return
+                        logo_candidates.append((score, full_url, source))
 
                     logo_candidates = []
                     for tag in _re.findall(r'<meta[^>]+>', html, _re.I | _re.S):
                         meta_key = (_attr(tag, "property") or _attr(tag, "name")).lower()
                         content = _attr(tag, "content")
                         if meta_key in {"og:logo", "logo"}:
-                            _add_logo(content, 100)
+                            _add_logo(content, 100, source="the site's logo meta tag")
                         # NOTE: og:image / twitter:image are deliberately NOT
                         # candidates - on most brand sites they are campaign
                         # banners or product shots, not the company logo
@@ -3709,19 +4903,24 @@ def make_v3_router(db):
                     for tag in _re.findall(r'<link[^>]+>', html, _re.I | _re.S):
                         rel = _attr(tag, "rel").lower()
                         if any(key in rel for key in ["apple-touch-icon", "mask-icon", "shortcut icon", "icon"]):
-                            _add_logo(_attr(tag, "href"), 55 if "apple" in rel else 45)
+                            _add_logo(_attr(tag, "href"), 55 if "apple" in rel else 45, source="the site's app icon" if "apple" in rel else "the site's favicon")
                     for manifest_icon_url in manifest_logo_candidates:
-                        _add_logo(manifest_icon_url, 58)
+                        _add_logo(manifest_icon_url, 58, source="the site's web app manifest icon")
                     for tag in _re.findall(r'<img[^>]+>', html, _re.I | _re.S):
                         haystack = " ".join([_attr(tag, "class"), _attr(tag, "id"), _attr(tag, "alt"), _attr(tag, "src"), _attr(tag, "data-src")]).lower()
                         if "logo" in haystack or _slug(brand_name).replace(".", "") in haystack.replace("-", "").replace("_", ""):
-                            _add_logo(_attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"), 92 if "logo" in haystack else 68)
+                            _add_logo(
+                                _attr(tag, "src") or _attr(tag, "data-src") or _attr(tag, "data-lazy-src"),
+                                92 if "logo" in haystack else 68,
+                                _attr(tag, "alt"),
+                                source="a logo image on the website",
+                            )
                     for match in _re.findall(r'"logo"\s*:\s*(?:"([^"\n]+)"|\{[^}]*"url"\s*:\s*"([^"\n]+)")', html, _re.I | _re.S):
-                        _add_logo(next((item for item in match if item), ""), 96)
+                        _add_logo(next((item for item in match if item), ""), 96, source="the logo in the site's page data")
                     # JSON-LD Organization.logo gets the highest score - it's
                     # the explicit, brand-curated logo.
                     for jl_logo in jsonld_logos:
-                        _add_logo(jl_logo, 110)
+                        _add_logo(jl_logo, 110, source="the site's structured data (Organization logo)")
 
                     # Domain-keyed fallback: Google's favicon service serves
                     # the site's real favicon at high resolution WHEN it has
@@ -3731,7 +4930,7 @@ def make_v3_router(db):
                     # is sunset - connection refused - so it is not used.)
                     _logo_domain = _domain_from_url(final_url)
                     if _logo_domain:
-                        _add_logo(f"https://www.google.com/s2/favicons?sz=256&domain={_logo_domain}", 20)
+                        _add_logo(f"https://www.google.com/s2/favicons?sz=256&domain={_logo_domain}", 20, source=f"Google's favicon service for {_logo_domain}")
 
                     def _logo_image_ok(content: bytes, content_type: str) -> bool:
                         """True only for a real, usable logo image. Rejects
@@ -3754,7 +4953,8 @@ def make_v3_router(db):
                     logo_candidates.sort(key=lambda item: item[0], reverse=True)
                     seen_logo_urls = set()
                     ordered_logo_urls: List[str] = []
-                    for _score, candidate_url in logo_candidates[:8]:
+                    logo_source_by_url: Dict[str, str] = {}
+                    for _score, candidate_url, candidate_source in logo_candidates[:8]:
                         if str(candidate_url).startswith("https://www.google.com/s2/favicons"):
                             # Service URL - bypass _brand_logo_from_source, whose
                             # "favicon" block-list would wrongly filter it.
@@ -3765,6 +4965,7 @@ def make_v3_router(db):
                             continue
                         seen_logo_urls.add(normalised)
                         ordered_logo_urls.append(normalised)
+                        logo_source_by_url[normalised] = candidate_source
 
                     async def _logo_verifies(candidate: str) -> bool:
                         try:
@@ -3790,6 +4991,7 @@ def make_v3_router(db):
                         for candidate, verdict in zip(ordered_logo_urls, verdicts):
                             if verdict is True:
                                 scraped_logo = candidate
+                                scraped_logo_source = logo_source_by_url.get(candidate, "")
                                 break
                     # If nothing verified, scraped_logo stays empty and the UI
                     # falls back to brand initials - intentionally better than
@@ -3887,18 +5089,22 @@ def make_v3_router(db):
                 # Network / 4xx / 5xx / SSL / timeout. Log with full context so
                 # we can debug from production logs instead of guessing.
                 logger.warning("Scrape HTTP error for %s (%s): %s", url, brand_name, exc)
+                scrape_error = _fetch_failure_reason(exc, url)
                 website_fetch_failed = True
             except (ValueError, KeyError, TypeError) as exc:
                 logger.warning("Scrape parse error for %s (%s): %s", url, brand_name, exc)
+                scrape_error = f"{_domain_from_url(url) or url} returned a page that could not be parsed."
                 website_fetch_failed = True
             except Exception as exc:  # noqa: BLE001
                 # Catch-all so a single bad page doesn't 500 the whole endpoint.
                 logger.warning("Scrape unexpected error for %s (%s): %s", url, brand_name, exc)
+                scrape_error = _fetch_failure_reason(exc, url)
                 website_fetch_failed = True
             else:
                 website_fetch_failed = False
         else:
             website_fetch_failed = True
+            scrape_error = "No website on this brand, and no search key configured to find one."
 
         # ---- SerpAPI rediscovery fallback ----
         # If we couldn't reach the configured website (dead domain like
@@ -4005,17 +5211,58 @@ def make_v3_router(db):
                                 scraped_about = meta_fallback[:1500]
                                 about_source = "serpapi_meta"
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("SerpAPI rediscovery scrape failed for %s (%s): %s", brand_name, retry_url, exc)
+                        logger.warning("SerpAPI rediscovery scrape failed for %s (%s): %s", brand_name, retry_url, _redact_secrets(str(exc)))
             except requests.RequestException as exc:
-                logger.warning("SerpAPI rediscovery request failed for %s: %s", brand_name, exc)
+                logger.warning("SerpAPI rediscovery request failed for %s: %s", brand_name, _redact_secrets(str(exc)))
+
+        # Rediscovery (or anything else) got us content after all, so the
+        # earlier failure is no longer worth reporting.
+        if scraped_about or scraped_logo:
+            scrape_error = ""
+        elif not scrape_error:
+            scrape_error = f"{_domain_from_url(final_url) or 'The site'} was read, but it publishes no description or logo we could use."
 
         if not scraped_about:
             scraped_about = str(brand.get("about") or brand.get("brand_about") or "")
+        # Found on this scrape -> the page it was found on; otherwise the logo
+        # already on the record keeps the source it was saved with.
+        scraped_logo_source_page = final_url if scraped_logo else ""
+        if admin_logo:
+            scraped_logo = scraped_logo_source = scraped_logo_source_page = ""
+        elif official.get("logo_url"):
+            # The logo the brand's own website shows (img asset or inline SVG).
+            scraped_logo = official["logo_url"]
+            scraped_logo_source = official["logo_source"]
+            scraped_logo_source_page = official["official_url"]
+        else:
+            # Never a logo from a page that merely mentions the brand.
+            if scraped_logo and (_is_marketplace_domain(_domain_from_url(final_url))
+                                 or _is_marketplace_domain(_domain_from_url(scraped_logo))):
+                scraped_logo = scraped_logo_source = scraped_logo_source_page = ""
+            # Secondary source, only because the official site offered no logo.
+            if not scraped_logo and official.get("official_url"):
+                secondary = await _official_site_favicon(official["official_url"])
+                if secondary:
+                    scraped_logo, scraped_logo_source, scraped_logo_source_page = secondary
         if not scraped_logo:
-            scraped_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
+            stored_logo = str(brand.get("logo_url") or brand.get("brand_logo_url") or "")
+            if stored_logo and not stored_logo.startswith("data:") and _is_marketplace_domain(_domain_from_url(stored_logo)):
+                stored_logo = ""
+            scraped_logo = stored_logo
+            scraped_logo_source = str(brand.get("logo_source") or "") if stored_logo else ""
+            scraped_logo_source_page = str(brand.get("logo_source_page") or "") if stored_logo else ""
+        if scraped_logo and not scraped_logo.startswith("data:") and _is_bad_logo_url(scraped_logo, _domain_from_url(final_url)):
+            scraped_logo = ""
+            scraped_logo_source = ""
+            scraped_logo_source_page = ""
         # We Yan's scraped logo is white and invisible on the tile - always pin a known-good logo.
         if _is_weyan_brand(brand_name):
             scraped_logo = WEYAN_LOGO_URL
+            scraped_logo_source = "TASCK's pinned We Yan logo"
+            scraped_logo_source_page = ""
+        if scraped_logo and scrape_error and not admin_logo:
+            # The official-site logo was found after all.
+            scrape_error = ""
         if not scraped_budget:
             scraped_budget = "No public marketing budget found. Confirm during Connect call."
 
@@ -4029,6 +5276,8 @@ def make_v3_router(db):
         if scraped_logo:
             updates["logo_url"] = scraped_logo
             updates["brand_logo_url"] = scraped_logo
+            updates["logo_source"] = scraped_logo_source
+            updates["logo_source_page"] = scraped_logo_source_page
         if scraped_budget:
             updates["marketing_budget"] = scraped_budget
         if len(updates) > 1:
@@ -4040,11 +5289,19 @@ def make_v3_router(db):
             "about_source": about_source,
             "logo_url": scraped_logo,
             "brand_logo_url": scraped_logo,
+            "logo_source": scraped_logo_source,
+            "logo_source_page": scraped_logo_source_page,
+            # The site verified as the brand's own ("" when none could be).
+            "official_website": official.get("official_url") or "",
             "marketing_budget": scraped_budget,
             "brand_name": brand_name,
             "website": final_url,
             "source_url": final_url,
             "scraped": True,
+            # Empty when something was found. Shown to the admin verbatim so a
+            # dead domain reads as a dead domain instead of an empty field.
+            "error": scrape_error,
+            "reached_website": not website_fetch_failed,
         }
     class BrandCreate(BaseModel):
         company: str
@@ -4077,6 +5334,27 @@ def make_v3_router(db):
 
     @router.post("/brands")
     async def create_brand(payload: BrandCreate):
+        # "Add Brand to CRM" for a brand that's already in the CRM must not
+        # spin up a duplicate brand row - along with a duplicate contact,
+        # duplicate login account, and duplicate welcome email. Match on the
+        # same case-insensitive company name and reuse that record instead,
+        # backfilling any fields the existing brand was missing and bumping
+        # updated_at so it resurfaces at the top of a "most recent" list.
+        company_name = (payload.company or "").strip()
+        if company_name:
+            existing_brand = await _find_matching_brand(company_name)
+            if existing_brand:
+                dedupe_now = _now_iso()
+                field_updates: Dict[str, Any] = {}
+                for key in ("industry", "primary_contact", "role", "email", "phone", "website", "hq", "marketing_budget", "notes", "next_action"):
+                    value = getattr(payload, key, None)
+                    if value and not str(existing_brand.get(key) or "").strip():
+                        field_updates[key] = value
+                field_updates["updated_at"] = dedupe_now
+                await db.v3_brands.update_one({"id": existing_brand["id"]}, {"$set": field_updates})
+                existing_brand.update(field_updates)
+                return {**existing_brand, "already_existed": True}
+
         brand_id = f"brand-{uuid.uuid4().hex[:8]}"
         rm = await _relationship_manager(payload.rm_id)
         now = _now_iso()
@@ -4086,7 +5364,7 @@ def make_v3_router(db):
             crm_accepted_at = now
         about_text = _compact_text(payload.about or payload.brand_about)
         source_url = payload.source_url or ""
-        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
+        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url, brand_name=payload.company)
         logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
         doc = {
             "id": brand_id,
@@ -4172,7 +5450,8 @@ def make_v3_router(db):
                 f"Hello {payload.primary_contact},\n\n"
                 "Welcome to TASCK.\n\n"
                 f"We have prepared brand portal access for {payload.company} so your team can review project documents, respond to approval requests, and keep communication with TASCK in one place.\n\n"
-                f"Click here to sign in: {brand_login_link}\n"
+                "Click here to sign in:\n"
+                f"{brand_login_link}\n\n"
                 f"Email: {username}\n"
                 f"Password: {temp_password}\n\n"
                 "For security, please sign in and change this password before sharing the account with anyone else on your team. If your team did not request this access, reply to this email and TASCK will help immediately.\n\n"
@@ -4267,60 +5546,67 @@ def make_v3_router(db):
 
     @router.post("/brands/qualification-candidates")
     async def create_brand_qualification_candidate(payload: BrandQualificationCandidateCreate):
-        brand_id = f"brand-{uuid.uuid4().hex[:8]}"
-        rm = await _relationship_manager(payload.rm_id)
-        about_text = _compact_text(payload.about or payload.brand_about)
-        source_url = payload.source_url or ""
-        website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url)
-        logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
-        doc = {
-            "id": brand_id,
-            "company": payload.company,
-            "industry": payload.industry,
-            "website": website,
-            "source_url": source_url or website,
-            "source": payload.source or payload.lead_source or "v3_crm",
-            "about": about_text,
-            "brand_about": about_text,
-            "logo_url": logo_url,
-            "brand_logo_url": logo_url,
-            "hq": payload.hq or "",
-            "primary_contact": payload.primary_contact,
-            "role": payload.role,
-            "email": payload.email or "",
-            "phone": payload.phone or "",
-            "status": "qualification_pending",
-            "qualification_status": "pending",
-            "lead_score": payload.lead_score,
-            "last_interaction": "awaiting qualification",
-            "engagement_track_default": payload.engagement_track_default,
-            "source": payload.source,
-            "notes": payload.notes or "",
-            "reschedule_count": 0,
-            "created_at": _now_iso(),
-            "updated_at": _now_iso(),
-            "rm_id": rm.get("id", ""),
-            "relationship_manager": rm,
-            "relationshipManager": rm,
-            "relationship_manager_name": rm.get("name", ""),
-            "relationship_manager_email": rm.get("email", ""),
-            "communication_methods": {
+        # Don't spin up a duplicate brand + contact for a company already on
+        # record under a slightly different name - reuse it and still log
+        # this as a new qualification meeting against that existing brand.
+        existing_brand = await _find_matching_brand(payload.company or "")
+        if existing_brand:
+            brand_id = existing_brand["id"]
+            doc = existing_brand
+        else:
+            brand_id = f"brand-{uuid.uuid4().hex[:8]}"
+            rm = await _relationship_manager(payload.rm_id)
+            about_text = _compact_text(payload.about or payload.brand_about)
+            source_url = payload.source_url or ""
+            website = _website_from_brand_inputs(website=payload.website, email=payload.email, source_url=source_url, brand_name=payload.company)
+            logo_url = payload.logo_url or payload.brand_logo_url or _brand_logo_from_source(website)
+            doc = {
+                "id": brand_id,
+                "company": payload.company,
+                "industry": payload.industry,
+                "website": website,
+                "source_url": source_url or website,
+                "source": payload.source or payload.lead_source or "v3_crm",
+                "about": about_text,
+                "brand_about": about_text,
+                "logo_url": logo_url,
+                "brand_logo_url": logo_url,
+                "hq": payload.hq or "",
+                "primary_contact": payload.primary_contact,
+                "role": payload.role,
                 "email": payload.email or "",
                 "phone": payload.phone or "",
-                "website": payload.website or "",
-            },
-        }
-        await db.v3_brands.insert_one({**doc})
-        await db.v3_contacts.insert_one({
-            "id": f"ct-{uuid.uuid4().hex[:8]}",
-            "brand_id": brand_id,
-            "name": payload.primary_contact,
-            "role": payload.role,
-            "email": payload.email or "",
-            "phone": payload.phone or "",
-            "is_primary": True,
-            "decision_seniority": "lead",
-        })
+                "status": "qualification_pending",
+                "qualification_status": "pending",
+                "lead_score": payload.lead_score,
+                "last_interaction": "awaiting qualification",
+                "engagement_track_default": payload.engagement_track_default,
+                "notes": payload.notes or "",
+                "reschedule_count": 0,
+                "created_at": _now_iso(),
+                "updated_at": _now_iso(),
+                "rm_id": rm.get("id", ""),
+                "relationship_manager": rm,
+                "relationshipManager": rm,
+                "relationship_manager_name": rm.get("name", ""),
+                "relationship_manager_email": rm.get("email", ""),
+                "communication_methods": {
+                    "email": payload.email or "",
+                    "phone": payload.phone or "",
+                    "website": payload.website or "",
+                },
+            }
+            await db.v3_brands.insert_one({**doc})
+            await db.v3_contacts.insert_one({
+                "id": f"ct-{uuid.uuid4().hex[:8]}",
+                "brand_id": brand_id,
+                "name": payload.primary_contact,
+                "role": payload.role,
+                "email": payload.email or "",
+                "phone": payload.phone or "",
+                "is_primary": True,
+                "decision_seniority": "lead",
+            })
         meeting = await create_brand_qualification_meeting(
             brand=doc,
             source=payload.source,
@@ -5069,6 +6355,17 @@ def make_v3_router(db):
             raise HTTPException(404, "Business case not found")
         mi = _marketing_intelligence_from_case(case)
         creators = await db.v3_creators.find(_approved_creator_query(), {"_id": 0}).to_list(500)
+
+        # The Creator Selector "Creator Matches" field. Lines are usually a
+        # TYPE of creator ("Food reviewers"), sometimes an actual name. Read it
+        # up front: it steers the deterministic preselection AND the LLM, so
+        # requested types decide which profiles reach the shortlist.
+        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
+        raw_named = str((round_doc.get("creator_selector") or {}).get("creator_matches") or "")
+        requested_types = [
+            part.strip() for part in re.split(r"[\n,;/]+", raw_named) if len(part.strip()) >= 3
+        ] if raw_named.strip() else []
+        requested_tokens = {t: _match_tokens(t) for t in requested_types}
         haystack = " ".join([
             str(mi.get("key_marketing_focus", "")),
             str(mi.get("primary_target_audience", "")),
@@ -5116,9 +6413,31 @@ def make_v3_router(db):
             if cr.get("manager_email") or cr.get("email"):
                 score += 2
                 reasons.append("Contact route is available for immediate brief send.")
+            # Requested creator TYPES outrank general brand fit: a profile whose
+            # genre/categories/audience carry the words of a requested line is
+            # what the team actually asked for.
+            matched_from = ""
+            profile_tokens = _match_tokens(_creator_profile_text(cr))
+            best_overlap = 0
+            for wanted_line, wanted_tokens in requested_tokens.items():
+                if not wanted_tokens:
+                    continue
+                overlap = len(wanted_tokens & profile_tokens)
+                # A multi-word type needs more than one word to agree. One
+                # shared role word is not membership: "Tech reviewer" overlaps
+                # "Food reviewers" on "reviewer" alone and is not a food creator.
+                if overlap < min(2, len(wanted_tokens)):
+                    continue
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    matched_from = wanted_line
+            if matched_from:
+                score += 10 + (5 * min(best_overlap, 3))
+                reasons.insert(0, f'Profile matches the requested creator type "{matched_from}".')
             deterministic_matches.append({
                 "creator": cr,
                 "score": min(score, 99),
+                "matched_from": matched_from,
                 "reasons": reasons or ["Strong general fit; admin should validate audience and fee conditions."],
                 "risk_notes": [] if cr.get("rate_card") != "TBD" else ["Rate card is not confirmed yet."],
             })
@@ -5140,7 +6459,7 @@ def make_v3_router(db):
                 llm_timeout_seconds = 20.0
             try:
                 llm_result = await asyncio.wait_for(
-                    _call_creator_match_tool(brand, case, mi, candidate_creators),
+                    _call_creator_match_tool(brand, case, mi, candidate_creators, requested_types),
                     timeout=llm_timeout_seconds,
                 )
             except asyncio.TimeoutError:
@@ -5167,9 +6486,26 @@ def make_v3_router(db):
                     # Always surface "Rate card TBD" as a baseline risk if applicable.
                     if cr.get("rate_card") == "TBD" and not any("rate card" in r.lower() for r in risk_notes):
                         risk_notes.append("Rate card is not confirmed yet.")
+                    # The model echoes the requested type it matched. Snap it
+                    # to the exact line the team wrote (case/spacing drift) and
+                    # drop anything it invented.
+                    claimed = str(item.get("matched_from") or "").strip()
+                    matched_from = ""
+                    if claimed:
+                        for line in requested_types:
+                            if line.lower() == claimed.lower():
+                                matched_from = line
+                                break
+                        else:
+                            claimed_tokens = _match_tokens(claimed)
+                            for line in requested_types:
+                                if claimed_tokens and claimed_tokens & requested_tokens.get(line, set()):
+                                    matched_from = line
+                                    break
                     hydrated.append({
                         "creator": cr,
                         "score": score,
+                        "matched_from": matched_from,
                         "reasons": reasons or ["LLM rank with no explicit reason - validate manually."],
                         "risk_notes": risk_notes,
                     })
@@ -5180,18 +6516,32 @@ def make_v3_router(db):
 
         final_matches = llm_matches if llm_matches is not None else deterministic_matches[:8]
 
+        # When the team has said WHICH creator types they want, the answer is
+        # those creators - not a top-8 padded with whoever else scores well on
+        # brand fit. Padding would auto-select creators nobody asked for. With
+        # no requested types the brand-fit ranking stands as before.
+        if requested_types:
+            typed = [m for m in final_matches if m.get("matched_from")]
+            if not typed:
+                # The model returned nothing tied to a requested type. Fall back
+                # to the deterministic type matches, taken from the FULL ranked
+                # list rather than its top 8 so a type match sitting just below
+                # the cut is not lost. If that is empty too, nothing in the
+                # database fits - named_unmatched says so rather than
+                # substituting creators nobody asked for.
+                typed = [m for m in deterministic_matches if m.get("matched_from")][:8]
+            final_matches = typed
+
         # Creators the team NAMED in the Creator Selector ("Creator Matches"
         # field). These are matched against the database by name so the scanner
         # can auto-select them - the AI suggestions below are additions on top
         # ("this creator from our database also matches") for anyone the admin
         # did not remember.
         named_matches: List[Dict[str, Any]] = []
-        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0}) or {}
-        raw_named = str((round_doc.get("creator_selector") or {}).get("creator_matches") or "")
-        if raw_named.strip():
+        if requested_types:
             def _norm(text: str) -> str:
                 return "".join(ch for ch in str(text or "").lower() if ch.isalnum())
-            wanted = [part.strip() for part in re.split(r"[\n,;/]+", raw_named) if len(part.strip()) >= 3]
+            wanted = requested_types
             matched_ids = set()
             for wanted_name in wanted:
                 wn = _norm(wanted_name)
@@ -5222,14 +6572,22 @@ def make_v3_router(db):
                 "updated_at": _now_iso(),
             }},
         )
-        # Keep the AI suggestions distinct from the named picks.
+        # Keep the exact-name picks distinct from the type matches.
         named_ids = {m["creator"].get("id") for m in named_matches}
+        type_matches = [m for m in final_matches if (m.get("creator") or {}).get("id") not in named_ids]
+
+        # A requested line is only "unmatched" when nothing answered it - not
+        # merely because no creator carries that literal name. A line like
+        # "Food reviewers" is satisfied by a profile matched to that type.
+        answered = {m.get("matched_from") for m in named_matches if m.get("matched_from")}
+        answered |= {m.get("matched_from") for m in type_matches if m.get("matched_from")}
+
         return {
             "business_case_id": bc_id,
-            "matches": [m for m in final_matches if (m.get("creator") or {}).get("id") not in named_ids],
+            "matches": type_matches,
             "named_matches": named_matches,
-            "named_unmatched": [w for w in ([part.strip() for part in re.split(r"[\n,;/]+", raw_named) if len(part.strip()) >= 3] if raw_named.strip() else [])
-                                 if not any(m.get("matched_from") == w for m in named_matches)],
+            "requested_types": requested_types,
+            "named_unmatched": [line for line in requested_types if line not in answered],
             "analysis_source": analysis_source,
         }
 
@@ -5338,6 +6696,9 @@ def make_v3_router(db):
     class BusinessCaseValueUpdate(BaseModel):
         estimated_value: float = Field(..., ge=0)
         approved_by: Optional[str] = "admin"
+        # The currency the admin typed the value in (₦ / N / naira -> NGN,
+        # $ / USD / dollars -> USD). Omitted keeps the case's current one.
+        value_currency: Optional[str] = Field(None, pattern="^(NGN|USD)$")
 
     @router.patch("/business-cases/{bc_id}/value")
     async def update_business_case_value(bc_id: str, payload: BusinessCaseValueUpdate):
@@ -5345,17 +6706,20 @@ def make_v3_router(db):
         if not case:
             raise HTTPException(404, "Business case not found")
         now = _now_iso()
+        updates: Dict[str, Any] = {
+            "estimated_value": payload.estimated_value,
+            "value_approved_at": now,
+            "value_approved_by": payload.approved_by or "admin",
+            "updated_at": now,
+            "last_interaction_at": now,
+        }
+        if payload.value_currency:
+            updates["value_currency"] = payload.value_currency
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {
-                "$set": {
-                    "estimated_value": payload.estimated_value,
-                    "value_approved_at": now,
-                    "value_approved_by": payload.approved_by or "admin",
-                    "updated_at": now,
-                    "last_interaction_at": now,
-                },
-                "$push": {"timeline": {"at": now, "event": "v1_admin_project_value_approved", "actor": payload.approved_by or "admin", "value": payload.estimated_value}},
+                "$set": updates,
+                "$push": {"timeline": {"at": now, "event": "v1_admin_project_value_approved", "actor": payload.approved_by or "admin", "value": payload.estimated_value, "currency": payload.value_currency}},
             },
         )
         updated = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -5363,6 +6727,12 @@ def make_v3_router(db):
 
     @router.get("/business-cases/{bc_id}")
     async def get_business_case(bc_id: str, alignment_snapshot_id: Optional[str] = None):
+        # Cases whose snapshot was regenerated before work was carried forward
+        # at generation time get it here, once, on the next open.
+        try:
+            await _carry_forward_snapshot_work(bc_id)
+        except Exception as exc:  # noqa: BLE001 - never block loading the case
+            logger.warning("carry-forward of snapshot work failed for %s: %s", bc_id, exc)
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
@@ -5424,15 +6794,26 @@ def make_v3_router(db):
         if not selected_creator_ids:
             selected_creator_ids = ((case.get("plan") or {}).get("selected_creator_ids") or [])
 
+        # The creator picked in the Creator Match Scanner wins; the case's
+        # original creator_id is only the fallback when nothing was picked.
+        # (It used to be the other way round, so a case linked to one creator
+        # but scanned to another showed the wrong creator everywhere.)
         creator = None
-        creator_id = case.get("creator_id")
-        if not creator_id and selected_creator_ids:
-            creator_id = selected_creator_ids[0]
+        creator_id = selected_creator_ids[0] if selected_creator_ids else case.get("creator_id")
         if creator_id:
             creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0})
+        # The creators ticked in the Creator Match Scanner, in that order. Later
+        # pages (Planning, Feedback) show these rather than `creator` above,
+        # which prefers the case's original creator_id over the selection.
+        selected_creators = []
+        if selected_creator_ids:
+            found = await db.v3_creators.find({"id": {"$in": selected_creator_ids}}, {"_id": 0}).to_list(len(selected_creator_ids))
+            by_id = {c.get("id"): c for c in found}
+            selected_creators = [by_id[cid] for cid in selected_creator_ids if cid in by_id]
 
         snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
-        contract = await db.v3_contracts.find_one({"business_case_id": bc_id}, {"_id": 0})
+        # The live brand contract (else creator) - never a superseded copy.
+        contract = next(iter(await _current_contracts(bc_id)), None)
         # Connect conversations: every business-call meeting (carries the
         # transcript text) plus every loose connect source (email / WhatsApp /
         # note). Surfaces a count so the admin Connect page can tell whether
@@ -5446,9 +6827,16 @@ def make_v3_router(db):
         # Strip the inline base64 file blob from invoice docs so the bundle
         # response stays small. The download endpoint serves the file on demand.
         invoices = await db.v3_invoices.find({"business_case_id": bc_id}, {"_id": 0, "file_data_base64": 0}).to_list(100)
-        final_report = await db.v3_final_reports.find_one({"business_case_id": bc_id}, {"_id": 0})
+        final_report = await _sync_report_creator(await db.v3_final_reports.find_one({"business_case_id": bc_id}, {"_id": 0}))
         brainstorm = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0})
         interactions = await db.v3_interactions.find({"business_case_id": bc_id}, {"_id": 0}).to_list(100)
+        # Same duration fill as _load_generated_brief, so the Creative Brief
+        # page shows what the downloads carry.
+        plan_brief = (case.get("plan") or {}).get("generated_brief")
+        if isinstance(plan_brief, dict) and creative_brief_duration_is_placeholder(plan_brief.get("duration")):
+            duration = creative_brief_duration(((brainstorm or {}).get("creator_selector") or {}).get("timelines"), pitch_deck)
+            if duration:
+                case["plan"] = {**case["plan"], "generated_brief": {**plan_brief, "duration": duration}}
         return {
             "business_case": case,
             "brand": brand,
@@ -5457,6 +6845,7 @@ def make_v3_router(db):
             "alignment_snapshots": alignment_snapshots,
             "active_snapshot_id": active_snapshot_id,
             "selected_creator_ids": selected_creator_ids,
+            "selected_creators": selected_creators,
             "creative_brief": brief,
             "pitch_deck": pitch_deck,
             "creative_snapshot": snapshot,
@@ -5597,10 +6986,8 @@ def make_v3_router(db):
             new_name = (payload.new_brand_name or "").strip()
             if not new_name:
                 raise HTTPException(422, "Pick an existing brand or provide a new brand name.")
-            # Reuse an existing brand when the name already exists (case-insensitive)
-            brand = await db.v3_brands.find_one(
-                {"company": {"$regex": f"^{re.escape(new_name)}$", "$options": "i"}}, {"_id": 0}
-            )
+            # Reuse an existing brand when the name matches one on record.
+            brand = await _find_matching_brand(new_name)
             if not brand:
                 rm = await _relationship_manager(None)
                 brand_id = f"brand-{uuid.uuid4().hex[:8]}"
@@ -5930,21 +7317,49 @@ def make_v3_router(db):
         excerpt = text[:12000]
         fields: Dict[str, Any] = {}
         analysis_source = "none"
+        extract_user_message = f"Document filename: {file.filename}\n\nDocument text:\n{excerpt}"
         emergent_key = os.getenv("EMERGENT_LLM_KEY")
-        if emergent_key:
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        _prefer_anthropic = _resolve_ai_provider("IMPORT_EXTRACT_PROVIDER")
+
+        async def _extract_via_emergent() -> Optional[Dict[str, Any]]:
+            if not emergent_key:
+                return None
+            model = os.getenv("IMPORT_EXTRACT_EMERGENT_MODEL") or "gemini-2.5-flash"
+            # Worker thread, not the event loop - see _emergent_chat.
+            text_out = await _emergent_chat(
+                emergent_key, f"import-extract-{uuid.uuid4()}", _IMPORT_EXTRACT_SYSTEM,
+                "gemini", model, extract_user_message, timeout=60,
+            )
+            parsed = _parse_json_object(text_out) or {}
+            if parsed:
+                parsed["analysis_source"] = f"emergent:gemini/{model}"
+            return parsed or None
+
+        def _extract_via_anthropic() -> Optional[Dict[str, Any]]:
+            if not anthropic_key:
+                return None
+            model = (os.getenv("IMPORT_EXTRACT_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL")
+                     or "claude-sonnet-4-5")
+            return _anthropic_json_call(anthropic_key, model, _IMPORT_EXTRACT_SYSTEM,
+                                        extract_user_message, max_tokens=2000, temperature=0.0,
+                                        timeout=60)
+
+        # Same provider preference as every other AI feature: Anthropic when it
+        # is configured (Azure), the Emergent gateway otherwise. Whichever runs
+        # first and returns fields wins; the other is the fallback.
+        extract_order = ([_extract_via_anthropic, _extract_via_emergent] if _prefer_anthropic
+                         else [_extract_via_emergent, _extract_via_anthropic])
+        for _extract in extract_order:
             try:
-                model = os.getenv("IMPORT_EXTRACT_EMERGENT_MODEL") or "gemini-2.5-flash"
-                # Worker thread, not the event loop - see _emergent_chat.
-                text_out = await _emergent_chat(
-                    emergent_key, f"import-extract-{uuid.uuid4()}", _IMPORT_EXTRACT_SYSTEM,
-                    "gemini", model,
-                    f"Document filename: {file.filename}\n\nDocument text:\n{excerpt}",
-                    timeout=60,
-                )
-                fields = _parse_json_object(text_out) or {}
-                analysis_source = f"emergent:gemini/{model}"
+                result = await _extract() if asyncio.iscoroutinefunction(_extract) else await asyncio.to_thread(_extract)
             except Exception as exc:
-                logging.warning("Import extract LLM failed: %s", exc)
+                logging.warning("Import extract LLM (%s) failed: %s", _extract.__name__, exc)
+                continue
+            if result:
+                analysis_source = str(result.pop("analysis_source", None) or "unknown")
+                fields = result
+                break
 
         def _s(key: str) -> str:
             val = fields.get(key)
@@ -5977,22 +7392,38 @@ def make_v3_router(db):
     class BrandProjectStartPayload(BaseModel):
         force_new: bool = False
         title: Optional[str] = None
+        # Which of the brand's open projects to reuse. A brand can have
+        # several running at once, so when the admin picks one on the CRM
+        # brand page we honour that choice instead of guessing.
+        business_case_id: Optional[str] = None
+
+    async def _brand_open_case(brand_id: str, business_case_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The brand's open Business Case to reuse. An explicit
+        business_case_id means the admin picked one of several projects, so it
+        wins as long as it really belongs to this brand and is still open.
+        Otherwise fall back to the most recently touched one, which is what
+        this has always done for a brand with a single project."""
+        query: Dict[str, Any] = {
+            "brand_id": brand_id,
+            "status": {"$ne": "deleted"},
+            "stage": {"$nin": ["closed", "archived"]},
+        }
+        if business_case_id:
+            picked = await db.v3_business_cases.find_one({**query, "id": business_case_id}, {"_id": 0})
+            if picked:
+                return picked
+        rows = await db.v3_business_cases.find(query, {"_id": 0}).sort(
+            [("updated_at", -1), ("created_at", -1)]
+        ).to_list(1)
+        return rows[0] if rows else None
 
     @router.post("/brands/{brand_id}/business-call")
     async def move_brand_to_business_call(brand_id: str, payload: BrandProjectStartPayload = BrandProjectStartPayload()):
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
-        existing_cases = await db.v3_business_cases.find(
-            {
-                "brand_id": brand_id,
-                "status": {"$ne": "deleted"},
-                "stage": {"$nin": ["closed", "archived"]},
-            },
-            {"_id": 0},
-        ).sort([("updated_at", -1), ("created_at", -1)]).to_list(1)
-        if existing_cases and not payload.force_new:
-            existing = existing_cases[0]
+        existing = None if payload.force_new else await _brand_open_case(brand_id, payload.business_case_id)
+        if existing:
             return {"ok": True, "business_case": existing, "business_case_id": existing["id"], "created": False}
         now = _now_iso()
         bc_id = f"bc-{uuid.uuid4().hex[:8]}"
@@ -6046,32 +7477,30 @@ def make_v3_router(db):
         brand = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
         if not brand:
             raise HTTPException(404, "Brand not found")
-        existing_cases = await db.v3_business_cases.find(
-            {
-                "brand_id": brand_id,
-                "status": {"$ne": "deleted"},
-                "stage": {"$nin": ["closed", "archived"]},
-            },
-            {"_id": 0},
-        ).sort([("updated_at", -1), ("created_at", -1)]).to_list(1)
-        
+        existing = None if payload.force_new else await _brand_open_case(brand_id, payload.business_case_id)
+
         now = _now_iso()
-        if existing_cases and not payload.force_new:
-            existing = existing_cases[0]
+        if existing:
             bc_id = existing["id"]
+            # Reusing an existing case must never pull its stage backwards -
+            # only promote it out of Connect. A case already in Plan/Deliver
+            # stays exactly where it is when the admin reopens Frame to add
+            # another transcript.
+            is_promoting = existing.get("stage") in (None, "", "connect", "frame")
             updates = {
-                "stage": "frame",
                 "connect.connect_status": "qualified_to_frame",
                 "connect.status_updated_at": now,
                 "connect.updated_at": now,
                 "connect.promoted_at": now,
                 "connect.promote_reason": "Directly moved to Frame from CRM Brand Detail.",
-                "next_action": STAGE_NEXT_ACTIONS["frame"],
                 "updated_at": now,
             }
+            if is_promoting:
+                updates["stage"] = "frame"
+                updates["next_action"] = STAGE_NEXT_ACTIONS["frame"]
             await db.v3_business_cases.update_one(
                 {"id": bc_id},
-                {"$set": updates, "$push": {"timeline": {"at": now, "event": "connect_promoted_to_frame"}}},
+                {"$set": updates, "$push": {"timeline": {"at": now, "event": "connect_promoted_to_frame" if is_promoting else "frame_transcripts_reopened"}}},
             )
             await db.v3_brands.update_one(
                 {"id": brand_id},
@@ -6808,6 +8237,12 @@ def make_v3_router(db):
                 {"heading": "Recommended Next Step", "type": "prose", "content": next_step},
             ],
             "scope_flags": scope_flags,
+            # What this snapshot was built from. The Alignment Snapshot page
+            # compares it against the case's current connect.analysis_fingerprint:
+            # equal means the snapshot already reflects the analysed
+            # conversations and Regenerate stays hidden; different means the
+            # transcripts were edited and re-analysed since, so it comes back.
+            "source_fingerprint": str(connect.get("analysis_fingerprint") or ""),
         }
         if opportunity:
             # Tie the snapshot to its opportunity and give the brand somewhere
@@ -6953,34 +8388,6 @@ def make_v3_router(db):
             )
         return {"ok": True, "brand_viewed": True}
 
-        # If paid engagement, generate the Strategy Development Fee invoice.
-        updates: Dict[str, Any] = {
-            "frame.alignment_snapshot_status": "approved",
-            "frame.alignment_snapshot_approved_at": approved_at,
-            "updated_at": _now_iso(),
-        }
-        if case.get("engagement_track") == "paid":
-            inv_id = f"inv-{uuid.uuid4().hex[:8]}"
-            inv = {
-                "id": inv_id,
-                "business_case_id": bc_id,
-                "kind": "strategy_development_fee",
-                "amount": 4_000_000,
-                "status": "issued",
-                "issued_at": approved_at,
-                "paid_at": None,
-            }
-            await db.v3_invoices.insert_one({**inv})
-            updates["frame.strategy_development_fee_invoice_id"] = inv_id
-            updates["frame.strategy_development_fee_paid"] = False
-        else:
-            updates["frame.strategy_development_fee_invoice_id"] = None
-            updates["frame.strategy_development_fee_paid"] = False
-            updates["frame.strategy_development_fee_waived_reason"] = "Grant engagement - TTA absorbs strategy cost."
-
-        await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_approved", "by": payload.approver}}})
-        return {"ok": True, "approved_at": approved_at}
-
     class AlignmentUpdatePayload(BaseModel):
         title: Optional[str] = None
         meta: Optional[str] = None
@@ -7026,18 +8433,42 @@ def make_v3_router(db):
         if payload.sections is not None:
             updates["sections"] = payload.sections
             try:
-                old_sections = {s.get("heading"): s for s in (snap.get("sections") or [])}
+                # Sections are compared BY POSITION, not by heading.
+                #
+                # This used to key the old sections on their heading, which was
+                # safe only while headings were immutable. The assistant can now
+                # rename a heading, and under the old scheme a rename made the
+                # previous section unfindable: it was reported as a brand-new
+                # section while the one it replaced vanished from the comparison
+                # entirely. The brand would then read a "what changed" summary
+                # naming a section that had always been there and omitting the
+                # edit that actually happened.
+                #
+                # Position is not a perfect identity either - inserting a
+                # section shifts everything below it - but it degrades honestly
+                # (it over-reports) where heading-keying failed silently.
+                old_sections = list(snap.get("sections") or [])
                 changed: List[str] = []
-                for new_section in payload.sections or []:
+                for index, new_section in enumerate(payload.sections or []):
                     heading = new_section.get("heading") or "Section"
-                    old_section = old_sections.get(heading)
+                    old_section = old_sections[index] if index < len(old_sections) else None
                     if old_section is None:
                         changed.append(str(heading))
+                        continue
+                    old_heading = old_section.get("heading") or "Section"
+                    if old_heading != heading:
+                        # Name the rename in both directions so the reader can
+                        # match it against the version they were sent before.
+                        changed.append(f"{old_heading} (renamed to {heading})")
                         continue
                     for key in ("content", "items", "rows", "points", "selectors"):
                         if old_section.get(key) != new_section.get(key):
                             changed.append(str(heading))
                             break
+                # A section removed from the end is a change too, and keying by
+                # heading never noticed it at all.
+                for removed in old_sections[len(payload.sections or []):]:
+                    changed.append(f"{removed.get('heading') or 'Section'} (removed)")
                 if payload.title is not None and payload.title != snap.get("title"):
                     changed.append("Title")
                 if changed:
@@ -7057,6 +8488,133 @@ def make_v3_router(db):
             {"$set": {"updated_at": _now_iso()}, "$push": {"timeline": {"at": _now_iso(), "event": "alignment_edited", "by": payload.reviewer}}},
         )
         return await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+
+    class AdminAssistantMessage(BaseModel):
+        role: str
+        text: str
+
+    class AdminAssistantChatPayload(BaseModel):
+        mode: str = "general"
+        message: str
+        history: List[AdminAssistantMessage] = []
+        edit_target_id: Optional[str] = None
+        sections: Optional[List[Dict[str, Any]]] = None
+        rewritable_types: Optional[List[str]] = None
+
+    @router.post("/admin-assistant/chat")
+    async def admin_assistant_chat(payload: AdminAssistantChatPayload):
+        message = (payload.message or "").strip()
+        if not message:
+            raise HTTPException(422, "message is required")
+        mode = "edit" if payload.mode == "edit" and payload.sections is not None else "general"
+
+        system_prompt = _admin_assistant_system_prompt(mode, payload.sections, payload.rewritable_types)
+        user_message = _admin_assistant_user_message(
+            [turn.model_dump() for turn in payload.history], message,
+        )
+
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        emergent_key = os.getenv("EMERGENT_LLM_KEY")
+        model = os.getenv("ADMIN_ASSISTANT_LLM_MODEL") or os.getenv("ALIGNMENT_ANALYZER_MODEL") or "claude-sonnet-4-5"
+        # The Writer Model stays Claude Sonnet 4.5; only the route to it changes.
+        # It reaches Claude through the Emergent gateway by default, because the
+        # direct Anthropic key is revoked (HTTP 401 on every call, including
+        # /v1/models, after it leaked into git history). `_resolve_ai_provider`
+        # cannot decide this: it prefers Anthropic merely because
+        # ANTHROPIC_API_KEY is *present* - exactly the trap here, a
+        # present-but-dead key. Set ADMIN_ASSISTANT_PROVIDER=anthropic (or
+        # TASCK_AI_PROVIDER=anthropic) to go direct again once a live key exists.
+        _explicit_provider = ((os.getenv("ADMIN_ASSISTANT_PROVIDER") or os.getenv("TASCK_AI_PROVIDER") or "")
+                              .strip().lower())
+        prefer_anthropic = _explicit_provider in {"anthropic", "claude"}
+        failures: List[str] = []
+
+        # Both providers get a budget well under the 100s edge-proxy limit, so
+        # even a hung provider (or both in turn) returns a real answer rather
+        # than letting the proxy time the request out and replace it with a
+        # Cloudflare error page.
+        def _call_anthropic() -> Optional[Dict[str, Any]]:
+            # 1200 truncated any rewrite of a long section mid-JSON, which
+            # surfaced as a failure rather than an edit.
+            return _anthropic_json_call(anthropic_key, model, system_prompt, user_message,
+                                        max_tokens=4000, temperature=0.3, timeout=40)
+
+        async def _call_emergent() -> Optional[Dict[str, Any]]:
+            if not emergent_key:
+                raise RuntimeError("EMERGENT_LLM_KEY is not set")
+            # Same Writer Model (Claude Sonnet 4.5), reached through the
+            # Emergent gateway instead of a direct Anthropic key.
+            provider = os.getenv("ADMIN_ASSISTANT_EMERGENT_PROVIDER") or "anthropic"
+            emergent_model = os.getenv("ADMIN_ASSISTANT_EMERGENT_MODEL") or model
+            text = await _emergent_chat(emergent_key, f"assistant-{uuid.uuid4()}", system_prompt,
+                                        provider, emergent_model, user_message, timeout=40.0)
+            parsed = _parse_json_object(text)
+            if isinstance(parsed, dict):
+                parsed["analysis_source"] = f"emergent:{provider}/{emergent_model}"
+                return parsed
+            # Chat models occasionally answer a plain question in prose despite
+            # the JSON instruction. In general mode that answer IS the reply, so
+            # use it rather than failing the turn over formatting. Edit mode must
+            # not guess: it needs the structured section_update.
+            prose = (text or "").strip()
+            if mode != "edit" and prose:
+                return {"reply": prose, "can_fulfill": False,
+                        "analysis_source": f"emergent:{provider}/{emergent_model}"}
+            raise RuntimeError(f"emergent:{provider}/{emergent_model} returned no JSON object "
+                               f"({len(text or '')} chars)")
+
+        def _problem_with(result: Dict[str, Any]) -> Optional[str]:
+            return None if "reply" in result else "response missing 'reply'"
+
+        order = [_call_anthropic, _call_emergent] if prefer_anthropic else [_call_emergent, _call_anthropic]
+        result = await _run_ai_provider_chain(order, _problem_with, failures, "Admin assistant chat")
+        if result is None:
+            # A 5xx here is worse than useless: Cloudflare discards the body and
+            # serves its own "the origin is overloaded or misconfigured" page, so
+            # the admin is told the server is broken when the truth is that an AI
+            # provider rejected the call (an invalid key returns 401 in
+            # milliseconds - nothing is overloaded). Answer 200 with the real
+            # reason so the chat can say what actually happened.
+            detail = " | ".join(failures) or "no AI provider is configured"
+            logger.warning("Admin assistant chat: every provider failed: %s", detail)
+            return {
+                "reply": "I couldn't reach the writing model just now, so nothing has been changed. "
+                         "Your text is untouched - edit it directly on the page, or try again in a moment.\n\n"
+                         f"Reason: {detail}",
+                "can_fulfill": False,
+                "section_update": None,
+                "writer_model": None,
+                "error": detail,
+            }
+
+        reply = str(result.get("reply") or "").strip() or "I don't have a response for that."
+        can_fulfill = bool(result.get("can_fulfill", True))
+        section_update = result.get("section_update") if mode == "edit" else None
+
+        # Safety net: never trust the model's own bounds-checking. Drop the
+        # update (and force a decline) if the index is out of range or the
+        # section's type isn't one this call is allowed to touch.
+        if section_update:
+            try:
+                index = int(section_update.get("index"))
+            except (TypeError, ValueError):
+                index = -1
+            section = section_update.get("section") if isinstance(section_update.get("section"), dict) else None
+            sections = payload.sections or []
+            rewritable = set(payload.rewritable_types or [])
+            valid = (
+                section is not None
+                and 0 <= index < len(sections)
+                and str(sections[index].get("type")) in rewritable
+            )
+            if not valid:
+                section_update = None
+                can_fulfill = False
+
+        return {"reply": reply, "can_fulfill": can_fulfill, "section_update": section_update,
+                # Which route actually served the turn, so a provider switch is
+                # visible without reading server logs.
+                "writer_model": result.get("analysis_source")}
 
     class SendAlignmentPayload(BaseModel):
         recipient_email: Optional[str] = None
@@ -7160,14 +8718,17 @@ def make_v3_router(db):
     def _docx_paragraph(value: Any, *, bold: bool = False, italic: bool = False,
                         size_half_pt: int = 22, color: str = _DOCX_BODY_COLOR,
                         font: str = _DOCX_BODY_FONT, before: int = 120, after: int = 240,
-                        justify: bool = True, line: int = _DOCX_LINE_1_5) -> str:
+                        justify: bool = True, line: int = _DOCX_LINE_1_5, keep_next: bool = False) -> str:
         # Headings, titles and table cells pass justify=False: justification
         # only helps multi-line prose, and in a short heading or a narrow table
         # column it opens ugly word gaps.
         alignment = '<w:jc w:val="both"/>' if justify else ""
+        # keep_next holds this paragraph on the page of the next one (a
+        # signatory's Name/Title/Signature/Date lines stay together).
+        keep = "<w:keepNext/>" if keep_next else ""
         return (
             "<w:p>"
-            f'<w:pPr><w:spacing w:before="{before}" w:after="{after}" w:line="{line}" w:lineRule="auto"/>'
+            f'<w:pPr>{keep}<w:spacing w:before="{before}" w:after="{after}" w:line="{line}" w:lineRule="auto"/>'
             f"{alignment}</w:pPr>"
             "<w:r>"
             f"{_docx_run_props(bold=bold, italic=italic, size_half_pt=size_half_pt, color=color, font=font)}"
@@ -7733,8 +9294,20 @@ def make_v3_router(db):
         if meta:
             blocks.append(_docx_paragraph(meta))
         for section in sections or []:
-            blocks.append(_docx_paragraph(section.get("heading") or "Section", bold=True))
+            heading = section.get("heading") or "Section"
             content = section.get("content") or section.get("text") or ""
+            if is_signature_heading(heading) and content:
+                # One compact, left-aligned block per signatory that never
+                # splits across pages - as the Contract Studio preview shows.
+                blocks.append(_docx_paragraph(heading, bold=True, keep_next=True))
+                for group in signature_groups(content):
+                    for i, line in enumerate(group):
+                        last = i == len(group) - 1
+                        blocks.append(_docx_paragraph(line, justify=False, before=0 if i else 120,
+                                                      after=240 if last else 60, keep_next=not last))
+                blocks.append(_docx_paragraph(""))
+                continue
+            blocks.append(_docx_paragraph(heading, bold=True))
             if content:
                 for paragraph in str(content).split("\n"):
                     blocks.append(_docx_paragraph(paragraph))
@@ -8156,6 +9729,20 @@ def make_v3_router(db):
         approx_bytes = (len(payload.file_data_base64) * 3) // 4
         if approx_bytes > 10 * 1024 * 1024:
             raise HTTPException(413, "Invoice file is larger than 10MB.")
+
+        try:
+            raw_bytes = base64.b64decode(payload.file_data_base64)
+        except Exception:
+            raise HTTPException(400, "Could not read this file - it looks corrupted. Please try uploading it again.")
+        legible, reason = await _inspect_document_legibility(raw_bytes, payload.mime_type, payload.file_name)
+        if not legible:
+            raise HTTPException(422, {
+                "code": "illegible_upload",
+                "file_name": payload.file_name,
+                "reason": reason,
+                "message": f'Could not accept "{payload.file_name}": {reason}',
+            })
+
         inv_id = f"inv-{uuid.uuid4().hex[:8]}"
         # Default the displayed kind to the filename if admin doesn't supply one.
         default_kind = (payload.kind or payload.file_name.rsplit(".", 1)[0] or "invoice").strip() or "invoice"
@@ -8290,6 +9877,12 @@ def make_v3_router(db):
     class PlanningTextUpdatePayload(BaseModel):
         timeline_plan: Optional[str] = None
         planning_notes: Optional[str] = None
+        # What the admin has typed in TOTAL VALUE, approved or not, so it is
+        # still there after they leave the page and come back.
+        project_value_draft: Optional[str] = None
+        # The Deliverables page form ("Save deliverable"): kept as typed until
+        # "Add deliverable" turns it into a row. {} clears it.
+        deliverable_draft: Optional[Dict[str, Any]] = None
 
     @router.patch("/business-cases/{bc_id}/planning")
     async def update_planning_text(bc_id: str, payload: PlanningTextUpdatePayload):
@@ -8299,10 +9892,71 @@ def make_v3_router(db):
         updates: Dict[str, Any] = {"updated_at": _now_iso()}
         if payload.timeline_plan is not None:
             updates["plan.timeline_plan"] = payload.timeline_plan
+            # Admin-written from here on: the Pitch Deck no longer refills it.
+            updates["plan.timeline_plan_source"] = "admin"
         if payload.planning_notes is not None:
             updates["plan.planning_notes"] = payload.planning_notes
+        if payload.project_value_draft is not None:
+            updates["plan.project_value_draft"] = payload.project_value_draft
+        if payload.deliverable_draft is not None:
+            allowed = ("title", "notes", "delivery_date", "delivery_time", "delivery_timeframe")
+            updates["plan.deliverable_draft"] = {k: str(payload.deliverable_draft.get(k) or "") for k in allowed}
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
         return await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+
+    @router.post("/business-cases/{bc_id}/planning/from-pitch-deck")
+    async def planning_from_pitch_deck(bc_id: str, force: bool = False):
+        """The Planning page's Concept (Pitch Deck slides 3 + 6) and timeline
+        (slide 8, Go To Market / Campaign), written by AI from the deck on
+        screen - or from the deck's own text when no AI provider answers.
+
+        Cached against the deck's last edit, so it reruns only when the deck
+        changes (or `force`). The timeline is only (re)filled while it is
+        empty or still the deck-drafted text; once the admin edits it, it is
+        theirs (timeline_plan_source = "admin")."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        deck = await _case_pitch_deck(bc_id)
+        if not deck:
+            raise HTTPException(404, "No Pitch Deck on this business case yet.")
+        plan = case.get("plan") or {}
+        deck_stamp = str(deck.get("updated_at") or deck.get("generated_at") or deck.get("id"))
+        timeline = str(plan.get("timeline_plan") or "")
+        timeline_is_admins = bool(timeline.strip()) and plan.get("timeline_plan_source") != "pitch_deck"
+        fresh = plan.get("planning_digest_deck_stamp") == deck_stamp and plan.get("planning_concept")
+        if fresh and not force and (timeline_is_admins or timeline.strip()):
+            return {"ok": True, "cached": True, "concept": plan.get("planning_concept"),
+                    "timeline_plan": timeline, "timeline_plan_source": plan.get("timeline_plan_source")}
+
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0, "company": 1, "name": 1}) or {}
+        failures: List[str] = []
+        digest = await _call_planning_digest_tool(brand.get("company") or brand.get("name") or "", deck, failures)
+        if digest:
+            concept = _clean_document_text(digest.get("concept") or "", "").strip()
+            drafted_timeline = str(digest.get("timeline") or "").strip()
+            source = digest.get("analysis_source") or "ai"
+        else:
+            logger.info("Planning digest for %s from deck text: %s", bc_id, " | ".join(failures))
+            concept, drafted_timeline, source = "", "", "pitch_deck_text"
+        concept = concept or planning_concept_from_deck(deck)
+        drafted_timeline = drafted_timeline or planning_timeline_from_deck(deck)
+
+        now = _now_iso()
+        updates: Dict[str, Any] = {
+            "plan.planning_concept": concept,
+            "plan.planning_concept_source": source,
+            "plan.planning_digest_deck_stamp": deck_stamp,
+            "plan.planning_digest_at": now,
+        }
+        if not timeline_is_admins and drafted_timeline:
+            updates["plan.timeline_plan"] = drafted_timeline
+            updates["plan.timeline_plan_source"] = "pitch_deck"
+            timeline = drafted_timeline
+        await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
+        return {"ok": True, "cached": False, "concept": concept, "timeline_plan": timeline,
+                "timeline_plan_source": "admin" if timeline_is_admins else "pitch_deck",
+                "analysis_source": source}
 
     # Track which Business Case sub-phase the admin is on
     # (Planning / Delivery / Reporting). Used by businessCasePhasePath on the
@@ -8344,9 +9998,14 @@ def make_v3_router(db):
         if payload.subphase == "planning":
             updates = {"plan.planning_completed_at": now, "updated_at": now}
         else:  # delivery
-            # Guard: delivery cannot be completed before planning is.
-            if not (case.get("plan") or {}).get("planning_completed_at"):
-                raise HTTPException(400, "Complete the Planning phase before completing Delivery.")
+            # Guard: Reporting is locked until the admin approves the
+            # deliverables. Any edit after an approval clears the flag, so a
+            # late change forces a fresh approval before moving on.
+            deliverable_count = await db.v3_deliverables.count_documents({"business_case_id": bc_id})
+            if not deliverable_count:
+                raise HTTPException(400, "Add at least one deliverable and approve it before moving to Reporting.")
+            if not (case.get("deliver") or {}).get("deliverables_approved_at"):
+                raise HTTPException(400, "Approve the deliverables before moving to Reporting.")
             updates = {"plan.delivery_completed_at": now, "updated_at": now}
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
         return await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
@@ -11482,11 +13141,29 @@ def make_v3_router(db):
         """The case's Creative Brief in the fixed 4-page template - snapshot
         scoped first, then the case-level mirror."""
         snap_id = snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
+        brief = None
         if snap_id:
             snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0}) or {}
-            if snap.get("generated_brief"):
-                return snap["generated_brief"]
-        return (case.get("plan") or {}).get("generated_brief")
+            brief = snap.get("generated_brief")
+        brief = brief or (case.get("plan") or {}).get("generated_brief")
+        if brief and creative_brief_duration_is_placeholder(brief.get("duration")):
+            # Briefs written before the duration came from the project (or
+            # before the Pitch Deck existed) said "To be confirmed"; fill it
+            # from the project now so every download and preview carries it.
+            duration = await _project_brief_duration(case.get("id"), snap_id)
+            if duration:
+                brief = {**brief, "duration": duration}
+        return brief
+
+    async def _project_brief_duration(bc_id: Optional[str], snapshot_id: Optional[str] = None) -> str:
+        """Creative Brief duration from Creator Selector section 4 (Timelines)
+        and the Pitch Deck's conversion journey - see creative_brief_duration."""
+        if not bc_id:
+            return ""
+        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0, "creator_selector": 1}) or {}
+        timelines = (round_doc.get("creator_selector") or {}).get("timelines")
+        deck = await _case_pitch_deck(bc_id, alignment_snapshot_id=snapshot_id)
+        return creative_brief_duration(timelines, deck)
 
     @router.post("/business-cases/{bc_id}/ai/creative-brief/generate")
     async def generate_creative_brief(bc_id: str, alignment_snapshot_id: Optional[str] = None):
@@ -11531,19 +13208,21 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "AI is writing the brief in the approved TASCK template…",
+                              "message": "Writing the brief in the approved TASCK template…",
                               "updated_at": _now_iso()}})
                 failures: List[str] = []
                 brief = await _call_creative_brief_tool(brand, case, snapshot, selector,
                                                         creators, failures=failures)
                 if not brief:
-                    # Name the provider's actual complaint rather than pointing
-                    # the admin at an env var that is usually fine.
+                    # The provider's actual complaint goes to the log and the
+                    # job's `error` field for whoever fixes it; the admin gets
+                    # a sentence they can act on, not model names and JSON.
                     detail = " | ".join(failures) or "no AI provider is configured"
+                    logger.warning("Creative Brief generation unavailable for %s: %s", bc_id, detail)
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"The AI could not write the brief - {detail}",
+                                  "message": "The brief could not be written right now - the writing service could not complete the request. Please try again later.",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}})
                     return
@@ -11559,6 +13238,12 @@ def make_v3_router(db):
                     if case_title.lower() not in model_title.lower():
                         prefix = f"{brand_label} " if brand_label and brand_label.lower() not in case_title.lower() else ""
                         brief["title"] = f"{prefix}Creator Role Brief: {case_title}".strip().upper()
+                # Duration comes from the project (Timelines + the Pitch Deck
+                # journey), not the model's guess; the model's value only
+                # stands when the project says nothing yet.
+                project_duration = await _project_brief_duration(bc_id, scoped_snapshot_id)
+                if project_duration:
+                    brief["duration"] = project_duration
                 brief["business_case_id"] = bc_id
                 brief["business_case_title"] = case_title
                 brief["brand_name"] = brand_label
@@ -11757,6 +13442,13 @@ def make_v3_router(db):
             logo_uri = ""
         footer_bytes = _read_template_asset("footer_contact.png")
         footer_uri = ("data:image/png;base64," + base64.b64encode(footer_bytes).decode("ascii")) if footer_bytes else ""
+        # The letterhead's faint decorative curves, behind every page as in
+        # the .docx (and the Pitch Deck / contract PDFs).
+        curves_bytes = _read_template_asset("decorative_curves.png")
+        curves_css = (
+            'background-image: url("data:image/png;base64,' + base64.b64encode(curves_bytes).decode("ascii") + '"); '
+            "background-repeat: no-repeat; background-position: center; background-size: 75% 82%;"
+        ) if curves_bytes else ""
 
         page_html: List[str] = []
         total = len(pages)
@@ -11787,7 +13479,7 @@ def make_v3_router(db):
     .cb-toolbar .cb-brand {{ font-family: 'Bebas Neue', sans-serif; letter-spacing: .12em; font-size: 20px; }}
     .cb-toolbar button {{ background: #FFF; color: #1F4A3A; border: 0; padding: 8px 16px; border-radius: 999px; font-weight: 600; cursor: pointer; letter-spacing: .04em; }}
     .cb-toolbar button:hover {{ background: #EEE7D6; }}
-    .cb-page {{ background: #FFF; width: 794px; min-height: 1123px; margin: 24px auto; padding: 48px 64px 28px; box-shadow: 0 2px 24px rgba(0,0,0,.10); display: flex; flex-direction: column; }}
+    .cb-page {{ background-color: #FFF; {curves_css} -webkit-print-color-adjust: exact; print-color-adjust: exact; width: 794px; min-height: 1123px; margin: 24px auto; padding: 48px 64px 28px; box-shadow: 0 2px 24px rgba(0,0,0,.10); display: flex; flex-direction: column; }}
     .cb-head {{ display: flex; justify-content: flex-end; margin-bottom: 18px; }}
     .cb-head img {{ width: 78px; height: 78px; }}
     .cb-body {{ flex: 1 1 auto; }}
@@ -11878,6 +13570,29 @@ def make_v3_router(db):
         ))
         return _docx_package(blocks)
 
+    def pitch_deck_pdf_bytes(deck: Dict[str, Any]) -> bytes:
+        """The Pitch Deck PDF: the same paragraphs, sizes and spacing as
+        pitch_deck_docx_bytes, on the TASCK letterhead (logo, curves,
+        contact strip, Century Gothic) - so the download matches the .docx."""
+        title = str(deck.get("title") or "Creator Campaign Pitch")
+        items: List[Dict[str, Any]] = [
+            tasck_pdf.para(title.upper(), bold=True, size_half_pt=30, before=240, after=160),
+            tasck_pdf.hr(),
+        ]
+        for section in deck.get("sections", []) or []:
+            heading = str(section.get("heading") or "").strip()
+            if heading:
+                items.append(tasck_pdf.para(heading, bold=True, size_half_pt=26, before=240, after=120))
+            for line in str(section.get("content") or "").split("\n"):
+                if line.strip():
+                    items.append(tasck_pdf.para(line.strip(), after=160))
+        items.append(tasck_pdf.hr())
+        items.append(tasck_pdf.para(
+            "Prepared by TASCK. Please review, comment, or approve from your brand portal.",
+            italic=True, size_half_pt=20, before=160, after=120,
+        ))
+        return tasck_pdf.render_letterhead_pdf(title, items)
+
     @router.get("/business-cases/{bc_id}/pitch-deck")
     async def get_pitch_deck(bc_id: str, alignment_snapshot_id: Optional[str] = None):
         query = {"business_case_id": bc_id}
@@ -11932,19 +13647,21 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "AI is writing all ten Pitch Deck sections…",
+                              "message": "Writing all ten Pitch Deck sections…",
                               "updated_at": _now_iso()}})
                 failures: List[str] = []
                 result = await _call_pitch_deck_tool(brand, case, snapshot, selector, creators,
                                                      failures=failures)
                 if not result:
-                    # Show the provider's actual complaint. "Check your API key"
-                    # was wrong most of the time and hid the real cause.
+                    # The provider's actual complaint goes to the log and the
+                    # job's `error` field for whoever fixes it; the admin gets
+                    # a sentence they can act on, not model names and JSON.
                     detail = " | ".join(failures) or "no AI provider is configured"
+                    logger.warning("Pitch Deck generation unavailable for %s: %s", bc_id, detail)
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"The AI could not write the Pitch Deck - {detail}",
+                                  "message": "The Pitch Deck could not be written right now - the writing service could not complete the request. Please try again later.",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}})
                     return
@@ -12017,6 +13734,7 @@ def make_v3_router(db):
     class PitchDeckUpdate(BaseModel):
         title: Optional[str] = None
         sections: Optional[List[Dict[str, Any]]] = None
+        slides: Optional[Dict[str, Any]] = None
         cover_option: Optional[str] = None
         reviewer: str = "admin"
 
@@ -12028,7 +13746,24 @@ def make_v3_router(db):
         updates: Dict[str, Any] = {"updated_at": _now_iso(), "last_edited_by": payload.reviewer}
         if payload.title is not None:
             updates["title"] = payload.title
-        if payload.sections is not None:
+        if payload.slides is not None:
+            # `slides` is what the flip book and the slide view actually render.
+            # Merge per slide so a client sending one edited slide cannot drop
+            # the other fifteen, then re-derive `sections` from the result -
+            # sections is a flattened read-only view of slides that the .docx
+            # renderer reads, so editing the deck has to refresh it or the
+            # document and the deck drift apart.
+            merged = dict(deck.get("slides") or {})
+            for key, value in (payload.slides or {}).items():
+                if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                    merged[key] = {**merged[key], **value}
+                else:
+                    merged[key] = value
+            updates["slides"] = merged
+            derived = _pitch_sections_from_slides(merged)
+            if derived:
+                updates["sections"] = derived
+        elif payload.sections is not None:
             updates["sections"] = payload.sections
         if payload.cover_option is not None:
             allowed = {"photo_studio", "minimal_navy", "green_wash", "sunset"}
@@ -12174,13 +13909,51 @@ def make_v3_router(db):
         )
         return {"ok": True, "count": len(remaining)}
 
+    async def _case_pitch_deck(bc_id: str, deck_id: Optional[str] = None,
+                               alignment_snapshot_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """The Pitch Deck a send / approve on this case means: the one on the
+        admin's screen and in the brand's bundle. A case can hold several
+        decks (one per Alignment Snapshot, plus pre-segmentation legacy ones),
+        so a bare find_one by case picked whichever came first - sends went
+        to an old deck while the brand portal showed the current one, still
+        unsent and hidden. Resolution mirrors the business case bundle:
+        explicit deck -> the active snapshot's deck -> the unscoped legacy
+        deck -> the newest."""
+        decks = await db.v3_pitch_decks.find({"business_case_id": bc_id}, {"_id": 0}).to_list(50)
+        if not decks:
+            return None
+        if deck_id:
+            match = next((d for d in decks if d.get("id") == deck_id), None)
+            if match:
+                return match
+        snapshot_id = alignment_snapshot_id
+        if not snapshot_id:
+            case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0, "frame": 1}) or {}
+            snapshot_id = (case.get("frame") or {}).get("alignment_snapshot_id")
+        if not snapshot_id:
+            snaps = await db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0}).to_list(50)
+            snaps.sort(key=lambda sn: (
+                PRIORITY_OPTIONS.index(sn.get("priority")) if sn.get("priority") in PRIORITY_OPTIONS else len(PRIORITY_OPTIONS),
+                str(sn.get("generated_at") or ""),
+            ))
+            snapshot_id = snaps[0].get("id") if snaps else None
+        if snapshot_id:
+            match = next((d for d in decks if d.get("alignment_snapshot_id") == snapshot_id), None)
+            if match:
+                return match
+        legacy = next((d for d in decks if not d.get("alignment_snapshot_id")), None)
+        if legacy:
+            return legacy
+        return max(decks, key=lambda d: str(d.get("updated_at") or d.get("created_at") or ""))
+
     class PitchDeckApprovePayload(BaseModel):
         approver: str
         approver_party: str = "admin"
+        deck_id: Optional[str] = None
 
     @router.post("/business-cases/{bc_id}/pitch-deck/approve")
     async def approve_pitch_deck(bc_id: str, payload: PitchDeckApprovePayload):
-        deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+        deck = await _case_pitch_deck(bc_id, payload.deck_id)
         if not deck:
             raise HTTPException(404, "No Pitch Deck to approve. Generate it first.")
         approved_at = _now_iso()
@@ -12198,6 +13971,8 @@ def make_v3_router(db):
 
     class PitchDeckSendPayload(BaseModel):
         recipient_email: Optional[str] = None
+        # The deck on the admin's screen (see _case_pitch_deck).
+        deck_id: Optional[str] = None
         # False = "Send to brand page": reveal the deck in the brand portal
         # without emailing. Generated decks stay admin-only until one of the
         # two send actions runs, so admin can edit first.
@@ -12230,7 +14005,7 @@ def make_v3_router(db):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        deck = await db.v3_pitch_decks.find_one({"business_case_id": bc_id}, {"_id": 0})
+        deck = await _case_pitch_deck(bc_id, payload.deck_id if payload else None)
         if not deck:
             raise HTTPException(404, "No Pitch Deck to send. Generate it first.")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
@@ -12242,7 +14017,10 @@ def make_v3_router(db):
         # Publishing to the brand page needs no email address.
         if send_email and not recipient:
             raise HTTPException(400, "Brand email is required before sending the Pitch Deck.")
-        review_link = f"{app_base_url()}/brand/pitch-deck"
+        # Deep link to this deck: the brand portal opens it directly (after
+        # the brand login, which keeps the query) rather than whichever deck
+        # happens to be first.
+        review_link = f"{app_base_url()}/brand/pitch-deck?deck={deck['id']}"
         sent_at = _now_iso()
         if not send_email:
             # "Send to brand page": make it visible in the portal, no email.
@@ -12425,6 +14203,25 @@ def make_v3_router(db):
         return Response(
             content=data,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"},
+        )
+
+    @router.get("/pitch-decks/{deck_id}/pdf")
+    async def download_pitch_deck_pdf(deck_id: str):
+        deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        if not deck:
+            raise HTTPException(404, "Pitch Deck not found")
+        pdf_bytes = await asyncio.to_thread(pitch_deck_pdf_bytes, deck)
+        case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0}) or {}
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        filename = re.sub(r"\.docx$", ".pdf", pitch_deck_filename(deck, brand))
+        from urllib.parse import quote
+        ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "pitch-deck.pdf"
+        # attachment, not inline: this is the "Download PDF" button, so it must
+        # save a file rather than open in the tab.
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"},
         )
 
@@ -12878,10 +14675,33 @@ def make_v3_router(db):
     # ------------------------------------------------------------------------
     # CONTRACTS
     # ------------------------------------------------------------------------
+    def _contract_recency(ctr: Dict[str, Any]) -> str:
+        return str(ctr.get("regenerated_at") or ctr.get("updated_at") or ctr.get("created_at") or "")
+
+    async def _current_contracts(bc_id: str) -> List[Dict[str, Any]]:
+        """A case's live contracts: one per template (brand, creator...), the
+        most recent. Regenerating replaces a contract in place; copies left
+        over from before that (Gucci had five) are marked `superseded` and
+        stay out of every list, without being deleted."""
+        rows = await db.v3_contracts.find(
+            {"business_case_id": bc_id, "superseded": {"$ne": True}}, {"_id": 0},
+        ).to_list(200)
+        current: Dict[str, Dict[str, Any]] = {}
+        for row in sorted(rows, key=_contract_recency, reverse=True):
+            current.setdefault(str(row.get("template") or row.get("id")), row)
+        stale = [r["id"] for r in rows if current.get(str(r.get("template") or r.get("id"))) is not r]
+        if stale:
+            await db.v3_contracts.update_many(
+                {"id": {"$in": stale}}, {"$set": {"superseded": True, "superseded_at": _now_iso()}},
+            )
+        order = {"brand_msa": 0, "creator_principal": 1, "four_party_grant": 2}
+        return sorted(current.values(), key=lambda r: order.get(r.get("template"), 9))
+
     @router.get("/contracts")
     async def list_contracts(business_case_id: Optional[str] = None):
-        query = {"business_case_id": business_case_id} if business_case_id else {}
-        return await db.v3_contracts.find(query, {"_id": 0}).to_list(200)
+        if business_case_id:
+            return await _current_contracts(business_case_id)
+        return await db.v3_contracts.find({"superseded": {"$ne": True}}, {"_id": 0}).to_list(200)
 
     class ContractCreate(BaseModel):
         business_case_id: str
@@ -12905,6 +14725,15 @@ def make_v3_router(db):
         for bad, good in replacements.items():
             text = text.replace(bad, good)
         return " ".join(text.replace("awer" + "ness", "awareness").split())
+
+    def _clean_document_body(value: Any, fallback: str = "") -> str:
+        """_clean_document_text for multi-line section content: same repairs,
+        but the line breaks stay. The one-line cleaner ran a contract's
+        signature block ("For TASCK...\\nName: ___\\nTitle: ___") into a
+        single paragraph in both the PDF and the .docx, while the on-page
+        preview (which keeps the breaks) showed it aligned."""
+        lines = [_clean_document_text(line) for line in str(value or fallback or "").replace("\r\n", "\n").split("\n")]
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
     def _build_contract_sections(template: str, brand_name: str, creator_name: str, value: float, project_title: str) -> List[Dict[str, Any]]:
         """Return ordered editable sections for the requested contract template."""
@@ -13026,7 +14855,8 @@ def make_v3_router(db):
         # Lookup brand & creator names for the template body so the contract starts brand-aware
         case = await db.v3_business_cases.find_one({"id": payload.business_case_id}, {"_id": 0}) or {}
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
-        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+        creator_id = await _case_creator_id(case)
+        creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) if creator_id else None
         brand_name = _clean_document_text(brand.get("company") or brand.get("name") or (payload.parties[1] if len(payload.parties) > 1 else "Brand"), "Brand")
         creator_name = _clean_document_text((creator or {}).get("name") or (payload.parties[1] if payload.template == "creator_principal" and len(payload.parties) > 1 else "Creator"), "Creator")
         project_title = _clean_document_text(case.get("title") or "Project", "Project")
@@ -13037,6 +14867,31 @@ def make_v3_router(db):
             "creator_principal": f"{creator_name} x {brand_name} - Independent Creator Agreement",
             "four_party_grant": f"{brand_name} x TASCK - Four-Party Grant Agreement",
         }
+        existing = next((c for c in await _current_contracts(payload.business_case_id)
+                         if c.get("template") == payload.template), None)
+        if existing:
+            # Regenerate = replace: the same contract (same id, so links
+            # already shared keep working) restarts from the template as a
+            # fresh draft. One brand and one creator contract, never a pile.
+            ctr_id = existing["id"]
+            now = _now_iso()
+            await db.v3_contracts.update_one({"id": ctr_id}, {
+                "$set": {
+                    "title": title_map.get(payload.template, "Contract"),
+                    "status": "draft", "signed_at": None,
+                    "parties": payload.parties, "value": payload.value,
+                    "ai_risk_flags": ai_flags, "sections": sections,
+                    "regenerated_at": now, "updated_at": now,
+                },
+                "$unset": {"brand_approved": "", "brand_approved_at": "", "brand_approved_by": "", "last_sent_to": "", "last_sent_at": ""},
+            })
+            doc = await db.v3_contracts.find_one({"id": ctr_id}, {"_id": 0})
+            await db.v3_business_cases.update_one(
+                {"id": payload.business_case_id},
+                {"$set": {"plan.contract_id": ctr_id, "updated_at": now},
+                 "$push": {"timeline": {"at": now, "event": "contract_regenerated", "contract_id": ctr_id, "template": payload.template}}},
+            )
+            return doc
         doc = {
             "id": ctr_id,
             "business_case_id": payload.business_case_id,
@@ -13075,6 +14930,38 @@ def make_v3_router(db):
             await db.v3_contracts.update_one({"id": contract_id}, {"$set": updates})
         return await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
 
+    class ContractApprovePayload(BaseModel):
+        approver: str = "brand"
+        approver_party: str = "brand"
+
+    @router.post("/contracts/{contract_id}/approve")
+    async def approve_contract(contract_id: str, payload: ContractApprovePayload):
+        """The brand approves a contract from its portal. Stamped on the
+        contract itself - before, approving only logged an interaction, so
+        the portal kept showing the contract as "Not ready"."""
+        ctr = await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
+        if not ctr:
+            raise HTTPException(404, "Contract not found")
+        now = _now_iso()
+        await db.v3_contracts.update_one({"id": contract_id}, {"$set": {
+            "brand_approved": True, "brand_approved_at": now,
+            "brand_approved_by": payload.approver, "updated_at": now,
+        }})
+        case = await db.v3_business_cases.find_one({"id": ctr.get("business_case_id")}, {"_id": 0, "brand_id": 1}) or {}
+        # Same interaction the portal logged before, so admin still sees it.
+        await db.v3_interactions.insert_one({
+            "id": f"int-{uuid.uuid4().hex[:8]}",
+            "brand_id": case.get("brand_id"), "business_case_id": ctr.get("business_case_id"),
+            "type": "brand_document_approval", "title": "Contract approved by brand",
+            "author": payload.approver, "content": f"{payload.approver} approved {ctr.get('title') or 'the contract'} from the brand portal.",
+            "contract_id": contract_id, "date_iso": now, "created_at": now,
+        })
+        await db.v3_business_cases.update_one(
+            {"id": ctr.get("business_case_id")},
+            {"$push": {"timeline": {"at": now, "event": "contract_approved_by_brand", "contract_id": contract_id, "actor": payload.approver}}},
+        )
+        return await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
+
     @router.post("/contracts/{contract_id}/sign")
     async def sign_contract(contract_id: str):
         ctr = await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
@@ -13094,10 +14981,37 @@ def make_v3_router(db):
     # ------------------------------------------------------------------------
     # DELIVERABLES (3-stage workflow: pending_upload -> pending_rm_review -> approved)
     # ------------------------------------------------------------------------
+    # Uploaded deliverable files live in their own collection so the base64
+    # blob never bloats the deliverable row (and never risks the 16MB doc
+    # cap). Lists carry metadata only; the download endpoint streams bytes.
+    async def _attach_deliverable_files(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not rows:
+            return rows
+        files = await db.v3_deliverable_files.find(
+            {"deliverable_id": {"$in": [row["id"] for row in rows]}},
+            {"_id": 0, "file_data_base64": 0},
+        ).sort("uploaded_at", 1).to_list(1000)
+        by_deliverable: Dict[str, List[Dict[str, Any]]] = {}
+        for item in files:
+            by_deliverable.setdefault(item.get("deliverable_id"), []).append(item)
+        for row in rows:
+            row["attachments"] = by_deliverable.get(row["id"], [])
+        return rows
+
+    async def _invalidate_deliverables_approval(bc_id: str) -> None:
+        """Any edit on the Deliverables page - add, update, delete, upload -
+        drops the admin's approval. Reporting stays locked until the admin
+        approves again, so a late edit can never slip through unapproved."""
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"deliver.deliverables_approved_at": None, "updated_at": _now_iso()}},
+        )
+
     @router.get("/deliverables")
     async def list_deliverables(business_case_id: Optional[str] = None):
         query = {"business_case_id": business_case_id} if business_case_id else {}
-        return await db.v3_deliverables.find(query, {"_id": 0}).to_list(500)
+        rows = await db.v3_deliverables.find(query, {"_id": 0}).to_list(500)
+        return await _attach_deliverable_files(rows)
 
     class DeliverableTransition(BaseModel):
         actor: str = "rm"
@@ -13131,6 +15045,171 @@ def make_v3_router(db):
             {"$set": {"deliver.milestones_total": len(all_d), "deliver.milestones_complete": approved, "updated_at": _now_iso()}},
         )
         return {"ok": True, "new_status": next_state}
+
+    # ------------------------------------------------------------------------
+    # DELIVERABLE FILES - the admin uploads the finished artefact (PDF, Word,
+    # image...) against a deliverable. The first successful upload moves the
+    # row off "pending_upload", which is what clears the PENDING UPLOAD badge
+    # on the Delivery page. 10MB per file, same legibility check as invoices.
+    # ------------------------------------------------------------------------
+    DELIVERABLE_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+
+    class DeliverableUploadPayload(BaseModel):
+        file_name: str
+        mime_type: str = "application/octet-stream"
+        file_data_base64: str
+
+    @router.post("/deliverables/{deliverable_id}/upload")
+    async def upload_deliverable_file(deliverable_id: str, payload: DeliverableUploadPayload):
+        d = await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+        if not d:
+            raise HTTPException(404, "Deliverable not found")
+        if not payload.file_data_base64 or not payload.file_name:
+            raise HTTPException(400, "file_data_base64 and file_name are required.")
+        approx_bytes = (len(payload.file_data_base64) * 3) // 4
+        if approx_bytes > DELIVERABLE_UPLOAD_MAX_BYTES:
+            raise HTTPException(413, "Deliverable file is larger than 10MB.")
+        try:
+            raw_bytes = base64.b64decode(payload.file_data_base64)
+        except Exception:
+            raise HTTPException(400, "Could not read this file - it looks corrupted. Please try uploading it again.")
+        legible, reason = await _inspect_document_legibility(raw_bytes, payload.mime_type, payload.file_name)
+        if not legible:
+            raise HTTPException(422, {
+                "code": "illegible_upload",
+                "file_name": payload.file_name,
+                "reason": reason,
+                "message": 'Could not accept "%s": %s' % (payload.file_name, reason),
+            })
+
+        uploaded_at = _now_iso()
+        file_id = "delf-%s" % uuid.uuid4().hex[:8]
+        await db.v3_deliverable_files.insert_one({
+            "id": file_id,
+            "deliverable_id": deliverable_id,
+            "business_case_id": d["business_case_id"],
+            "file_name": payload.file_name[:240],
+            "file_mime_type": (payload.mime_type or "application/octet-stream")[:120],
+            "file_size_bytes": approx_bytes,
+            "uploaded_at": uploaded_at,
+            "file_data_base64": payload.file_data_base64,
+        })
+        # A file is in, so the row is no longer "pending upload" - it is
+        # waiting on the admin's approval. A new file on an already-approved
+        # deliverable sends it back for approval too.
+        await db.v3_deliverables.update_one(
+            {"id": deliverable_id},
+            {"$set": {"status": "pending_rm_review", "last_upload_at": uploaded_at, "updated_at": uploaded_at}},
+        )
+        await _invalidate_deliverables_approval(d["business_case_id"])
+        await db.v3_business_cases.update_one(
+            {"id": d["business_case_id"]},
+            {"$push": {"timeline": {"at": uploaded_at, "event": "deliverable_file_uploaded", "deliverable_id": deliverable_id, "file_id": file_id}}},
+        )
+        updated = await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+        rows = await _attach_deliverable_files([updated] if updated else [])
+        return rows[0] if rows else updated
+
+    @router.get("/deliverables/files/{file_id}")
+    async def download_deliverable_file(file_id: str):
+        row = await db.v3_deliverable_files.find_one({"id": file_id}, {"_id": 0})
+        if not row:
+            raise HTTPException(404, "File not found")
+        data_b64 = row.get("file_data_base64")
+        if not data_b64:
+            raise HTTPException(404, "No file attached")
+        try:
+            raw = base64.b64decode(data_b64)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Deliverable file %s base64 decode failed: %s", file_id, exc)
+            raise HTTPException(500, "Deliverable file is corrupted.")
+        return StreamingResponse(
+            BytesIO(raw),
+            media_type=row.get("file_mime_type") or "application/octet-stream",
+            headers={"Content-Disposition": 'attachment; filename="%s"' % (row.get("file_name") or file_id)},
+        )
+
+    @router.delete("/deliverables/files/{file_id}")
+    async def delete_deliverable_file(file_id: str):
+        row = await db.v3_deliverable_files.find_one({"id": file_id}, {"_id": 0})
+        if not row:
+            raise HTTPException(404, "File not found")
+        await db.v3_deliverable_files.delete_one({"id": file_id})
+        deliverable_id = row.get("deliverable_id")
+        remaining = await db.v3_deliverable_files.count_documents({"deliverable_id": deliverable_id})
+        now = _now_iso()
+        # Removing the last file puts the deliverable back to pending upload.
+        updates: Dict[str, Any] = {"updated_at": now}
+        if remaining == 0:
+            updates["status"] = "pending_upload"
+        await db.v3_deliverables.update_one({"id": deliverable_id}, {"$set": updates})
+        if row.get("business_case_id"):
+            await _invalidate_deliverables_approval(row["business_case_id"])
+        return {"ok": True, "remaining": remaining}
+
+    # ------------------------------------------------------------------------
+    # APPROVE DELIVERABLES - the admin gate on the Delivery page. Approval is
+    # what unlocks Reporting, and every click re-stamps brand_notified_at so
+    # the brand portal raises a fresh "deliverable available" notification.
+    # ------------------------------------------------------------------------
+    class DeliverablesApprovePayload(BaseModel):
+        deliverable_ids: Optional[List[str]] = None
+        actor: str = "admin"
+
+    @router.post("/business-cases/{bc_id}/deliverables/approve")
+    async def approve_deliverables(bc_id: str, payload: DeliverablesApprovePayload):
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        query: Dict[str, Any] = {"business_case_id": bc_id}
+        if payload.deliverable_ids:
+            query["id"] = {"$in": payload.deliverable_ids}
+        rows = await db.v3_deliverables.find(query, {"_id": 0}).to_list(500)
+        if not rows:
+            raise HTTPException(400, "Add a deliverable before approving.")
+
+        approved_at = _now_iso()
+        await db.v3_deliverables.update_many(
+            {"id": {"$in": [row["id"] for row in rows]}},
+            {"$set": {
+                "status": "approved",
+                "rm_approved_at": approved_at,
+                "brand_approved_at": approved_at,
+                "approved_at": approved_at,
+                "approved_by": payload.actor,
+                # Re-stamped on EVERY approval click - the brand notification
+                # id carries this timestamp, so a re-approval shows up as a
+                # new alert rather than one the brand already dismissed.
+                "brand_notified_at": approved_at,
+                "payment_released": True,
+                "updated_at": approved_at,
+            }},
+        )
+
+        all_d = await db.v3_deliverables.find({"business_case_id": bc_id}, {"_id": 0}).to_list(500)
+        approved_count = len([x for x in all_d if x.get("status") == "approved"])
+        outstanding = len(all_d) - approved_count
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {
+                "deliver.milestones_total": len(all_d),
+                "deliver.milestones_complete": approved_count,
+                # The gate Reporting checks. Only set once nothing is left
+                # unapproved; cleared again by the next edit.
+                "deliver.deliverables_approved_at": None if outstanding else approved_at,
+                "deliver.last_approved_at": approved_at,
+                "updated_at": approved_at,
+            },
+             "$push": {"timeline": {"at": approved_at, "event": "deliverables_approved", "actor": payload.actor, "count": len(rows)}}},
+        )
+        return {
+            "ok": True,
+            "approved_at": approved_at,
+            "approved_count": len(rows),
+            "outstanding": outstanding,
+            "all_approved": outstanding == 0,
+            "deliverables": await _attach_deliverable_files(all_d),
+        }
 
     # ------------------------------------------------------------------------
     # SCOPE CHANGE - pauses delivery until brand approves the amendment
@@ -13207,6 +15286,87 @@ def make_v3_router(db):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0}) or {}
         return ((case.get("frame") or {}).get("alignment_snapshot_id")) or None
 
+    async def _case_creator_id(case: Dict[str, Any]) -> Optional[str]:
+        """The creator this case works with: the first one picked in the
+        Creator Match Scanner (on the active snapshot, else case.plan), falling
+        back to the case's original creator_id only when nothing was picked.
+        The same rule the business-case bundle uses for `creator`, so contracts,
+        emails and reports name the creator the admin actually selected."""
+        ids: List[str] = []
+        snap_id = (case.get("frame") or {}).get("alignment_snapshot_id")
+        if snap_id:
+            snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0, "selected_creator_ids": 1}) or {}
+            ids = snap.get("selected_creator_ids") or []
+        if not ids:
+            ids = (case.get("plan") or {}).get("selected_creator_ids") or []
+        return ids[0] if ids else case.get("creator_id")
+
+    def _round_has_work(doc: Dict[str, Any]) -> bool:
+        selector = (doc or {}).get("creator_selector") or {}
+        return bool(str((doc or {}).get("transcript") or "").strip()) or any(str(v or "").strip() for v in selector.values())
+
+    async def _carry_forward_snapshot_work(bc_id: str) -> None:
+        """Keep the admin's Framing work when the Alignment Snapshot is
+        regenerated.
+
+        Re-analysing the Connect conversations (after editing a business-call
+        transcript, say) generates NEW snapshots and makes one of them active.
+        The Creator Selector, its transcript and the scanner's creator picks
+        are stored per snapshot, so the pages opened empty for the new one and
+        the saved work looked lost. A snapshot no current opportunity points
+        at has been replaced; carry its work onto the active snapshot - but
+        only what the active snapshot does not have yet. Nothing is deleted
+        or overwritten, and it is a no-op once the active snapshot has work.
+        """
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            return
+        target = (case.get("frame") or {}).get("alignment_snapshot_id")
+        if not target:
+            return
+        current = {o.get("snapshot_id") for o in ((case.get("connect") or {}).get("opportunities") or []) if o.get("snapshot_id")}
+        snapshots = await db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0, "id": 1, "generated_at": 1, "selected_creator_ids": 1}).to_list(50)
+        replaced = [s for s in snapshots if s.get("id") and s["id"] != target and s["id"] not in current]
+        if not replaced:
+            return
+        replaced.sort(key=lambda s: str(s.get("generated_at") or ""), reverse=True)
+        replaced_ids = [s["id"] for s in replaced]
+        now = _now_iso()
+
+        # Creator Selector round (its eight fields, transcript, scored creators).
+        target_rounds = await db.v3_brainstorm_rounds.find({"business_case_id": bc_id, "alignment_snapshot_id": target}, {"_id": 0}).to_list(100)
+        if not any(_round_has_work(r) for r in target_rounds):
+            source = _pick_active_brainstorm_round([
+                r for r in await db.v3_brainstorm_rounds.find(
+                    {"business_case_id": bc_id, "alignment_snapshot_id": {"$in": replaced_ids}}, {"_id": 0}
+                ).to_list(100) if _round_has_work(r)
+            ])
+            if source:
+                work = {k: v for k, v in source.items() if k not in ("id", "alignment_snapshot_id", "business_case_id", "created_at")}
+                work.update({"carried_from_round_id": source.get("id"), "carried_at": now, "updated_at": now})
+                existing = _pick_active_brainstorm_round(target_rounds)
+                if existing:
+                    await db.v3_brainstorm_rounds.update_one({"id": existing["id"]}, {"$set": work})
+                    round_id = existing["id"]
+                else:
+                    round_id = f"bs-{uuid.uuid4().hex[:8]}"
+                    await db.v3_brainstorm_rounds.insert_one({**work, "id": round_id, "business_case_id": bc_id, "alignment_snapshot_id": target, "created_at": now})
+                await db.v3_business_cases.update_one({"id": bc_id}, {"$set": {"plan.brainstorm_round_id": round_id}})
+
+        # Transcript pasted or uploaded on the transcript page.
+        drafts = (case.get("plan") or {}).get("brainstorm_transcript_drafts") or {}
+        if not str(drafts.get(target) or "").strip():
+            carried = next((drafts.get(sid) for sid in replaced_ids if str(drafts.get(sid) or "").strip()), None)
+            if carried:
+                await db.v3_business_cases.update_one({"id": bc_id}, {"$set": {f"plan.brainstorm_transcript_drafts.{target}": carried}})
+
+        # Creators picked in the Creator Match Scanner.
+        target_doc = next((s for s in snapshots if s.get("id") == target), {})
+        if not (target_doc.get("selected_creator_ids") or []):
+            picks = next((s.get("selected_creator_ids") for s in replaced if s.get("selected_creator_ids")), None)
+            if picks:
+                await db.v3_alignment_snapshots.update_one({"id": target}, {"$set": {"selected_creator_ids": picks}})
+
     @router.post("/brainstorm-rounds")
     async def create_brainstorm(payload: BrainstormCreate):
         bs_id = f"bs-{uuid.uuid4().hex[:8]}"
@@ -13236,6 +15396,7 @@ def make_v3_router(db):
             "id": bs_id,
             "business_case_id": payload.business_case_id,
             "alignment_snapshot_id": snapshot_id,
+            "created_at": _now_iso(),
             "status": "in_progress",
             "planning_fields": payload.planning_fields,
             # The eight Creator Selector fields (client-specified). Filled
@@ -13437,14 +15598,14 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "AI is reading the transcript and filling the TTA Creator Selector…",
+                              "message": "Reading the transcript and filling the TTA Creator Selector…",
                               "updated_at": _now_iso()}})
                 analyzed = await _call_brainstorm_analysis_tool(brand, case, mi, transcript)
                 if not isinstance(analyzed, dict):
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": "The AI analysis did not return a usable result. Please retry.",
+                                  "message": "The analysis did not return a usable result. Please retry.",
                                   "error": "empty_analysis", "updated_at": _now_iso()}})
                     return
 
@@ -13452,9 +15613,10 @@ def make_v3_router(db):
 
                 # Find or create the round scoped to this snapshot. A brand with
                 # multiple snapshots ends up with one Creator Selector per snapshot.
-                existing = await db.v3_brainstorm_rounds.find_one(
+                # Write into the same round the Creator Selector page opens.
+                existing = _pick_active_brainstorm_round(await db.v3_brainstorm_rounds.find(
                     {"business_case_id": bc_id, "alignment_snapshot_id": snapshot_id}, {"_id": 0}
-                )
+                ).to_list(100))
                 if not existing:
                     created = await create_brainstorm(BrainstormCreate(
                         business_case_id=bc_id,
@@ -13571,13 +15733,175 @@ def make_v3_router(db):
         )
         return {"ok": True, "skipped_at": skipped_at, "brainstorm_round_id": round_id}
 
+    class BrainstormTranscriptDraftPayload(BaseModel):
+        transcript: str = ""
+        alignment_snapshot_id: Optional[str] = None
+
+    @router.patch("/business-cases/{bc_id}/brainstorm/transcript-draft")
+    async def save_brainstorm_transcript_draft(bc_id: str, payload: BrainstormTranscriptDraftPayload):
+        """Keep whatever the admin pasted or uploaded on the transcript page,
+        analyzed or not, so it is still there when they come back. Stored per
+        Alignment Snapshot on case.plan so it rides along in the bundle and
+        never creates a brainstorm round (which would change routing)."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0, "id": 1})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        snapshot_id = await _resolve_active_snapshot_id(bc_id, payload.alignment_snapshot_id) or "default"
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {f"plan.brainstorm_transcript_drafts.{snapshot_id}": payload.transcript or ""}},
+        )
+        return {"ok": True, "alignment_snapshot_id": snapshot_id}
+
     # ------------------------------------------------------------------------
     # FINAL REPORT + CLOSURE
     # ------------------------------------------------------------------------
+    # The Brand Partner form and the Creative Partner form are two separate
+    # documents that happen to share one stored template. Every outbound path
+    # therefore picks exactly one audience: "Send to Brand" must attach only
+    # the Brand Partner form, "Send to Creator" only the Creative Partner form.
+    # Sending both to either side showed each partner the other's questions.
+    # "all" is the admin's own internal copy - the only variant that keeps the
+    # email template and the Internal Use notes, which the template itself
+    # marks as not shown to the client.
+    FEEDBACK_AUDIENCES = {
+        "brand": ("brand_partner", "Brand Partner Feedback"),
+        "creator": ("creative_partner", "Creative Partner Feedback"),
+    }
+
+    # Public feedback form: a 5-option Likert scale in place of typing a raw
+    # 1-10 number. Stored ratings stay on the existing 1-10 scale (x2) so the
+    # admin-side Feedback Template card, PDF export, and the "average score
+    # below 7" internal-use trigger all keep working unchanged.
+    FEEDBACK_LIKERT_LABELS = ["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]
+    FEEDBACK_LIKERT_TO_TEN = {1: 2, 2: 4, 3: 6, 4: 8, 5: 10}
+
+    def _resolve_feedback_audience(audience: Optional[str]) -> str:
+        value = (audience or "all").strip().lower()
+        if value not in {"all", *FEEDBACK_AUDIENCES}:
+            raise HTTPException(400, "audience must be 'brand', 'creator' or 'all'")
+        return value
+
+    def _feedback_doc_title(fb: Dict[str, Any], audience: str, report_title: str) -> str:
+        if audience == "all":
+            return f"Feedback - {report_title}"
+        group_key, group_label = FEEDBACK_AUDIENCES[audience]
+        block = fb.get(group_key) or {}
+        return _clean_document_text(block.get("form_title") or group_label, group_label)
+
+    FEEDBACK_FORM_INSTRUCTION = "Please rate the following based on your experience working with TTA."
+
+    def _feedback_form(fb: Dict[str, Any], audience: str) -> Dict[str, Any]:
+        """One side's feedback form as the online form shows it: title,
+        project, date, the questions, a comments field. Nothing else - no
+        description, scores, email template or internal notes."""
+        group_key, group_label = FEEDBACK_AUDIENCES[audience]
+        block = fb.get(group_key) or {}
+        default_title = "TTA Project Feedback - " + ("Brand Partner" if audience == "brand" else "Creative Partner")
+        return {
+            "title": _clean_document_text(block.get("form_title") or default_title, default_title),
+            "project": _clean_document_text(block.get("project_name") or "-", "-"),
+            "date": _clean_document_text(block.get("date") or "-", "-"),
+            "questions": [(_clean_document_text(q.get("label") or ""), _clean_document_text(q.get("question") or ""))
+                          for q in block.get("questions") or [] if isinstance(q, dict)],
+        }
+
+    def _render_feedback_form_pdf(form: Dict[str, Any]) -> bytes:
+        """The feedback form as a paper form on the letterhead: each question
+        with its five options as empty radio circles to tick, and a comments
+        box at the end."""
+        items: List[Dict[str, Any]] = [
+            tasck_pdf.para(form["title"], bold=True, size_half_pt=28, justify=False, after=160),
+            tasck_pdf.para(f"Project name: {form['project']}", justify=False, before=0, after=60),
+            tasck_pdf.para(f"Date: {form['date']}", justify=False, before=0, after=200),
+            tasck_pdf.para(FEEDBACK_FORM_INSTRUCTION, justify=False, before=0, after=160),
+        ]
+        for idx, (label, question) in enumerate(form["questions"], start=1):
+            items.append(tasck_pdf.group([
+                tasck_pdf.para(f"{idx}. {label}", bold=True, justify=False, before=120, after=40),
+                tasck_pdf.para(question, justify=False, before=0, after=80),
+                tasck_pdf.radios(FEEDBACK_LIKERT_LABELS),
+            ]))
+        items.append(tasck_pdf.group([
+            tasck_pdf.para("Comments", bold=True, justify=False, before=240, after=80),
+            tasck_pdf.box(120),
+        ]))
+        return tasck_pdf.render_letterhead_pdf(form["title"], items)
+
+    def _feedback_form_html(form: Dict[str, Any]) -> str:
+        """Body of the feedback form's letterhead page (preview)."""
+        esc = lambda v: html.escape("" if v is None else str(v))  # noqa: E731
+        options = "".join(f'<span class="fb-opt"><span class="fb-radio"></span>{esc(o)}</span>' for o in FEEDBACK_LIKERT_LABELS)
+        parts = [
+            f'<h1 class="dv-title">{esc(form["title"])}</h1>',
+            f'<p class="fb-meta"><strong>Project name:</strong> {esc(form["project"])}</p>',
+            f'<p class="fb-meta"><strong>Date:</strong> {esc(form["date"])}</p>',
+            f'<p class="fb-intro">{esc(FEEDBACK_FORM_INSTRUCTION)}</p>',
+        ]
+        for idx, (label, question) in enumerate(form["questions"], start=1):
+            parts.append(f'<section class="fb-q"><h2 class="dv-heading">{idx}. {esc(label)}</h2>'
+                         f'<p class="fb-question">{esc(question)}</p><div class="fb-opts">{options}</div></section>')
+        parts.append('<section class="fb-q"><h2 class="dv-heading">Comments</h2><div class="fb-box"></div></section>')
+        return "".join(parts)
+
+    def _feedback_blocks(fb: Dict[str, Any], audience: str) -> List[Dict[str, Any]]:
+        blocks: List[Dict[str, Any]] = []
+        if audience == "all" and fb.get("email_template"):
+            blocks.append({"heading": "Tab 1 - Email Template", "content": _clean_document_text(fb["email_template"])})
+        groups = list(FEEDBACK_AUDIENCES.values()) if audience == "all" else [FEEDBACK_AUDIENCES[audience]]
+        for group_key, group_label in groups:
+            block = fb.get(group_key) or {}
+            blocks.append({"heading": _clean_document_text(block.get("form_title", group_label), group_label), "content": _clean_document_text(block.get("form_description") or "")})
+            header_lines = [f"Project name: {_clean_document_text(block.get('project_name', '-'))}", f"Date: {_clean_document_text(block.get('date', '-'))}"]
+            if "google_form_link" in block:
+                header_lines.append(f"Google form link: {_clean_document_text(block.get('google_form_link') or '-')}")
+            blocks.append({"content": "\n".join(header_lines)})
+            for idx, q in enumerate(block.get("questions") or []):
+                blocks.append({"heading": f"{idx + 1}. {_clean_document_text(q.get('label', ''))}", "content": f"{_clean_document_text(q.get('question', ''))}\nRating: {q.get('rating') if q.get('rating') is not None else '-'} / 10"})
+            blocks.append({"content": f"Optional comment: {_clean_document_text(block.get('optional_comment') or '-')}"})
+        if audience == "all" and fb.get("internal_use"):
+            blocks.append({"heading": "Internal Use (Not Shown to Client)", "content": "\n".join([f"- {_clean_document_text(line)}" for line in fb["internal_use"]])})
+        return blocks
+
+    async def _sync_report_creator(rep: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Keep a report's creator the one picked in the Creator Match
+        Scanner. A report is written once, so picking a different creator
+        afterwards left the old name on its Title Page and header (Gucci's
+        said Teni Otedola after Zendaya was selected). Only the "Creator:"
+        line and the header are touched; the rest of the admin's edits stay."""
+        if not rep:
+            return rep
+        case = await db.v3_business_cases.find_one({"id": rep.get("business_case_id")}, {"_id": 0})
+        creator_id = await _case_creator_id(case) if case else None
+        creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0, "name": 1}) if creator_id else None
+        name = _clean_document_text((creator or {}).get("name") or "")
+        if not name:
+            return rep
+        changed = False
+        sections: List[Any] = []
+        for section in rep.get("sections") or []:
+            if isinstance(section, dict) and re.match(r"\s*(\d+\.\s*)?title page", str(section.get("heading") or ""), re.I):
+                content = str(section.get("content") or "")
+                fixed = re.sub(r"(?im)^(\s*creator:[ \t]*).*$", lambda m: m.group(1) + name, content)
+                if fixed != content:
+                    section, changed = {**section, "content": fixed}, True
+            sections.append(section)
+        header = str(rep.get("brand_header") or "")
+        parts = header.split(" x ")
+        if len(parts) == 3 and parts[1] != name.upper():
+            parts[1] = name.upper()
+            header, changed = " x ".join(parts), True
+        if changed:
+            updates = {"sections": sections, "brand_header": header, "creator_id": creator_id, "creator_name": name}
+            await db.v3_final_reports.update_one({"id": rep["id"]}, {"$set": updates})
+            rep = {**rep, **updates}
+        return rep
+
     @router.get("/final-reports")
     async def list_final_reports(business_case_id: Optional[str] = None):
         query = {"business_case_id": business_case_id} if business_case_id else {}
-        return await db.v3_final_reports.find(query, {"_id": 0}).to_list(100)
+        rows = await db.v3_final_reports.find(query, {"_id": 0}).to_list(100)
+        return [await _sync_report_creator(row) for row in rows] if business_case_id else rows
 
     class FinalReportUpdate(BaseModel):
         title: Optional[str] = None
@@ -13608,11 +15932,19 @@ def make_v3_router(db):
         return await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
 
     @router.post("/final-reports/{report_id}/mark-feedback-sent")
-    async def mark_feedback_sent(report_id: str):
+    async def mark_feedback_sent(report_id: str, audience: Optional[str] = None):
         rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
         if not rep:
             raise HTTPException(404, "Final report not found")
-        await db.v3_final_reports.update_one({"id": report_id}, {"$set": {"feedback_sent_at": _now_iso()}})
+        sent_at = _now_iso()
+        # feedback_sent_at stays the "most recent send of either form" flag the
+        # closure checks already read; the per-audience stamps are what tell
+        # the admin which side has actually been asked for feedback.
+        updates: Dict[str, Any] = {"feedback_sent_at": sent_at}
+        which = _resolve_feedback_audience(audience) if audience else "all"
+        if which != "all":
+            updates[f"feedback_sent_{which}_at"] = sent_at
+        await db.v3_final_reports.update_one({"id": report_id}, {"$set": updates})
         return await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
 
     # ------------------------------------------------------------------------
@@ -13626,6 +15958,10 @@ def make_v3_router(db):
         target: str = Field(..., pattern="^(brand|creator)$")
         body: str
         subject: Optional[str] = None
+        # Which creator, for target "creator". Must belong to this case (picked
+        # in the Creator Match Scanner, or the case's own creator). Omitted:
+        # the case's creator (the first scanner pick, else its creator_id).
+        creator_id: Optional[str] = None
 
     @router.post("/business-cases/{bc_id}/feedback/request")
     async def create_feedback_request(bc_id: str, payload: FeedbackRequestPayload):
@@ -13633,7 +15969,17 @@ def make_v3_router(db):
         if not case:
             raise HTTPException(404, "Business case not found")
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) if case.get("brand_id") else None
-        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+        creator_id = await _case_creator_id(case)
+        if payload.target == "creator" and payload.creator_id:
+            allowed = set((case.get("plan") or {}).get("selected_creator_ids") or [])
+            async for snap in db.v3_alignment_snapshots.find({"business_case_id": bc_id}, {"_id": 0, "selected_creator_ids": 1}):
+                allowed.update(snap.get("selected_creator_ids") or [])
+            if case.get("creator_id"):
+                allowed.add(case["creator_id"])
+            if payload.creator_id not in allowed:
+                raise HTTPException(400, "That creator is not on this Business Case.")
+            creator_id = payload.creator_id
+        creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) if creator_id else None
 
         if payload.target == "brand":
             recipient = (brand or {}).get("email") or (case.get("brand_contact_snapshot") or {}).get("email")
@@ -13664,7 +16010,7 @@ def make_v3_router(db):
             body=body,
             kind=f"feedback_request_{payload.target}",
             brand_id=case.get("brand_id"),
-            creator_id=case.get("creator_id"),
+            creator_id=creator_id,
             business_case_id=bc_id,
         )
 
@@ -13672,7 +16018,7 @@ def make_v3_router(db):
             "id": f"fbreq-{uuid.uuid4().hex[:8]}",
             "business_case_id": bc_id,
             "brand_id": case.get("brand_id"),
-            "creator_id": case.get("creator_id"),
+            "creator_id": creator_id,
             "target": payload.target,
             "recipient": recipient,
             "subject": subject,
@@ -13853,7 +16199,7 @@ def make_v3_router(db):
 
         # 3. Contracts signed.
         contracts = await db.v3_contracts.find(
-            {"signed_at": {"$ne": None}},
+            {"signed_at": {"$ne": None}, "superseded": {"$ne": True}},
             {"_id": 0, "id": 1, "business_case_id": 1, "signed_at": 1, "title": 1, "template": 1},
         ).sort("signed_at", -1).to_list(50)
         for row in contracts:
@@ -14221,6 +16567,7 @@ def make_v3_router(db):
             {
                 "business_case_id": {"$in": case_ids},
                 "sent_to_brand_at": {"$ne": None},
+                "superseded": {"$ne": True},
             },
             {"_id": 0, "id": 1, "business_case_id": 1, "sent_to_brand_at": 1, "signed_at": 1, "template": 1, "title": 1},
         ).sort("sent_to_brand_at", -1).to_list(50)
@@ -14273,6 +16620,38 @@ def make_v3_router(db):
                 "link": "/brand/messages",
             })
 
+        # 5. Deliverables the admin approved on the Delivery page. Each
+        # approval re-stamps brand_notified_at, and the notification id
+        # carries that timestamp, so re-approving after a change surfaces a
+        # fresh alert instead of one the brand has already dismissed.
+        approved_deliverables = await db.v3_deliverables.find(
+            {
+                "business_case_id": {"$in": case_ids},
+                "status": "approved",
+                "brand_notified_at": {"$ne": None},
+            },
+            {"_id": 0, "id": 1, "business_case_id": 1, "title": 1, "brand_notified_at": 1},
+        ).sort("brand_notified_at", -1).to_list(200)
+        for row in approved_deliverables:
+            when = row.get("brand_notified_at")
+            if not _within_window(when):
+                continue
+            case_title = case_titles.get(row.get("business_case_id"))
+            if not case_title:
+                continue
+            d_title = _clean_document_text(row.get("title") or "Deliverable", "Deliverable")
+            notifications.append({
+                "id": "brand_deliverable_ready:%s:%s" % (row.get("id"), when),
+                "kind": "deliverable_ready",
+                "actor": "admin",
+                "when": when,
+                "business_case_id": row.get("business_case_id"),
+                "business_case_title": case_title,
+                "title": "Deliverable available",
+                "message": 'TASCK has approved "%s" for %s. It is now available in your project.' % (d_title, case_title),
+                "link": "/brand/projects",
+            })
+
         def _ts(item: Dict[str, Any]) -> str:
             return str(item.get("when") or "")
         notifications.sort(key=_ts, reverse=True)
@@ -14295,37 +16674,191 @@ def make_v3_router(db):
     # ------------------------------------------------------------------------
     # PDF EXPORTS - contracts, final reports, feedback
     # ------------------------------------------------------------------------
-    def _render_pdf(title: str, blocks: List[Dict[str, Any]]) -> bytes:
-        """Render an ordered list of blocks into a PDF and return its bytes.
-        Each block: {"heading": str, "content": str} or {"text": str, "bold": bool}.
+    def _pdf_attachment_headers(title: str, fallback: str) -> Dict[str, str]:
+        """Headers that make the browser save the PDF instead of opening it.
+
+        These routes back the "Download PDF" buttons, so they must arrive as
+        `attachment`, not `inline` - inline is what made the button open the
+        PDF in a new tab. The file is named after the document title, with an
+        ASCII fallback for older clients and the full title via RFC 5987.
         """
-        from reportlab.lib.pagesizes import LETTER
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-        from reportlab.lib.enums import TA_LEFT
+        from urllib.parse import quote
+        stem = re.sub(r"[\\/:*?\"<>|\r\n\t]+", " ", str(title or "")).strip()
+        stem = re.sub(r"\s+", " ", stem) or fallback
+        filename = f"{stem}.pdf"
+        ascii_fallback = filename.encode("ascii", "ignore").decode("ascii").strip() or f"{fallback}.pdf"
+        return {"Content-Disposition": f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"}
 
-        buf = BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=LETTER, leftMargin=0.75 * inch, rightMargin=0.75 * inch, topMargin=0.75 * inch, bottomMargin=0.75 * inch, title=title)
-        styles = getSampleStyleSheet()
-        h_style = ParagraphStyle("h", parent=styles["Heading2"], fontSize=11, leading=14, spaceBefore=10, spaceAfter=4, textColor="#1A1A1A", fontName="Helvetica-Bold")
-        body_style = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10, leading=14, alignment=TA_LEFT, textColor="#333333", spaceAfter=4)
-        title_style = ParagraphStyle("t", parent=styles["Title"], fontSize=18, leading=22, textColor="#1F4A3A", spaceAfter=12)
-
-        story: List[Any] = []
-        story.append(Paragraph(title.replace("&", "&amp;"), title_style))
-        for block in blocks:
-            if "heading" in block and block.get("heading"):
-                story.append(Paragraph(str(block["heading"]).replace("&", "&amp;"), h_style))
+    def _render_pdf(title: str, blocks: List[Dict[str, Any]]) -> bytes:
+        """Render blocks as a PDF on the TASCK letterhead (tasck_pdf.py) -
+        paragraph for paragraph the same as the .docx that
+        document_docx_bytes writes from the same blocks, so the PDF and the
+        Word file of a contract / report / feedback form look alike.
+        Each block: {"heading", "content"/"text", "rows", "columns", "items"}.
+        """
+        items: List[Dict[str, Any]] = [tasck_pdf.para(title or "TASCK Document", bold=True, justify=False)]
+        for block in blocks or []:
+            heading = block.get("heading")
             content = block.get("content") or block.get("text") or ""
+            if is_signature_heading(heading) and content:
+                # Same layout as document_docx_bytes: one compact block per
+                # signatory, kept on one page (the heading with the first).
+                for g, lines in enumerate(signature_groups(content)):
+                    paras = ([tasck_pdf.para(heading, bold=True, justify=False)] if g == 0 else []) + [
+                        tasck_pdf.para(line, justify=False, before=0 if i else 120,
+                                       after=240 if i == len(lines) - 1 else 60)
+                        for i, line in enumerate(lines)
+                    ]
+                    items.append(tasck_pdf.group(paras))
+                items.append(tasck_pdf.para(""))
+                continue
+            if heading:
+                items.append(tasck_pdf.para(heading, bold=True, justify=False))
             if content:
-                # Preserve newlines as <br/>
-                safe = str(content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
-                story.append(Paragraph(safe, body_style))
-            story.append(Spacer(1, 0.05 * inch))
-        doc.build(story)
-        buf.seek(0)
-        return buf.getvalue()
+                for paragraph in str(content).split("\n"):
+                    items.append(tasck_pdf.para(paragraph))
+            rows = block.get("rows") or []
+            if rows:
+                headers = block.get("columns") or []
+                if not headers and isinstance(rows[0], dict):
+                    headers = list(rows[0].keys())
+                table = [list(headers)] if headers else []
+                for row in rows:
+                    table.append(row if isinstance(row, list) else [row.get(h, "") for h in headers])
+                items.append({"table": table, "header": bool(headers)})
+            for entry in block.get("items") or []:
+                items.append(tasck_pdf.para(f"- {entry}"))
+            items.append(tasck_pdf.para(""))
+        return tasck_pdf.render_letterhead_pdf(title, items)
+
+    def document_view_html(title: str, blocks: List[Dict[str, Any]], *, kind_label: str,
+                           pdf_href: str = "pdf", embed: bool = False, body: Optional[str] = None) -> str:
+        """A document on its own as a web page, on the TASCK letterhead (logo,
+        curves, contact footer): what shared links (Copy link / WhatsApp)
+        open. A page rather than a PDF so it shows in any browser - phones
+        included, where an inline PDF often just downloads. Same blocks and
+        layout as _render_pdf, signature blocks included."""
+        def esc(value: Any) -> str:
+            return html.escape("" if value is None else str(value))
+
+        parts: List[str] = [f'<h1 class="dv-title">{esc(title)}</h1>']
+        for block in blocks or []:
+            heading = str(block.get("heading") or "").strip()
+            content = str(block.get("content") or block.get("text") or "")
+            parts.append('<section class="dv-section">')
+            if heading:
+                parts.append(f'<h2 class="dv-heading">{esc(heading)}</h2>')
+            if is_signature_heading(heading) and content.strip():
+                for lines in signature_groups(content):
+                    parts.append('<div class="dv-sign">' + "".join(f'<p>{esc(line)}</p>' for line in lines) + '</div>')
+            else:
+                for line in content.split("\n"):
+                    if line.strip():
+                        parts.append(f'<p class="dv-para">{esc(line.strip())}</p>')
+            rows = block.get("rows") or []
+            if rows:
+                headers = block.get("columns") or (list(rows[0].keys()) if isinstance(rows[0], dict) else [])
+                table = ['<table class="dv-table">']
+                if headers:
+                    table.append("<tr>" + "".join(f"<th>{esc(h)}</th>" for h in headers) + "</tr>")
+                for row in rows:
+                    cells = row if isinstance(row, list) else [row.get(h, "") for h in headers]
+                    table.append("<tr>" + "".join(f"<td>{esc(c)}</td>" for c in cells) + "</tr>")
+                table.append("</table>")
+                parts.append("".join(table))
+            items = [str(i).strip() for i in block.get("items") or [] if str(i).strip()]
+            if items:
+                parts.append('<ul class="dv-list">' + "".join(f"<li>{esc(i)}</li>" for i in items) + "</ul>")
+            parts.append("</section>")
+
+        logo_uri = "data:image/png;base64," + "".join(_TASCK_LOGO_PNG_B64.split())
+        footer_bytes = _read_template_asset("footer_contact.png")
+        footer_img = ('<img src="data:image/png;base64,' + base64.b64encode(footer_bytes).decode("ascii") + '" alt="" />') if footer_bytes else ""
+        curves_bytes = _read_template_asset("decorative_curves.png")
+        curves_css = (
+            'background-image: url("data:image/png;base64,' + base64.b64encode(curves_bytes).decode("ascii") + '"); '
+            "background-repeat: no-repeat; background-position: center top 120px; background-size: 75% auto;"
+        ) if curves_bytes else ""
+        # `body`: a page laid out by the caller (the feedback form).
+        body_html = body if body is not None else "".join(parts)
+        # embed: shown inside the admin Preview, which has its own Download.
+        toolbar = "" if embed else (
+            '<div class="dv-bar"><span>TASCK · ' + esc(kind_label) + '</span>'
+            '<a href="' + esc(pdf_href) + '">Download PDF</a></div>'
+        )
+        return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{esc(title)}</title>
+  <style>
+    :root {{ color-scheme: light; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; background: #EEE; font-family: 'Century Gothic', 'CenturyGothic', AppleGothic, sans-serif; color: #1A1A1A; }}
+    .dv-bar {{ position: sticky; top: 0; z-index: 5; background: #1F4A3A; color: #FFF; padding: 10px 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }}
+    .dv-bar span {{ font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }}
+    .dv-bar a {{ background: #FFF; color: #1F4A3A; padding: 8px 16px; border-radius: 999px; font-weight: 600; font-size: 13px; text-decoration: none; white-space: nowrap; }}
+    .dv-page {{ background-color: #FFF; {curves_css} max-width: 794px; margin: 24px auto; padding: 40px 64px 28px; box-shadow: 0 2px 24px rgba(0,0,0,.10); }}
+    .dv-head {{ display: flex; justify-content: flex-end; margin-bottom: 18px; }}
+    .dv-head img {{ width: 78px; height: 78px; }}
+    .dv-foot {{ margin-top: 32px; text-align: center; }}
+    .dv-foot img {{ width: 100%; max-width: 620px; }}
+    .dv-title {{ font-size: 20px; font-weight: 700; margin: 0 0 18px; }}
+    .dv-heading {{ font-size: 15px; font-weight: 700; margin: 22px 0 8px; }}
+    .dv-para {{ font-size: 14px; line-height: 1.6; text-align: justify; margin: 0 0 10px; }}
+    .dv-sign {{ margin: 10px 0 16px; }}
+    .dv-sign p {{ font-size: 14px; line-height: 1.5; margin: 0 0 4px; }}
+    .dv-list {{ font-size: 14px; line-height: 1.6; padding-left: 22px; }}
+    .dv-table {{ border-collapse: collapse; width: 100%; font-size: 13px; margin: 6px 0 12px; }}
+    .dv-table th, .dv-table td {{ border: 1px solid #B8AA96; padding: 5px 7px; text-align: left; vertical-align: top; }}
+    .fb-meta {{ font-size: 14px; margin: 0 0 4px; }}
+    .fb-intro {{ font-size: 14px; margin: 18px 0 6px; }}
+    .fb-q {{ margin: 0 0 6px; break-inside: avoid; }}
+    .fb-question {{ font-size: 13px; color: #4F3E2F; margin: 0 0 10px; }}
+    .fb-opts {{ display: flex; gap: 6px; flex-wrap: wrap; }}
+    .fb-opt {{ flex: 1 1 0; min-width: 92px; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; text-align: center; }}
+    .fb-radio {{ width: 14px; height: 14px; border: 1.5px solid #1F4A3A; border-radius: 50%; display: inline-block; }}
+    .fb-box {{ height: 120px; border: 1px solid #B8AA96; border-radius: 6px; background: repeating-linear-gradient(to bottom, transparent 0, transparent 21px, #E8E4DB 21px, #E8E4DB 22px); }}
+    @media (max-width: 640px) {{
+      .dv-page {{ margin: 0; padding: 20px 18px; box-shadow: none; }}
+      .dv-head img {{ width: 56px; height: 56px; }}
+      .dv-para {{ text-align: left; }}
+    }}
+    @media print {{ .dv-bar {{ display: none; }} body {{ background: #FFF; }} .dv-page {{ box-shadow: none; margin: 0; }} }}
+  </style>
+</head>
+<body>
+  {toolbar}
+  <article class="dv-page">
+    <header class="dv-head"><img src="{logo_uri}" alt="TASCK" /></header>
+    {body_html}
+    <footer class="dv-foot">{footer_img}</footer>
+  </article>
+</body>
+</html>"""
+
+    async def _contract_for_render(contract_id: str) -> Dict[str, Any]:
+        ctr = await db.v3_contracts.find_one({"id": contract_id}, {"_id": 0})
+        if not ctr:
+            raise HTTPException(404, "Contract not found")
+        return ctr
+
+    @router.get("/contracts/{contract_id}/view")
+    async def contract_view(contract_id: str):
+        """Shareable link (Copy link / WhatsApp): the contract alone in the
+        browser, on the letterhead, with a Download PDF button. The old link
+        reopened the admin Contract page."""
+        ctr = await _contract_for_render(contract_id)
+        if not (ctr.get("sections") or []):
+            # Legacy contract without sections: the PDF route backfills them.
+            await contract_pdf(contract_id)
+            ctr = await _contract_for_render(contract_id)
+        title = _clean_document_text(ctr.get("title") or "Contract", "Contract")
+        blocks = [{**block, "heading": _clean_document_text(block.get("heading") or ""),
+                   "content": _clean_document_body(block.get("content") or block.get("text") or "")}
+                  for block in (ctr.get("sections") or [])]
+        return HTMLResponse(content=document_view_html(title, blocks, kind_label="Contract"))
 
     @router.get("/contracts/{contract_id}/pdf")
     async def contract_pdf(contract_id: str):
@@ -14336,7 +16869,8 @@ def make_v3_router(db):
         if not (ctr.get("sections") or []):
             case = await db.v3_business_cases.find_one({"id": ctr.get("business_case_id")}, {"_id": 0}) or {}
             brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
-            creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+            creator_id = await _case_creator_id(case)
+            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) if creator_id else None
             brand_name = brand.get("company") or brand.get("name") or "Brand"
             creator_name = _clean_document_text((creator or {}).get("name") or "Creator", "Creator")
             project_title = case.get("title") or "Project"
@@ -14354,9 +16888,9 @@ def make_v3_router(db):
             ctr["sections"] = sections
             ctr["title"] = new_title
         title = _clean_document_text(ctr.get("title") or "Contract", "Contract")
-        blocks = [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_text(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])]
+        blocks = [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_body(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])]
         pdf_bytes = _render_pdf(title, blocks)
-        return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{contract_id}.pdf"'})
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=_pdf_attachment_headers(title, contract_id))
 
     @router.get("/contracts/{contract_id}/docx")
     async def contract_docx(contract_id: str):
@@ -14366,7 +16900,8 @@ def make_v3_router(db):
         if not (ctr.get("sections") or []):
             case = await db.v3_business_cases.find_one({"id": ctr.get("business_case_id")}, {"_id": 0}) or {}
             brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
-            creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+            creator_id = await _case_creator_id(case)
+            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) if creator_id else None
             brand_name = brand.get("company") or brand.get("name") or "Brand"
             creator_name = (creator or {}).get("name") or "Creator"
             project_title = case.get("title") or "Project"
@@ -14374,12 +16909,11 @@ def make_v3_router(db):
             ctr["sections"] = sections
             ctr["title"] = ctr.get("title") or "Contract"
             await db.v3_contracts.update_one({"id": contract_id}, {"$set": {"sections": ctr["sections"], "title": ctr["title"], "updated_at": _now_iso()}})
-        docx_bytes = document_docx_bytes(_clean_document_text(ctr.get("title") or "Contract", "Contract"), [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_text(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
+        docx_bytes = document_docx_bytes(_clean_document_text(ctr.get("title") or "Contract", "Contract"), [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_body(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
         return StreamingResponse(BytesIO(docx_bytes), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers={"Content-Disposition": f'attachment; filename="{contract_id}-contract.docx"'})
 
-    @router.get("/final-reports/{report_id}/pdf")
-    async def final_report_pdf(report_id: str):
-        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+    async def _final_report_blocks(report_id: str) -> tuple:
+        rep = await _sync_report_creator(await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0}))
         if not rep:
             raise HTTPException(404, "Final report not found")
         title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
@@ -14387,37 +16921,56 @@ def make_v3_router(db):
             {
                 **block,
                 "heading": _clean_document_text(block.get("heading") or ""),
-                "content": _clean_document_text(block.get("content") or block.get("text") or ""),
+                "content": _clean_document_body(block.get("content") or block.get("text") or ""),
             }
             for block in (rep.get("sections") or [])
         ]
-        pdf_bytes = _render_pdf(title, blocks)
-        return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{report_id}.pdf"'})
+        return title, blocks
 
-    @router.get("/final-reports/{report_id}/feedback/pdf")
-    async def feedback_pdf(report_id: str):
+    @router.get("/final-reports/{report_id}/pdf")
+    async def final_report_pdf(report_id: str):
+        title, blocks = await _final_report_blocks(report_id)
+        pdf_bytes = _render_pdf(title, blocks)
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=_pdf_attachment_headers(title, report_id))
+
+    @router.get("/final-reports/{report_id}/view")
+    async def final_report_view(report_id: str, embed: bool = False):
+        """The report on its own in the browser, on the TASCK letterhead -
+        what the report's Copy link / WhatsApp share open, and (embed=1,
+        without the page's own toolbar) what the admin Preview shows."""
+        title, blocks = await _final_report_blocks(report_id)
+        return HTMLResponse(content=document_view_html(title, blocks, kind_label="Final Report", embed=embed))
+
+    @router.get("/final-reports/{report_id}/feedback/view")
+    async def feedback_form_view(report_id: str, audience: str = "brand", embed: bool = False):
+        """One side's feedback form (brand or creator) on the letterhead, as
+        the admin Preview shows it - the same layout as its PDF."""
         rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
         if not rep:
             raise HTTPException(404, "Final report not found")
+        which = _resolve_feedback_audience(audience)
+        if which == "all":
+            raise HTTPException(400, "audience must be 'brand' or 'creator'")
+        form = _feedback_form(rep.get("feedback") or {}, which)
+        return HTMLResponse(content=document_view_html(
+            form["title"], [], kind_label="Feedback form", embed=embed,
+            pdf_href=f"pdf?audience={which}", body=_feedback_form_html(form)))
+
+    @router.get("/final-reports/{report_id}/feedback/pdf")
+    async def feedback_pdf(report_id: str, audience: str = "all"):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        which = _resolve_feedback_audience(audience)
         fb = rep.get("feedback") or {}
-        blocks: List[Dict[str, Any]] = []
-        if fb.get("email_template"):
-            blocks.append({"heading": "Tab 1 - Email Template", "content": _clean_document_text(fb["email_template"])})
-        for group_key, group_label in [("brand_partner", "Brand Partner Feedback"), ("creative_partner", "Creative Partner Feedback")]:
-            block = fb.get(group_key) or {}
-            blocks.append({"heading": _clean_document_text(block.get("form_title", group_label), group_label), "content": _clean_document_text(block.get("form_description") or "")})
-            header_lines = [f"Project name: {_clean_document_text(block.get('project_name', '-'))}", f"Date: {_clean_document_text(block.get('date', '-'))}"]
-            if "google_form_link" in block:
-                header_lines.append(f"Google form link: {_clean_document_text(block.get('google_form_link') or '-')}")
-            blocks.append({"content": "\n".join(header_lines)})
-            for idx, q in enumerate(block.get("questions") or []):
-                blocks.append({"heading": f"{idx + 1}. {_clean_document_text(q.get('label', ''))}", "content": f"{_clean_document_text(q.get('question', ''))}\nRating: {q.get('rating') if q.get('rating') is not None else '-'} / 10"})
-            blocks.append({"content": f"Optional comment: {_clean_document_text(block.get('optional_comment') or '-')}"})
-        if fb.get("internal_use"):
-            blocks.append({"heading": "Internal Use (Not Shown to Client)", "content": "\n".join([f"- {_clean_document_text(line)}" for line in fb["internal_use"]])})
-        title = f"Feedback - {_clean_document_text(rep.get('title') or 'Final Report', 'Final Report')}"
-        pdf_bytes = _render_pdf(title, blocks)
-        return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="feedback-{report_id}.pdf"'})
+        report_title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
+        doc_title = _feedback_doc_title(fb, which, report_title)
+        # One side's form, laid out as the online form (radio options, a
+        # comments box). "all" is the legacy both-forms export.
+        pdf_bytes = (_render_pdf(doc_title, _feedback_blocks(fb, which)) if which == "all"
+                     else _render_feedback_form_pdf(_feedback_form(fb, which)))
+        suffix = "" if which == "all" else f"-{which}"
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=_pdf_attachment_headers(doc_title, f"feedback{suffix}-{report_id}"))
 
     # ------------------------------------------------------------------------
     # SMTP - share contract / final report / feedback via real email
@@ -14454,11 +17007,12 @@ def make_v3_router(db):
         if not (ctr.get("sections") or []):
             case = await db.v3_business_cases.find_one({"id": ctr.get("business_case_id")}, {"_id": 0}) or {}
             brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
-            creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+            creator_id = await _case_creator_id(case)
+            creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) if creator_id else None
             sections = _build_contract_sections(ctr.get("template", "brand_msa"), (brand.get("company") or brand.get("name") or "Brand"), ((creator or {}).get("name") or "Creator"), ctr.get("value") or 0, case.get("title") or "Project")
             await db.v3_contracts.update_one({"id": contract_id}, {"$set": {"sections": sections}})
             ctr["sections"] = sections
-        docx_bytes = document_docx_bytes(_clean_document_text(ctr.get("title") or "Contract", "Contract"), [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_text(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
+        docx_bytes = document_docx_bytes(_clean_document_text(ctr.get("title") or "Contract", "Contract"), [{**block, "heading": _clean_document_text(block.get("heading") or ""), "content": _clean_document_body(block.get("content") or block.get("text") or "")} for block in (ctr.get("sections") or [])], "Google Docs-compatible contract for review, comments, signature, and return to TASCK.")
         body = payload.custom_message or chr(10).join([
             f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},",
             "",
@@ -14480,7 +17034,7 @@ def make_v3_router(db):
 
     @router.post("/final-reports/{report_id}/send-email")
     async def send_final_report_email(report_id: str, payload: SendEmailPayload):
-        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        rep = await _sync_report_creator(await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0}))
         if not rep:
             raise HTTPException(404, "Final report not found")
         title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
@@ -14488,7 +17042,7 @@ def make_v3_router(db):
             {
                 **block,
                 "heading": _clean_document_text(block.get("heading") or ""),
-                "content": _clean_document_text(block.get("content") or block.get("text") or ""),
+                "content": _clean_document_body(block.get("content") or block.get("text") or ""),
             }
             for block in (rep.get("sections") or [])
         ]
@@ -14503,46 +17057,129 @@ def make_v3_router(db):
         await db.v3_final_reports.update_one({"id": report_id}, {"$set": {"report_sent_at": _now_iso(), "report_sent_to": payload.to_email}})
         return {"ok": True, "sent_to": payload.to_email}
 
-    @router.post("/final-reports/{report_id}/feedback/send-email")
-    async def send_feedback_email(report_id: str, payload: SendEmailPayload):
+    class SendFeedbackEmailPayload(SendEmailPayload):
+        # Which of the two forms to attach. The brand must never receive the
+        # creative's form and the creative must never receive the brand's, so
+        # this is always one side - "all" is rejected below.
+        audience: str = "brand"
+
+    @router.get("/link-audit")
+    async def link_audit():
+        """Every externally-shared link in one request, with its resolved host.
+
+        Redeploy check: if `clean` is false, some link still carries a host the
+        recipient should never see (the preview/emergent domain). Frontend
+        document links (flipbook, PDFs, DOCX) are built in the browser from
+        REACT_APP_BACKEND_URL, which is baked in at BUILD time - they are listed
+        here as `frontend_build` because this endpoint cannot see that value; the
+        `api_host` row below is what the backend is actually being reached on.
+        """
+        base = app_base_url()
+        source = (
+            "env:FRONTEND_URL/PUBLIC_APP_URL/APP_BASE_URL"
+            if (os.getenv("FRONTEND_URL") or os.getenv("PUBLIC_APP_URL") or os.getenv("APP_BASE_URL"))
+            else ("request_host" if REQUEST_PUBLIC_ORIGIN.get() else "hardcoded_default")
+        )
+        links = {
+            "brand_login": brand_login_url(),
+            "creator_login": creator_login_url(),
+            "brand_approvals": f"{base}/brand/approvals",
+            "brand_pitch_deck_review": f"{base}/brand/pitch-deck?deck=<deck_id>",
+            "creator_portal": f"{base}/creator",
+            "feedback_form": f"{base}/feedback/<token>",
+            "alignment_snapshot_brand_page": f"{base}/brand/approvals",
+            "api_host": f"{REQUEST_PUBLIC_ORIGIN.get() or base}/api/v3",
+        }
+        offenders = {name: url for name, url in links.items() if "emergent" in url.lower()}
+        return {
+            "app_base_url": base,
+            "app_base_url_source": source,
+            "request_public_origin": REQUEST_PUBLIC_ORIGIN.get(),
+            "links": links,
+            "frontend_build_links": {
+                "note": "Built in the browser from REACT_APP_BACKEND_URL (baked in at build time). "
+                        "Verify with: curl -s <site>/static/js/main.*.js | grep -o 'https://[a-z0-9.-]*emergent[a-z0-9.-]*'",
+                "paths": ["/api/v3/pitch-decks/<id>/flipbook", "/api/v3/pitch-decks/<id>/slides",
+                          "/api/v3/pitch-decks/<id>/pdf", "/api/v3/alignment-snapshots/<id>/docx",
+                          "/api/v3/creative-briefs/<id>/docx", "/api/v3/contracts/<id>/pdf",
+                          "/api/v3/contracts/<id>/view", "/api/v3/final-reports/<id>/view"],
+            },
+            "clean": not offenders,
+            "offenders": offenders,
+            "checked_at": _now_iso(),
+        }
+
+    @router.get("/final-reports/{report_id}/feedback/public-link")
+    async def get_feedback_public_link(report_id: str, audience: str = "brand"):
+        """The link a brand or creator should actually receive: the public
+        feedback form itself.
+
+        Copy-link and WhatsApp used to share this admin page's own URL
+        (`/admin/business-cases/{id}/reporting/final-report`), which a recipient
+        cannot open - it needs an admin login and is not the form. Only the
+        emailed path built the right URL, so the three share routes disagreed.
+        Same token as the email uses, minted on first request per audience.
+        """
         rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
         if not rep:
             raise HTTPException(404, "Final report not found")
-        # Build feedback blocks and render PDF (re-using the same logic as the feedback_pdf endpoint)
+        which = _resolve_feedback_audience(audience)
+        if which == "all":
+            raise HTTPException(400, "Ask for the Brand Partner form or the Creative Partner form, not both.")
+        group_key, _ = FEEDBACK_AUDIENCES[which]
+        token = await _ensure_feedback_token(report_id, group_key)
+        return {"audience": which, "token": token, "url": f"{app_base_url()}/feedback/{token}"}
+
+    @router.post("/final-reports/{report_id}/feedback/send-email")
+    async def send_feedback_email(report_id: str, payload: SendFeedbackEmailPayload):
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        if not rep:
+            raise HTTPException(404, "Final report not found")
+        which = _resolve_feedback_audience(payload.audience)
+        if which == "all":
+            raise HTTPException(400, "Send the Brand Partner form or the Creative Partner form, not both.")
         fb = rep.get("feedback") or {}
-        blocks: List[Dict[str, Any]] = []
-        if fb.get("email_template"):
-            blocks.append({"heading": "Tab 1 - Email Template", "content": _clean_document_text(fb["email_template"])})
-        for group_key, group_label in [("brand_partner", "Brand Partner Feedback"), ("creative_partner", "Creative Partner Feedback")]:
-            block = fb.get(group_key) or {}
-            blocks.append({"heading": _clean_document_text(block.get("form_title", group_label), group_label), "content": _clean_document_text(block.get("form_description") or "")})
-            header_lines = [f"Project name: {_clean_document_text(block.get('project_name', '-'))}", f"Date: {_clean_document_text(block.get('date', '-'))}"]
-            if "google_form_link" in block:
-                header_lines.append(f"Google form link: {_clean_document_text(block.get('google_form_link') or '-')}")
-            blocks.append({"content": "\n".join(header_lines)})
-            for idx, q in enumerate(block.get("questions") or []):
-                blocks.append({"heading": f"{idx + 1}. {_clean_document_text(q.get('label', ''))}", "content": f"{_clean_document_text(q.get('question', ''))}\nRating: {q.get('rating') if q.get('rating') is not None else '-'} / 10"})
-            blocks.append({"content": f"Optional comment: {_clean_document_text(block.get('optional_comment') or '-')}"})
-        title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
-        pdf_bytes = _render_pdf(f"Feedback - {title}", blocks)
+        report_title = _clean_document_text(rep.get("title") or "Final Report", "Final Report")
+        form_title = _feedback_doc_title(fb, which, report_title)
+        pdf_bytes = _render_feedback_form_pdf(_feedback_form(fb, which))
+        group_key, _ = FEEDBACK_AUDIENCES[which]
+        feedback_token = await _ensure_feedback_token(report_id, group_key)
+        feedback_link = f"{app_base_url()}/feedback/{feedback_token}"
         body = payload.custom_message or chr(10).join([
             f"Hello{(' ' + payload.recipient_name) if payload.recipient_name else ''},",
             "",
-            f"TASCK has shared the project report response document for {title}. Please review the attached document, add your project feedback or comments, and send the completed response back to TASCK from your brand portal or by replying to this email.",
+            f"TASCK has shared the {form_title} for {report_title}. Please give us your feedback here - it only takes a minute:",
+            feedback_link,
             "",
-            "This is a direct project update connected to your TASCK brand workspace and the completed project records.",
+            "A copy of the form is also attached for your records.",
+            "",
+            "This is a direct project update connected to your TASCK workspace and the completed project records.",
             "",
             "Warm regards,",
             "The TASCK Agency",
         ])
+        if payload.custom_message and feedback_link not in body:
+            body = f"{body}\n\nGive us your feedback here: {feedback_link}"
         try:
-            await asyncio.to_thread(_smtp_send, payload.to_email, f"TASCK Project Report Response: {title}", body, pdf_bytes, f"feedback-{report_id}.pdf")
+            await asyncio.to_thread(_smtp_send, payload.to_email, f"{form_title}: {report_title}", body, pdf_bytes, f"feedback-{which}-{report_id}.pdf")
         except HTTPException:
             raise
         except Exception as exc:
             raise HTTPException(502, f"Failed to send feedback email: {exc}")
-        await db.v3_final_reports.update_one({"id": report_id}, {"$set": {"feedback_sent_at": _now_iso(), "feedback_sent_to": payload.to_email}})
-        return {"ok": True, "sent_to": payload.to_email}
+        sent_at = _now_iso()
+        await db.v3_final_reports.update_one(
+            {"id": report_id},
+            {"$set": {
+                # feedback_sent_at / _to stay the "most recent send of either
+                # form" flags the closure checks already read; the per-audience
+                # stamps record which side was actually asked.
+                "feedback_sent_at": sent_at,
+                "feedback_sent_to": payload.to_email,
+                f"feedback_sent_{which}_at": sent_at,
+                f"feedback_sent_{which}_to": payload.to_email,
+            }},
+        )
+        return {"ok": True, "sent_to": payload.to_email, "audience": which}
 
 
 
@@ -14592,6 +17229,119 @@ def make_v3_router(db):
         pct = round((done / max(len(items), 1)) * 100)
         await db.v3_final_reports.update_one({"id": report["id"]}, {"$set": {"closure_checklist": items}})
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": {"closure.closure_pct": pct, "updated_at": _now_iso()}})
+
+    # ------------------------------------------------------------------------
+    # PUBLIC FEEDBACK FORM (no login - the link itself is the access control,
+    # same convention already used by the PDF/flip-book endpoints elsewhere in
+    # this file). Each side of the feedback template gets its own random
+    # token the first time it's sent; that token is the ONLY thing that maps
+    # to a report + audience, so a brand-side token can never see or submit
+    # the creator's questions and vice versa.
+    # ------------------------------------------------------------------------
+    async def _ensure_feedback_token(report_id: str, group_key: str) -> str:
+        rep = await db.v3_final_reports.find_one({"id": report_id}, {"_id": 0})
+        existing = ((rep or {}).get("feedback") or {}).get(group_key, {}).get("public_token")
+        if existing:
+            return existing
+        token = uuid.uuid4().hex
+        await db.v3_final_reports.update_one({"id": report_id}, {"$set": {f"feedback.{group_key}.public_token": token}})
+        return token
+
+    async def _find_feedback_by_token(token: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        rep = await db.v3_final_reports.find_one(
+            {"$or": [
+                {"feedback.brand_partner.public_token": token},
+                {"feedback.creative_partner.public_token": token},
+            ]},
+            {"_id": 0},
+        )
+        if not rep:
+            return None, None
+        fb = rep.get("feedback") or {}
+        which = "brand" if (fb.get("brand_partner") or {}).get("public_token") == token else "creator"
+        return rep, which
+
+    @router.get("/public/feedback/{token}")
+    async def get_public_feedback_form(token: str):
+        rep, which = await _find_feedback_by_token(token)
+        if not rep:
+            raise HTTPException(404, "This feedback link is invalid or has expired.")
+        group_key, group_label = FEEDBACK_AUDIENCES[which]
+        block = (rep.get("feedback") or {}).get(group_key) or {}
+        case = await db.v3_business_cases.find_one({"id": rep.get("business_case_id")}, {"_id": 0}) or {}
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) if case.get("brand_id") else None
+        return {
+            "audience": which,
+            "form_title": block.get("form_title") or group_label,
+            "project_name": block.get("project_name") or case.get("title") or "",
+            "brand_name": (brand or {}).get("company") or (brand or {}).get("name") or "",
+            "questions": [
+                {"key": q.get("key"), "label": q.get("label"), "question": q.get("question")}
+                for q in (block.get("questions") or [])
+            ],
+            "scale_labels": FEEDBACK_LIKERT_LABELS,
+            "already_submitted": bool(block.get("submitted_at")),
+            "submitted_at": block.get("submitted_at"),
+        }
+
+    class PublicFeedbackSubmission(BaseModel):
+        answers: Dict[str, int]
+        comment: Optional[str] = None
+        submitted_by: Optional[str] = None
+
+    @router.post("/public/feedback/{token}")
+    async def submit_public_feedback(token: str, payload: PublicFeedbackSubmission):
+        rep, which = await _find_feedback_by_token(token)
+        if not rep:
+            raise HTTPException(404, "This feedback link is invalid or has expired.")
+        group_key, group_label = FEEDBACK_AUDIENCES[which]
+        fb = rep.get("feedback") or {}
+        block = fb.get(group_key) or {}
+        if block.get("submitted_at"):
+            raise HTTPException(409, "Feedback has already been submitted for this link.")
+        questions = block.get("questions") or []
+        valid_keys = {q.get("key") for q in questions}
+        if not valid_keys or set(payload.answers.keys()) != valid_keys:
+            raise HTTPException(422, "Please answer every question before submitting.")
+        if any(value not in FEEDBACK_LIKERT_TO_TEN for value in payload.answers.values()):
+            raise HTTPException(422, "Each answer must be one of the five options offered.")
+
+        now = _now_iso()
+        updated_questions = [
+            {**q, "rating": FEEDBACK_LIKERT_TO_TEN[payload.answers[q.get("key")]]}
+            for q in questions
+        ]
+        average = round(sum(FEEDBACK_LIKERT_TO_TEN[v] for v in payload.answers.values()) / len(payload.answers), 1)
+        average_field = "brand_average_score" if which == "brand" else "creative_average_score"
+        await db.v3_final_reports.update_one(
+            {"id": rep["id"]},
+            {"$set": {
+                f"feedback.{group_key}.questions": updated_questions,
+                f"feedback.{group_key}.optional_comment": (payload.comment or "").strip(),
+                f"feedback.{group_key}.submitted_at": now,
+                f"feedback.{group_key}.submitted_by": (payload.submitted_by or "").strip(),
+                f"feedback.{average_field}": average,
+            }},
+        )
+
+        # Once BOTH sides are in, compute how aligned they are: each side's
+        # average (out of 10) converted to a percentage, alignment is 100
+        # minus the gap between those two percentages - two close scores
+        # (however high or low) read as aligned; a wide gap does not.
+        fresh = await db.v3_final_reports.find_one({"id": rep["id"]}, {"_id": 0})
+        fresh_fb = fresh.get("feedback") or {}
+        brand_avg = fresh_fb.get("brand_average_score")
+        creative_avg = fresh_fb.get("creative_average_score")
+        if brand_avg is not None and creative_avg is not None:
+            alignment_pct = round(100 - abs((brand_avg / 10 * 100) - (creative_avg / 10 * 100)))
+            await db.v3_final_reports.update_one({"id": rep["id"]}, {"$set": {"feedback.alignment_pct": alignment_pct}})
+
+        await db.v3_business_cases.update_one(
+            {"id": rep["business_case_id"]},
+            {"$set": {"updated_at": now},
+             "$push": {"timeline": {"at": now, "event": f"{which}_feedback_form_submitted", "average": average}}},
+        )
+        return {"ok": True}
 
     # ------------------------------------------------------------------------
     # INTERACTIONS (CRM activity log)
@@ -14772,11 +17522,19 @@ def make_v3_router(db):
             raise HTTPException(404, "Source not found")
         return {"ok": True, "deleted": source_id}
 
-    async def _connect_source_corpus(bc_id: str) -> Tuple[str, List[Dict[str, Any]]]:
+    async def _connect_source_corpus(bc_id: str, source_ids: Optional[List[str]] = None) -> Tuple[str, List[Dict[str, Any]]]:
         """Every uploaded Connect source, formatted for the LLM. Dividers name
         the channel (and nothing date-shaped) so Claude can weigh a WhatsApp
-        aside differently from a formal call, without leaking dates."""
-        rows = await db.v3_connect_sources.find({"business_case_id": bc_id}, {"_id": 0}).to_list(500)
+        aside differently from a formal call, without leaking dates.
+
+        `source_ids`, when given, limits this to just those sources - lets the
+        admin choose which conversations feed a given analysis run instead of
+        always including everything ever saved.
+        """
+        query: Dict[str, Any] = {"business_case_id": bc_id}
+        if source_ids is not None:
+            query["id"] = {"$in": source_ids}
+        rows = await db.v3_connect_sources.find(query, {"_id": 0}).to_list(500)
         rows.sort(key=lambda r: str(r.get("created_at") or ""))
         blocks = []
         for row in rows:
@@ -14793,10 +17551,58 @@ def make_v3_router(db):
     # opportunities. Admin reviews them, merges any that are really the
     # same job, and then generates one Alignment Snapshot per survivor.
     # ------------------------------------------------------------------
-    async def _all_connect_evidence(bc_id: str) -> str:
-        """Uploaded sources + any meeting transcripts, as one corpus."""
-        corpus, _rows = await _connect_source_corpus(bc_id)
-        meetings = await db.v3_meetings.find({"business_case_id": bc_id, "stage": "connect"}, {"_id": 0}).to_list(100)
+    async def _connect_evidence_fingerprint(
+        bc_id: str,
+        meeting_ids: Optional[List[str]] = None,
+        source_ids: Optional[List[str]] = None,
+    ) -> str:
+        """Fingerprint of the conversations, piece by piece.
+
+        Stamped when opportunity detection runs so the Conversations &
+        Transcripts page can tell whether the analysis it is showing was built
+        from the text currently on screen. Fingerprints the same units the page
+        holds - one per meeting transcript, one per uploaded source - so the
+        page can also mark an individual conversation as edited.
+
+        `meeting_ids`/`source_ids`, when given, scope this to exactly what a
+        run analyzed, so a partial (admin-selected) run doesn't get marked
+        "current" against conversations it never read.
+        """
+        source_query: Dict[str, Any] = {"business_case_id": bc_id}
+        if source_ids is not None:
+            source_query["id"] = {"$in": source_ids}
+        meeting_query: Dict[str, Any] = {"business_case_id": bc_id, "stage": "connect"}
+        if meeting_ids is not None:
+            meeting_query["id"] = {"$in": meeting_ids}
+        sources = await db.v3_connect_sources.find(source_query, {"_id": 0}).to_list(500)
+        meetings = await db.v3_meetings.find(meeting_query, {"_id": 0}).to_list(100)
+        texts = [s.get("content") for s in sources]
+        texts += [
+            m.get("transcript") for m in meetings
+            if (m.get("meeting_type") or m.get("type")) == "business_call" and not m.get("is_transcript_aggregate")
+        ]
+        return content_fingerprint(texts)
+
+    async def _all_connect_evidence(
+        bc_id: str,
+        meeting_ids: Optional[List[str]] = None,
+        source_ids: Optional[List[str]] = None,
+    ) -> str:
+        """Uploaded sources + any meeting transcripts, as one corpus.
+
+        `meeting_ids`/`source_ids`, when given, restrict this to exactly those
+        conversations - lets the admin analyze just what they select instead
+        of everything ever saved for this business case.
+        """
+        corpus, _rows = await _connect_source_corpus(bc_id, source_ids=source_ids)
+        # Aggregate "combined transcript" meetings are analysis artifacts,
+        # not distinct evidence - their content already duplicates the real
+        # per-session meetings they were built from, so exclude them here to
+        # avoid double-counting the same conversation in the corpus.
+        meeting_query: Dict[str, Any] = {"business_case_id": bc_id, "stage": "connect", "is_transcript_aggregate": {"$ne": True}}
+        if meeting_ids is not None:
+            meeting_query["id"] = {"$in": meeting_ids}
+        meetings = await db.v3_meetings.find(meeting_query, {"_id": 0}).to_list(100)
         blocks = [corpus] if corpus else []
         for meeting in meetings:
             transcript = (meeting.get("transcript") or "").strip()
@@ -14817,9 +17623,16 @@ def make_v3_router(db):
             "analysis_source": connect.get("opportunities_source"),
         }
 
+    class DetectOpportunitiesPayload(BaseModel):
+        # When either is set, detection reads only these conversations
+        # instead of every one ever saved for this business case - lets the
+        # admin pick which conversation(s) a run should cover.
+        meeting_ids: Optional[List[str]] = None
+        source_ids: Optional[List[str]] = None
+
     @router.post("/business-cases/{bc_id}/connect/detect-opportunities")
-    async def detect_opportunities(bc_id: str):
-        """Run Claude over every uploaded source and store the opportunities it
+    async def detect_opportunities(bc_id: str, payload: DetectOpportunitiesPayload = DetectOpportunitiesPayload()):
+        """Run Claude over the uploaded sources and store the opportunities it
         finds. Admin reviews/merges the result before any snapshot is made.
 
         Runs as a BACKGROUND JOB (same pattern as analyze-all): the Claude call
@@ -14831,7 +17644,9 @@ def make_v3_router(db):
         case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         if not case:
             raise HTTPException(404, "Business case not found")
-        corpus = await _all_connect_evidence(bc_id)
+        meeting_ids = payload.meeting_ids
+        source_ids = payload.source_ids
+        corpus = await _all_connect_evidence(bc_id, meeting_ids=meeting_ids, source_ids=source_ids)
         if not corpus:
             raise HTTPException(400, "Upload at least one transcript, email, or WhatsApp conversation first.")
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
@@ -14855,20 +17670,22 @@ def make_v3_router(db):
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
                     {"$set": {"status": "running", "progress": 30,
-                              "message": "AI is splitting the conversations into distinct opportunities…",
+                              "message": "Splitting the conversations into distinct opportunities…",
                               "updated_at": _now_iso()}},
                 )
                 failures: List[str] = []
                 result = await _call_opportunity_detection_tool(brand, case, corpus,
                                                                 failures=failures)
                 if not result:
-                    # Name the provider's actual complaint. "Check your API key"
-                    # was wrong most of the time and hid the real cause.
+                    # The provider's actual complaint goes to the log and the
+                    # job's `error` field for whoever fixes it; the admin gets
+                    # a sentence they can act on, not model names and JSON.
                     detail = " | ".join(failures) or "no AI provider is configured"
+                    logger.warning("Opportunity detection unavailable for %s: %s", bc_id, detail)
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
                         {"$set": {"status": "failed", "progress": 100,
-                                  "message": f"The AI could not analyse the conversations - {detail}",
+                                  "message": "Analysis is unavailable right now - the analysis service could not complete the request. Please try again later.",
                                   "error": detail[:500],
                                   "updated_at": _now_iso()}},
                     )
@@ -14905,6 +17722,9 @@ def make_v3_router(db):
                         "connect.opportunities": opportunities,
                         "connect.opportunities_detected_at": now,
                         "connect.opportunities_source": result.get("analysis_source") or "llm",
+                        # What this ran on, so the page knows whether the stored
+                        # analysis still covers the conversations on screen.
+                        "connect.opportunities_fingerprint": await _connect_evidence_fingerprint(bc_id, meeting_ids=meeting_ids, source_ids=source_ids),
                         "updated_at": now,
                     },
                      "$push": {"timeline": {"at": now, "event": "opportunities_detected", "count": len(opportunities)}}},
@@ -15088,6 +17908,9 @@ def make_v3_router(db):
         await db.v3_business_cases.update_one({"id": bc_id}, {"$set": updates})
         if not created:
             raise HTTPException(500, "No Alignment Snapshot could be generated. Check the AI provider configuration.")
+        # The snapshots this replaced may hold the Creator Selector, transcript
+        # and creator picks - keep them on the new active snapshot.
+        await _carry_forward_snapshot_work(bc_id)
         return {"ok": True, "created": created, "count": len(created)}
 
     class SnapshotPriorityPayload(BaseModel):
@@ -15240,6 +18063,16 @@ def make_v3_router(db):
                 "connect.status_updated_at": now,
                 "connect.updated_at": now,
                 "connect.latest_meeting_date": ", ".join(meeting_dates) if meeting_dates else None,
+                # Stamp WHEN this ran and WHAT it ran on. The Conversations &
+                # Transcripts page compares the fingerprint of the transcripts
+                # it currently holds against this one: equal means the analysis
+                # is already stored for exactly this text, so the Analyze
+                # button stays hidden and the admin just moves on; different
+                # means a transcript was edited and it needs running again.
+                "connect.analyzed_at": now,
+                "connect.analysis_fingerprint": content_fingerprint(
+                    [m.get("transcript") for m in (meetings or [])]
+                ),
                 "updated_at": now,
             }}
         )
@@ -15386,7 +18219,7 @@ def make_v3_router(db):
             try:
                 await db.v3_analysis_jobs.update_one(
                     {"id": job_id},
-                    {"$set": {"status": "running", "progress": 25, "message": "Running AI alignment analysis…", "updated_at": _now_iso()}},
+                    {"$set": {"status": "running", "progress": 25, "message": "Running alignment analysis…", "updated_at": _now_iso()}},
                 )
                 result = await _run_alignment_analysis(bc_id, meetings, case, brand, combined_text, meeting_dates)
                 # Alignment recommendation is stored - now split the same
@@ -15866,7 +18699,8 @@ def make_v3_router(db):
         if not case:
             raise HTTPException(404, "Business case not found")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
-        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
+        creator_id = await _case_creator_id(case)
+        creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) if creator_id else None
         brief = await db.v3_creative_briefs.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
         alignment = await db.v3_alignment_snapshots.find_one({"business_case_id": payload.business_case_id}, {"_id": 0})
         project_title = _clean_document_text(case.get("title") or "Project", "Project")
@@ -16120,9 +18954,12 @@ def make_v3_router(db):
         all_d = await db.v3_deliverables.find({"business_case_id": payload.business_case_id}, {"_id": 0}).to_list(500)
         await db.v3_business_cases.update_one(
             {"id": payload.business_case_id},
-            {"$set": {"deliver.milestones_total": len(all_d), "updated_at": created_at},
+            # A new deliverable is an edit, so any earlier approval is void -
+            # Reporting relocks until the admin approves again.
+            {"$set": {"deliver.milestones_total": len(all_d), "deliver.deliverables_approved_at": None, "updated_at": created_at},
              "$push": {"timeline": {"at": created_at, "event": "deliverable_added", "deliverable_id": d_id}}},
         )
+        doc["attachments"] = []
         return doc
 
     class DeliverableUpdate(BaseModel):
@@ -16143,7 +18980,10 @@ def make_v3_router(db):
             updates["scheduled_for"] = " ".join([item for item in [updates.get("delivery_date", d.get("delivery_date")), updates.get("delivery_time", d.get("delivery_time"))] if item]) or d.get("scheduled_for", "")
             updates["updated_at"] = _now_iso()
             await db.v3_deliverables.update_one({"id": deliverable_id}, {"$set": updates})
-        return await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+            await _invalidate_deliverables_approval(d["business_case_id"])
+        updated = await db.v3_deliverables.find_one({"id": deliverable_id}, {"_id": 0})
+        rows = await _attach_deliverable_files([updated] if updated else [])
+        return rows[0] if rows else updated
 
     @router.delete("/deliverables/{deliverable_id}")
     async def delete_deliverable(deliverable_id: str):
@@ -16151,6 +18991,8 @@ def make_v3_router(db):
         if not d:
             raise HTTPException(404, "Deliverable not found")
         await db.v3_deliverables.delete_one({"id": deliverable_id})
+        await db.v3_deliverable_files.delete_many({"deliverable_id": deliverable_id})
+        await _invalidate_deliverables_approval(d["business_case_id"])
         return {"ok": True}
 
     # ------------------------------------------------------------------------
@@ -16165,59 +19007,71 @@ def make_v3_router(db):
         if not case:
             raise HTTPException(404, "Business case not found")
         brand = await db.v3_brands.find_one({"id": case["brand_id"]}, {"_id": 0})
-        creator = await db.v3_creators.find_one({"id": case.get("creator_id")}, {"_id": 0}) if case.get("creator_id") else None
-        snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0})
+        creator_id = await _case_creator_id(case)
+        creator = await db.v3_creators.find_one({"id": creator_id}, {"_id": 0}) if creator_id else None
         deliverables = await db.v3_deliverables.find({"business_case_id": bc_id}, {"_id": 0}).to_list(200)
         approved = [d for d in deliverables if d.get("status") == "approved"]
 
-        # Use provided KPIs or derive from snapshot's success_metrics with simulated overdelivery
-        kpis = payload.kpis
-        if not kpis:
-            base = (snapshot or {}).get("success_metrics") or [
-                {"kpi": "Reach", "target": "10M"},
-                {"kpi": "Engagement rate", "target": "7%"},
-                {"kpi": "Earned media value", "target": "\u20a6200M"},
-            ]
-            kpis = [{"kpi": k["kpi"], "target": k["target"], "actual": k["target"], "variance": "+18%"} for k in base]
-
+        # Everything the report says comes from the project's own pages.
         brand_name = _clean_document_text((brand or {}).get("company") or (brand or {}).get("name") or "Brand", "Brand")
         creator_name = _clean_document_text((creator or {}).get("name") or "Creator", "Creator")
         project_title = _clean_document_text(case.get("title") or "Project", "Project")
-        deliverable_titles = [_clean_document_text(d.get("title", "")) for d in deliverables]
-        # Project Report template sections - strictly mirrors the uploaded .docx outline
+        plan = case.get("plan") or {}
+        snap_id = (case.get("frame") or {}).get("alignment_snapshot_id")
+        deck = await _case_pitch_deck(bc_id, alignment_snapshot_id=snap_id)
+        selected_ids: List[str] = []
+        if snap_id:
+            snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0, "selected_creator_ids": 1}) or {}
+            selected_ids = snap.get("selected_creator_ids") or []
+        selected_ids = selected_ids or plan.get("selected_creator_ids") or ([creator_id] if creator_id else [])
+        found = await db.v3_creators.find({"id": {"$in": selected_ids}}, {"_id": 0}).to_list(20) if selected_ids else []
+        by_id = {c.get("id"): c for c in found}
+        mix = {str(r.get("creator") or "").strip().lower(): r for r in (((deck or {}).get("slides") or {}).get("creator_mix") or {}).get("rows") or [] if isinstance(r, dict)}
+        creators_ctx = []
+        for cid in selected_ids:
+            c = by_id.get(cid)
+            if not c:
+                continue
+            name = _clean_document_text(c.get("name") or "Creator", "Creator")
+            specialty = _clean_document_text(c.get("specialty") or c.get("genre") or c.get("category") or c.get("niche") or "")
+            creators_ctx.append({"name": name, "specialty": specialty, "role": _clean_document_text((mix.get(name.lower()) or {}).get("role") or "")})
+        round_doc = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0, "creator_selector": 1}) or {}
+        contracts_ctx = [{"title": c.get("title"), "status": "approved by brand" if c.get("brand_approved") else c.get("status")}
+                         for c in await _current_contracts(bc_id)]
+        invoices = await db.v3_invoices.find({"business_case_id": bc_id}, {"_id": 0, "file_data_base64": 0}).to_list(100)
+        comment_rows = await db.v3_interactions.find(
+            {"business_case_id": bc_id, "type": {"$in": ["brand_document_comment", "brand_contract_comment", "brand_report_feedback"]}},
+            {"_id": 0, "content": 1}).to_list(20)
+        ctx: Dict[str, Any] = {
+            "project_title": project_title, "brand_name": brand_name, "creators": creators_ctx,
+            "date": _now_iso()[:10], "engagement_track": case.get("engagement_track"),
+            "value": case.get("estimated_value"), "currency": case.get("value_currency") or "NGN",
+            "duration": creative_brief_duration((round_doc.get("creator_selector") or {}).get("timelines"), deck),
+            "concept": plan.get("planning_concept") or (planning_concept_from_deck(deck) if deck else ""),
+            "timeline_plan": plan.get("timeline_plan"), "deck": deck or {},
+            "deliverables": deliverables, "contracts": contracts_ctx, "invoices": invoices,
+            "comments": [r.get("content") for r in comment_rows if r.get("content")],
+        }
+        # KPI targets are the deck's success metrics; actual results only
+        # when the admin supplies them (never simulated).
+        kpis = payload.kpis or report_kpis_from_deck(ctx)
+        if not kpis:
+            # No deck metrics: the Strategy Snapshot's, if it set any.
+            snapshot = await db.v3_creative_snapshots.find_one({"business_case_id": bc_id}, {"_id": 0, "success_metrics": 1}) or {}
+            kpis = [{"kpi": m.get("kpi"), "target": m.get("target"), "actual": "Pending results", "variance": ""}
+                    for m in snapshot.get("success_metrics") or [] if isinstance(m, dict) and m.get("kpi")]
+        ctx["kpis"] = kpis
+        failures: List[str] = []
+        try:
+            prose = await asyncio.wait_for(_call_final_report_tool(final_report_facts(ctx), failures), timeout=100)
+        except Exception as exc:  # noqa: BLE001 - the pages' own words still make a report
+            failures.append(str(exc) or type(exc).__name__)
+            prose = None
+        if not prose:
+            logger.info("Final report for %s written from project text: %s", bc_id, " | ".join(failures))
         report_sections = [
-            {"heading": "1. Title Page", "content": (
-                f"{_clean_document_text(project_title, 'Project')} - Final Campaign Report\nBrand: {brand_name}\nCreator: {creator_name}\nPrepared by TASCK Creative Company Limited\nDate: {_now_iso()[:10]}"
-            )},
-            {"heading": "2. Executive Summary", "content": (
-                f"{project_title} delivered {len(approved)} of {len(deliverables)} contracted milestones with overall KPI performance summarised below. "
-                "Strategic objectives, creative execution and measurable outcomes are detailed in the following sections."
-            )},
-            {"heading": "3. Project Overview & Objectives", "content": (
-                f"Brand: {brand_name}\nProject Title: {_clean_document_text(project_title, 'Project')}\nEngagement Track: {case.get('engagement_track', 'paid')}\nBudget Approved: \u20a6{int(case.get('estimated_value') or 0):,}\nObjective: {(snapshot or {}).get('concept') or 'Aligned with the approved Strategy Snapshot.'}"
-            )},
-            {"heading": "4. Strategy Summary", "content": (
-                "This project followed the strategy approved in the Strategy Snapshot Studio. "
-                "Refer to the Strategy Snapshot for the full breakdown of insight, growth plan, and creator selection rationale."
-            )},
-            {"heading": "5. Deliverables", "content": (
-                ("Approved deliverables:\n- " + "\n- ".join(deliverable_titles)) if deliverable_titles else "No deliverables recorded against this Business Case."
-            )},
-            {"heading": "6. Performance / KPIs", "content": (
-                "\n".join([f"- {k.get('kpi')} - Target: {k.get('target')} | Actual: {k.get('actual')} | Variance: {k.get('variance')}" for k in kpis])
-            )},
-            {"heading": "7. Budget & Spend", "content": (
-                f"Approved Budget: \u20a6{int(case.get('estimated_value') or 0):,}\nActual Spend: To be reconciled against final invoices.\nAgency Fee (10%): Applied at source per the contract."
-            )},
-            {"heading": "8. Learnings", "content": (
-                "What worked well: pacing, creator activation, brand integration.\nWhat to refine: feedback loop with sponsors, scheduling buffers around production milestones."
-            )},
-            {"heading": "9. Recommendations & Next Steps", "content": (
-                "Recommended next move: maintain the working relationship via a small follow-on activation within 60 days. Document brand-side learnings in the CRM brand profile."
-            )},
-            {"heading": "10. Closure Sign-off", "content": (
-                "By acknowledging this report below, the Brand confirms receipt and acceptance of all delivered work and the closure of the Project under the executed Service Agreement."
-            )},
+            {**section, "content": _clean_document_body(section["content"])}
+            for section in build_final_report_sections(ctx, prose)
         ]
         # Feedback Template - strictly follows the uploaded Feedback Template (email + brand partner + creative partner + internal use)
         feedback = {
@@ -16268,23 +19122,19 @@ def make_v3_router(db):
         }
 
         existing = await db.v3_final_reports.find_one({"business_case_id": bc_id}, {"_id": 0})
-        if existing:
-            # Replace with newest generation
-            await db.v3_final_reports.delete_one({"id": existing["id"]})
-
-        fr_id = f"fr-{uuid.uuid4().hex[:8]}"
+        fr_id = (existing or {}).get("id") or f"fr-{uuid.uuid4().hex[:8]}"
         report = {
             "id": fr_id,
             "business_case_id": bc_id,
             "status": "ready_for_brand",
             "generated_at": _now_iso(),
             "brand_header": f"{brand_name.split(' ')[0].upper()}{' x ' + creator_name.upper() if creator else ''} x TASCK",
+            "creator_id": creator_id,
+            "creator_name": creator_name if creator else None,
             "title": f"{_clean_document_text(project_title, 'Project')} - Final Campaign Report",
-            "summary": (
-                f"{project_title} delivered {len(approved)} of {len(deliverables)} contracted milestones."
-                f" KPI performance compared against the Strategy Snapshot targets is summarised below, alongside the closure checklist."
-            ),
+            "summary": report_sections[1]["content"],
             "kpis": kpis,
+            "analysis_source": (prose or {}).get("analysis_source") or "project_pages",
             "sections": report_sections,
             "feedback": feedback,
             "report_sent_at": None,
@@ -16306,7 +19156,16 @@ def make_v3_router(db):
                 item["status"] = "done"
             if item["item"] == "Budget/fees recorded" and case.get("estimated_value") is not None:
                 item["status"] = "done"
-        await db.v3_final_reports.insert_one({**report})
+        if existing:
+            # Rebuilding keeps the report itself - its id (shared links),
+            # the feedback forms and anything already submitted on them,
+            # what was sent when, the checklist - and replaces the content.
+            content_keys = ("generated_at", "brand_header", "creator_id", "creator_name", "title",
+                            "summary", "kpis", "analysis_source", "sections")
+            await db.v3_final_reports.update_one({"id": fr_id}, {"$set": {k: report[k] for k in content_keys}})
+            report = {**existing, **{k: report[k] for k in content_keys}}
+        else:
+            await db.v3_final_reports.insert_one({**report})
         # initial pct calc
         done = len([i for i in report["closure_checklist"] if i["status"] == "done"])
         pct = round((done / len(report["closure_checklist"])) * 100)
@@ -16357,7 +19216,7 @@ def make_v3_router(db):
         reviewed_by: str = "admin"
 
     @router.get("/opportunities")
-    async def list_opportunities():
+    async def list_tracker_opportunities():
         return await db.v3_opportunities.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
     @router.get("/opportunities/candidates")
@@ -17112,8 +19971,11 @@ Produce the opportunity card JSON.
                     )
                     return {"plan": plan, "raw": data, "error": data.get("error")}
                 except Exception as exc:
-                    logger.warning("[SerpAPI fan-out a%d] call failed: %s - %s", attempt_num, plan["source_key"], exc)
-                    return {"plan": plan, "raw": {}, "error": str(exc)}
+                    # requests puts the full URL - including api_key= - in the
+                    # exception text; never log or persist that.
+                    reason = _redact_secrets(str(exc))
+                    logger.warning("[SerpAPI fan-out a%d] call failed: %s - %s", attempt_num, plan["source_key"], reason)
+                    return {"plan": plan, "raw": {}, "error": reason}
 
             fanout_results = await asyncio.gather(*[_serpapi_one(p) for p in attempt_plans])
             diagnostics["serpapi_calls_total"] += len(attempt_plans)
@@ -17561,9 +20423,8 @@ Produce the opportunity card JSON.
         if not candidate:
             raise HTTPException(404, "Opportunity candidate not found")
 
-        all_brands = await db.v3_brands.find({}, {"_id": 0}).to_list(1000)
         partner_name = candidate.get("partner_name") or candidate.get("brand_name")
-        brand = next((item for item in all_brands if _slug(item.get("company")) == _slug(partner_name)), None)
+        brand = await _find_matching_brand(partner_name or "")
         contact_email = candidate.get("primary_contact_email") or candidate.get("contact_email") or ""
         contact_name = candidate.get("primary_contact_name") or "Marketing Team"
         contact_role = candidate.get("primary_contact_role") or "Brand contact"
@@ -18982,6 +21843,10 @@ Produce the opportunity card JSON.
         call_date: Optional[str] = None
         session_label: Optional[str] = None
         notes: Optional[str] = None
+        # Set when this session was already saved as a meeting on a prior
+        # visit to the Upload Call Transcripts page - lets us update that
+        # meeting in place instead of creating a duplicate.
+        meeting_id: Optional[str] = None
 
     class BrandFrameTranscriptsPayload(BaseModel):
         transcripts: List[BrandCallTranscriptItem]
@@ -19023,26 +21888,38 @@ Produce the opportunity card JSON.
         for index, item in enumerate(clean_items):
             session_label = (item.session_label or f"Session {index + 1}").strip()
             call_date = (item.call_date or "").strip()
-            meeting = await create_meeting(MeetingCreate(
-                title=f"Business Call Transcript - {brand_name} - {session_label}",
-                meeting_type="business_call",
-                stage="connect",
-                entity_type="brand",
-                source=payload.source,
-                business_case_id=bc_id,
-                brand_id=brand_id,
-                rm_id=case.get("rm_id") or brand.get("rm_id") or payload.actor,
-                entity_name=brand_name,
-                business_case_title=case.get("title") or f"{brand_name} business case",
-                contact_name=brand.get("primary_contact") or "",
-                contact_role=brand.get("role") or "",
-                contact_email=brand.get("email") or "",
-                contact_phone=brand.get("phone") or "",
-                scheduled_for=call_date or None,
-                agenda="Multi-session transcript upload for Frame Alignment Snapshot.",
-                meeting_notes=f"Uploaded by {payload.actor} from {payload.source}. {item.notes or ''}".strip(),
-            ))
-            meeting_id = meeting["id"]
+            # Reuse the meeting this session was already saved as, if the
+            # frontend hydrated it from a prior visit - otherwise every
+            # resave would create a fresh duplicate meeting for content that
+            # already exists.
+            existing_meeting = None
+            if item.meeting_id:
+                existing_meeting = await db.v3_meetings.find_one(
+                    {"id": item.meeting_id, "business_case_id": bc_id}, {"_id": 0},
+                )
+            if existing_meeting:
+                meeting_id = existing_meeting["id"]
+            else:
+                meeting = await create_meeting(MeetingCreate(
+                    title=f"Business Call Transcript - {brand_name} - {session_label}",
+                    meeting_type="business_call",
+                    stage="connect",
+                    entity_type="brand",
+                    source=payload.source,
+                    business_case_id=bc_id,
+                    brand_id=brand_id,
+                    rm_id=case.get("rm_id") or brand.get("rm_id") or payload.actor,
+                    entity_name=brand_name,
+                    business_case_title=case.get("title") or f"{brand_name} business case",
+                    contact_name=brand.get("primary_contact") or "",
+                    contact_role=brand.get("role") or "",
+                    contact_email=brand.get("email") or "",
+                    contact_phone=brand.get("phone") or "",
+                    scheduled_for=call_date or None,
+                    agenda="Multi-session transcript upload for Frame Alignment Snapshot.",
+                    meeting_notes=f"Uploaded by {payload.actor} from {payload.source}. {item.notes or ''}".strip(),
+                ))
+                meeting_id = meeting["id"]
             meeting_ids.append(meeting_id)
             await db.v3_meetings.update_one(
                 {"id": meeting_id},
@@ -19062,30 +21939,54 @@ Produce the opportunity card JSON.
             })
 
         combined_transcript = "\n\n".join(format_transcript_session(index, item) for index, item in enumerate(clean_items))
-        aggregate_meeting = await create_meeting(MeetingCreate(
-            title=f"Combined Business Call Analysis - {brand_name}",
-            meeting_type="business_call",
-            stage="connect",
-            entity_type="brand",
-            source=f"{payload.source}_combined",
-            business_case_id=bc_id,
-            brand_id=brand_id,
-            rm_id=case.get("rm_id") or brand.get("rm_id") or payload.actor,
-            entity_name=brand_name,
-            business_case_title=case.get("title") or f"{brand_name} business case",
-            contact_name=brand.get("primary_contact") or "",
-            contact_role=brand.get("role") or "",
-            contact_email=brand.get("email") or "",
-            contact_phone=brand.get("phone") or "",
-            agenda="Combined transcript analysis for Alignment Snapshot questions.",
-            meeting_notes=f"Combined analysis across {len(clean_items)} uploaded transcript(s).",
-        ))
-        aggregate_meeting_id = aggregate_meeting["id"]
-        await db.v3_meetings.update_one(
-            {"id": aggregate_meeting_id},
-            {"$set": {"transcript": combined_transcript, "updated_at": now}},
-        )
-        meeting_ids.append(aggregate_meeting_id)
+        # A single transcript needs no separate "combined" meeting - analyze
+        # the one real session meeting directly. Creating a second meeting
+        # here for a single upload was the cause of transcripts appearing to
+        # duplicate: one real session meeting plus one synthetic "combined"
+        # meeting, both shown in the transcript list. Only build the
+        # synthetic aggregate when there is genuinely more than one session
+        # to combine, and flag it so it never renders as its own transcript
+        # row or gets double-counted in the analysis corpus.
+        if len(clean_items) == 1:
+            aggregate_meeting_id = meeting_ids[0]
+        else:
+            # Reuse the aggregate meeting from a prior resave of this same
+            # business case, if it still exists, instead of creating a new
+            # one every time.
+            prior_aggregate_id = (case.get("connect") or {}).get("latest_business_call_id")
+            existing_aggregate = None
+            if prior_aggregate_id:
+                existing_aggregate = await db.v3_meetings.find_one(
+                    {"id": prior_aggregate_id, "business_case_id": bc_id, "is_transcript_aggregate": True},
+                    {"_id": 0},
+                )
+            if existing_aggregate:
+                aggregate_meeting_id = existing_aggregate["id"]
+            else:
+                aggregate_meeting = await create_meeting(MeetingCreate(
+                    title=f"Combined Business Call Analysis - {brand_name}",
+                    meeting_type="business_call",
+                    stage="connect",
+                    entity_type="brand",
+                    source=f"{payload.source}_combined",
+                    business_case_id=bc_id,
+                    brand_id=brand_id,
+                    rm_id=case.get("rm_id") or brand.get("rm_id") or payload.actor,
+                    entity_name=brand_name,
+                    business_case_title=case.get("title") or f"{brand_name} business case",
+                    contact_name=brand.get("primary_contact") or "",
+                    contact_role=brand.get("role") or "",
+                    contact_email=brand.get("email") or "",
+                    contact_phone=brand.get("phone") or "",
+                    agenda="Combined transcript analysis for Alignment Snapshot questions.",
+                    meeting_notes=f"Combined analysis across {len(clean_items)} uploaded transcript(s).",
+                ))
+                aggregate_meeting_id = aggregate_meeting["id"]
+            await db.v3_meetings.update_one(
+                {"id": aggregate_meeting_id},
+                {"$set": {"transcript": combined_transcript, "updated_at": now, "is_transcript_aggregate": True}},
+            )
+            meeting_ids.append(aggregate_meeting_id)
 
         analysis = await analyze_meeting_transcript(aggregate_meeting_id)
         marketing_intelligence = (
@@ -19094,11 +21995,16 @@ Produce the opportunity card JSON.
             or _extract_marketing_intelligence(combined_transcript)
         )
         readiness_score = int(analysis.get("readiness_score") or 0)
+        # Re-uploading/adding transcripts to a case that has already advanced
+        # past Frame (Plan/Deliver) must not regress its stage or next_action
+        # back to Frame - only promote a case still sitting in Connect.
+        is_promoting = case.get("stage") in (None, "", "connect", "frame")
+        stage_updates: Dict[str, Any] = {"stage": "frame", "next_action": STAGE_NEXT_ACTIONS["frame"]} if is_promoting else {}
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {
                 "$set": {
-                    "stage": "frame",
+                    **stage_updates,
                     "connect.source": payload.source,
                     "connect.connect_status": "qualified_to_frame",
                     "connect.transcript": combined_transcript,
@@ -19111,7 +22017,6 @@ Produce the opportunity card JSON.
                     "connect.transcript_source_count": len(clean_items),
                     "connect.promoted_at": now,
                     "frame.readiness_score": readiness_score,
-                    "next_action": STAGE_NEXT_ACTIONS["frame"],
                     "updated_at": now,
                 },
                 "$addToSet": {
@@ -19158,7 +22063,11 @@ Produce the opportunity card JSON.
             "next_action": "Review Alignment Snapshot questions",
         })
 
-        alignment_snapshot = await generate_alignment_questions_for_v1(bc_id)
+        # Deliberately does NOT auto-generate an Alignment Snapshot here. The
+        # admin still needs to review/select the campaign opportunity these
+        # transcripts describe first - same as the Connect "Move to Call"
+        # flow, which runs detect-opportunities and stops at the Campaign &
+        # Alignment Snapshot review page before any snapshot is generated.
         business_case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
         return {
             "ok": True,
@@ -19166,9 +22075,7 @@ Produce the opportunity card JSON.
             "meeting_ids": meeting_ids,
             "aggregate_meeting_id": aggregate_meeting_id,
             "business_case_id": bc_id,
-            "alignment_snapshot_id": alignment_snapshot["id"],
             "business_case": business_case,
-            "alignment_snapshot": alignment_snapshot,
             "transcript_analysis": analysis,
         }
 
@@ -19225,11 +22132,16 @@ Produce the opportunity card JSON.
             or _extract_marketing_intelligence(transcript)
         )
         readiness_score = int(analysis.get("readiness_score") or 0)
+        # Same stage-regression guard as the multi-transcript endpoint above -
+        # only promote a case still in Connect; leave a further-along case's
+        # stage/next_action untouched when its transcript is re-processed.
+        is_promoting = case.get("stage") in (None, "", "connect", "frame")
+        stage_updates: Dict[str, Any] = {"stage": "frame", "next_action": STAGE_NEXT_ACTIONS["frame"]} if is_promoting else {}
         await db.v3_business_cases.update_one(
             {"id": bc_id},
             {
                 "$set": {
-                    "stage": "frame",
+                    **stage_updates,
                     "connect.source": payload.source,
                     "connect.connect_status": "qualified_to_frame",
                     "connect.status_updated_at": now,
@@ -19242,7 +22154,6 @@ Produce the opportunity card JSON.
                     "connect.latest_business_call_id": meeting_id,
                     "connect.promoted_at": now,
                     "frame.readiness_score": readiness_score,
-                    "next_action": STAGE_NEXT_ACTIONS["frame"],
                     "updated_at": now,
                 },
                 "$addToSet": {
@@ -19323,6 +22234,43 @@ Produce the opportunity card JSON.
             {"id": meeting_id},
             {"$set": {"decision_status": "deleted", "status": "deleted", "updated_at": _now_iso()}},
         )
+        return {"ok": True, "decision_status": "deleted"}
+
+    @router.post("/meetings/{meeting_id}/connect-transcript/delete")
+    async def delete_connect_transcript(meeting_id: str, payload: MeetingDecisionPayload = MeetingDecisionPayload()):
+        """Remove one saved transcript/conversation row from Connect.
+
+        Purpose-built so this never touches the brand record. It used to reuse
+        `delete_business_call_brand` above, which is a different feature (its
+        real use is "reject this business call and disqualify the brand" from
+        the V3 admin meetings queue) - reusing it here meant deleting a single
+        transcript row also marked the ENTIRE BRAND as deleted.
+        """
+        meeting = await db.v3_meetings.find_one({"id": meeting_id}, {"_id": 0})
+        if not meeting:
+            raise HTTPException(404, "Meeting not found")
+        now = _now_iso()
+        await db.v3_meetings.update_one(
+            {"id": meeting_id},
+            {"$set": {"decision_status": "deleted", "status": "deleted", "updated_at": now}},
+        )
+        bc_id = meeting.get("business_case_id")
+        if bc_id:
+            case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+            remaining_transcripts = [
+                record for record in ((case or {}).get("connect") or {}).get("transcripts", [])
+                if record.get("meeting_id") != meeting_id
+            ]
+            await db.v3_business_cases.update_one(
+                {"id": bc_id},
+                {
+                    "$set": {"connect.transcripts": remaining_transcripts, "updated_at": now},
+                    "$pull": {
+                        "connect.meeting_ids": meeting_id,
+                        "business_call_meeting_ids": meeting_id,
+                    },
+                },
+            )
         return {"ok": True, "decision_status": "deleted"}
 
     @router.post("/meetings/{meeting_id}/creator-fit/accept")
@@ -19477,10 +22425,24 @@ Produce the opportunity card JSON.
     # ------------------------------------------------------------------------
     # METRICS / OVERVIEW
     # ------------------------------------------------------------------------
+    @router.get("/metrics/overview")
+    async def admin_operational_overview(window_days: int = 30):
+        """Agency-wide operational Overview.
+
+        Counted from the live collections on every request, so the figures
+        track the workflow as work moves. See backend/v3_overview.py for how
+        each analysis is derived and which are deliberately omitted.
+        """
+        from v3_overview import build_overview
+        return await build_overview(db, window_days=max(1, min(int(window_days or 30), 365)))
+
     @router.get("/metrics/admin-overview")
     async def admin_overview():
-        cases = await db.v3_business_cases.find({}, {"_id": 0}).to_list(1000)
-        brands = await db.v3_brands.find({}, {"_id": 0}).to_list(1000)
+        # Same exclusion already applied to list_business_cases/list_brands and
+        # build_overview - a merged-away duplicate must not keep inflating the
+        # totals shown here just because this endpoint queried separately.
+        cases = await db.v3_business_cases.find({"merged_into": {"$exists": False}}, {"_id": 0}).to_list(1000)
+        brands = await db.v3_brands.find({"merged_into": {"$exists": False}}, {"_id": 0}).to_list(1000)
         creators = await db.v3_creators.find({}, {"_id": 0}).to_list(1000)
         rms = await db.v3_rms.find({}, {"_id": 0}).to_list(500)
         contracts = await db.v3_contracts.find({}, {"_id": 0}).to_list(1000)
@@ -19592,6 +22554,49 @@ Produce the opportunity card JSON.
     def _pair_key(id_a: str, id_b: str) -> str:
         first, second = sorted([str(id_a), str(id_b)])
         return f"{first}|{second}"
+
+    # Corporate-suffix words stripped when comparing brand names for a match -
+    # SequenceMatcher's ratio scores "NNPC" vs "NNPC Limited" at only ~0.50
+    # (too low to trust at brand-name length) purely because the shared
+    # "NNPC" is a small fraction of the longer string, even though these are
+    # obviously the same company. Stripping the suffix first and requiring an
+    # EXACT match on what's left catches that case precisely instead of
+    # relying on a single similarity threshold to do double duty.
+    _BRAND_SUFFIX_WORDS = {
+        "limited", "ltd", "plc", "inc", "incorporated", "llc", "corp",
+        "corporation", "company", "co", "group", "nigeria", "nig",
+        "international", "intl", "holdings", "enterprises",
+    }
+
+    def _brand_core_name(text: Any) -> str:
+        tokens = _dupe_norm(text).split()
+        while tokens and tokens[-1] in _BRAND_SUFFIX_WORDS:
+            tokens.pop()
+        return " ".join(tokens)
+
+    async def _find_matching_brand(company_name: str, threshold: float = 0.85) -> Optional[Dict[str, Any]]:
+        """Match a candidate brand name against brands already on record:
+        an exact match once corporate suffixes are stripped (catches "NNPC"
+        vs "NNPC Limited"), or high overall similarity otherwise (catches
+        near-duplicate/typo'd names), reusing the same normalise+score
+        approach as the duplicate flagger below."""
+        norm_target = _dupe_norm(company_name)
+        if not norm_target:
+            return None
+        core_target = _brand_core_name(company_name)
+        candidates = await db.v3_brands.find({"merged_into": {"$exists": False}}, {"_id": 0}).to_list(2000)
+        best: Optional[Dict[str, Any]] = None
+        best_score = 0.0
+        for candidate in candidates:
+            if str(candidate.get("status") or "").lower() == "deleted":
+                continue
+            candidate_name = candidate.get("company") or candidate.get("name")
+            if core_target and core_target == _brand_core_name(candidate_name):
+                return candidate
+            score = _dupe_score(norm_target, _dupe_norm(candidate_name))
+            if score > best_score:
+                best, best_score = candidate, score
+        return best if best_score >= threshold else None
 
     async def _scan_case_duplicates() -> List[Dict[str, Any]]:
         """Scan for likely-duplicate active business cases.
@@ -19711,6 +22716,39 @@ Produce the opportunity card JSON.
         target_id: str  # the case to KEEP
         actor: Optional[str] = "admin"
 
+    async def _merge_brand(loser_id: str, winner_id: str, actor: str) -> Dict[str, int]:
+        """Repoint every record that references the loser brand onto the
+        winner, then mark the loser merged. The collection list is the exact
+        same one delete_brand's cascade above already uses to find everything
+        a brand_id touches, so nothing referencing the loser is left orphaned.
+        """
+        brand_id_collections = [
+            "v3_contacts", "v3_business_cases", "v3_interactions", "v3_brand_accounts",
+            "v3_email_outbox", "v3_opportunities", "v3_meetings", "v3_projects",
+            "v3_fees", "v3_wallet", "v3_reports", "v3_tasks",
+        ]
+        now = _now_iso()
+        repointed: Dict[str, int] = {}
+        for collection in brand_id_collections:
+            result = await db[collection].update_many(
+                {"brand_id": loser_id}, {"$set": {"brand_id": winner_id, "updated_at": now}},
+            )
+            if result.modified_count:
+                repointed[collection] = result.modified_count
+        await db.v3_brands.update_one(
+            {"id": loser_id},
+            {
+                "$set": {
+                    "merged_into": winner_id,
+                    "merged_at": now,
+                    "status": "deleted",
+                    "deleted_reason": f"Merged into brand {winner_id}",
+                    "updated_at": now,
+                },
+                "$push": {"timeline": {"at": now, "event": "brand_merged", "actor": actor, "target_id": winner_id}}},
+        )
+        return repointed
+
     @router.post("/business-cases/{bc_id}/merge-into")
     async def merge_business_case(bc_id: str, payload: DuplicateMergePayload):
         target_id = (payload.target_id or "").strip()
@@ -19765,7 +22803,118 @@ Produce the opportunity card JSON.
                 },
             },
         )
-        return {"ok": True, "merged_case_id": bc_id, "target_id": target_id}
+        # If the two cases belong to different brand records, they're the
+        # same underlying duplicate the admin is resolving here - merge the
+        # brands too, or the loser brand would keep showing up as a distinct
+        # active brand forever even after its case is merged away.
+        brand_merge_result = None
+        source_brand_id = source.get("brand_id")
+        target_brand_id = target.get("brand_id")
+        if source_brand_id and target_brand_id and source_brand_id != target_brand_id:
+            brand_merge_result = await _merge_brand(source_brand_id, target_brand_id, payload.actor or "admin")
+
+        return {
+            "ok": True,
+            "merged_case_id": bc_id,
+            "target_id": target_id,
+            "brand_merged": bool(brand_merge_result),
+        }
+
+    # ------------------------------------------------------------------------
+    # DUPLICATE FLAGGER (bare brands - no business case yet to catch them)
+    # ------------------------------------------------------------------------
+    # The case-duplicate scan above only ever compares business cases, so two
+    # brands added twice with nothing but a CRM record (e.g. "Add Brand to
+    # CRM" run twice for the same company before the creation-time fuzzy
+    # check existed, or a brand added before that fix shipped) have no pair
+    # to surface there. This mirrors the same scan/merge/dismiss shape for
+    # brands directly, reusing the exact matching rule _find_matching_brand
+    # already uses (core name exact match after stripping corporate suffixes,
+    # or high overall similarity).
+    # ------------------------------------------------------------------------
+    async def _scan_brand_duplicates() -> List[Dict[str, Any]]:
+        brands = await db.v3_brands.find({"merged_into": {"$exists": False}}, {"_id": 0}).to_list(2000)
+        brands = [b for b in brands if str(b.get("status") or "").lower() != "deleted"]
+
+        dismissed_rows = await db.v3_duplicate_dismissals.find({}, {"_id": 0, "pair_key": 1}).to_list(5000)
+        dismissed_keys = {row.get("pair_key") for row in dismissed_rows if row.get("pair_key")}
+
+        brand_terms = [
+            (b, _brand_core_name(b.get("company") or b.get("name")), _dupe_norm(b.get("company") or b.get("name")))
+            for b in brands
+        ]
+
+        def _summarize(brand_row: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "id": brand_row.get("id"),
+                "company": brand_row.get("company") or brand_row.get("name") or "",
+                "industry": brand_row.get("industry") or "",
+                "status": brand_row.get("status") or "",
+                "primary_contact": brand_row.get("primary_contact") or "",
+                "created_at": brand_row.get("created_at"),
+                "updated_at": brand_row.get("updated_at"),
+            }
+
+        pairs: List[Dict[str, Any]] = []
+        for i in range(len(brand_terms)):
+            brand_a, core_a, norm_a = brand_terms[i]
+            for j in range(i + 1, len(brand_terms)):
+                brand_b, core_b, norm_b = brand_terms[j]
+                if not norm_a or not norm_b:
+                    continue
+                exact_core = bool(core_a) and core_a == core_b
+                score = 1.0 if exact_core else _dupe_score(norm_a, norm_b)
+                if not exact_core and score < 0.85:
+                    continue
+                pair_key = _pair_key(brand_a.get("id"), brand_b.get("id"))
+                if pair_key in dismissed_keys:
+                    continue
+                pairs.append({
+                    "pair_key": pair_key,
+                    "similarity": round(score, 3),
+                    "left": _summarize(brand_a),
+                    "right": _summarize(brand_b),
+                })
+        pairs.sort(key=lambda p: p["similarity"], reverse=True)
+        return pairs
+
+    @router.get("/brand-duplicates")
+    async def list_brand_duplicates():
+        pairs = await _scan_brand_duplicates()
+        return {"count": len(pairs), "pairs": pairs}
+
+    @router.get("/brand-duplicates/count")
+    async def brand_duplicates_count():
+        pairs = await _scan_brand_duplicates()
+        return {"count": len(pairs)}
+
+    @router.post("/brands/{brand_id}/duplicate-dismiss")
+    async def dismiss_brand_duplicate_pair(brand_id: str, payload: DuplicateDismissPayload):
+        other_id = (payload.other_id or "").strip()
+        if not other_id:
+            raise HTTPException(422, "other_id is required")
+        pair_key = _pair_key(brand_id, other_id)
+        now = _now_iso()
+        await db.v3_duplicate_dismissals.update_one(
+            {"pair_key": pair_key},
+            {"$set": {"pair_key": pair_key, "dismissed_at": now}},
+            upsert=True,
+        )
+        return {"ok": True, "pair_key": pair_key}
+
+    @router.post("/brands/{brand_id}/merge-into")
+    async def merge_brand_route(brand_id: str, payload: DuplicateMergePayload):
+        target_id = (payload.target_id or "").strip()
+        if not target_id or target_id == brand_id:
+            raise HTTPException(422, "target_id must be a different brand id")
+        source = await db.v3_brands.find_one({"id": brand_id}, {"_id": 0})
+        target = await db.v3_brands.find_one({"id": target_id}, {"_id": 0})
+        if not source:
+            raise HTTPException(404, "Source brand not found")
+        if not target:
+            raise HTTPException(404, "Target brand not found")
+        await _merge_brand(brand_id, target_id, payload.actor or "admin")
+        return {"ok": True, "merged_brand_id": brand_id, "target_id": target_id}
 
     # ------------------------------------------------------------------------
     # UNREAD MESSAGES BADGE (admin)

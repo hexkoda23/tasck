@@ -3,10 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { v3MoveBrandToBusinessCall } from '../../lib/v3api';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
+import useTopbarOffset from '../../lib/useTopbarOffset';
 
 const V1AdminBrandCallRedirect = () => {
   const { brandId } = useParams();
   const navigate = useNavigate();
+  const topbarOffset = useTopbarOffset();
   const [notice, setNotice] = useState('Opening transcript workspace...');
 
   useEffect(() => {
@@ -35,9 +37,13 @@ const V1AdminBrandCallRedirect = () => {
 
   return (
     <div className="space-y-4" data-testid="v1-brand-call-redirect">
-      <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
-        <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
-      </button>
+      <div className="v1-flow-sticky-nav" style={{ top: topbarOffset }}>
+        <div>
+          <button type="button" onClick={() => navigate(adminRoute('/crm-brands'))} className="v3-btn-secondary text-[11px]">
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to CRM Brands
+          </button>
+        </div>
+      </div>
       <div className="v3-card flex items-center gap-3 p-6 text-[13px] text-[#4F3E2F]">
         <Loader2 className="h-4 w-4 animate-spin text-[#1F4A3A]" />
         <span>{notice}</span>

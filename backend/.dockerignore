@@ -1,0 +1,13 @@
+# Keep secrets, tests and local artefacts out of the API image.
+.env
+.env.*
+!.env.example
+tests/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+Dockerfile
+.dockerignore

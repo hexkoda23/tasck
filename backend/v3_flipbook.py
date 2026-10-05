@@ -1450,13 +1450,64 @@ pf.on('flip', function(e){ sync(e.data); });
     });
   }catch(_){ }
 })();
-document.getElementById('prev').onclick = function(){ pf.flipPrev(); };
-document.getElementById('next').onclick = function(){ pf.flipNext(); };
-document.getElementById('first').onclick = function(){ pf.flip(0); };
-document.getElementById('last').onclick = function(){ pf.flip(total - 1); };
+// Turning the deck backwards did nothing in any small preview, while turning
+// it forwards worked - the deck flipped one way only.
+//
+// StPageFlip turns a page by grabbing a corner of the book, and it builds that
+// grab point itself - differently for each direction:
+//
+//   flipNext -> { x: rect.left + 2*pageWidth - 10, y: 1 }   uses the book's rect
+//   flipPrev -> { x: 10,                           y: 1 }   assumes the book is at 0
+//
+// rect.left is blockWidth/2 - pageWidth, zero only while the book fills its
+// container's width. As soon as height is the limiting dimension - every small
+// preview, the brand portal's among them - the book is centred, rect.left
+// grows, and the backward point lands outside the book. disableFlipByClick is
+// on here (a stray click must never turn a page), which makes the library
+// check the grab point is on a corner, and an off-book point fails that check:
+// the turn is dropped in silence.
+//
+// Both points are therefore built here, from the book's own rect. `top` is
+// included as well, which the library leaves out of BOTH directions - a tall
+// frame centres the book vertically and breaks the forward turn the same way.
+// The click guard is untouched: a point built this way satisfies it rather
+// than switching it off.
+function cornerPoint(direction){
+  var r = pf.getBoundsRect();
+  return {
+    x: direction < 0 ? r.left + 10 : r.left + 2 * r.pageWidth - 10,
+    y: r.top + 1
+  };
+}
+function turnBack(){ pf.getFlipController().flip(cornerPoint(-1)); }
+function turnForward(){ pf.getFlipController().flip(cornerPoint(1)); }
+// pf.flip(n) walks one spread at a time through the library's own grab points,
+// so the jump-to-first button was dropped in exactly the same way; step it
+// through the corrected points instead.
+function turnTo(index){
+  var current = pf.getCurrentPageIndex();
+  if (index === current) return;
+  var step = index > current ? turnForward : turnBack;
+  step();
+  var remaining = 40;
+  var timer = setInterval(function(){
+    if (--remaining < 0) { clearInterval(timer); return; }
+    if (pf.getState() !== 'read') return;
+    var now = pf.getCurrentPageIndex();
+    if ((index > current && now >= index) || (index < current && now <= index)) {
+      clearInterval(timer);
+      return;
+    }
+    step();
+  }, 120);
+}
+document.getElementById('prev').onclick = function(){ turnBack(); };
+document.getElementById('next').onclick = function(){ turnForward(); };
+document.getElementById('first').onclick = function(){ turnTo(0); };
+document.getElementById('last').onclick = function(){ turnTo(total - 1); };
 document.addEventListener('keydown', function(e){
-  if (e.key === 'ArrowRight') pf.flipNext();
-  if (e.key === 'ArrowLeft') pf.flipPrev();
+  if (e.key === 'ArrowRight') turnForward();
+  if (e.key === 'ArrowLeft') turnBack();
 });
 // Deterministic click-to-flip: the library's own click handling is disabled
 // (disableFlipByClick) so a plain click can never double-flip after a drag.
@@ -1470,7 +1521,7 @@ vp.addEventListener('click', function(e){
   if (Math.abs(e.clientX - downX) > 6 || Math.abs(e.clientY - downY) > 6) return;
   var book = document.querySelector('.stf__parent') || document.getElementById('book');
   var r = book.getBoundingClientRect();
-  if (e.clientX > r.left + r.width / 2) pf.flipNext(); else pf.flipPrev();
+  if (e.clientX > r.left + r.width / 2) turnForward(); else turnBack();
 });
 sync(0);
 // Download PDF: fires the browser's native print flow. Print CSS flattens

@@ -158,7 +158,7 @@ const V3AdminBusinessCases = () => {
     setBusy(true);
     setTimeout(() => {
       setGrantAgentRan(true);
-      setGrantOpportunities(demoGrantOpportunities);
+      setGrantOpportunities([]);
       setBusy(false);
     }, 350);
   };
@@ -179,18 +179,14 @@ const V3AdminBusinessCases = () => {
         })));
       } else {
         const pending = await v3ListOpportunityCandidates({ status: 'pending' });
-        setBusinessOpportunities((Array.isArray(pending) && pending.length ? pending : demoOpportunityCandidates)
+        setBusinessOpportunities((Array.isArray(pending) ? pending : [])
           .map((candidate) => ({
             ...candidateToBusinessOpportunity(candidate),
             source_type: 'scanner',
           })));
       }
     } catch (e) {
-      const demoAccepted = demoOpportunityCandidates.filter((candidate) => candidate.status === 'accepted');
-      setBusinessOpportunities(demoAccepted.length ? demoAccepted.map((candidate) => ({
-        ...candidateToBusinessOpportunity(candidate),
-        source_type: 'scanner_demo',
-      })) : demoBusinessOpportunities);
+      setBusinessOpportunities([]);
     } finally {
       setBusy(false);
     }
@@ -207,110 +203,28 @@ const V3AdminBusinessCases = () => {
     }
     setBusy(true);
     try {
-      if (opportunity.source_type === 'scanner' && opportunity.brand_id) {
-        const brand = brands.find((b) => b.id === opportunity.brand_id) || fallbackBrands.find((b) => b.id === opportunity.brand_id);
-        const brandRmId = brand?.rm_id || brand?.rmId || brand?.relationship_manager?.id || 'rm-temi';
-        const created = await v3CreateBusinessCase({
-          brand_id: opportunity.brand_id,
-          creator_id: null,
-          title: opportunity.title,
-          engagement_track: 'paid',
-          estimated_value: Number(opportunity.estimated_value) || 75000000,
-          rm_id: brandRmId,
-          connect_status: 'in_discovery',
-          stated_intent: opportunity.pain_point,
-          source: opportunity.source || 'SerpAPI opportunity scanner',
-        });
-        setBusinessOpportunities((items) => items.map((item) => (item.id === opportunity.id ? { ...item, status: 'converted' } : item)));
-        navigate(`/v3/admin/business-cases/${created.id}`);
-        return;
-      }
+      const brand = brands.find((b) => b.id === opportunity.brand_id);
+      const created = await v3CreateBusinessCase({
+        brand_id: opportunity.brand_id,
+        creator_id: null,
+        title: opportunity.title,
+        engagement_track: 'paid',
+        estimated_value: Number(opportunity.estimated_value) || 0,
+        rm_id: brand?.rm_id || brand?.rmId || brand?.relationship_manager?.id || null,
+        connect_status: 'in_discovery',
+        stated_intent: opportunity.pain_point,
+        source: opportunity.source || 'SerpAPI opportunity scanner',
+      });
+      setBusinessOpportunities((items) => items.map((item) => (item.id === opportunity.id ? { ...item, status: 'converted' } : item)));
+      navigate(`/v3/admin/business-cases/${created.id}`);
     } catch (e) {
-      // Demo/local fallback below keeps the presentation usable.
+      // No client-side fabrication: send the admin to CRM -> Opportunities to convert it there.
+      navigate('/v3/admin/crm/opportunities');
     } finally {
       setBusy(false);
     }
-
-    const brand = fallbackBrands.find((item) => item.id === opportunity.brand_id) || {
-      id: opportunity.brand_id || `brand-${opportunity.id}`,
-      company: opportunity.company,
-      industry: opportunity.industry || 'Brand / Consumer Marketing',
-      primaryContact: 'Marketing Team',
-      primary_contact: 'Marketing Team',
-      role: 'Brand contact',
-      email: '',
-      leadScore: opportunity.fit_score || 70,
-    };
-    const row = {
-      id: `ai-bc-${opportunity.id}`,
-      brand_id: opportunity.brand_id || brand.id,
-      creator_id: null,
-      title: opportunity.title,
-      stage: 'connect',
-      engagement_track: 'paid',
-      estimated_value: opportunity.estimated_value,
-      rm_id: 'rm-temi',
-      created_at: '2026-05-26',
-      days_in_stage: 0,
-      next_action: 'Review AI-scraped opportunity, schedule connector call, and generate Alignment Snapshot.',
-      health: 'new',
-      connect: {
-        status: 'in_discovery',
-        connect_status: 'in_discovery',
-        source: opportunity.source,
-        stated_intent: opportunity.pain_point,
-        marketing_intelligence: {
-          key_marketing_focus: opportunity.suggested_angle,
-          primary_target_audience: 'Priority audience inferred from the scraped business opportunity; admin to confirm on connector call.',
-          key_marketing_channels: ['Instagram', 'TikTok', 'YouTube', 'PR'],
-          marketing_kpis: [
-            { kpi: 'Reach', target: 'Confirm with brand during connector call.' },
-            { kpi: 'Engagement', target: 'Confirm channel benchmark with brand.' },
-            { kpi: 'Conversion signal', target: 'Define from the scraped pain point and brand objective.' },
-          ],
-          source: 'ai_business_opportunity_agent',
-        },
-      },
-    };
-    const bundle = {
-      source: 'demo',
-      business_case: {
-        ...row,
-        frame: {},
-        plan: {},
-        deliver: { scope_change_log: [] },
-        closure: { report_status: 'pending', brand_feedback_received: false, creator_feedback_received: false },
-      },
-      brand,
-      creator: null,
-      rm: getRM('rm-temi'),
-      interactions: [{
-        id: `int-${opportunity.id}`,
-        type: 'ai_discovery',
-        title: 'AI-scraped business opportunity',
-        author: 'TASCK AI Opportunity Agent',
-        date_iso: new Date().toISOString(),
-        content: `${opportunity.pain_point}\n\nSuggested angle: ${opportunity.suggested_angle}\n\nSource: ${opportunity.source}\nContact: ${opportunity.contact}`,
-      }],
-      alignment_snapshot: null,
-      invoices: [],
-      brainstorm_round: null,
-      creative_brief: null,
-      creative_snapshot: null,
-      contract: null,
-      deliverables: [],
-      final_report: null,
-    };
-    saveStoredDemoBundle(bundle);
-    setCases((current) => {
-      const withoutDuplicate = current.filter((item) => item.id !== row.id);
-      const next = [row, ...withoutDuplicate];
-      setOverview(demoOverviewFromRows(next));
-      return next;
-    });
-    setBusinessOpportunities((items) => items.map((item) => (item.id === opportunity.id ? { ...item, status: 'converted' } : item)));
-    navigate(`/v3/admin/business-cases/${row.id}`);
   };
+
 
   return (
     <>

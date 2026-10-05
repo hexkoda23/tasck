@@ -1,0 +1,100 @@
+# Detects drift from "production is built from THCO-Labs/TASCK".
+#
+# Fails when:
+# - a Container App is not running an image pinned by digest,
+# - a running image lacks the org.opencontainers.image.revision label, or that
+#   commit is not on main,
+# - the registry received a tag in the last 8 days (and after the pipeline
+#   cut-over) that is not a main commit, which is what a manual
+#   `az acr build` / `docker push` produces.
+#
+# Read-only against Azure: it never changes apps, images or data.
+name: Verify production
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # daily, 06:17 UTC
+  workflow_run:
+    workflows: [Deploy to Azure]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  RESOURCE_GROUP: rg-tasck-prod
+  ACR_NAME: acrtasckproddcycxfri
+  ACR_LOGIN_SERVER: acrtasckproddcycxfri.azurecr.io
+
+jobs:
+  verify:
+    name: Production images trace to main
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR (read)
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Running images are digests built from main
+        run: |
+          set -uo pipefail
+          az extension add --name containerapp --upgrade --only-show-errors
+          problems=0
+          for APP in tasck-api tasck-web; do
+            IMAGE=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query "properties.template.containers[0].image" -o tsv)
+            echo "$APP runs $IMAGE"
+            case "$IMAGE" in
+              "$ACR_LOGIN_SERVER/$APP@sha256:"*) ;;
+              *) echo "::error title=$APP not pinned::$APP runs '$IMAGE', not a digest from $ACR_LOGIN_SERVER/$APP"; problems=$((problems+1)); continue ;;
+            esac
+            REV=$(docker buildx imagetools inspect "$IMAGE" --format '{{ index .Image.Config.Labels "org.opencontainers.image.revision" }}' 2>/dev/null || true)
+            SRC=$(docker buildx imagetools inspect "$IMAGE" --format '{{ index .Image.Config.Labels "org.opencontainers.image.source" }}' 2>/dev/null || true)
+            if [ -z "$REV" ] || [ "$REV" = "<no value>" ]; then
+              echo "::error title=$APP has no commit label::$IMAGE was not built by the deploy workflow"; problems=$((problems+1)); continue
+            fi
+            if [ "$SRC" != "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" ]; then
+              echo "::error title=$APP built elsewhere::source label is '$SRC'"; problems=$((problems+1)); continue
+            fi
+            if ! git merge-base --is-ancestor "$REV" origin/main 2>/dev/null; then
+              echo "::error title=$APP commit not on main::$IMAGE was built from $REV, which is not on main"; problems=$((problems+1)); continue
+            fi
+            echo "$APP OK: built from $REV ($(git log -1 --format='%h %s' "$REV"))"
+          done
+          exit $problems
+
+      - name: No out-of-band pushes to the registry
+        if: always()
+        run: |
+          set -uo pipefail
+          SINCE=$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          # Pushes before the pipeline's first release (2026-09-15 18:00 UTC) predate this
+          # policy; their content was recovered into Git.
+          CUTOVER=2026-09-15T18:00:00Z
+          [[ "$SINCE" < "$CUTOVER" ]] && SINCE=$CUTOVER
+          problems=0
+          for APP in tasck-api tasck-web; do
+            while IFS=$'\t' read -r TAG CREATED; do
+              [ -z "$TAG" ] && continue
+              if [[ "$TAG" =~ ^[0-9a-f]{40}$ ]] && git merge-base --is-ancestor "$TAG" origin/main 2>/dev/null; then
+                continue
+              fi
+              echo "::error title=Manual image in ACR::$APP:$TAG pushed $CREATED is not a main commit. Build through a PR instead of az acr build / docker push."
+              problems=$((problems+1))
+            done < <(az acr manifest list-metadata -r "$ACR_NAME" -n "$APP" \
+                       --query "[?createdTime>='$SINCE'].[tags[0], createdTime]" -o tsv 2>/dev/null)
+          done
+          [ "$problems" -eq 0 ] && echo "No out-of-band image pushes in the last 8 days."
+          exit $problems

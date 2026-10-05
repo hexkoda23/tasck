@@ -150,6 +150,40 @@ const overrideCandidatesFor = (name) => {
 
 export { overrideCandidatesFor };
 
+// Sites that host pages ABOUT brands - pins, galleries, press, directories,
+// marketplaces, socials. A brand whose website field points at one of these
+// (e.g. a Pinterest pin it was found on) must not borrow that site's favicon
+// as its logo. Mirrors THIRD_PARTY_DOMAINS in backend/official_brand_logo.py.
+const THIRD_PARTY_LOGO_DOMAINS = [
+  'pinterest.com', 'pinterest.co.uk', 'pinterest.ca', 'pinterest.fr', 'pinterest.de', 'pinterest.it',
+  'pinterest.es', 'pinterest.com.au', 'pin.it', 'pinimg.com', 'tumblr.com', 'reddit.com', 'quora.com',
+  'flickr.com', 'behance.net', 'dribbble.com', 'imgur.com', 'giphy.com', 'threads.net', 'fandom.com',
+  'blogspot.com', 'wikimedia.org', 'wikipedia.org', 'brandsoftheworld.com', 'seeklogo.com',
+  'logos-world.net', '1000logos.net', 'worldvectorlogo.com', 'freepik.com', 'shutterstock.com',
+  'gettyimages.com', 'istockphoto.com', 'pngwing.com', 'pngtree.com', 'instagram.com', 'facebook.com',
+  'x.com', 'twitter.com', 'tiktok.com', 'linkedin.com', 'youtube.com', 'apps.apple.com',
+  'play.google.com', 'crunchbase.com', 'amazon.com', 'etsy.com', 'ebay.com', 'jumia.com.ng', 'jiji.ng',
+  'konga.com', 'linktr.ee', 'medium.com', 'forbes.com', 'bloomberg.com', 'reuters.com', 'bbc.com',
+  'cnn.com', 'vogue.com',
+];
+
+// A contact's email domain names the brand's site only when it carries the
+// brand's name (sam@gucci.com for Gucci) - an agency or personal domain
+// (dean@thcohqs.com) is someone else's. Mirrors _email_domain_matches_brand
+// in backend/v3_routes.py.
+const NAME_NOISE = new Set(['ltd', 'limited', 'inc', 'incorporated', 'co', 'company', 'corp', 'corporation',
+  'group', 'global', 'intl', 'international', 'nigeria', 'ng', 'africa', 'plc', 'holdings', 'the', 'and']);
+export const emailDomainMatchesBrand = (domain, brandName) => {
+  const label = String(domain || '').toLowerCase().split('.')[0].replace(/[^a-z0-9]/g, '');
+  const key = String(brandName || '').toLowerCase().split(/[^a-z0-9]+/).filter((t) => t && !NAME_NOISE.has(t)).join('');
+  return label.length >= 3 && key.length >= 3 && (label.includes(key) || key.includes(label));
+};
+
+export const isThirdPartyLogoDomain = (domain) => {
+  const value = String(domain || '').toLowerCase().replace(/^www\./, '');
+  return Boolean(value) && THIRD_PARTY_LOGO_DOMAINS.some((d) => value === d || value.endsWith(`.${d}`));
+};
+
 // Kept for backwards compatibility with imports elsewhere in the codebase.
 export const WEYAN_LOGO_URL = 'https://www.weyan.app/favicon.png';
 export const isWeYanBrand = (name) => normaliseBrandKey(name).includes('weyan');
@@ -243,11 +277,30 @@ export const setCachedBrandLogo = (name, url) => {
   writeCache(entries);
 };
 
+/**
+ * True for a URL long enough to be junk rather than a link.
+ *
+ * An uploaded logo is stored inline as a `data:` URI and is legitimately
+ * thousands of characters long, so the length test must not apply to it -
+ * applying it dropped every uploaded logo from the candidate list, which is
+ * why an upload saved correctly and then never appeared.
+ */
 export const truncate = (url, max = 512) => {
   if (typeof url !== 'string') return false;
   const trimmed = url.trim();
+  if (trimmed.slice(0, 5).toLowerCase() === 'data:') return false;
   return trimmed.length > max;
 };
+
+/**
+ * An inline logo - an upload held on the record as a `data:` URI.
+ *
+ * Not the same question as "is this stored on the brand": a scraped logo is
+ * saved as an ordinary https URL and is just as explicit. Callers say which
+ * candidate came from the record by passing it as `storedLogo`; this helper
+ * only catches inline ones that arrive inside a candidate list.
+ */
+export const isInlineLogo = (url) => typeof url === 'string' && /^(data:|blob:)/i.test(url.trim());
 
 const deriveInitials = (name = '') => {
   const clean = String(name).trim();
@@ -338,16 +391,37 @@ const detectWhiteLogo = (url, cb) => {
 export const BrandLogo = ({
   name,
   candidates = [],
+  storedLogo = '',
   initials,
   containerClassName = '',
   imgClassName = '',
   initialsClassName = '',
+  // Optional: told which URL actually rendered, so a page can say where the
+  // logo it is showing came from.
+  onResolved,
 }) => {
   const overrides = overrideCandidatesFor(name);
   const userCandidates = Array.isArray(candidates) ? candidates.filter(Boolean) : [];
-  const overriddenCandidateKey = [...overrides, ...userCandidates].join('|');
-  const resolved = [...overrides, ...userCandidates];
-  const cached = getCachedBrandLogo(name);
+  // The logo on the brand record - uploaded, or scraped and saved - is an
+  // explicit choice, so it outranks both the hardcoded name overrides and the
+  // guessed favicons. Everything else keeps its existing order.
+  const stored = Array.from(new Set(
+    [storedLogo, ...userCandidates.filter(isInlineLogo)].filter(Boolean).map((c) => String(c).trim()),
+  ));
+  const guesses = userCandidates.filter((candidate) => !stored.includes(String(candidate).trim()));
+  const overriddenCandidateKey = [...stored, ...overrides, ...guesses].join('|');
+  const resolved = [...stored, ...overrides, ...guesses];
+  // The cache is a fast path for GUESSING, so it only applies when the record
+  // holds nothing. It is keyed by brand name, written on every successful load
+  // and never expires, so consulting it ahead of the record's own logo pinned
+  // an old favicon in place for good - a new upload could never displace it.
+  //
+  // It must also still be one of this brand's candidates. The cache outlives
+  // the rules that produced its entries: a favicon guessed from a page the
+  // brand was merely found on (a Pinterest pin) stayed pinned as that brand's
+  // logo after such guesses were ruled out.
+  const cachedEntry = stored.length ? '' : getCachedBrandLogo(name);
+  const cached = cachedEntry && resolved.includes(cachedEntry) ? cachedEntry : '';
   // When there's a cached URL, try it first (fast path). When cache is empty
   // we must NOT prepend '' - an empty first entry short-circuits the <img>
   // render below and the whole fallback chain never fires.
@@ -383,7 +457,10 @@ export const BrandLogo = ({
           src={url}
           alt={`${name || 'Brand'} logo`}
           className={imgClassName}
-          onLoad={() => setCachedBrandLogo(name, url)}
+          onLoad={() => {
+            if (!stored.includes(url)) setCachedBrandLogo(name, url);
+            if (onResolved) onResolved(url);
+          }}
           onError={() => setIndex((current) => current + 1)}
         />
       ) : (

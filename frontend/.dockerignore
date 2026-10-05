@@ -1,0 +1,11 @@
+# Keep env files, dependencies and local build output out of the build context.
+.env
+.env.*
+node_modules/
+build/
+coverage/
+.cache/
+npm-debug.log*
+yarn-error.log*
+Dockerfile
+.dockerignore

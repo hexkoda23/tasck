@@ -799,7 +799,12 @@ div:has(> a[href*="utm_source=emergent"]) {
   font-family: 'Inter', sans-serif;
   color: #1A1A1A;
   max-width: 100%;
-  overflow-x: hidden;
+  /* `clip` rather than `hidden`: both stop sideways overflow, but `hidden`
+     makes this a scroll container, and a scroll container that never scrolls
+     kills `position: sticky` for everything inside it - the topbar and the
+     Business Case flow nav bar both scrolled away because of it. `clip`
+     leaves the page itself as the scroller, so sticky works. */
+  overflow-x: clip;
 }
 
 .v3-sidebar {
@@ -946,6 +951,49 @@ div:has(> a[href*="utm_source=emergent"]) {
   max-width: 1180px;
 }
 
+/* Pinned back bar: the Back / Business Cases (or CRM Brands) buttons stay
+   under the topbar so the admin never has to scroll to the top to go back.
+   Only that one row is pinned - page titles, steps and phase bars scroll with
+   the page - so the bar stays short. Used by the Business Case flow pages and
+   every other admin page with a top back bar. `top` is set inline from the
+   measured topbar height. The negative margins bleed the bar out over
+   .v3-content's padding so scrolled content never shows at its edges. */
+.v1-flow-sticky-nav {
+  position: sticky;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: #FAFAF7;
+  margin: -32px -40px 0;
+  padding: 14px 40px 10px;
+  border-bottom: 1px solid #E8E4DB;
+}
+
+.v3-dark .v1-flow-sticky-nav {
+  background: #1A1A1A;
+  border-bottom-color: #2A2A2A;
+}
+
+/* Narrow layout: the menu and the search bar scroll away (see the
+   900px .v3-shell rules), and the back bar pins to the very top of the
+   screen. The margins still have to match .v3-content's padding at each
+   breakpoint. */
+@media (max-width: 900px) {
+  .v1-flow-sticky-nav {
+    margin: -24px -16px 0;
+    padding: 10px 16px 8px;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 540px) {
+  .v1-flow-sticky-nav {
+    margin: -20px -12px 0;
+    padding: 8px 12px 8px;
+  }
+}
+
 .v3-stepper {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1003,10 +1051,18 @@ div:has(> a[href*="utm_source=emergent"]) {
 @media (max-width: 900px) {
   .v3-shell {
     display: block;
+    /* `clip`, as on wide screens, so the back bar can pin. The menu and the
+       search bar are made non-sticky below instead, so they still scroll
+       away as they always have here and only the short back bar stays. */
+    overflow-x: clip;
+  }
+
+  .v3-shell .v3-topbar {
+    position: relative;
   }
 
   .v3-sidebar {
-    position: sticky;
+    position: relative;
     width: 100%;
     min-height: 0;
     max-height: none;

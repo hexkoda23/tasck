@@ -1,0 +1,332 @@
+import { adminRoute } from './v3AdminRouteBase';
+
+/*
+ * The admin business-case flow, in the order an admin actually walks it.
+ *
+ * Every flow page already knew how to move forward from its own primary
+ * action ("Promote to Frame", "Open Pitch Deck", ...), but those actions are
+ * only offered while there is work left to do. Coming back to a finished page
+ * left no way onward except the browser Back button, which is why FlowShell
+ * now renders a footer with Previous / Next on every page. This table is the
+ * single source of that order.
+ *
+ * `suffix` is the part after /business-cases/:id. `scoped` marks the steps
+ * that also exist under /business-cases/:id/snapshot/:snapshotId/... - when a
+ * Connect call produced several Alignment Snapshots each one owns its own
+ * Creator Selector, Pitch Deck and Creative Brief, and moving between them
+ * must stay inside the snapshot the admin opened.
+ *
+ * `ownsNext` marks a page that already carries its own onward button, so the
+ * footer must not add a second one. Two buttons doing one job is clutter at
+ * best; on the Pitch Deck and Creative Brief it was worse than that, because
+ * their "Next step" card points at the sibling or at Planning depending on
+ * which of the pair was opened first, while a footer Next is fixed - so the
+ * page could offer "Move to Business Case" and "Next: Creative Brief" at the
+ * same time, disagreeing about where the admin goes.
+ */
+export const FLOW_STEPS = [
+  { key: 'connect', suffix: '/connect', label: 'Connect / Business Call', ownsNext: true },
+  { key: 'connect-schedule', suffix: '/connect/schedule', label: 'Conversations & Transcripts' },
+  { key: 'snapshot', suffix: '/frame/snapshot', label: 'Alignment Snapshot' },
+  { key: 'brainstorm-transcript', suffix: '/frame/brainstorm-transcript', label: 'Brainstorm Transcript' },
+  { key: 'brainstorm', suffix: '/frame/brainstorm', label: 'Brainstorm' },
+  { key: 'creator-scan', suffix: '/frame/creator-scan', label: 'Creator Selector', scoped: true, ownsNext: true },
+  { key: 'pitch-deck', suffix: '/frame/pitch-deck', label: 'Pitch Deck', scoped: true, ownsNext: true },
+  { key: 'brief', suffix: '/frame/brief', label: 'Creative Brief', scoped: true, ownsNext: true },
+  { key: 'planning', suffix: '/plan/planning', label: 'Planning', ownsNext: true },
+  { key: 'contracts', suffix: '/delivery/contracts', label: 'Contract Studio', ownsNext: true },
+  { key: 'deliverables', suffix: '/delivery/deliverables', label: 'Deliverables' },
+  { key: 'final-report', suffix: '/reporting/final-report', label: 'Final Report' },
+];
+
+/*
+ * Pages that sit beside the main chain rather than in it. Nothing links to
+ * the Creator Briefing Call today, and the Connect sub-pages are detours the
+ * admin is sent to and must be able to come back from, so each names its own
+ * neighbours instead of taking a slot in the order above.
+ */
+const ASIDE_STEPS = {
+  '/frame/creator-briefing-call': { label: 'Creator Briefing Call', prev: 'brief', next: 'planning' },
+  // The Opportunities page exists to turn opportunities into Alignment
+  // Snapshots, so it is a real gate; the rest are read-only detours the admin
+  // was sent to, and hiding Next on those would only strand them.
+  '/connect/opportunities': { label: 'Opportunities', prev: 'connect-schedule', next: 'snapshot', requires: 'snapshot-exists' },
+  '/connect/questions': { label: 'Connect Questions', prev: 'connect-schedule', next: 'snapshot' },
+  '/connect/analysis': { label: 'Connect Analysis', prev: 'connect-schedule', next: 'snapshot' },
+  '/connect/reschedule': { label: 'Reschedule', prev: 'connect-schedule', next: 'connect-schedule' },
+  '/frame/transcripts': { label: 'Frame Transcripts', prev: 'snapshot', next: 'brainstorm-transcript' },
+  '/frame/waiting-brand': { label: 'Waiting on Brand', prev: 'snapshot', next: 'brainstorm-transcript' },
+  '/frame/admin-review': { label: 'Admin Review', prev: 'snapshot', next: 'brainstorm-transcript' },
+  '/frame/approved': { label: 'Approved', prev: 'snapshot', next: 'brainstorm-transcript' },
+  // The Feedback page carries its own "Open Delivery" button, so the footer
+  // must not add a second way onward.
+  '/plan/feedback': { label: 'Feedback', prev: 'planning', next: 'deliverables', ownsNext: true },
+  '/delivery/waiting-signatures': { label: 'Waiting for Signatures', prev: 'contracts', next: 'deliverables' },
+};
+
+const stepByKey = (key) => FLOW_STEPS.find((step) => step.key === key) || null;
+
+/**
+ * How far along the flow the page at `pathname` is: its FLOW_STEPS index (a
+ * detour counts as the step before it), or -1 for a path outside the flow.
+ * Lets "Continue" compare a remembered page with the furthest phase reached.
+ */
+export const flowStepRank = (pathname) => {
+  const raw = suffixOf(pathname);
+  const suffix = /^\/plan\/(brainstorm|creator-scan|brief|creator-briefing-call)$/.test(raw)
+    ? raw.replace('/plan/', '/frame/')
+    : raw;
+  const index = FLOW_STEPS.findIndex((step) => step.suffix === suffix);
+  if (index !== -1) return index;
+  const aside = ASIDE_STEPS[suffix];
+  return aside ? FLOW_STEPS.findIndex((step) => step.key === aside.prev) : -1;
+};
+
+/** The part of an admin flow URL after /business-cases/:id, snapshot scope stripped. */
+const suffixOf = (pathname) => {
+  const match = String(pathname || '').match(/\/business-cases\/[^/]+(?:\/snapshot\/[^/]+)?(\/.*)?$/);
+  const suffix = (match && match[1]) || '';
+  return suffix.replace(/\/$/, '');
+};
+
+export const flowSnapshotId = (pathname) => {
+  const match = String(pathname || '').match(/\/business-cases\/[^/]+\/snapshot\/([^/]+)/);
+  return (match && match[1]) || '';
+};
+
+export const flowStepHref = (step, id, snapshotId) => {
+  if (!step) return '';
+  if (snapshotId && step.scoped) {
+    return adminRoute(`/business-cases/${id}/snapshot/${snapshotId}${step.suffix}`);
+  }
+  return adminRoute(`/business-cases/${id}${step.suffix}`);
+};
+
+/**
+ * Previous / next page for the flow page at `pathname`, or nulls when the
+ * path is not part of the flow (so FlowShell can render nothing).
+ * Legacy /plan/* aliases resolve to the same steps as their /frame/* twins.
+ */
+export const flowNeighbours = (pathname, id) => {
+  if (!id) return { prev: null, next: null };
+  const snapshotId = flowSnapshotId(pathname);
+  const raw = suffixOf(pathname);
+  // /plan/brainstorm, /plan/creator-scan, /plan/brief and
+  // /plan/creator-briefing-call are back-compat aliases for the /frame/ paths.
+  const suffix = /^\/plan\/(brainstorm|creator-scan|brief|creator-briefing-call)$/.test(raw)
+    ? raw.replace('/plan/', '/frame/')
+    : raw;
+
+  const aside = ASIDE_STEPS[suffix];
+  if (aside) {
+    return {
+      prev: stepByKey(aside.prev),
+      next: stepByKey(aside.next),
+      snapshotId,
+    };
+  }
+
+  const index = FLOW_STEPS.findIndex((step) => step.suffix === suffix);
+  if (index === -1) return { prev: null, next: null, snapshotId };
+  return {
+    prev: index > 0 ? FLOW_STEPS[index - 1] : null,
+    next: index < FLOW_STEPS.length - 1 ? FLOW_STEPS[index + 1] : null,
+    snapshotId,
+  };
+};
+
+/*
+ * Has the work on a step actually been done?
+ *
+ * Next is only offered once it has. A Next on every page regardless would let
+ * an admin walk the whole flow without generating anything, which is exactly
+ * the ordering the stage gating exists to enforce - the footer is there so a
+ * FINISHED page can be left again, not so an unfinished one can be skipped.
+ *
+ * Each rule reads the artifact the step is supposed to produce, from the same
+ * bundle every flow page already loads. Anything not listed has no artifact to
+ * check and is treated as passable.
+ */
+const STEP_DONE = {
+  // A conversation has been saved against the project - the Connect page's own
+  // CTA flips from "Add Transcript" to "Next" on the same condition.
+  connect: (bundle, bc) => Boolean(
+    (Array.isArray(bundle.meetings) && bundle.meetings.length)
+    || Number(bundle.connect_sources_count) > 0
+  ),
+  // The conversations have been analysed.
+  'connect-schedule': (bundle, bc) => Boolean(
+    bc.connect?.opportunities_detected_at || bc.connect?.analyzed_at
+  ),
+  /*
+   * Generating the Alignment Snapshot is not finishing it - it still has to be
+   * sent, commented on, revised and approved, and until the admin approves it
+   * the case does not advance. So the Alignment Snapshot page is passed on
+   * APPROVAL, not on the document existing.
+   *
+   * `frame.alignment_snapshot_status` is what admin approval sets and what the
+   * stage advance keys off; the snapshot's own `approved_at` / `status` covers
+   * records written before that field was populated.
+   */
+  snapshot: (bundle, bc) => {
+    const frame = bc.frame || {};
+    if (frame.alignment_snapshot_status === 'approved' || frame.alignment_snapshot_approved_at) return true;
+    const snapshots = Array.isArray(bundle.alignment_snapshots) && bundle.alignment_snapshots.length
+      ? bundle.alignment_snapshots
+      : [bundle.alignment_snapshot].filter(Boolean);
+    return snapshots.some((snap) => snap && (snap.approved_at || snap.status === 'approved'));
+  },
+  // Whether a snapshot exists at all - what the Opportunities page produces.
+  'snapshot-exists': (bundle, bc) => Boolean(
+    bundle.alignment_snapshot?.id
+    || (Array.isArray(bundle.alignment_snapshots) && bundle.alignment_snapshots.length)
+    || bc.frame?.alignment_snapshot_id
+  ),
+  'brainstorm-transcript': (bundle, bc) => Boolean(
+    bc.plan?.brainstorm_transcript_analyzed_at || bundle.brainstorm_round?.id
+  ),
+  brainstorm: (bundle, bc) => Boolean(bundle.brainstorm_round?.id || bc.plan?.brainstorm_round_id),
+  'creator-scan': (bundle, bc) => Boolean(
+    (Array.isArray(bundle.selected_creator_ids) && bundle.selected_creator_ids.length)
+    || (Array.isArray(bc.plan?.selected_creator_ids) && bc.plan.selected_creator_ids.length)
+  ),
+  'pitch-deck': (bundle, bc) => Boolean(bundle.pitch_deck?.id || bc.plan?.pitch_deck_id),
+  brief: (bundle, bc) => Boolean(bundle.creative_brief?.id || bc.plan?.generated_brief),
+  // Planning is closed off explicitly; the stepper unlocks Delivery on the
+  // same flag.
+  planning: (bundle, bc) => Boolean(bc.plan?.planning_completed_at),
+  contracts: (bundle, bc) => Boolean(
+    bundle.contract?.id || (Array.isArray(bundle.contracts) && bundle.contracts.length)
+  ),
+  deliverables: (bundle, bc) => Boolean(
+    bc.plan?.delivery_completed_at
+    || bc.reporting_started_at
+    || (Array.isArray(bundle.deliverables) && bundle.deliverables.length)
+  ),
+  // The project has moved on from Deliverables into Reporting. Without a rule
+  // here Next was always offered on Deliverables, right beside the page's own
+  // "Move to Reporting Phase" button.
+  'final-report': (bundle, bc) => Boolean(
+    bc.plan?.delivery_completed_at
+    || bc.reporting_started_at
+    || bc.final_report_sent_at
+  ),
+};
+
+/* What the admin still has to do, shown where the Next button would be. */
+export const STEP_PENDING_HINT = {
+  connect: 'Save a conversation with this brand to continue.',
+  'connect-schedule': 'Analyze the conversations to continue.',
+  snapshot: 'Approve the Alignment Snapshot to continue.',
+  'snapshot-exists': 'Generate the Alignment Snapshot to continue.',
+  'brainstorm-transcript': 'Add and analyse the brainstorm transcript to continue.',
+  brainstorm: 'Run the brainstorm to continue.',
+  'creator-scan': 'Select at least one creator to continue.',
+  'pitch-deck': 'Generate the Pitch Deck to continue.',
+  brief: 'Generate the Creative Brief to continue.',
+  planning: 'Complete Planning to continue.',
+  contracts: 'Generate a contract to continue.',
+  deliverables: 'Add a deliverable, or complete Delivery, to continue.',
+};
+
+export const flowStepComplete = (stepKey, bundle) => {
+  const rule = STEP_DONE[stepKey];
+  if (!rule) return true;
+  if (!bundle) return false;
+  return Boolean(rule(bundle, bundle.business_case || {}));
+};
+
+/**
+ * Has the CREATOR MATCH SCANNER produced a selection yet?
+ *
+ * The Pitch Deck and the Creative Brief are both written from the creators
+ * the scanner picks, so neither may open - let alone auto-write itself -
+ * before that step has run. Exported so those pages can gate on exactly the
+ * same rule the flow uses for the `creator-scan` step.
+ */
+export const creatorsSelected = (bundle) => flowStepComplete('creator-scan', bundle);
+
+/**
+ * The step whose completion gates Next on `pathname`. For a step in the chain
+ * that is the step itself; for a detour it is whatever that page names in
+ * `requires`, and detours that name nothing are not gated.
+ */
+export const flowGateKey = (pathname) => {
+  const raw = suffixOf(pathname);
+  const suffix = /^\/plan\/(brainstorm|creator-scan|brief|creator-briefing-call)$/.test(raw)
+    ? raw.replace('/plan/', '/frame/')
+    : raw;
+  const aside = ASIDE_STEPS[suffix];
+  if (aside) return aside.requires || null;
+  const step = FLOW_STEPS.find((entry) => entry.suffix === suffix);
+  return step ? step.key : null;
+};
+
+/**
+ * True when the page at `pathname` already has its own onward control, so the
+ * footer should leave Next alone rather than duplicate it.
+ */
+export const flowStepOwnsNext = (pathname) => {
+  const raw = suffixOf(pathname);
+  const suffix = /^\/plan\/(brainstorm|creator-scan|brief|creator-briefing-call)$/.test(raw)
+    ? raw.replace('/plan/', '/frame/')
+    : raw;
+  if (ASIDE_STEPS[suffix]) return Boolean(ASIDE_STEPS[suffix].ownsNext);
+  const step = FLOW_STEPS.find((entry) => entry.suffix === suffix);
+  return Boolean(step && step.ownsNext);
+};
+
+/*
+ * The flow page this admin was last on, per business case.
+ *
+ * "Continue" on a brand used to reopen whatever page the case's STAGE implies,
+ * which is not where the admin was: leaving mid-way through the Pitch Deck,
+ * working in another tab and coming back put them on the stage's landing page
+ * instead of the deck. This remembers the actual page, and every entry point
+ * gets it because they all resolve through businessCasePhasePath().
+ *
+ * localStorage, so it is shared across the browser's tabs and survives a
+ * reload. Per-viewer convenience only - if it is missing, unreadable, or names
+ * a page that is no longer part of the flow, the caller falls back to the
+ * stage-derived path.
+ */
+const LAST_PAGE_KEY = (id) => `v1LastFlowPage:${id}`;
+
+export const rememberFlowPage = (id, pathname) => {
+  if (!id) return;
+  const suffix = suffixOf(pathname);
+  const known = FLOW_STEPS.some((step) => step.suffix === suffix) || Boolean(ASIDE_STEPS[suffix]);
+  if (!known) return;
+  try {
+    window.localStorage.setItem(
+      LAST_PAGE_KEY(id),
+      JSON.stringify({ suffix, snapshotId: flowSnapshotId(pathname) }),
+    );
+  } catch (e) {
+    /* private mode / storage disabled - remembering is a convenience */
+  }
+};
+
+export const lastFlowPage = (id) => {
+  if (!id) return '';
+  let stored = null;
+  try {
+    stored = window.localStorage.getItem(LAST_PAGE_KEY(id));
+  } catch (e) {
+    return '';
+  }
+  if (!stored) return '';
+  let parsed = null;
+  try {
+    parsed = JSON.parse(stored);
+  } catch (e) {
+    return '';
+  }
+  const suffix = parsed && parsed.suffix;
+  // Rebuilt from the tables rather than trusting the stored string, so a stale
+  // or tampered value can never send anyone to an arbitrary route.
+  const step = FLOW_STEPS.find((entry) => entry.suffix === suffix);
+  if (step) return flowStepHref(step, id, parsed.snapshotId);
+  if (ASIDE_STEPS[suffix]) return adminRoute(`/business-cases/${id}${suffix}`);
+  return '';
+};

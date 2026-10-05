@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Building2, Eye, EyeOff, Lock } from 'lucide-react';
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 import { v3BrandLogin } from '../../lib/v3api';
 import { setBrandPortalSession } from '../../lib/v3brandPortal';
+import { safeDestination } from '../../lib/routeGuard';
 
 const PasswordInput = ({ value, onChange }) => {
   const [visible, setVisible] = useState(false);
@@ -32,6 +33,7 @@ const PasswordInput = ({ value, onChange }) => {
 
 const V1BrandLogin = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { completeLogin } = useAuth();
   const [form, setForm] = useState({ email: '', password: '' });
   const [busy, setBusy] = useState(false);
@@ -46,7 +48,11 @@ const V1BrandLogin = () => {
       const session = await v3BrandLogin({ email: form.email, password: form.password });
       completeLogin({ user: session.user, token: session.token });
       setBrandPortalSession(session.account);
-      navigate('/brand');
+      // A brand arriving from an email link was sent here by the route guard,
+      // which remembered the page they clicked; finish on that page rather
+      // than the portal home, or the link only ever half works.
+      navigate(safeDestination(location.state?.from, '/brand', '/brand', '/brand/login'),
+        { replace: true });
     } catch (e) {
       const status = e?.response?.status;
       const detail = e?.response?.data?.detail || '';

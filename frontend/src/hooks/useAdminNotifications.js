@@ -22,6 +22,7 @@ import { v3ListAdminNotifications } from '../lib/v3api';
 
 const STORAGE_KEY = 'tasck_admin_seen_notifications';
 const DISMISSED_KEY = 'tasck_admin_dismissed_notifications';
+const ANNOUNCED_KEY = 'tasck_admin_announced_notifications';
 const POLL_INTERVAL_MS = 30000; // 30 seconds
 
 const loadSetFromKey = (key) => {
@@ -50,6 +51,8 @@ const loadSeenSet = () => loadSetFromKey(STORAGE_KEY);
 const saveSeenSet = (set) => saveSetToKey(STORAGE_KEY, set);
 const loadDismissedSet = () => loadSetFromKey(DISMISSED_KEY);
 const saveDismissedSet = (set) => saveSetToKey(DISMISSED_KEY, set);
+const loadAnnouncedSet = () => loadSetFromKey(ANNOUNCED_KEY);
+const saveAnnouncedSet = (set) => saveSetToKey(ANNOUNCED_KEY, set);
 
 export const useAdminNotifications = ({ onNewItem } = {}) => {
   const [items, setItems] = useState([]);
@@ -58,8 +61,10 @@ export const useAdminNotifications = ({ onNewItem } = {}) => {
   const seenRef = useRef(loadSeenSet());
   const dismissedRef = useRef(loadDismissedSet());
   // Track ids the hook has already broadcast as "new" so we don't re-fire
-  // toasts on every refresh.
-  const announcedRef = useRef(new Set());
+  // toasts on every refresh. Persisted to localStorage (like seen/dismissed)
+  // so a toast that already fired once doesn't fire again after a reload -
+  // only genuinely new notifications toast.
+  const announcedRef = useRef(loadAnnouncedSet());
 
   const refresh = useCallback(async () => {
     try {
@@ -77,6 +82,7 @@ export const useAdminNotifications = ({ onNewItem } = {}) => {
           announcedRef.current.add(item.id);
           try { onNewItem(item); } catch (_) { /* don't crash on toast errors */ }
         }
+        if (newItems.length > 0) saveAnnouncedSet(announcedRef.current);
       }
     } catch (e) {
       setError(e?.response?.data?.detail || e?.message || 'Could not load notifications.');

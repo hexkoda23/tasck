@@ -10,9 +10,7 @@ import { useV3Resource } from '../../lib/useV3Resource';
 import V3Modal from '../../components/v3/V3Modal';
 import { Search, Plus, ArrowUpDown, Sparkles, Users } from 'lucide-react';
 import { adminRoute, getAdminRouteBase, V1_ADMIN_ROUTE_BASE } from '../../lib/v3AdminRouteBase';
-import { BrandLogo } from '../../lib/brandLogo';
-import { RelationshipStageTag, relationshipStageOf } from '../../lib/relationshipStage';
-import { PriorityTag } from '../../lib/snapshotPriority';
+import { BrandLogo, emailDomainMatchesBrand, isThirdPartyLogoDomain } from '../../lib/brandLogo';
 import { toast } from 'sonner';
 
 // Format a brand's last-worked-on timestamp as a real readable date+time
@@ -61,16 +59,15 @@ const normaliseBrand = (b) => ({
   email: b.email || b.contact_email || b.primary_contact_email || b.primaryContactEmail || '',
   about: b.about || b.brand_about || b.description || b.company_description || b.notes || '',
   createdAt: b.created_at || b.createdAt || null,
+  // Used for "Newest" sort so a brand just touched (new business case,
+  // transcript, edit) resurfaces at the top - not only brand-new records.
+  updatedAt: b.updated_at || b.updatedAt || b.created_at || b.createdAt || null,
   // Show a real date/time the brand was last worked on, not "just now".
   lastInteraction: formatBrandLastWorked(b),
   engagementTrack: b.engagement_track_default || 'paid',
   rmId: b.rm_id || b.relationship_manager?.id || 'rm-temi',
   relationshipManager: b.relationship_manager || { name: b.relationship_manager_name || 'Unassigned' },
-  relationshipStage: relationshipStageOf(b),
   nextAction: b.next_action || '',
-  // Alignment Snapshot projects: the brand appears once PER project on the CRM
-  // list, each with its own priority tag, so admin can pick one and continue.
-  alignmentProjects: Array.isArray(b.alignment_projects) ? b.alignment_projects : [],
 });
 
 const brandCreatedAtTs = (value) => {
@@ -116,8 +113,10 @@ const domainFromEmail = (email = '') => {
 
 const logoCandidatesForBrand = (brand) => {
   const websiteDomain = domainFromWebsite(brand.website || brand.sourceUrl);
-  const emailDomain = domainFromEmail(brand.email);
+  const contactDomain = domainFromEmail(brand.email);
+  const emailDomain = emailDomainMatchesBrand(contactDomain, brand.name || brand.company) ? contactDomain : '';
   const domains = [websiteDomain, emailDomain].filter(Boolean)
+    .filter((domain) => !isThirdPartyLogoDomain(domain))
     .filter((value, index, array) => array.indexOf(value) === index);
   const domainCandidates = domains.flatMap((domain) => [
     // Clearbit (`logo.clearbit.com`) was removed here - the service shut down
@@ -128,7 +127,9 @@ const logoCandidatesForBrand = (brand) => {
     'https://' + domain + '/favicon.png',
     'https://' + domain + '/favicon.ico',
   ]);
-  return [brand.logoUrl, ...domainCandidates]
+  // brand.logoUrl is passed separately as `storedLogo` - it is not a guess and
+  // must not be ordered among these.
+  return domainCandidates
     .filter(Boolean)
     .filter((value, index, array) => array.indexOf(value) === index);
 };
@@ -136,6 +137,7 @@ const logoCandidatesForBrand = (brand) => {
 const CrmBrandLogo = ({ brand }) => (
   <BrandLogo
     name={brand.company}
+    storedLogo={brand.logoUrl}
     candidates={logoCandidatesForBrand(brand)}
     initials={brandInitials(brand.company)}
     containerClassName="w-12 h-12 rounded-lg border border-[#E8E4DB] bg-white flex items-center justify-center flex-shrink-0 overflow-hidden"
@@ -243,6 +245,16 @@ const V1AdminCRM = () => {
         if (!brandId) {
           throw new Error('CRM brand was created but no brand id was returned.');
         }
+        // The backend matches on company name and reuses the existing brand
+        // instead of creating a duplicate. Don't kick off a fresh scrape or
+        // claim a new brand was "saved" when this brand was already there.
+        if (created.already_existed) {
+          toast.success('Brand already in CRM - opening the existing record.');
+          setAddOpen(false);
+          resetForm();
+          navigate(adminRoute(`/crm-brands/${brandId}`));
+          return;
+        }
         // If the admin gave us a website, pull the brand's details and logo
         // straight off it. The brand detail page already owns the scrape and
         // its progress UI, so hand off rather than duplicating it here - and
@@ -277,8 +289,8 @@ const V1AdminCRM = () => {
     )
     .sort((a, b) => {
       if (sortBy === 'name') return a.company.localeCompare(b.company);
-      const newestFirst = brandCreatedAtTs(b.createdAt) - brandCreatedAtTs(a.createdAt);
-      return newestFirst || a.company.localeCompare(b.company);
+      const mostRecentFirst = brandCreatedAtTs(b.updatedAt) - brandCreatedAtTs(a.updatedAt);
+      return mostRecentFirst || a.company.localeCompare(b.company);
     });
 
   const trackPill = (track) =>
@@ -407,8 +419,6 @@ const V1AdminCRM = () => {
                       >
                         {tp.label}
                       </span>
-                      {/* Where this brand stands in the relationship pipeline. */}
-                      <RelationshipStageTag stage={brand.relationshipStage} />
                     </div>
                     <p className="text-[12px] text-[#8A8A8A] mt-0.5">
                       {brand.primaryContact || 'No contact'} {brand.role ? `/ ${brand.role}` : ''}
@@ -447,52 +457,6 @@ const V1AdminCRM = () => {
           </div>
         )}
       </div>
-
-      {/* One row per Alignment Snapshot project: e.g. "MTN (Better Advert)"
-          with its priority tag. Clicking continues from that snapshot on the
-          Alignment Snapshot page; approval there opens the Creator Selector. */}
-      {filtered.some((brand) => brand.alignmentProjects.length > 0) && (
-        <div className="mt-6">
-          <p className="text-[11px] uppercase tracking-wider text-[#8A8A8A] mb-2">
-            Alignment Snapshot projects
-          </p>
-          <div className="space-y-2">
-            {filtered.flatMap((brand) => brand.alignmentProjects.map((project) => (
-              <button
-                key={`${brand.id}-${project.snapshot_id}`}
-                onClick={() => navigate(adminRoute(`/business-cases/${project.business_case_id}/frame/snapshot?snapshot=${project.snapshot_id}`))}
-                className="w-full v3-card p-3 text-left flex items-center gap-3 hover:border-[#1F4A3A] transition-colors"
-                data-testid={`crm-project-${project.snapshot_id}`}
-              >
-                <CrmBrandLogo brand={brand} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[13px] font-medium text-[#1A1A1A]">
-                      {brand.company} <span className="text-[#6E6657] font-normal">({project.title})</span>
-                    </span>
-                    <PriorityTag priority={project.priority} />
-                    <span className="text-[10px] text-[#8A8A8A] px-2 py-0.5 rounded bg-[#F4F2EC]">
-                      {String(project.status || 'draft').replace(/[_-]+/g, ' ')}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#6E6657] mt-0.5">
-                    {project.priority ? `Brand priority: ${project.priority}` : 'Not ranked by the brand yet'} · click to continue from the Alignment Snapshot
-                  </p>
-                </div>
-                <span
-                  role="link"
-                  tabIndex={0}
-                  onClick={(e) => { e.stopPropagation(); navigate(adminRoute(`/crm-brands/${brand.id}`)); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); navigate(adminRoute(`/crm-brands/${brand.id}`)); } }}
-                  className="text-[11px] text-[#8A8A8A] hover:text-[#1F4A3A] underline flex-shrink-0"
-                >
-                  Brand details
-                </span>
-              </button>
-            )))}
-          </div>
-        </div>
-      )}
 
       {createdIntake && (
         <div

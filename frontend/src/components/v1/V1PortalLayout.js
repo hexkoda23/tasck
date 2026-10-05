@@ -33,8 +33,9 @@ const portalConfig = {
     loginPath: '/brand/login',
     homePath: '/brand',
     // On sign out, send the brand straight to the V1 entry page so the tester
-    // can immediately log back in as admin for an easy end-to-end flow.
-    signOutUrl: 'https://thcodemo.space/v1',
+    // can immediately log back in as admin for an easy end-to-end flow. A path,
+    // not an absolute URL, so it works on whichever host serves the app.
+    signOutPath: '/v1',
     items: [
       { path: '/brand', label: 'Overview', icon: LayoutDashboard, exact: true },
       { path: '/brand/projects', label: 'Projects', icon: FolderOpen },
@@ -79,17 +80,12 @@ const V1PortalLayout = ({ portal }) => {
   const title = portal === 'brand' && brand ? brand.company : config.label;
   const initials = portal === 'brand' ? brandSession?.initials || 'BR' : 'CR';
 
-  // Sign out, then either redirect to the configured external entry page
-  // (brand portal → /v1 for easy admin re-login) or fall back to the portal's
-  // own login page.
+  // Sign out, then go to the configured entry page (brand portal → /v1 for
+  // easy admin re-login) or fall back to the portal's own login page.
   const handleSignOut = () => {
     logout();
     clearBrandPortalCache();
-    if (config.signOutUrl) {
-      window.location.href = config.signOutUrl;
-      return;
-    }
-    navigate(config.loginPath);
+    navigate(config.signOutPath || config.loginPath);
   };
 
   const handleSessionButton = () => {
