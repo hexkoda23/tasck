@@ -33,11 +33,23 @@ import { adminRoute } from '../../lib/v3AdminRouteBase';
 import useTopbarOffset from '../../lib/useTopbarOffset';
 import { PriorityTag as RelationshipPriorityTag } from '../../lib/snapshotPriority';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
+import { pitchDeckHref } from '../../lib/v1FlowSteps';
 import { BrandLogo as SharedBrandLogo, emailDomainMatchesBrand, isThirdPartyLogoDomain } from '../../lib/brandLogo';
 import { isClosed, listableCases } from '../../lib/stageContent';
 import { toast } from 'sonner';
 
 const EMPTY_VALUE = 'Not captured yet';
+
+const BUSINESS_CASE_STAGE_LINKS = [
+  { key: 'alignment', label: 'Alignment', path: '/frame/snapshot' },
+  { key: 'creator-selector', label: 'Creator Selector', path: '/frame/brainstorm' },
+  { key: 'creator-match', label: 'Creator Match', path: '/frame/creator-scan' },
+  { key: 'pitch-deck', label: 'Pitch Deck', path: '/frame/pitch-deck' },
+  { key: 'brief', label: 'Brief', path: '/frame/brief' },
+  { key: 'planning', label: 'Planning', path: '/plan/planning' },
+  { key: 'delivery', label: 'Delivery', path: '/delivery/deliverables' },
+  { key: 'reporting', label: 'Reporting', path: '/reporting/final-report' },
+];
 
 // Friendly stage label shown under the scrape progress bar, driven by the
 // current percentage. When the scrape has just failed we still hit 100% (the
@@ -947,16 +959,23 @@ const V1AdminCRMBrandDetail = () => {
                     </button>
                   </div>
                 )}
-                {/* Direct jump links to Framing artifacts, shown as buttons so
-                    every stage is easy to spot and reach. Visible at every stage. */}
-                <div className="mt-2 grid grid-cols-4 gap-1.5 border-t border-[#E8E4DB] pt-2 sm:grid-cols-7">
-                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/snapshot`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-alignment-${businessCase.id}`}>Alignment</button>
-                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brainstorm`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-creator-selector-${businessCase.id}`}>Creator Selector</button>
-                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/creator-scan`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-creator-match-${businessCase.id}`}>Creator Match</button>
-                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/frame/brief`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-brief-${businessCase.id}`}>Brief</button>
-                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/plan/planning`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-planning-${businessCase.id}`}>Planning</button>
-                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/delivery/deliverables`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-delivery-${businessCase.id}`}>Delivery</button>
-                  <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/admin/business-cases/${businessCase.id}/reporting/final-report`); }} className="rounded-md border border-[#1F4A3A] bg-[#EAF4EE] px-2 py-1.5 text-center text-[10px] font-semibold text-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white transition-colors" data-testid={`brand-bc-stage-reporting-${businessCase.id}`}>Reporting</button>
+                {/* Keep every stage destination easy to find and tap. */}
+                <div className="mt-4 rounded-lg border border-[#DDE8E0] bg-[#F7FAF8] p-3">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[#1F4A3A]">Open a stage</p>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+                    {BUSINESS_CASE_STAGE_LINKS.map(({ key, label, path }) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); navigate(key === 'pitch-deck' ? pitchDeckHref(businessCase.id) : `/admin/business-cases/${businessCase.id}${path}`); }}
+                        className="flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-[#8EAD99] bg-white px-3 py-2.5 text-center text-[13px] font-semibold leading-tight text-[#1F4A3A] shadow-sm transition-colors hover:border-[#1F4A3A] hover:bg-[#1F4A3A] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1F4A3A]"
+                        data-testid={`brand-bc-stage-${key}-${businessCase.id}`}
+                      >
+                        {label}
+                        <ExternalLink className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             ))}

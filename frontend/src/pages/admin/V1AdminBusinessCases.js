@@ -11,7 +11,7 @@ import {
 } from '../../lib/v3data';
 import { candidateToBusinessOpportunity } from '../../lib/v3opportunityDemo';
 import V3Modal from '../../components/v3/V3Modal';
-import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search, Lock, MessageSquare } from 'lucide-react';
+import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search, Lock, MessageSquare, FolderInput } from 'lucide-react';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
 
 const stageMeta = {
@@ -283,7 +283,7 @@ const V1AdminBusinessCases = () => {
   return (
     <>
     <div data-testid="v3-admin-business-cases">
-      <div className="flex items-center justify-between mb-8">
+      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-1">Admin Control Centre</p>
           <h1 className="v3-heading text-2xl" style={{ fontFamily: "'Fraunces', serif" }}>
@@ -295,7 +295,7 @@ const V1AdminBusinessCases = () => {
             </span>
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => navigate(adminRoute('/duplicates'))}
             className="v3-btn-secondary relative"
@@ -317,6 +317,9 @@ const V1AdminBusinessCases = () => {
           </button>
           <button onClick={() => navigate(adminRoute('/crm/opportunities'))} className="v3-btn-secondary" data-testid="bc-ai-business-agent" title="Open Brand Opportunity Scanner">
             <Sparkles className="w-3.5 h-3.5" /> AI-generated business cases
+          </button>
+          <button onClick={() => navigate(adminRoute('/import-project'))} className="v3-btn-secondary" data-testid="bc-import-project">
+            <FolderInput className="w-3.5 h-3.5" /> Import Project
           </button>
           <button onClick={openNew} className="v3-btn-primary" data-testid="bc-new">
             <Plus className="w-4 h-4" /> New Business Case

@@ -2,7 +2,7 @@ import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { useThemeMode } from '../../lib/useThemeMode';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, FolderInput, Home, Loader2, LogIn, LogOut, MessageSquare, Moon, PanelLeftClose, Search, Settings, Sun, Trash2, X } from 'lucide-react';
+import { Bell, Building2, BriefcaseBusiness, ChevronLeft, ChevronRight, Home, Loader2, LogIn, LogOut, MessageSquare, Moon, PanelLeftClose, Search, Settings, Sun, Trash2, X } from 'lucide-react';
 import Logo from '../../components/shared/Logo';
 import { useAuth } from '../../context/AuthContext';
 import { AssistantProvider } from '../../assistant/AssistantProvider';
@@ -19,7 +19,6 @@ const CRM_BC_SUBPATH_RE = /^\/admin\/business-cases\/[^/]+\/(connect|frame)(\/|$
 const BC_BC_SUBPATH_RE = /^\/admin\/business-cases\/[^/]+\/(plan|delivery|reporting)(\/|$)/;
 
 const navItems = [
-  { path: '/admin', label: 'Overview', icon: Home, exact: true },
   {
     path: '/admin/crm-brands',
     label: 'CRM Brands',
@@ -37,6 +36,8 @@ const navItems = [
     // (/admin/business-cases/:id) also belong here.
     matchesPath: (pathname) => (
       pathname === '/admin/business-cases'
+      || pathname === '/admin/import-project'
+      || pathname === '/admin/duplicates'
       || /^\/admin\/business-cases\/[^/]+\/?$/.test(pathname)
       || BC_BC_SUBPATH_RE.test(pathname)
     ),
@@ -44,7 +45,7 @@ const navItems = [
     // don't accidentally light this tab up.
     suppressDefaultStartsWith: true,
   },
-  { path: '/admin/import-project', label: 'Import Project', icon: FolderInput },
+  { path: '/admin/overview', label: 'Overview', icon: Home, exact: true },
   {
     path: '/admin/brand-communications',
     label: 'Messages',
@@ -62,6 +63,7 @@ const isNavActive = (pathname, item) => {
 };
 
 const navTestId = (label) => `v1-admin-nav-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+const notificationToastId = (id) => `v1-admin-notification:${id}`;
 
 const V1AdminLayout = () => {
   const navigate = useNavigate();
@@ -183,19 +185,26 @@ const V1AdminLayout = () => {
   // opens the related page. Toasts only fire for ids the hook has not yet
   // announced - acknowledgement is stored in localStorage so the admin never
   // sees the same toast twice.
-  const handleNewNotification = useCallback((item) => {
+  const handleNewNotification = useCallback((item, markSeen) => {
     toast(item.title || 'Brand action', {
+      id: notificationToastId(item.id),
       description: item.message,
+      closeButton: true,
+      duration: 5000,
       action: item.link ? {
         label: 'Open',
-        onClick: () => navigate(item.link),
+        onClick: () => {
+          markSeen(item.id);
+          toast.dismiss(notificationToastId(item.id));
+          navigate(item.link);
+        },
       } : undefined,
     });
   }, [navigate]);
 
   const { unseen, markSeen, markAllSeen, dismiss } = useAdminNotifications({ onNewItem: handleNewNotification });
 
-  // Close the notifications dropdown when clicking elsewhere.
+  // Close the notifications dropdown on outside pointer input or Escape.
   useEffect(() => {
     if (!notificationsOpen) return undefined;
     const handler = (event) => {
@@ -203,8 +212,15 @@ const V1AdminLayout = () => {
         setNotificationsOpen(false);
       }
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setNotificationsOpen(false);
+    };
+    document.addEventListener('pointerdown', handler);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handler);
+      document.removeEventListener('keydown', onKeyDown);
+    };
   }, [notificationsOpen]);
 
   // Same for the search results dropdown.
@@ -242,7 +258,7 @@ const V1AdminLayout = () => {
           >
             {sidebarCollapsed ? <ChevronRight className="w-4 h-4" strokeWidth={1.5} /> : <PanelLeftClose className="w-4 h-4" strokeWidth={1.5} />}
           </button>
-          <div className="cursor-pointer" onClick={() => navigate('/select')}>
+          <div className="cursor-pointer" onClick={() => navigate('/v1')}>
             <Logo variant="light" size="sm" showText={!sidebarCollapsed} />
           </div>
           {!sidebarCollapsed && (
@@ -378,6 +394,8 @@ const V1AdminLayout = () => {
               className="relative p-2 rounded-lg hover:bg-[#F4F2EC] transition-colors"
               data-testid="v1-admin-notifications-toggle"
               title={unseen.length ? `${unseen.length} new` : 'Notifications'}
+              aria-label="Notifications"
+              aria-expanded={notificationsOpen}
             >
               <Bell className="w-4 h-4 text-[#8A8A8A]" />
               {unseen.length > 0 && (
@@ -393,11 +411,16 @@ const V1AdminLayout = () => {
               <div className="absolute right-0 mt-2 w-80 rounded-[10px] border border-[#E8E4DB] bg-white shadow-2xl z-50" data-testid="v1-admin-notifications-dropdown">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-[#E8E4DB]">
                   <p className="text-[12px] font-semibold text-[#1A1A1A]">Recent actions</p>
-                  {unseen.length > 0 && (
-                    <button type="button" onClick={() => { markAllSeen(); }} className="text-[11px] text-[#1F4A3A] underline hover:no-underline" data-testid="v1-admin-notifications-mark-all">
-                      Mark all seen
+                  <div className="flex items-center gap-3">
+                    {unseen.length > 0 && (
+                      <button type="button" onClick={() => { unseen.forEach((item) => toast.dismiss(notificationToastId(item.id))); markAllSeen(); }} className="text-[11px] text-[#1F4A3A] underline hover:no-underline" data-testid="v1-admin-notifications-mark-all">
+                        Mark all seen
+                      </button>
+                    )}
+                    <button type="button" onClick={() => setNotificationsOpen(false)} className="p-1 rounded text-[#8A8A8A] hover:text-[#1A1A1A] hover:bg-[#F4F2EC]" title="Close notifications" aria-label="Close notifications" data-testid="v1-admin-notifications-close">
+                      <X className="w-4 h-4" />
                     </button>
-                  )}
+                  </div>
                 </div>
                 <div className="max-h-[360px] overflow-y-auto">
                   {unseen.length === 0 ? (
@@ -411,7 +434,7 @@ const V1AdminLayout = () => {
                       >
                         <button
                           type="button"
-                          onClick={() => { markSeen(item.id); setNotificationsOpen(false); if (item.link) navigate(item.link); }}
+                          onClick={() => { markSeen(item.id); toast.dismiss(notificationToastId(item.id)); setNotificationsOpen(false); if (item.link) navigate(item.link); }}
                           className="flex-1 text-left px-3 py-2 min-w-0"
                           data-testid={`v1-admin-notification-open-${item.id}`}
                         >
@@ -421,7 +444,7 @@ const V1AdminLayout = () => {
                         </button>
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); dismiss(item.id); }}
+                          onClick={(e) => { e.stopPropagation(); toast.dismiss(notificationToastId(item.id)); dismiss(item.id); }}
                           className="px-2 flex items-center text-[#8A8A8A] hover:text-[#B54A37] hover:bg-[#FBEDEA] border-l border-[#F4F2EC]"
                           title="Dismiss this notification"
                           aria-label="Dismiss notification"

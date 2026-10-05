@@ -40,13 +40,13 @@ export const LandingPage = () => {
           The operating system for Africa's creative economy. Connecting brands, artists, and talent.
         </p>
 
-        {/* Enter Demo Button */}
+        {/* Enter CRM Button */}
         <button
-          onClick={() => navigate('/select')}
+          onClick={() => navigate('/v1')}
           className="inline-flex items-center gap-3 px-10 py-4 rounded-full bg-white text-[#0F172A] text-sm font-semibold hover:bg-white/90 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 shadow-[0_0_40px_rgba(255,255,255,0.08)]"
           data-testid="enter-demo-btn"
         >
-          Enter Demo <ArrowRight className="w-4 h-4" />
+          Enter CRM <ArrowRight className="w-4 h-4" />
         </button>
 
         {/* Stats */}

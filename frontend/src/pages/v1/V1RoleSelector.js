@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import Logo from '../../components/shared/Logo';
 import {
-  Briefcase, Building2, Sparkles, Palette, Shield, ArrowRight, ChevronLeft
+  Briefcase, Building2, Sparkles, Palette, Shield, ArrowRight
 } from 'lucide-react';
 
 const roleCards = [
@@ -44,11 +44,6 @@ const V1RoleSelector = () => {
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-6" data-testid="v1-role-selector">
       <div className="w-full max-w-md mx-auto">
-        {/* Back link */}
-        <button onClick={() => navigate('/select')} className="inline-flex items-center gap-1.5 text-[#94A3B8] text-xs mb-8 hover:text-[#64748B] transition-colors" data-testid="back-to-versions">
-          <ChevronLeft className="w-3.5 h-3.5" /> Back to version select
-        </button>
-
         {/* Header */}
         <div className="mb-2"><Logo variant="light" size="sm" /></div>
 

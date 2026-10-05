@@ -102,6 +102,9 @@ export const flowStepHref = (step, id, snapshotId) => {
   return adminRoute(`/business-cases/${id}${step.suffix}`);
 };
 
+export const pitchDeckHref = (id, snapshotId) =>
+  flowStepHref(stepByKey('pitch-deck'), id, snapshotId);
+
 /**
  * Previous / next page for the flow page at `pathname`, or nulls when the
  * path is not part of the flow (so FlowShell can render nothing).

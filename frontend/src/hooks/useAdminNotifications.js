@@ -66,6 +66,12 @@ export const useAdminNotifications = ({ onNewItem } = {}) => {
   // only genuinely new notifications toast.
   const announcedRef = useRef(loadAnnouncedSet());
 
+  const markSeen = useCallback((id) => {
+    seenRef.current.add(id);
+    saveSeenSet(seenRef.current);
+    setItems((current) => current.slice());
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const rows = await v3ListAdminNotifications();
@@ -80,7 +86,7 @@ export const useAdminNotifications = ({ onNewItem } = {}) => {
         const newItems = visible.filter((row) => !seenRef.current.has(row.id) && !announcedRef.current.has(row.id));
         for (const item of newItems) {
           announcedRef.current.add(item.id);
-          try { onNewItem(item); } catch (_) { /* don't crash on toast errors */ }
+          try { onNewItem(item, markSeen); } catch (_) { /* don't crash on toast errors */ }
         }
         if (newItems.length > 0) saveAnnouncedSet(announcedRef.current);
       }
@@ -88,20 +94,13 @@ export const useAdminNotifications = ({ onNewItem } = {}) => {
       setError(e?.response?.data?.detail || e?.message || 'Could not load notifications.');
       setLoading(false);
     }
-  }, [onNewItem]);
+  }, [onNewItem, markSeen]);
 
   useEffect(() => {
     refresh();
     const handle = setInterval(refresh, POLL_INTERVAL_MS);
     return () => clearInterval(handle);
   }, [refresh]);
-
-  const markSeen = useCallback((id) => {
-    seenRef.current.add(id);
-    saveSeenSet(seenRef.current);
-    // Trigger re-render so unseen count updates.
-    setItems((current) => current.slice());
-  }, []);
 
   const markAllSeen = useCallback(() => {
     for (const item of items) seenRef.current.add(item.id);

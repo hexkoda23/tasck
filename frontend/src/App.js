@@ -10,7 +10,6 @@ import DashboardLayout from './components/layout/DashboardLayout';
 
 // V2 Layout + Pages
 import V2Layout from './components/v2/V2Layout';
-import VersionSelector from './pages/VersionSelector';
 import V2RoleSelector from './pages/v2/V2RoleSelector';
 import CommandCenter from './pages/v2/command/CommandCenter';
 import IntelligenceCenter from './pages/v2/command/IntelligenceCenter';
@@ -223,8 +222,8 @@ function AppRoutes() {
       {/* Landing Page */}
       <Route path="/" element={<LandingPage />} />
 
-      {/* Version Selector */}
-      <Route path="/select" element={<VersionSelector />} />
+      {/* Keep the old version picker source for reference, but skip it in the CRM flow. */}
+      <Route path="/select" element={<Navigate to="/v1" replace />} />
 
       {/* Feedback Admin */}
       <Route path="/feedback" element={<FeedbackAdmin />} />
@@ -394,7 +393,8 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<V1AdminOverview />} />
+        <Route index element={<Navigate to="/admin/crm-brands" replace />} />
+        <Route path="overview" element={<V1AdminOverview />} />
         <Route path="crm-brands" element={<V1AdminCRM />} />
         <Route path="crm-brands/:brandId/call" element={<V1AdminBrandCallRedirect />} />
         <Route path="pipeline" element={<V3AdminPipeline />} />

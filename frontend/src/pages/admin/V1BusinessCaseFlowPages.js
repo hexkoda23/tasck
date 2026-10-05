@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { pickActiveBrainstormRound } from '../../lib/brainstormRound';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import useTopbarOffset from '../../lib/useTopbarOffset';
-import { flowNeighbours, flowStepHref, flowStepComplete, flowGateKey, flowStepOwnsNext, creatorsSelected, STEP_PENDING_HINT, rememberFlowPage, lastFlowPage, flowStepRank } from '../../lib/v1FlowSteps';
+import { flowNeighbours, flowStepHref, flowSnapshotId, pitchDeckHref, flowStepComplete, flowGateKey, flowStepOwnsNext, creatorsSelected, STEP_PENDING_HINT, rememberFlowPage, lastFlowPage, flowStepRank } from '../../lib/v1FlowSteps';
 import { ConnectSourcesPanel, OpportunitiesPanel } from './V1ConnectSources';
 import { PriorityTag, PRIORITY_OPTIONS } from '../../lib/snapshotPriority';
 import AnalyzerSourceBanner from '../../components/v3/AnalyzerSourceBanner';
@@ -488,6 +488,8 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
   // back-button at the CRM Brands list instead of the Business Cases list so
   // the page feels purely CRM-flavoured.
   const isCrmPage = /\/(connect|frame)(\/|$)/.test(location.pathname || '');
+  const showPitchDeckShortcut = /\/(?:frame|plan)\/brief\/?$/.test(location.pathname)
+    || /\/(?:plan\/planning|delivery\/summary)\/?$/.test(location.pathname);
   return (
     <div className="v3-stage-shell space-y-5" data-testid="business-case-flow-page">
       {/* Sticky nav bar: just the back buttons, pinned under the topbar so
@@ -509,6 +511,16 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
             </button>
           )}
           <div className="flex-1" />
+          {showPitchDeckShortcut && (
+            <button
+              type="button"
+              onClick={() => navigate(pitchDeckHref(id, flowSnapshotId(location.pathname)))}
+              className="v3-btn-secondary min-h-[40px]"
+              data-testid="business-case-pitch-deck-shortcut"
+            >
+              <Presentation className="w-3.5 h-3.5" /> Pitch Deck
+            </button>
+          )}
           {/* The relationship stage pill used to sit here. Removed at the
               client's request - the stage is still tracked on the brand record
               and still advances with the flow, it is just not surfaced. */}
@@ -5066,7 +5078,7 @@ export const V3BusinessCasePlanBrief = () => {
               </button>
             ) : (
               <button
-                onClick={() => navigate(adminRoute(`/business-cases/${id}/frame/pitch-deck`))}
+                onClick={() => navigate(pitchDeckHref(id, snapshotId))}
                 className="v3-btn-primary bg-[#1F7A4D] hover:bg-[#17653E] border-[#1F7A4D]"
                 data-testid="brief-open-pitch-deck-btn"
               >
