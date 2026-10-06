@@ -42,6 +42,7 @@ import official_brand_logo as _official_logo
 import tasck_pdf
 import v3_tracker_v33
 import v3_tracker_dedupe
+from creator_selector_funnel import apply_funnel_projection
 
 logger = logging.getLogger("tasck.v3")
 
@@ -1976,17 +1977,16 @@ async def _call_creator_match_tool(
 # Curated questions the admin can ask during the brainstorm session. These
 # are template-grounded (the TTA Snapshot Brainstorm structure) and shown on
 # the upload page before/while the session happens.
-# The Creator Selector question set (client-specified). These are BOTH the
-# suggested questions shown on the transcript-upload page AND the exact fields
-# the TTA Creator Selector form captures - one box each, manually fillable or
-# auto-filled by Claude from an uploaded transcript.
+# The eight editable fields in the TTA Creator Selector. The suggested
+# transcript questions below ask for the final KPI and behaviour needed to
+# populate the two calculated funnel fields.
 CREATOR_SELECTOR_FIELDS = [
     {"key": "audience_platform", "label": "Where is this audience (Platform)",
      "hint": "The platforms where this audience actually lives - e.g. Instagram, TikTok, YouTube, WhatsApp, radio."},
     {"key": "top_of_funnel_size", "label": "Top of Funnel Audience Size",
-     "hint": "How large is the reachable audience at the top of the funnel? Estimates and sources are fine."},
+     "hint": "Filled from the confirmed final KPI when available. Review and edit as needed."},
     {"key": "funnel_milestones", "label": "What are the Funnel Milestones",
-     "hint": "The steps from first touch to the target action - e.g. view -> follow -> click -> sign-up -> repeat use."},
+     "hint": "Awareness, consideration, and conversion targets. Review and edit as needed."},
     {"key": "timelines", "label": "Timelines",
      "hint": "Key dates and phases - launch windows, campaign length, reporting points."},
     {"key": "risks", "label": "Risks",
@@ -2025,8 +2025,8 @@ def _pick_active_brainstorm_round(rows: List[Dict[str, Any]]) -> Optional[Dict[s
 
 BRAINSTORM_SUGGESTED_QUESTIONS = [
     "Where is this audience? (Platform)",
-    "What is the Top of Funnel audience size?",
-    "What are the Funnel Milestones?",
+    "What is the final measurable KPI, including its exact target, action, and time period?",
+    "What actions should people take from awareness through conversion?",
     "What are the Timelines?",
     "What are the Risks?",
     "How do we mitigate those risks? (Risk Mitigation)",
@@ -2056,9 +2056,11 @@ def _brainstorm_snapshot_summary_default() -> Dict[str, str]:
 
 def _brainstorm_analysis_system_prompt() -> str:
     return """
-You are TASCK's TTA Creator Selector analyst, working for a paying enterprise client. You will be given the transcript of a creator-selection session (the conversation may also be an email or WhatsApp thread). Your job is to read it carefully and fill in the entire TTA Creator Selector template with rich, specific, defensible content drawn ONLY from the transcript. The MOST IMPORTANT output is `creator_selector` - the eight headline fields the team reviews.
+You are TASCK's TTA Creator Selector analyst, working for a paying enterprise client. You will be given the transcript of a creator-selection session (the conversation may also be an email or WhatsApp thread). Your job is to read it carefully and fill in the entire TTA Creator Selector template with rich, specific, defensible content. Use the transcript for the Creator Selector answers; approved Alignment Snapshot KPI context can also establish the final measurable target. The MOST IMPORTANT output is `creator_selector` - the eight headline fields the team reviews.
 
 Write polished Nigerian business English. Use concrete nouns and the actual language used in the session. Do NOT invent creators, numbers, budgets, or facts not supported by the transcript - if something was not discussed, write a short, clearly-marked placeholder like "Not covered in session - confirm with team." rather than fabricating.
+
+Identify ONE final measurable campaign KPI from the transcript first, or from the approved Alignment Snapshot KPI context if the transcript does not state one. Return its exact numeric target, outcome unit and period in `funnel_final_kpi`. The `evidence` must be a short VERBATIM substring of the chosen source that contains the target number; `source` must be `transcript` or `alignment_snapshot`. If there is no single unambiguous numeric final KPI (including a range with no selected target), set `funnel_final_kpi` to null. Do not use a reach/impressions target, a budget, a percentage, or a numeric top-of-funnel estimate as the final outcome KPI. The application calculates the audience and milestones; do not perform or describe funnel arithmetic in your answer.
 
 ABSOLUTE RULES:
 - Never include speaker names, speaker labels (e.g. "Tunde:", "Speaker 1:"), timestamps, or stage directions. Convert dialog into clean third-person strategic prose.
@@ -2066,6 +2068,7 @@ ABSOLUTE RULES:
 
 Return JSON only, no markdown, with EXACTLY this shape (fill every string; use "" only when truly nothing applies):
 {
+  "funnel_final_kpi": {"value": 100000, "unit": "additional users", "period": "quarter", "source": "transcript", "evidence": "100,000+ additional users per quarter"} | null,
   "creator_selector": {
     "audience_platform": "string (where this audience lives - the platforms, channels, or spaces named in the session)",
     "top_of_funnel_size": "string (the top-of-funnel audience size discussed, with any source or estimate basis)",
@@ -2144,7 +2147,25 @@ The "snapshot_summary" object is REQUIRED - it is the headline brainstorm output
 """.strip()
 
 
-def _brainstorm_analysis_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi: Dict[str, Any], transcript: str) -> str:
+def _alignment_kpi_context(snapshot: Dict[str, Any]) -> str:
+    """Only the approved snapshot's outcome/KPI material, not unrelated numbers."""
+    rows = []
+    for section in snapshot.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        heading = str(section.get("heading") or "")
+        if not any(word in heading.lower() for word in ("goal", "metric", "outcome", "success")):
+            continue
+        rows.append(json.dumps({key: section.get(key) for key in ("heading", "content", "rows", "items")
+                                if section.get(key)}, ensure_ascii=False))
+    kpis = (snapshot.get("marketing_intelligence") or {}).get("marketing_kpis") or []
+    if kpis:
+        rows.append(json.dumps(kpis, ensure_ascii=False))
+    return "\n".join(rows)[:12000]
+
+
+def _brainstorm_analysis_user_message(brand: Dict[str, Any], case: Dict[str, Any], mi: Dict[str, Any], transcript: str,
+                                      alignment_context: str = "") -> str:
     def _safe(value: Any) -> str:
         text = "" if value is None else str(value).strip()
         return text or "(not captured)"
@@ -2155,6 +2176,7 @@ INDUSTRY / CATEGORY: {_safe(brand.get("category") or brand.get("industry") or br
 PROJECT: {_safe(case.get("title"))}
 APPROVED MARKETING FOCUS: {_safe(mi.get("key_marketing_focus"))}
 APPROVED TARGET AUDIENCE: {_safe(mi.get("primary_target_audience"))}
+APPROVED ALIGNMENT SNAPSHOT KPI CONTEXT: {alignment_context or '(no confirmed numeric KPI)'}
 
 BRAINSTORM SESSION TRANSCRIPT:
 {transcript[:24000]}
@@ -2932,7 +2954,8 @@ def personalize_creative_brief(brief: Dict[str, Any], creator_name: str = "") ->
     out["prepared_for"] = name
     sections: List[Dict[str, Any]] = []
     for section in brief.get("sections") or []:
-        if isinstance(section, dict) and str(section.get("heading") or "").strip() == CB_HEADING_NEXT:
+        if (isinstance(section, dict) and str(section.get("heading") or "").strip() == CB_HEADING_NEXT
+                and (section.get("paragraphs") or []) == [CB_CLOSING_LINE]):
             closing = f"{name}, {CB_CLOSING_LINE[0].lower()}{CB_CLOSING_LINE[1:]}"
             section = {**section, "paragraphs": [closing]}
         sections.append(section)
@@ -3403,12 +3426,13 @@ async def _call_brainstorm_analysis_tool(
     case: Dict[str, Any],
     mi: Dict[str, Any],
     transcript: str,
+    alignment_context: str = "",
 ) -> Optional[Dict[str, Any]]:
     if not (transcript or "").strip():
         return None
 
     system_prompt = _brainstorm_analysis_system_prompt()
-    user_message = _brainstorm_analysis_user_message(brand, case, mi, transcript)
+    user_message = _brainstorm_analysis_user_message(brand, case, mi, transcript, alignment_context)
     emergent_key = os.getenv("EMERGENT_LLM_KEY") or os.getenv("BRAINSTORM_EMERGENT_LLM_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
@@ -6833,7 +6857,8 @@ def make_v3_router(db):
         # Same duration fill as _load_generated_brief, so the Creative Brief
         # page shows what the downloads carry.
         plan_brief = (case.get("plan") or {}).get("generated_brief")
-        if isinstance(plan_brief, dict) and creative_brief_duration_is_placeholder(plan_brief.get("duration")):
+        if (isinstance(plan_brief, dict) and not plan_brief.get("last_edited_by")
+                and creative_brief_duration_is_placeholder(plan_brief.get("duration"))):
             duration = creative_brief_duration(((brainstorm or {}).get("creator_selector") or {}).get("timelines"), pitch_deck)
             if duration:
                 case["plan"] = {**case["plan"], "generated_brief": {**plan_brief, "duration": duration}}
@@ -10016,6 +10041,7 @@ def make_v3_router(db):
     class CreativeBriefCreate(BaseModel):
         business_case_id: str
         creator_id: str
+        alignment_snapshot_id: Optional[str] = None
         brief_text: str = ""
         subject: Optional[str] = None
         creator_contact_email: Optional[str] = None
@@ -13026,9 +13052,10 @@ def make_v3_router(db):
             blocks.append(para(f"Prepared for: {brief['prepared_for']}", bold=True, after=200))
 
         # ---- Sections ---------------------------------------------------------
-        for section in brief.get("sections", []) or []:
+        for section_index, section in enumerate(brief.get("sections", []) or []):
             heading = str(section.get("heading") or "").strip()
-            if heading in CREATIVE_BRIEF_PAGE_STARTS:
+            if (section_index in (3, 4, 7) if len(brief.get("sections") or []) == 9
+                    else heading in CREATIVE_BRIEF_PAGE_STARTS):
                 blocks.append(_docx_page_break())
             if heading:
                 blocks.append(head(heading))
@@ -13144,9 +13171,9 @@ def make_v3_router(db):
         brief = None
         if snap_id:
             snap = await db.v3_alignment_snapshots.find_one({"id": snap_id}, {"_id": 0}) or {}
-            brief = snap.get("generated_brief")
+            brief = snap.get("generated_brief") if snap.get("business_case_id") == case.get("id") else None
         brief = brief or (case.get("plan") or {}).get("generated_brief")
-        if brief and creative_brief_duration_is_placeholder(brief.get("duration")):
+        if brief and not brief.get("last_edited_by") and creative_brief_duration_is_placeholder(brief.get("duration")):
             # Briefs written before the duration came from the project (or
             # before the Pitch Deck existed) said "To be confirmed"; fill it
             # from the project now so every download and preview carries it.
@@ -13154,6 +13181,112 @@ def make_v3_router(db):
             if duration:
                 brief = {**brief, "duration": duration}
         return brief
+
+    class CreativeBriefUpdate(BaseModel):
+        title: str
+        duration: str = ""
+        sections: List[Dict[str, Any]]
+
+    @router.patch("/business-cases/{bc_id}/creative-brief")
+    async def update_generated_creative_brief(
+        bc_id: str, payload: CreativeBriefUpdate, alignment_snapshot_id: Optional[str] = None,
+    ):
+        """Save the admin's edits to the brief used by preview, DOCX and sends."""
+        case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0})
+        if not case:
+            raise HTTPException(404, "Business case not found")
+        snap_id = alignment_snapshot_id or (case.get("frame") or {}).get("alignment_snapshot_id")
+        snap = None
+        if snap_id:
+            snap = await db.v3_alignment_snapshots.find_one(
+                {"id": snap_id, "business_case_id": bc_id}, {"_id": 0},
+            )
+            if alignment_snapshot_id and not snap:
+                raise HTTPException(404, "Alignment Snapshot not found on this Business Case")
+        brief = (snap or {}).get("generated_brief")
+        if not brief:
+            fallback = (case.get("plan") or {}).get("generated_brief")
+            if fallback and (not snap_id or fallback.get("alignment_snapshot_id") in (None, snap_id)):
+                brief = fallback
+        if not isinstance(brief, dict):
+            raise HTTPException(404, "Generate a Creative Brief before editing it")
+        existing_sections = brief.get("sections") or []
+        if not isinstance(existing_sections, list) or len(payload.sections) != len(existing_sections):
+            raise HTTPException(400, "Keep the brief's existing sections when saving edits")
+        title = payload.title.strip()
+        if not title or len(title) > 300 or len(payload.duration) > 300:
+            raise HTTPException(400, "Title is required; title and duration must be under 300 characters")
+        if len(json.dumps(payload.sections, ensure_ascii=False)) > 120000:
+            raise HTTPException(400, "Creative Brief is too long")
+
+        text_fields = ("heading", "content", "intro", "primary_label", "primary_value",
+                       "availability_label", "conditions_label", "conditions_hint", "note")
+        list_fields = ("paragraphs", "bullets", "checkboxes", "scope_signal",
+                       "assumptions", "availability_options", "confirmations")
+        updated_sections = []
+        for original, proposed in zip(existing_sections, payload.sections):
+            if not isinstance(original, dict) or not isinstance(proposed, dict):
+                raise HTTPException(400, "Invalid Creative Brief section")
+            section = dict(original)
+            for field in text_fields:
+                if field in proposed:
+                    if not isinstance(proposed[field], str) or len(proposed[field]) > 12000:
+                        raise HTTPException(400, f"Invalid {field} text")
+                    section[field] = proposed[field]
+            if not str(section.get("heading") or "").strip():
+                raise HTTPException(400, "Each brief section needs a heading")
+            for field in list_fields:
+                if field in proposed:
+                    values = proposed[field]
+                    if not isinstance(values, list) or len(values) > 100 or any(
+                        not isinstance(value, str) or len(value) > 12000 for value in values
+                    ):
+                        raise HTTPException(400, f"Invalid {field} list")
+                    section[field] = values
+            for field in ("groups", "lines"):
+                if field in proposed:
+                    old_rows = original.get(field) or []
+                    new_rows = proposed[field]
+                    if not isinstance(new_rows, list) or len(new_rows) != len(old_rows):
+                        raise HTTPException(400, f"Keep the existing {field} structure")
+                    merged_rows = []
+                    for old_row, new_row in zip(old_rows, new_rows):
+                        if not isinstance(old_row, dict) or not isinstance(new_row, dict):
+                            raise HTTPException(400, f"Invalid {field} entry")
+                        row = dict(old_row)
+                        row_fields = ("title", "bullets", "sub_bullets") if field == "groups" else ("label", "value")
+                        for row_field in row_fields:
+                            if row_field not in new_row:
+                                continue
+                            value = new_row[row_field]
+                            if row_field in ("bullets", "sub_bullets"):
+                                if not isinstance(value, list) or len(value) > 100 or any(
+                                    not isinstance(item, str) or len(item) > 12000 for item in value
+                                ):
+                                    raise HTTPException(400, f"Invalid {row_field} list")
+                            elif not isinstance(value, str) or len(value) > 12000:
+                                raise HTTPException(400, f"Invalid {row_field} text")
+                            row[row_field] = value
+                        merged_rows.append(row)
+                    section[field] = merged_rows
+            updated_sections.append(section)
+
+        now = _now_iso()
+        updated = {**brief, "title": title, "duration": payload.duration.strip(),
+                   "sections": updated_sections, "updated_at": now, "last_edited_by": "admin"}
+        if snap:
+            updated["alignment_snapshot_id"] = snap_id
+            await db.v3_alignment_snapshots.update_one(
+                {"id": snap_id, "business_case_id": bc_id},
+                {"$set": {"generated_brief": updated, "updated_at": now}},
+            )
+        await db.v3_business_cases.update_one(
+            {"id": bc_id},
+            {"$set": {"plan.generated_brief": updated, "updated_at": now},
+             "$push": {"timeline": {"at": now, "event": "creative_brief_edited",
+                                    "alignment_snapshot_id": snap_id}}},
+        )
+        return {"ok": True, "brief": updated}
 
     async def _project_brief_duration(bc_id: Optional[str], snapshot_id: Optional[str] = None) -> str:
         """Creative Brief duration from Creator Selector section 4 (Timelines)
@@ -13342,9 +13475,10 @@ def make_v3_router(db):
         # Page boundaries mirror the .docx exactly.
         pages: List[List[str]] = [parts]
 
-        for section in brief.get("sections", []) or []:
+        for section_index, section in enumerate(brief.get("sections", []) or []):
             heading = str(section.get("heading") or "").strip()
-            if heading in CREATIVE_BRIEF_PAGE_STARTS:
+            if (section_index in (3, 4, 7) if len(brief.get("sections") or []) == 9
+                    else heading in CREATIVE_BRIEF_PAGE_STARTS):
                 pages.append([])
             parts = pages[-1]
             parts.append('<section class="cb-section">')
@@ -14241,7 +14375,14 @@ def make_v3_router(db):
         # with their name woven in. The free-text draft is only a fallback for
         # cases where the templated brief has not been generated yet.
         creator_display = creator.get("name") or ""
-        generated = await _load_generated_brief(case)
+        if payload.alignment_snapshot_id:
+            belongs_to_case = await db.v3_alignment_snapshots.find_one(
+                {"id": payload.alignment_snapshot_id, "business_case_id": payload.business_case_id},
+                {"_id": 0, "id": 1},
+            )
+            if not belongs_to_case:
+                raise HTTPException(404, "Alignment Snapshot not found on this Business Case")
+        generated = await _load_generated_brief(case, payload.alignment_snapshot_id)
         subject_line = payload.subject or f"Creative Brief - {project_title}"
         if generated:
             brief_doc = personalize_creative_brief(generated, creator_display)
@@ -15584,6 +15725,10 @@ def make_v3_router(db):
 
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
         mi = _marketing_intelligence_from_case(case)
+        snapshot = await db.v3_alignment_snapshots.find_one(
+            {"id": snapshot_id, "business_case_id": bc_id}, {"_id": 0}
+        ) or {}
+        alignment_context = _alignment_kpi_context(snapshot)
 
         job_id = f"selector-job-{uuid.uuid4().hex[:10]}"
         await db.v3_analysis_jobs.insert_one({
@@ -15600,7 +15745,7 @@ def make_v3_router(db):
                     {"$set": {"status": "running", "progress": 30,
                               "message": "Reading the transcript and filling the TTA Creator Selector…",
                               "updated_at": _now_iso()}})
-                analyzed = await _call_brainstorm_analysis_tool(brand, case, mi, transcript)
+                analyzed = await _call_brainstorm_analysis_tool(brand, case, mi, transcript, alignment_context)
                 if not isinstance(analyzed, dict):
                     await db.v3_analysis_jobs.update_one(
                         {"id": job_id},
@@ -15637,10 +15782,14 @@ def make_v3_router(db):
                         return merged
                     return existing.get(key) or fallback
 
+                calculated_selector, _ = apply_funnel_projection(
+                    _section("creator_selector", _creator_selector_default()),
+                    analyzed.get("funnel_final_kpi"), transcript, alignment_context,
+                )
                 updates: Dict[str, Any] = {
                     # The headline output: the eight Creator Selector fields shown on
                     # the TTA Creator Selector page.
-                    "creator_selector": _section("creator_selector", _creator_selector_default()),
+                    "creator_selector": calculated_selector,
                     "pre_work": _section("pre_work", {}),
                     "phase_0_focus_group": _section("phase_0_focus_group", {}),
                     "phase_1_problem": _section("phase_1_problem", {}),

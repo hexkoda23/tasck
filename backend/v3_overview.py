@@ -29,16 +29,11 @@ from typing import Any, Dict, List, Optional, Tuple
 # Brand relationship stages that mean "not being worked right now".
 PAUSED_STAGES = {"dormant", "resting"}
 
-# Derived workflow position. `stage` is the canonical funnel column on a case;
-# the finer positions are read off the artifacts the case actually carries, so
-# a project appears under Pitch Deck only once a deck exists. Order matters -
-# it is the order the UI renders the pipeline in.
+# Business Case project phases. Connect and Framing belong to CRM Brands;
+# their records remain available for documents and meetings but are not
+# counted as projects in the Overview pipeline.
 WORKFLOW_ORDER: List[Tuple[str, str]] = [
-    ("connect", "Connect"),
-    ("frame", "Frame"),
     ("plan", "Plan"),
-    ("creator_matching", "Creator Matching"),
-    ("pitch_deck", "Pitch Deck"),
     ("delivery", "Delivery"),
     ("reporting", "Reporting"),
     ("closed", "Closed"),
@@ -77,28 +72,64 @@ def _metric(value: int, breakdown: List[Dict[str, Any]], href: str = "") -> Dict
 
 
 def workflow_position(case: Dict[str, Any]) -> str:
-    """Where a case actually sits, read off its own record.
-
-    Falls through from the most advanced evidence to the least so the position
-    moves forward on its own as artifacts are produced.
-    """
+    """The case's current Business Case phase, including older saved phases."""
     stage = str(case.get("stage") or "connect").lower()
+    phase = str(case.get("business_case_phase") or "").lower()
     plan = case.get("plan") if isinstance(case.get("plan"), dict) else {}
-    if stage in ("closed",):
+    if stage == "closed":
         return "closed"
-    if stage in ("reporting",) or case.get("final_report_sent_at") or case.get("reporting_started_at"):
+    if stage == "reporting" or phase == "reporting" or plan.get("delivery_completed_at") or case.get("final_report_sent_at") or case.get("reporting_started_at"):
         return "reporting"
-    if stage == "deliver":
+    if stage == "deliver" or phase == "delivery" or case.get("deliverables_started_at"):
         return "delivery"
-    if stage == "plan":
-        if plan.get("pitch_deck_id") or plan.get("pitch_deck_status"):
-            return "pitch_deck"
-        if plan.get("selected_creator_ids") or plan.get("creator_shortlist"):
-            return "creator_matching"
+    if stage == "plan" or phase == "planning" or plan.get("planning_completed_at"):
         return "plan"
     if stage == "frame":
         return "frame"
     return "connect"
+
+
+def current_business_cases(cases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Use the same current-project rule as the Business Cases page."""
+    def activity(case: Dict[str, Any]) -> datetime:
+        timeline = case.get("timeline") if isinstance(case.get("timeline"), list) else []
+        return _latest(
+            case.get("updated_at"), case.get("last_interaction_at"), case.get("created_at"),
+            *[item.get("at") or item.get("updated_at") or item.get("created_at")
+              for item in timeline if isinstance(item, dict)],
+        ) or datetime.min.replace(tzinfo=timezone.utc)
+
+    def intentional(case: Dict[str, Any]) -> bool:
+        timeline = case.get("timeline") if isinstance(case.get("timeline"), list) else []
+        connect = case.get("connect") if isinstance(case.get("connect"), dict) else {}
+        return (case.get("project_start_mode") == "new_project"
+                or connect.get("project_start_mode") == "new_project"
+                or any(item.get("force_new") is True or item.get("project_start_mode") == "new_project"
+                       for item in timeline if isinstance(item, dict)))
+
+    def eligible_case(case: Dict[str, Any]) -> bool:
+        plan = case.get("plan") if isinstance(case.get("plan"), dict) else {}
+        return bool(
+            str(case.get("stage") or "").lower() in {"plan", "deliver", "reporting", "closed"}
+            or str(case.get("business_case_phase") or "").lower() in {"planning", "delivery", "reporting"}
+            or plan.get("planning_completed_at") or plan.get("delivery_completed_at")
+            or case.get("deliverables_started_at") or case.get("reporting_started_at")
+            or case.get("final_report_sent_at")
+        )
+
+    eligible = [case for case in cases if eligible_case(case)]
+    eligible.sort(key=lambda case: (activity(case), str(case.get("id") or "")), reverse=True)
+    selected = []
+    brands_seen = set()
+    for case in eligible:
+        brand = case.get("brand") if isinstance(case.get("brand"), dict) else {}
+        brand_id = case.get("brand_id") or brand.get("id")
+        if brand_id and not intentional(case):
+            if brand_id in brands_seen:
+                continue
+            brands_seen.add(brand_id)
+        selected.append(case)
+    return selected
 
 
 async def build_overview(db, window_days: int = 30) -> Dict[str, Any]:
@@ -148,23 +179,21 @@ async def build_overview(db, window_days: int = 30) -> Dict[str, Any]:
     # ---------------------------------------------------------------- portfolio
     paused_brands = [b for b in brands if str(b.get("relationship_stage") or "").lower() in PAUSED_STAGES]
     active_brands = [b for b in brands if b not in paused_brands]
-    new_brands = [b for b in brands if (_parse(b.get("created_at")) or now) >= window_start]
+    new_brands = [b for b in brands if (created := _parse(b.get("created_at"))) and created >= window_start]
 
-    open_cases = [c for c in cases if workflow_position(c) != "closed"]
-    done_cases = [c for c in cases if workflow_position(c) == "closed"]
+    project_cases = current_business_cases(cases)
+    open_cases = [c for c in project_cases if workflow_position(c) != "closed"]
+    done_cases = [c for c in project_cases if workflow_position(c) == "closed"]
 
-    # Active projects: every project that has entered the workflow - from the
-    # business call / Connect stage onwards - and is not closed. The tile
-    # links to these projects themselves, so it no longer has to match what
-    # the Business Cases list page shows.
+    # Project counts match the Business Cases list, from Planning onward.
     active_cases = open_cases
 
     # ---------------------------------------------------------------- pipeline
-    position_of = {c.get("id"): workflow_position(c) for c in cases}
+    position_of = {c.get("id"): workflow_position(c) for c in project_cases}
     stage_label = dict(WORKFLOW_ORDER)
     pipeline = []
     for key, label in WORKFLOW_ORDER:
-        rows = [c for c in cases if position_of.get(c.get("id")) == key]
+        rows = [c for c in project_cases if position_of.get(c.get("id")) == key]
         pipeline.append({
             "key": key,
             "label": label,
@@ -176,7 +205,7 @@ async def build_overview(db, window_days: int = 30) -> Dict[str, Any]:
     # `health` is the CRM's own field. Whatever values exist are reported;
     # none are invented, so a value the workflow never sets simply has no row.
     health_counts: Dict[str, int] = {}
-    for c in cases:
+    for c in project_cases:
         key = str(c.get("health") or "unset").lower()
         health_counts[key] = health_counts.get(key, 0) + 1
     status = [{"key": k, "label": k.replace("_", " ").title(), "count": v}
@@ -474,7 +503,7 @@ async def build_overview(db, window_days: int = 30) -> Dict[str, Any]:
             case = case_by_id.get(k.get("business_case_id")) or {}
             add(k.get("signed_at") or k.get("updated_at") or k.get("created_at"), "Contract signed",
                 brand_label(k.get("brand_id") or case.get("brand_id"), case.get("brand_name", "")), case.get("id", ""))
-    for c in cases:
+    for c in project_cases:
         add(c.get("created_at"), "Project created", c.get("title") or brand_label(c.get("brand_id")), c.get("id"))
     for b in brands:
         add(b.get("created_at"), "Brand added", brand_label(b.get("id")))
@@ -538,7 +567,6 @@ async def build_overview(db, window_days: int = 30) -> Dict[str, Any]:
             },
             "completed_projects": _metric(len(done_cases), [
                 {"label": "Closed", "count": len(done_cases)},
-                {"label": "Reports produced", "count": len(finals) + len(reports)},
             ], href="/business-cases"),
             "attention": {**attention, "href": "/business-cases"},
             "pending": {**pending, "href": "/business-cases"},

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { pickActiveBrainstormRound } from '../../lib/brainstormRound';
+import { unlockedBusinessCasePhaseIndex } from '../../lib/businessCasePhase';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import useTopbarOffset from '../../lib/useTopbarOffset';
 import { flowNeighbours, flowStepHref, flowSnapshotId, pitchDeckHref, flowStepComplete, flowGateKey, flowStepOwnsNext, creatorsSelected, STEP_PENDING_HINT, rememberFlowPage, lastFlowPage, flowStepRank } from '../../lib/v1FlowSteps';
@@ -15,6 +16,7 @@ import TranscriptEntry from '../../components/admin/TranscriptEntry';
 import SavedArtifactCard from '../../components/admin/SavedArtifactCard';
 import { contentFingerprint } from '../../lib/contentFingerprint';
 import { TtaLetterhead } from '../../components/v1/TtaLetterhead';
+import EditableCreativeBrief from '../../components/v3/EditableCreativeBrief';
 import { normalizeKpiList, formatReadinessFieldValue } from '../../lib/readinessFieldFormat';
 import { useAssistantSurface } from '../../assistant/useAssistantSurface';
 import { shouldAutoGenerate } from '../../lib/stageContent';
@@ -146,6 +148,7 @@ import {
   v3PitchDeckSlidesUrl,
   v3GetPitchDeckAnalytics,
   v3GenerateCreativeBrief,
+  v3UpdateGeneratedCreativeBrief,
   v3StrategySnapshotDocxUrl,
   v3ContractDocxUrl,
   v3FinalReportPdfUrl,
@@ -354,42 +357,36 @@ const getFrameEntry = (id) => { try { return sessionStorage.getItem(frameEntryKe
 //
 // Backend stage keys are unchanged; only the UI grouping reflects the client's
 // vocabulary so no data migration is needed.
+const PHASE_INDEX = { connect: 0, frame: 1, plan: 2, deliver: 3, reporting: 4, closed: 4 };
+const FLOW_PHASES = [
+  { key: 'connect', label: 'Connect', color: '#155E63', tint: '#E8F5F6' },
+  { key: 'frame', label: 'Framing', color: '#8A6022', tint: '#FBF1DC' },
+  { key: 'plan', label: 'Planning', color: '#275A88', tint: '#EAF2FB' },
+  { key: 'deliver', label: 'Delivery', color: '#3D6B38', tint: '#EDF5E8' },
+  { key: 'reporting', label: 'Reporting', color: '#A44332', tint: '#FBEDE9' },
+];
+
 const stepperConfig = (id, stage, pathname, bc = {}) => {
-  const inCrmPhase = /\/(connect|frame)(\/|$)/.test(pathname || '');
-  if (inCrmPhase) {
-    return {
-      links: [
-        ['Connect', adminRoute(`/business-cases/${id}/connect`)],
-        ['Framing', adminRoute(`/business-cases/${id}/frame/snapshot`)],
-      ],
-      // Backend `frame` AND `plan` both belong to the Framing area in the UI.
-      currentIndex: ({ connect: 0, frame: 1, plan: 1 }[stage] ?? 1),
-    };
-  }
-  // Business Case area: Planning -> Delivery -> Reporting.
-  // currentIndex is the HIGHEST unlocked step (locked = idx > currentIndex).
-  // Delivery must stay locked until Planning is explicitly completed, and
-  // Reporting until Delivery is completed. A closed/reporting-stage case
-  // unlocks everything (nothing left to gate).
+  const pageIndex = PHASE_INDEX[phaseFromPath(pathname) || stage] ?? 0;
   const plan = bc.plan || {};
-  const planningDone = Boolean(plan.planning_completed_at);
-  const deliveryDone = Boolean(plan.delivery_completed_at) || Boolean(bc.reporting_started_at) || Boolean(bc.final_report_sent_at);
-  let bcIndex = 0; // Planning only.
-  if (planningDone) bcIndex = 1; // Delivery unlocked.
-  if (deliveryDone) bcIndex = 2; // Reporting unlocked.
-  if (stage === 'closed' || stage === 'reporting') bcIndex = 2;
+  const savedIndex = bc.business_case_phase === 'reporting' || stage === 'closed' || stage === 'reporting'
+    || plan.delivery_completed_at || bc.reporting_started_at || bc.final_report_sent_at
+    ? 4 : bc.business_case_phase === 'delivery' || stage === 'deliver'
+      || plan.planning_completed_at || bc.deliverables_started_at
+      ? 3 : bc.business_case_phase === 'planning'
+        ? 2 : stage === 'frame' || stage === 'plan' ? 1 : 0;
+  const reachedIndex = Math.max(pageIndex, savedIndex,
+    savedIndex >= 2 ? 2 + unlockedBusinessCasePhaseIndex(bc) : savedIndex);
   return {
     links: [
-      // Planning lands on its summary page (project value, brand/creator
-      // info, timelines, invoicing, links to Contract Studio + Feedback).
-      // Delivery lands directly on the Deliverables page - per Chioma's
-      // mapping, that is the only page in the Delivery phase. Reporting
-      // covers the Final Report.
-      ['Planning', adminRoute(`/business-cases/${id}/plan/planning`)],
-      ['Delivery', adminRoute(`/business-cases/${id}/delivery/deliverables`)],
-      ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
+      adminRoute(`/business-cases/${id}/connect`),
+      adminRoute(`/business-cases/${id}/frame/snapshot`),
+      adminRoute(`/business-cases/${id}/plan/planning`),
+      adminRoute(`/business-cases/${id}/delivery/deliverables`),
+      adminRoute(`/business-cases/${id}/reporting/final-report`),
     ],
-    currentIndex: bcIndex,
+    pageIndex,
+    reachedIndex,
   };
 };
 
@@ -482,7 +479,7 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
   const bc = getCase(bundle);
   const flowBrand = bundle?.brand || {};
   if (loading) return <div className="v3-card p-8 text-[13px] text-[#8A8A8A]">Loading business case...</div>;
-  const { links: stepperLinks, currentIndex: stepperIndex } = stepperConfig(id, bc.stage, location.pathname, bc);
+  const { links: stepperLinks, pageIndex, reachedIndex } = stepperConfig(id, bc.stage, location.pathname, bc);
   // Framing pages (Connect + Frame sub-steps) live under the CRM Brands tab
   // conceptually. Strip the Business Case context chip and point the second
   // back-button at the CRM Brands list instead of the Business Cases list so
@@ -537,26 +534,29 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
           </div>
           {nextAction && <div className="v3-next-action-card">{nextAction}</div>}
         </div>
-        <div className="v3-stepper">
-          {stepperLinks.map(([label, href], idx) => {
-            const locked = idx > stepperIndex;
+        <div className="v3-flow-phase-nav" aria-label="Business Case stages" data-testid="business-case-stage-nav">
+          {FLOW_PHASES.map((phase, idx) => {
+            const locked = idx > reachedIndex;
+            const state = locked ? 'locked' : idx === pageIndex ? 'current' : idx < pageIndex ? 'complete' : 'available';
             return (
               <button
-                key={label}
-                onClick={() => { if (!locked) navigate(href); }}
+                key={phase.key}
+                onClick={() => { if (!locked) navigate(stepperLinks[idx]); }}
                 disabled={locked}
                 aria-disabled={locked}
-                title={locked ? `Locked until the ${stepperLinks[idx - 1]?.[0]} stage is completed` : ''}
-                className={`v3-stepper-item${locked ? ' v3-stepper-item-locked' : ''}`}
-                data-testid={`stepper-${label.toLowerCase()}${locked ? '-locked' : ''}`}
+                aria-current={idx === pageIndex ? 'step' : undefined}
+                title={locked ? `Complete ${FLOW_PHASES[idx - 1]?.label} to unlock ${phase.label}` : `${phase.label} stage`}
+                className={`v3-flow-phase-nav-item v3-flow-phase-nav-item-${state}`}
+                style={{ '--phase-accent': phase.color, '--phase-tint': phase.tint }}
+                data-testid={`stepper-${phase.label.toLowerCase()}${locked ? '-locked' : ''}`}
               >
-                {locked && <Lock className="w-3.5 h-3.5 mr-1.5 inline-block align-[-2px]" strokeWidth={2} />}
-                {label}
+                {state === 'complete' && <CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+                {locked && <Lock className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />}
+                {phase.label}
               </button>
             );
           })}
         </div>
-        <PhaseProgressBar stage={phaseFromPath(location.pathname) || bc.stage} />
       </div>
       {children}
       <FlowFooterNav id={id} bundle={bundle} />
@@ -564,14 +564,7 @@ export const FlowShell = ({ title, subtitle, children, nextAction }) => {
   );
 };
 
-// The 5 broad relationship-stage phases, always shown together so the admin
-// can tell at a glance where a project sits overall - separate from the
-// stepper above, which only ever shows the 2-3 steps within whichever area
-// (CRM vs Business Case) the admin is currently in.
-const PHASE_INDEX = { connect: 0, frame: 1, plan: 2, deliver: 3, reporting: 4, closed: 4 };
-const PHASES = ['Connect', 'Framing', 'Planning', 'Delivery', 'Reporting'];
-
-// Which of the 5 broad phases the CURRENT PAGE belongs to, from its URL -
+// Which of the 5 phases the CURRENT PAGE belongs to, from its URL -
 // independent of the case's own persisted stage, so the bar tracks where the
 // admin is looking right now instead of freezing on the case's overall stage
 // (e.g. it stayed on "Reporting" while browsing Planning/Delivery pages of a
@@ -587,20 +580,6 @@ const phaseFromPath = (pathname = '') => {
   if (/\/frame(?:\/|$)/.test(pathname)) return 'frame';
   if (/\/connect(?:\/|$)/.test(pathname)) return 'connect';
   return null;
-};
-
-const PhaseProgressBar = ({ stage }) => {
-  const activeIndex = PHASE_INDEX[stage] ?? 0;
-  return (
-    <div className="flex items-center gap-1.5" data-testid="phase-progress-bar">
-      {PHASES.map((label, idx) => (
-        <div key={label} className="flex-1 flex flex-col items-center gap-1" data-testid={`phase-progress-${label.toLowerCase()}`}>
-          <div className={`h-1 w-full rounded-full ${idx === activeIndex ? 'bg-[#1F4A3A]' : idx < activeIndex ? 'bg-[#C7D7CF]' : 'bg-[#E8E4DB]'}`} />
-          <span className={`text-[10px] uppercase tracking-wider ${idx === activeIndex ? 'text-[#1F4A3A] font-semibold' : 'text-[#8A8A8A]'}`}>{label}</span>
-        </div>
-      ))}
-    </div>
-  );
 };
 
 /*
@@ -3949,8 +3928,8 @@ export const V3BusinessCasePlanBrainstormTranscript = () => {
 // CREATOR_SELECTOR_FIELDS in backend/v3_routes.py - keep keys in sync.
 const CREATOR_SELECTOR_FIELDS = [
   { key: 'audience_platform', label: 'Where is this audience (Platform)', hint: 'The platforms where this audience actually lives - e.g. Instagram, TikTok, YouTube, WhatsApp, radio.', placeholder: 'e.g. Instagram and TikTok first, YouTube for long-form...' },
-  { key: 'top_of_funnel_size', label: 'Top of Funnel Audience Size', hint: 'How large is the reachable audience at the top of the funnel? Estimates and sources are fine.', placeholder: 'e.g. ~2.5m reachable 18-30s across target platforms...' },
-  { key: 'funnel_milestones', label: 'What are the Funnel Milestones', hint: 'The steps from first touch to the target action.', placeholder: 'e.g. view -> follow -> click -> sign-up -> first purchase -> repeat...' },
+  { key: 'top_of_funnel_size', label: 'Top of Funnel Audience Size', hint: 'Filled from the confirmed final KPI when available. Review and edit as needed.', placeholder: 'Confirm a final KPI in the transcript to generate this estimate.' },
+  { key: 'funnel_milestones', label: 'What are the Funnel Milestones', hint: 'Awareness, consideration, and conversion targets. Review and edit as needed.', placeholder: 'Confirm a final KPI in the transcript to generate these milestones.' },
   { key: 'timelines', label: 'Timelines', hint: 'Key dates and phases - launch windows, campaign length, reporting points.', placeholder: 'e.g. 6-week launch burst from March, reporting at week 3 and 6...' },
   { key: 'risks', label: 'Risks', hint: 'The biggest risks to this working - audience, creator, market, or execution risks.', placeholder: 'e.g. audience distrust of app promos; creator availability...' },
   { key: 'risk_mitigation', label: 'Risk Mitigation', hint: 'How each named risk is reduced or handled.', placeholder: 'e.g. proof-led content first; back-up creator shortlist...' },
@@ -4634,7 +4613,7 @@ export const V3BusinessCasePlanCreatorScan = () => {
 export const V3BusinessCasePlanBrief = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { id, snapshotId, bundle } = useBusinessCaseBundle();
+  const { id, snapshotId, bundle, reload } = useBusinessCaseBundle();
   const [creators, setCreators] = useState([]);
   const [selectedIds, setSelectedIds] = useState([]);
   const [manualCreatorId, setManualCreatorId] = useState('');
@@ -4643,6 +4622,8 @@ export const V3BusinessCasePlanBrief = () => {
   const [notice, setNotice] = useState('');
   // The brand-tailored brief in the approved TASCK 4-page template.
   const [templateBrief, setTemplateBrief] = useState(null);
+  const [editingBrief, setEditingBrief] = useState(false);
+  const [savingBrief, setSavingBrief] = useState(false);
   const [generatingBrief, setGeneratingBrief] = useState(false);
   const [briefProgress, setBriefProgress] = useState('');
   // Brief generation popup - mirrors the Pitch Deck page: the backend job
@@ -4672,12 +4653,30 @@ export const V3BusinessCasePlanBrief = () => {
   // keeps the page open, so a finished project is never locked out.
   const scanDone = creatorsSelected(bundle) || Boolean(bundle?.creative_brief?.id || bundle?.business_case?.plan?.generated_brief);
 
-  // Adopt a brief generated earlier (persisted on the case).
+  // Prefer the brief on the selected Alignment Snapshot. The case-level copy
+  // is retained for older briefs and the creator send/download routes.
+  const persistedBrief = bundle?.alignment_snapshot?.generated_brief || bundle?.business_case?.plan?.generated_brief;
+  const persistedBriefVersion = persistedBrief?.updated_at || bundle?.alignment_snapshot?.generated_brief_at || bundle?.business_case?.plan?.generated_brief_at;
+  const hasPersistedBrief = Boolean(persistedBrief);
   useEffect(() => {
-    const persisted = bundle?.business_case?.plan?.generated_brief;
-    if (persisted && !templateBrief) setTemplateBrief(persisted);
+    setTemplateBrief(persistedBrief || null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bundle?.business_case?.id, bundle?.business_case?.plan?.generated_brief_at]);
+  }, [id, snapshotId, hasPersistedBrief, persistedBriefVersion]);
+
+  const saveBriefEdits = async (draft) => {
+    setSavingBrief(true);
+    try {
+      const result = await v3UpdateGeneratedCreativeBrief(id, draft, snapshotId);
+      setTemplateBrief(result.brief);
+      setEditingBrief(false);
+      toast.success('Creative Brief changes saved. Previews and future downloads use this version.');
+      reload().catch(() => {});
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e?.message || 'Could not save the Creative Brief.');
+    } finally {
+      setSavingBrief(false);
+    }
+  };
 
   const generateTemplateBrief = async () => {
     setGeneratingBrief(true);
@@ -4698,6 +4697,7 @@ export const V3BusinessCasePlanBrief = () => {
       }, snapshotId);
       stopGenTick();
       setTemplateBrief(result?.brief || null);
+      setEditingBrief(false);
       setGenPopup({ open: true, progress: 100, status: 'complete', message: 'Creative Brief ready in the approved TASCK template.' });
       toast.success('Creative Brief written in the TASCK template.');
       setTimeout(() => setGenPopup((prev) => ({ ...prev, open: false })), 1600);
@@ -4789,7 +4789,7 @@ export const V3BusinessCasePlanBrief = () => {
     try {
       // The backend renders the same fixed 4-page brief for this business
       // case, addressed to this creator - no per-creator free text.
-      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, creator_contact_email: recipient, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
+      const doc = await v3CreateBrief({ business_case_id: id, creator_id: creator.id, alignment_snapshot_id: snapshotId, creator_contact_email: recipient, subject: `Creative Brief - ${creatorName(creator)} - ${getCase(bundle).title}` });
       setSentBriefs((current) => ({ ...current, [creator.id]: doc }));
       const status = doc?.email?.status || doc?.email_status || 'queued';
       const sentTo = doc?.email?.to || doc?.creator_contact_email || creatorContact(creator) || creatorName(creator);
@@ -4867,7 +4867,7 @@ export const V3BusinessCasePlanBrief = () => {
             )}
             {/* Downloads live on each creator card below (Download Google
                 Docs), addressed to that creator - one place, one button. */}
-            {templateBrief && (
+            {templateBrief && !editingBrief && (
               <a
                 href={v3TemplateBriefPreviewUrl(id, snapshotId)}
                 target="_blank"
@@ -4886,12 +4886,13 @@ export const V3BusinessCasePlanBrief = () => {
           <div className="mb-3">
             <SavedArtifactCard
               title="Creative Brief"
-              savedAt={templateBrief.generated_at || templateBrief.updated_at}
-              detail="Download or send it below."
+              savedAt={templateBrief.updated_at || templateBrief.generated_at}
+              detail="Edit it at any time before sharing the latest version."
               action={(
-                <button type="button" onClick={generateTemplateBrief} className="v3-btn-secondary text-[12px]" data-testid="brief-regenerate-btn">
-                  <Sparkles className="w-3.5 h-3.5" /> Regenerate
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  {!editingBrief && <button type="button" onClick={() => setEditingBrief(true)} className="v3-btn-primary text-[12px]" data-testid="brief-edit-btn"><PencilLine className="w-3.5 h-3.5" /> Edit brief</button>}
+                  {!editingBrief && <button type="button" onClick={generateTemplateBrief} className="v3-btn-secondary text-[12px]" data-testid="brief-regenerate-btn"><Sparkles className="w-3.5 h-3.5" /> Regenerate</button>}
+                </div>
               )}
               testId="brief-saved-card"
             />
@@ -4906,7 +4907,10 @@ export const V3BusinessCasePlanBrief = () => {
             the agency sample, every word written for this brand from the Alignment Snapshot and Creator Selector.
           </p>
         )}
-        {templateBrief && (
+        {templateBrief && editingBrief && (
+          <EditableCreativeBrief brief={templateBrief} saving={savingBrief} onSave={saveBriefEdits} onCancel={() => setEditingBrief(false)} />
+        )}
+        {templateBrief && !editingBrief && (
           <TtaLetterhead title={templateBrief.title || 'TTA – Creative Alignment Brief (Creator Version)'}>
             <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1 font-['Century_Gothic','Century Gothic',sans-serif]" data-testid="brief-template-preview">
               {templateBrief.subtitle && <p className="text-[11px] font-semibold text-[#6E6657] mb-1">{templateBrief.subtitle}</p>}
@@ -4966,6 +4970,7 @@ export const V3BusinessCasePlanBrief = () => {
       </InfoCard>
       {notice && <div className="rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2.5 text-[12px] text-[#7A5A1E]">{notice}</div>}
       <InfoCard title="Selected creator briefs">
+        {editingBrief && <p className="mb-3 rounded-lg border border-[#E5C99A] bg-[#FBF4E4] px-3 py-2 text-[12px] text-[#7A5A1E]">Save or cancel your edits before sharing or downloading this brief.</p>}
         <p className="mb-3 text-[12px] text-[#6E6657]">
           One brief per business case in the approved 4-page template - each creator gets that same document with their name on it.
           Sending emails the formatted brief (TASCK-branded .docx attached) and makes it reviewable in the creator portal.
@@ -4994,12 +4999,12 @@ export const V3BusinessCasePlanBrief = () => {
                   <button onClick={() => setSelectedIds((current) => current.filter((value) => value !== creator.id))} className="rounded-md p-1.5 text-[#B54A37] hover:bg-[#FBF1EE]" aria-label={`Remove ${creatorName(creator)}`}><Trash2 className="w-3.5 h-3.5" /></button>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => send(creator)} className="v3-btn-primary rounded-full text-[12px] whitespace-nowrap" data-testid={`brief-email-${creator.id}`}><Send className="w-3.5 h-3.5" /> Send to creator</button>
+                  <button onClick={() => send(creator)} disabled={editingBrief || savingBrief} className="v3-btn-primary rounded-full text-[12px] whitespace-nowrap" data-testid={`brief-email-${creator.id}`}><Send className="w-3.5 h-3.5" /> Send to creator</button>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button onClick={() => copyLink(creator)} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
-                  <button onClick={() => downloadGoogleDoc(creator)} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download Google Docs</button>
-                  <button onClick={() => shareWhatsApp(creator)} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
+                  <button onClick={() => copyLink(creator)} disabled={editingBrief || savingBrief} className="v3-btn-secondary"><FileText className="w-3.5 h-3.5" /> Copy link</button>
+                  <button onClick={() => downloadGoogleDoc(creator)} disabled={editingBrief || savingBrief} className="v3-btn-secondary"><Download className="w-3.5 h-3.5" /> Download Google Docs</button>
+                  <button onClick={() => shareWhatsApp(creator)} disabled={editingBrief || savingBrief} className="v3-btn-secondary"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp share</button>
                 </div>
               </div>
             ))}
@@ -6585,15 +6590,14 @@ export const V3BusinessCasePlanFeedback = () => {
   const brandEmail = brand?.email || bc?.brand_contact_snapshot?.email || '';
 
   // The one way onward from Planning: Contract Studio -> this page -> Delivery.
-  // Delivery stays locked until Planning is marked complete, so the first
-  // press completes Planning (as the Planning page's old "Complete Planning &
-  // Open Delivery" button did); once it is complete this just opens Delivery.
+  // The first press completes Planning; a case already recorded in Delivery
+  // opens Delivery directly even if its older completion flag is missing.
   const [openingDelivery, setOpeningDelivery] = useState(false);
   const [deliveryNotice, setDeliveryNotice] = useState('');
   const openDelivery = async () => {
     const deliverablesPath = adminRoute(`/business-cases/${id}/delivery/deliverables`);
     setDeliveryNotice('');
-    if (bc.plan?.planning_completed_at) {
+    if (unlockedBusinessCasePhaseIndex(bc) >= 1) {
       navigate(deliverablesPath);
       return;
     }
@@ -6857,7 +6861,9 @@ export const V3BusinessCasePlanFeedback = () => {
           <p className="text-[13px] text-[#6E6657]">
             {bc.plan?.planning_completed_at
               ? 'Planning is complete. The Delivery phase is unlocked.'
-              : 'Confirm the budget, timelines, invoicing, and contracts are handled. Opening Delivery marks Planning complete.'}
+              : unlockedBusinessCasePhaseIndex(bc) >= 1
+                ? 'This case has already reached Delivery. You can return to it now.'
+                : 'Confirm the budget, timelines, invoicing, and contracts are handled. Opening Delivery marks Planning complete.'}
           </p>
           <button onClick={openDelivery} disabled={openingDelivery} className="v3-btn-primary flex-shrink-0 disabled:opacity-60" data-testid="feedback-open-delivery-btn">
             <ArrowRight className="w-3.5 h-3.5" /> {openingDelivery ? 'Opening…' : 'Open Delivery'}
@@ -7207,7 +7213,6 @@ export const V3BusinessCaseDeliverySummary = () => {
             {valueNotice && <p className="mt-1 text-[11px] text-[#1F4A3A]">{valueNotice}</p>}
           </div>
           <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Engagement track</span>{humanStatus(bc.engagement_track || '-')}</div>
-          <div><span className="text-[10px] uppercase tracking-wider text-[#8A8A8A] block">Stage</span>{humanStatus(bc.stage)}</div>
         </div>
       </InfoCard>
       <InfoCard title="Brand details">

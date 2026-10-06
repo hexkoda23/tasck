@@ -3,7 +3,7 @@ import { adminRoute } from '../../lib/v3AdminRouteBase';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  v3ListBusinessCases, v3AdminOverview, v3GetBrands, v3GetCreators,
+  v3ListBusinessCases, v3GetBrands, v3GetCreators,
   v3CreateBusinessCase, v3ListOpportunityCandidates, v3BusinessCaseDuplicatesCount,
 } from '../../lib/v3api';
 import {
@@ -13,36 +13,34 @@ import { candidateToBusinessOpportunity } from '../../lib/v3opportunityDemo';
 import V3Modal from '../../components/v3/V3Modal';
 import { Sparkles, Filter, ArrowRight, AlertOctagon, Plus, CheckCircle2, XCircle, Search, Lock, MessageSquare, FolderInput } from 'lucide-react';
 import { businessCasePhasePath } from './V1BusinessCaseFlowPages';
+import { businessCaseActivityTs, businessCaseCounts, businessCaseDisplayStage, currentBusinessCases } from '../../lib/businessCaseScope';
+import { unlockedBusinessCasePhaseIndex } from '../../lib/businessCasePhase';
 
 const stageMeta = {
   connect: { label: 'Connect', color: '#9B9380' },
   frame: { label: 'Frame', color: '#C49B5F' },
-  plan: { label: 'Plan', color: '#1F4A3A' },
-  deliver: { label: 'Deliver', color: '#567B3F' },
+  plan: { label: 'Planning', color: '#275A88', tint: '#EAF2FB' },
+  deliver: { label: 'Delivery', color: '#3D6B38', tint: '#EDF5E8' },
   // The backend `closed` stage is where the Reporting / closeout work happens.
-  closed: { label: 'Reporting', color: '#B54A37' },
+  reporting: { label: 'Reporting', color: '#A44332', tint: '#FBEDE9' },
 };
 
-// Business Cases only surface once a brand has reached Plan. Connect / Frame stay
-// inside the CRM brand workflow, so they never appear here.
-const VISIBLE_STAGES = ['plan', 'deliver', 'closed'];
-
 // Filter chips shown for the Business Case area and how each maps onto a real
-// backend stage. "Reporting" is the `closed` stage (final-report / closeout).
+// project phase.
 const BC_STAGE_CHIPS = [
   { key: 'all', label: 'All' },
-  { key: 'plan', label: 'Plan' },
-  { key: 'deliver', label: 'Deliver' },
+  { key: 'plan', label: 'Planning' },
+  { key: 'deliver', label: 'Delivery' },
   { key: 'reporting', label: 'Reporting' },
 ];
-const CHIP_STAGE = { plan: 'plan', deliver: 'deliver', reporting: 'closed' };
-
 // Stages shown in the overview "By stage" breakdown for the Business Case area.
 const BC_STAGE_METRICS = [
-  { key: 'plan', label: 'Plan', color: '#1F4A3A' },
-  { key: 'deliver', label: 'Deliver', color: '#567B3F' },
-  { key: 'closed', label: 'Reporting', color: '#B54A37' },
+  { key: 'plan', label: 'Planning', color: '#275A88' },
+  { key: 'deliver', label: 'Delivery', color: '#3D6B38' },
+  { key: 'reporting', label: 'Reporting', color: '#A44332' },
 ];
+
+const formatExactNaira = (amount) => `₦${Number(amount || 0).toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
 
 const healthBadge = (h) => {
   const map = {
@@ -55,86 +53,18 @@ const healthBadge = (h) => {
   return map[key] || map.new;
 };
 
-// Phase tab index relative to the Business Case phases (Plan → Delivery → Reporting).
-// A phase tab is locked until the case has reached that stage.
-const STAGE_PHASE_INDEX = { plan: 0, deliver: 1, reporting: 2, closed: 2 };
-
 const phaseLinks = (id) => [
-  ['Plan', adminRoute(`/business-cases/${id}/plan/brainstorm`)],
-  ['Delivery', adminRoute(`/business-cases/${id}/delivery/summary`)],
+  ['Planning', adminRoute(`/business-cases/${id}/plan/planning`)],
+  ['Delivery', adminRoute(`/business-cases/${id}/delivery/deliverables`)],
   ['Reporting', adminRoute(`/business-cases/${id}/reporting/final-report`)],
 ];
-
-const brandCreatedAtTs = (value) => {
-  const ts = Date.parse(value || '');
-  return Number.isNaN(ts) ? 0 : ts;
-};
-
-const sortBrandsNewestFirst = (brandList = []) => {
-  return [...brandList].sort((a, b) => {
-    const newest = brandCreatedAtTs(b.created_at || b.createdAt) - brandCreatedAtTs(a.created_at || a.createdAt);
-    if (newest !== 0) {
-      return newest;
-    }
-    return (a.company || '').localeCompare(b.company || '');
-  });
-};
-
-const businessCaseActivityTs = (businessCase) => {
-  const timestamps = [
-    businessCase?.updated_at,
-    businessCase?.updatedAt,
-    businessCase?.last_interaction_at,
-    businessCase?.lastInteractionAt,
-    businessCase?.created_at,
-    businessCase?.createdAt,
-  ].map((value) => {
-    const parsed = Date.parse(value || '');
-    return Number.isNaN(parsed) ? 0 : parsed;
-  });
-
-  const timeline = Array.isArray(businessCase?.timeline) ? businessCase.timeline : [];
-  timeline.forEach((item) => {
-    const parsed = Date.parse(item?.at || item?.updated_at || item?.created_at || '');
-    timestamps.push(Number.isNaN(parsed) ? 0 : parsed);
-  });
-
-  return Math.max(...timestamps, 0);
-};
-
-const isIntentionalNewProject = (businessCase) => {
-  if (businessCase?.connect?.project_start_mode === 'new_project' || businessCase?.project_start_mode === 'new_project') return true;
-  const timeline = Array.isArray(businessCase?.timeline) ? businessCase.timeline : [];
-  return timeline.some((item) => item?.force_new === true || item?.project_start_mode === 'new_project');
-};
-
-const dedupeBusinessCasesForV1 = (items = []) => {
-  const sorted = [...items].sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a) || String(b.id || '').localeCompare(String(a.id || '')));
-  const latestByBrand = new Map();
-  const explicitProjects = [];
-
-  sorted.forEach((businessCase) => {
-    const brandKey = businessCase?.brand_id || businessCase?.brand?.id || '';
-    if (!brandKey || isIntentionalNewProject(businessCase)) {
-      explicitProjects.push(businessCase);
-      return;
-    }
-    if (!latestByBrand.has(brandKey)) {
-      latestByBrand.set(brandKey, businessCase);
-    }
-  });
-
-  return [...latestByBrand.values(), ...explicitProjects]
-    .sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a) || String(b.id || '').localeCompare(String(a.id || '')));
-};
 
 const V1AdminBusinessCases = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialStage = (searchParams.get('stage') || 'all').toLowerCase();
   const validStages = BC_STAGE_CHIPS.map((c) => c.key);
-  const [cases, setCases] = useState([]);
-  const [overview, setOverview] = useState(null);
+  const [cases, setCases] = useState(null);
   const [stage, setStage] = useState(validStages.includes(initialStage) ? initialStage : 'all');
   const [track, setTrack] = useState('all');
   const [error, setError] = useState(null);
@@ -149,29 +79,38 @@ const V1AdminBusinessCases = () => {
   const [grantOpportunities, setGrantOpportunities] = useState([]);
   const [businessAgentOpen, setBusinessAgentOpen] = useState(false);
   const [businessOpportunities, setBusinessOpportunities] = useState([]);
-  const fetchedRef = useRef(false);
+  const lastFetchRef = useRef(0);
   const [form, setForm] = useState({
     brand_id: '', creator_id: '', title: '', engagement_track: 'paid',
     estimated_value: 100000000, rm_id: 'rm-temi',
     connect_status: 'in_discovery', stated_intent: '', source: 'Inbound enquiry',
   });
 
-  const reload = () =>
-    Promise.all([v3ListBusinessCases(), v3AdminOverview()]).then(([cs, ov]) => {
+  const reload = () => {
+    lastFetchRef.current = Date.now();
+    return Promise.all([v3ListBusinessCases(), v3BusinessCaseDuplicatesCount().catch(() => null)]).then(([cs, duplicates]) => {
       const csList = Array.isArray(cs) ? cs : [];
       csList.sort((a, b) => businessCaseActivityTs(b) - businessCaseActivityTs(a) || String(b.id || '').localeCompare(String(a.id || '')));
       setCases(csList);
-      setOverview(ov && typeof ov === 'object' && !Array.isArray(ov) ? ov : null);
+      if (duplicates && typeof duplicates.count === 'number') setDuplicatesCount(duplicates.count);
       setError(null);
     }).catch((e) => {
       setError('Backend unavailable. Please check your connection.');
     });
+  };
 
   useEffect(() => {
     reload().catch((e) => setError(e.message));
-    v3BusinessCaseDuplicatesCount()
-      .then((r) => { if (r && typeof r.count === 'number') setDuplicatesCount(r.count); })
-      .catch(() => {});
+    const revalidate = () => {
+      if (document.visibilityState === 'hidden' || Date.now() - lastFetchRef.current < 15000) return;
+      reload();
+    };
+    window.addEventListener('focus', revalidate);
+    document.addEventListener('visibilitychange', revalidate);
+    return () => {
+      window.removeEventListener('focus', revalidate);
+      document.removeEventListener('visibilitychange', revalidate);
+    };
   }, []);
 
   const openNew = async () => {
@@ -217,19 +156,13 @@ const V1AdminBusinessCases = () => {
     }
   };
 
-  const filtered = useMemo(
-    () => dedupeBusinessCasesForV1(
-      (Array.isArray(cases) ? cases : []).filter(
-        (c) =>
-          // Only brands that have reached Plan appear in the Business Case area.
-          VISIBLE_STAGES.includes(c.stage) &&
-          (stage === 'all' || c.stage === CHIP_STAGE[stage]) &&
-          (track === 'all' || c.engagement_track === track)
-      )
-    ),
-    [cases, stage, track]
-  );
-  const byStage = overview?.by_stage || {};
+  const visibleCases = useMemo(() => currentBusinessCases(cases || []), [cases]);
+  const overview = useMemo(() => businessCaseCounts(cases || []), [cases]);
+  const filtered = useMemo(() => visibleCases.filter((c) =>
+    (stage === 'all' || businessCaseDisplayStage(c) === stage)
+    && (track === 'all' || c.engagement_track === track)
+  ), [visibleCases, stage, track]);
+  const byStage = overview.by_stage;
 
   const runGrantAgent = () => {
     setBusy(true);
@@ -279,6 +212,12 @@ const V1AdminBusinessCases = () => {
     }
     setError('This opportunity must come from the live V3 Opportunity Scanner before it can become a real Business Case.');
   };
+
+  if (cases === null) {
+    return <div data-testid="v3-admin-business-cases" className="v3-card p-8 text-[13px] text-[#6E6657]">
+      {error ? <><p>{error}</p><button type="button" onClick={reload} className="v3-btn-secondary mt-3">Try again</button></> : 'Loading Business Cases…'}
+    </div>;
+  }
 
   return (
     <>
@@ -427,14 +366,14 @@ const V1AdminBusinessCases = () => {
             <p className="text-2xl font-semibold" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
               {overview.paid_count}
             </p>
-            <p className="text-[11px] text-[#1F4A3A] mt-1">{formatNairaV3(overview.paid_total_value)} pipeline</p>
+            <p className="text-[11px] text-[#1F4A3A] mt-1">{formatExactNaira(overview.paid_total_value)} pipeline</p>
           </div>
           <div className="v3-card p-5">
             <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">Grant</p>
             <p className="text-2xl font-semibold" style={{ fontFamily: "'JetBrains Mono', monospace" }}>
               {overview.grant_count}
             </p>
-            <p className="text-[11px] text-[#7A5F23] mt-1">{formatNairaV3(overview.grant_total_value)} pipeline</p>
+            <p className="text-[11px] text-[#7A5F23] mt-1">{formatExactNaira(overview.grant_total_value)} pipeline</p>
           </div>
           <div className="v3-card p-5">
             <p className="text-[11px] text-[#8A8A8A] uppercase tracking-wider mb-2">By Stage</p>
@@ -465,11 +404,9 @@ const V1AdminBusinessCases = () => {
         <Filter className="w-4 h-4 text-[#8A8A8A]" />
         <div className="flex gap-1 p-1 bg-[#F4F2EC] rounded-lg" data-testid="bc-stage-filter">
           {BC_STAGE_CHIPS.map(({ key, label }) => {
-            const visibleCases = Array.isArray(cases) ? cases.filter((c) => VISIBLE_STAGES.includes(c.stage)) : [];
-            const mappedStage = CHIP_STAGE[key];
             const stageCount = key === 'all'
               ? visibleCases.length
-              : (byStage[mappedStage]?.count ?? visibleCases.filter((c) => c.stage === mappedStage).length);
+              : byStage[key] || 0;
             return (
               <button
                 key={key}
@@ -479,7 +416,8 @@ const V1AdminBusinessCases = () => {
                   if (key === 'all') next.delete('stage'); else next.set('stage', key);
                   setSearchParams(next, { replace: true });
                 }}
-                className={`text-[11px] px-3 py-1 rounded transition-colors ${stage === key ? 'bg-white text-[#1A1A1A] shadow-sm' : 'text-[#8A8A8A]'}`}
+                className={`text-[11px] px-3 py-1 rounded transition-colors ${stage === key ? 'bg-white shadow-sm font-semibold' : 'text-[#8A8A8A]'}`}
+                style={stage === key && key !== 'all' ? { color: stageMeta[key].color } : undefined}
                 data-testid={`bc-stage-${key}`}
               >
                 {label} <span className="text-[10px] opacity-70">({stageCount})</span>
@@ -576,7 +514,11 @@ const V1AdminBusinessCases = () => {
       {/* List */}
       <div className="space-y-2">
         {filtered.map((c) => {
-          const sm = stageMeta[c.stage] || stageMeta.plan;
+          const displayStage = businessCaseDisplayStage(c);
+          const sm = stageMeta[displayStage] || stageMeta.plan;
+          const rawStageMatches = displayStage === 'plan' ? c.stage === 'plan'
+            : displayStage === 'deliver' ? c.stage === 'deliver'
+              : c.stage === 'reporting' || c.stage === 'closed';
           const hb = healthBadge(c.health);
           // This is the Business Case tab, so stay in it - a case still in
           // Connect or Framing opens at Planning rather than bouncing the
@@ -589,19 +531,9 @@ const V1AdminBusinessCases = () => {
               data-testid={`bc-row-${c.id}`}
             >
               <div className="flex items-center gap-4">
-                <div
-                  className="w-1 h-12 rounded-full flex-shrink-0"
-                  style={{ background: sm.color }}
-                />
                 <button onClick={() => navigate(nextPath)} className="flex-1 min-w-0 text-left">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[14px] font-medium text-[#1A1A1A]">{c.title}</span>
-                    <span
-                      className="text-[10px] px-2 py-0.5 rounded uppercase tracking-wider"
-                      style={{ background: `${sm.color}1A`, color: sm.color }}
-                    >
-                      {sm.label}
-                    </span>
                     <span
                       className="text-[10px] px-2 py-0.5 rounded"
                       style={{
@@ -626,7 +558,7 @@ const V1AdminBusinessCases = () => {
                       </span>
                     )}
                   </div>
-                  <p className="text-[12px] text-[#8A8A8A] mt-1">{c.next_action}</p>
+                  <p className="text-[12px] text-[#8A8A8A] mt-1">{rawStageMatches ? c.next_action : `Continue in ${sm.label}.`}</p>
                 </button>
                 <div className="flex-shrink-0 text-right">
                   <p
@@ -635,30 +567,31 @@ const V1AdminBusinessCases = () => {
                   >
                     {formatValueV3(c)}
                   </p>
-                  <p className="text-[10px] text-[#8A8A8A] mt-0.5">{Number.isFinite(c.days_in_stage) ? c.days_in_stage : 0}d in stage</p>
                 </div>
                 <button onClick={() => navigate(nextPath)} className="v3-btn-secondary text-[11px] flex-shrink-0">
                   Open active page <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
-              <div className="flex flex-wrap gap-2 pl-5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {phaseLinks(c.id).map(([label, href], idx) => {
-                  const locked = idx > (STAGE_PHASE_INDEX[c.stage] ?? 0);
-                  const isActive = href === nextPath;
+                  const locked = idx > unlockedBusinessCasePhaseIndex(c);
+                  const isActive = ['plan', 'deliver', 'reporting'][idx] === displayStage;
+                  const phaseStyle = stageMeta[['plan', 'deliver', 'reporting'][idx]];
                   return (
                     <button
                       key={label}
                       onClick={() => { if (!locked) navigate(href); }}
                       disabled={locked}
                       aria-disabled={locked}
+                      aria-current={isActive ? 'step' : undefined}
+                      aria-label={`${label}${isActive ? ', current stage' : ''}`}
                       title={locked ? `Locked until the ${phaseLinks(c.id)[idx - 1]?.[0]} stage is completed` : ''}
-                      className={`text-[11px] px-3 py-1.5 rounded-lg border transition-colors ${
-                        locked
-                          ? 'bg-[#F4F2EC] text-[#B8B2A4] border-[#E8E4DB] cursor-not-allowed opacity-60'
-                          : isActive
-                            ? 'bg-[#1F4A3A] text-white border-[#1F4A3A]'
-                            : 'bg-[#FAFAF7] text-[#6E6657] border-[#E8E4DB] hover:border-[#D4CDBF]'
-                      }`}
+                      className={`min-h-[42px] text-[12px] font-semibold px-3 py-2 rounded-lg border transition-colors ${locked ? 'cursor-not-allowed' : 'hover:brightness-95'}`}
+                      style={locked
+                        ? { background: '#F4F2EC', color: '#A49D90', borderColor: '#E8E4DB' }
+                        : isActive
+                          ? { background: phaseStyle.color, color: '#FFFFFF', borderColor: phaseStyle.color }
+                          : { background: phaseStyle.tint, color: phaseStyle.color, borderColor: phaseStyle.color }}
                       data-testid={`bc-${c.id}-phase-${label.toLowerCase()}${locked ? '-locked' : ''}`}
                     >
                       {locked && <Lock className="w-3 h-3 mr-1 inline-block align-[-2px]" strokeWidth={2} />}

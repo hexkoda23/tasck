@@ -23,7 +23,8 @@ import {
   AlertTriangle, BarChart3, CalendarClock, CheckCircle2, ChevronRight, ClipboardList, FileText,
   History, PauseCircle, RefreshCw, Sparkles, Users,
 } from 'lucide-react';
-import { v3AdminOperationalOverview } from '../../lib/v3api';
+import { v3AdminOperationalOverview, v3ListBusinessCases } from '../../lib/v3api';
+import { reconcileProjectOverview } from '../../lib/businessCaseScope';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import { useClickOutside } from '../../hooks/useClickOutside';
 
@@ -160,7 +161,7 @@ const TotalProjects = ({ pipeline = [] }) => {
           <span className="mt-2 block text-[11px] uppercase tracking-wider text-[#8A8A8A] font-semibold">Total projects</span>
         </div>
         {total > 0 && (
-          <div className="min-w-0 flex-1 grid gap-3 grid-cols-2 sm:grid-cols-4 xl:grid-cols-8" data-testid="overview-total-projects-stages">
+          <div className="min-w-0 flex-1 grid gap-3 grid-cols-2 sm:grid-cols-4" data-testid="overview-total-projects-stages">
             {pipeline.map((s) => {
               const pct = Math.round(((s.count || 0) / total) * 100);
               return (
@@ -255,9 +256,9 @@ const V1AdminOverview = () => {
     lastFetch.current = Date.now();
     if (quiet) setRefreshing(true); else setLoading(true);
     setError(null);
-    return v3AdminOperationalOverview()
-      .then((payload) => { setData(payload); })
-      .catch(() => { if (!quiet) setError('Could not load the overview.'); })
+    return Promise.all([v3AdminOperationalOverview(), v3ListBusinessCases()])
+      .then(([payload, cases]) => { setData(reconcileProjectOverview(payload, cases)); })
+      .catch(() => { setError(quiet ? 'Could not refresh the overview.' : 'Could not load the overview.'); })
       .finally(() => { setLoading(false); setRefreshing(false); });
   }, []);
 
@@ -367,7 +368,7 @@ const V1AdminOverview = () => {
 
       {activeOpen && activeLinks.length > 1 && (
         <Card icon={ClipboardList} title={`Active projects (${activeLinks.length})`} tone="#2E6FB7"
-          subtitle="Every project from the business call onwards that is not closed. Open one to go to it."
+          subtitle="Every current Business Case from Planning onward that is not closed. Open one to go to it."
           action={(
             <button type="button" onClick={() => setOpenList('')} className="v3-btn-secondary text-[11px] flex-shrink-0" data-testid="overview-active-close">
               Close
@@ -422,7 +423,7 @@ const V1AdminOverview = () => {
       <Card icon={BarChart3} title="Pipeline"
         subtitle={`${projectsTotal} active ${projectsTotal === 1 ? 'project' : 'projects'} by workflow stage`}
         testId="overview-pipeline">
-        <div className="px-5 py-5 grid gap-4 grid-cols-2 sm:grid-cols-4 xl:grid-cols-8" data-testid="overview-pipeline-stages">
+        <div className="px-5 py-5 grid gap-4 grid-cols-2 sm:grid-cols-4" data-testid="overview-pipeline-stages">
           {pipeline.map((s) => (
             <div key={s.key} data-testid={`overview-stage-${s.key}`}>
               <Meter pct={(s.count / maxPipeline) * 100} tone={s.key === 'closed' ? '#B5AF9F' : '#1F4A3A'} />
@@ -447,7 +448,7 @@ const V1AdminOverview = () => {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {/* Deadlines */}
         <Card icon={CalendarClock} title="Deadlines" tone="#B07A2B"
-          subtitle="Scheduled meetings — the only dated commitments the CRM holds" testId="overview-deadlines">
+          subtitle="Scheduled meetings across all CRM brands" testId="overview-deadlines">
           {deadlines.total === 0 ? (
             <Empty>Nothing scheduled. Meetings booked through the CRM appear here.</Empty>
           ) : (
@@ -482,7 +483,7 @@ const V1AdminOverview = () => {
         </Card>
 
         {/* Documents */}
-        <Card icon={FileText} title="Documents" subtitle="What exists and where each one has got to" testId="overview-documents">
+        <Card icon={FileText} title="Documents" subtitle="All CRM documents, including brands still in Connect or Framing" testId="overview-documents">
           {documents.length === 0 ? (
             <Empty>No documents generated yet.</Empty>
           ) : (

@@ -3,8 +3,8 @@
 Locks in:
 - Each Documents row carries one item per document it counts.
 - Every item links to a Business Case page for its own case.
-- Pipeline counts cover every project, so the Total projects tile (their sum)
-  matches the number of current business cases.
+- Pipeline counts cover every current Business Case from Planning onward, so
+  the Total projects tile matches the Business Cases list.
 
 Needs the backend running (REACT_APP_BACKEND_URL / BACKEND_URL, default
 http://localhost:8001).
@@ -58,7 +58,7 @@ def test_every_pending_action_links_to_its_page():
 def test_active_projects_are_every_open_project_and_link_to_each():
     data = _overview()
     active = data["portfolio"]["active_projects"]
-    # Every project from Connect onwards that is not closed.
+    # Every current Business Case from Planning onward that is not closed.
     open_count = sum(stage["count"] for stage in data["pipeline"] if stage["key"] != "closed")
     assert active["value"] == open_count == len(active["items"])
     for item in active["items"]:

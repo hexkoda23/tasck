@@ -518,6 +518,10 @@ export const v3GenerateCreativeBrief = async (bcId, onProgress, snapshotId) => {
   }
   throw new Error('Brief generation timed out. Please retry.');
 };
+export const v3UpdateGeneratedCreativeBrief = (bcId, brief, snapshotId) => v3.patch(
+  `/business-cases/${bcId}/creative-brief`, brief,
+  { params: snapshotId ? { alignment_snapshot_id: snapshotId } : undefined },
+).then(r => r.data);
 const briefQuery = (snapshotId, creatorId) => {
   const params = new URLSearchParams();
   if (snapshotId) params.set('alignment_snapshot_id', snapshotId);

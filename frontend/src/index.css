@@ -1026,6 +1026,66 @@ div:has(> a[href*="utm_source=emergent"]) {
   opacity: 0.6;
 }
 
+/* One stage navigation across CRM and Business Case pages. The active stage
+   is solid, visited stages are tinted, and later stages stay visible. */
+.v3-flow-phase-nav {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scrollbar-width: thin;
+}
+
+.v3-flow-phase-nav-item {
+  display: inline-flex;
+  flex: 1 0 116px;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #E8E4DB;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.v3-flow-phase-nav-item:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.v3-flow-phase-nav-item-complete {
+  border-color: var(--phase-accent);
+  background: var(--phase-tint);
+  color: var(--phase-accent);
+}
+
+.v3-flow-phase-nav-item-available {
+  border-color: var(--phase-accent);
+  background: #FFFFFF;
+  color: var(--phase-accent);
+}
+
+.v3-flow-phase-nav-item-current {
+  border-color: var(--phase-accent);
+  background: var(--phase-accent);
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(31, 74, 58, 0.14);
+}
+
+.v3-flow-phase-nav-item-locked {
+  border-color: #E8E4DB;
+  background: #F4F2EC;
+  color: #A49D90;
+  cursor: not-allowed;
+}
+
+.v3-flow-phase-nav-item:focus-visible {
+  outline: 3px solid #D6A55C;
+  outline-offset: 2px;
+}
+
 .v3-next-action-card {
   max-width: 360px;
   border: 1px solid #D4CDBF;
