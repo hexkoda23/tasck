@@ -101,3 +101,39 @@ def apply_funnel_projection(selector: Dict[str, Any], candidate: Any, transcript
     )
     return result, {**kpi, "top_of_funnel": top, "awareness": awareness,
                     "consideration": consideration, "conversion": conversion}
+
+
+def document_funnel_rows(selector: Dict[str, Any]) -> list[dict[str, str]]:
+    """Project the editable Creator Selector audience into document-ready results.
+
+    Only an actual audience number is usable. An unconfirmed target must never
+    become a fabricated projection in a creator or brand-facing document.
+    """
+    source = str((selector or {}).get("top_of_funnel_size") or "").strip()
+    match = _NUMBER.match(source)
+    top = next(_numbers(match.group()), None) if match else None
+    conversion_unit = "people"
+    final_match = re.search(
+        r"\bfinal\s+kpi\s+of\s+((?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(?:million|thousand|[km])?)\b",
+        source, re.I,
+    )
+    if final_match:
+        final = next(_numbers(final_match.group(1)), None)
+        if final:
+            top = final * 20
+            suffix = re.split(r"\bper\s+(?:day|week|month|quarter|year)\b|[.;]",
+                              source[final_match.end():], maxsplit=1, flags=re.I)[0].strip()
+            if re.fullmatch(r"(?:additional|new|qualified|active)?\s*"
+                            r"(?:users|customers|people|leads|sign-ups|downloads|wallet opens|purchases|sales)",
+                            suffix, re.I):
+                conversion_unit = suffix
+    labels = ("Top Funnel Size Audience (TFA)", "Awareness stage",
+              "Consideration stage", "Conversion stage")
+    if not top or top <= 0:
+        return [{"label": label, "value": "Not confirmed by admin yet"} for label in labels]
+    awareness = top * 60 // 100
+    consideration = awareness * 25 // 100
+    conversion = consideration * 20 // 100
+    values = (top, awareness, consideration, conversion)
+    return [{"label": label, "value": f"{value:,} {conversion_unit if index == 3 else 'people'}"}
+            for index, (label, value) in enumerate(zip(labels, values))]

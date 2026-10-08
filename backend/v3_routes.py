@@ -42,7 +42,7 @@ import official_brand_logo as _official_logo
 import tasck_pdf
 import v3_tracker_v33
 import v3_tracker_dedupe
-from creator_selector_funnel import apply_funnel_projection
+from creator_selector_funnel import apply_funnel_projection, document_funnel_rows
 
 logger = logging.getLogger("tasck.v3")
 
@@ -2507,7 +2507,15 @@ _CB_STAGE_RE = re.compile(
 
 
 def creative_brief_duration_is_placeholder(value: Any) -> bool:
-    return str(value or "").strip().rstrip(".").lower() in _CB_DURATION_PLACEHOLDERS
+    return clean_creative_brief_duration(value).strip().rstrip(".").lower() in _CB_DURATION_PLACEHOLDERS
+
+
+def clean_creative_brief_duration(value: Any) -> str:
+    """Discard an unconfirmed-session note appended to a real schedule."""
+    duration = str(value or "").strip()
+    duration = re.sub(r"\s*not covered in session\s*[-–—]\s*confirm with team\.?",
+                      "", duration, flags=re.IGNORECASE).strip()
+    return duration
 
 
 def creative_brief_duration(timelines: Any, deck: Optional[Dict[str, Any]]) -> str:
@@ -2559,7 +2567,7 @@ def creative_brief_duration(timelines: Any, deck: Optional[Dict[str, Any]]) -> s
     anchor = re.split(r"(?<=[.!?])\s+", str(timelines or "").strip(), maxsplit=1)[0].strip()
     if anchor and len(anchor.split()) <= 14 and not creative_brief_duration_is_placeholder(anchor):
         parts.append(anchor if anchor.endswith((".", "!", "?")) else anchor + ".")
-    return " ".join(parts).strip()
+    return clean_creative_brief_duration(" ".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -3155,6 +3163,43 @@ def _pitch_sections_from_slides(slides: Dict[str, Any]) -> List[Dict[str, str]]:
         if content:
             sections.append({"heading": heading, "content": content})
     return sections
+
+
+def with_document_funnel(artifact: Dict[str, Any], selector: Dict[str, Any],
+                         *, kind: str) -> Dict[str, Any]:
+    """Overlay current, deterministic funnel results on stored documents."""
+    result = dict(artifact)
+    rows = document_funnel_rows(selector)
+    if kind == "brief":
+        result["duration"] = clean_creative_brief_duration(result.get("duration"))
+        sections = [dict(section) for section in result.get("sections") or []]
+        metrics = next((section for section in sections
+                        if section.get("heading") == CB_HEADING_METRICS), None)
+        if metrics is None:
+            metrics = {"heading": CB_HEADING_METRICS, "bullets": []}
+            sections.append(metrics)
+        labels = {row["label"] for row in rows} | {"Audience Funnel"}
+        existing = [line for line in metrics.get("lines") or []
+                    if isinstance(line, dict) and line.get("label") not in labels]
+        metrics["lines"] = existing + [{"label": "Audience Funnel", "value": ""}] + rows
+        result["sections"] = sections
+    elif kind == "deck":
+        slides = result.get("slides") or {}
+        if isinstance(slides, dict) and slides:
+            slides = dict(slides)
+            funnel = dict(slides.get("funnel") or {})
+            funnel["tiers"] = [{"label": row["label"], "note": row["value"]}
+                               for row in rows]
+            slides["funnel"] = funnel
+            result["slides"] = slides
+            sections = _pitch_sections_from_slides(slides)
+        else:
+            sections = [dict(section) for section in result.get("sections") or []
+                        if section.get("heading") != "Audience Funnel"]
+            sections.append({"heading": "Audience Funnel", "content": "\n".join(
+                f'{row["label"]}: {row["value"]}' for row in rows)})
+        result["sections"] = sections
+    return result
 
 
 def _pitch_deck_system_prompt() -> str:
@@ -6853,6 +6898,9 @@ def make_v3_router(db):
         invoices = await db.v3_invoices.find({"business_case_id": bc_id}, {"_id": 0, "file_data_base64": 0}).to_list(100)
         final_report = await _sync_report_creator(await db.v3_final_reports.find_one({"business_case_id": bc_id}, {"_id": 0}))
         brainstorm = await db.v3_brainstorm_rounds.find_one({"business_case_id": bc_id}, {"_id": 0})
+        selector_for_documents = ((brainstorm or {}).get("creator_selector") or {})
+        if pitch_deck:
+            pitch_deck = with_document_funnel(pitch_deck, selector_for_documents, kind="deck")
         interactions = await db.v3_interactions.find({"business_case_id": bc_id}, {"_id": 0}).to_list(100)
         # Same duration fill as _load_generated_brief, so the Creative Brief
         # page shows what the downloads carry.
@@ -6862,6 +6910,10 @@ def make_v3_router(db):
             duration = creative_brief_duration(((brainstorm or {}).get("creator_selector") or {}).get("timelines"), pitch_deck)
             if duration:
                 case["plan"] = {**case["plan"], "generated_brief": {**plan_brief, "duration": duration}}
+        plan_brief = (case.get("plan") or {}).get("generated_brief")
+        if isinstance(plan_brief, dict):
+            case["plan"] = {**case["plan"], "generated_brief":
+                            with_document_funnel(plan_brief, selector_for_documents, kind="brief")}
         return {
             "business_case": case,
             "brand": brand,
@@ -13164,6 +13216,18 @@ def make_v3_router(db):
                 f"{creator_name}, kindly review this brief and confirm your interest so we can move forward."]})
         return {"title": heading_title, "duration": "", "sections": blocks}
 
+    async def _document_selector(bc_id: Optional[str]) -> Dict[str, Any]:
+        if not bc_id:
+            return {}
+        round_doc = await db.v3_brainstorm_rounds.find_one(
+            {"business_case_id": bc_id}, {"_id": 0, "creator_selector": 1}) or {}
+        return round_doc.get("creator_selector") or {}
+
+    async def _deck_with_funnel(deck: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not deck:
+            return deck
+        return with_document_funnel(deck, await _document_selector(deck.get("business_case_id")), kind="deck")
+
     async def _load_generated_brief(case: Dict[str, Any], snapshot_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """The case's Creative Brief in the fixed 4-page template - snapshot
         scoped first, then the case-level mirror."""
@@ -13180,6 +13244,8 @@ def make_v3_router(db):
             duration = await _project_brief_duration(case.get("id"), snap_id)
             if duration:
                 brief = {**brief, "duration": duration}
+        if brief:
+            brief = with_document_funnel(brief, await _document_selector(case.get("id")), kind="brief")
         return brief
 
     class CreativeBriefUpdate(BaseModel):
@@ -13210,6 +13276,7 @@ def make_v3_router(db):
                 brief = fallback
         if not isinstance(brief, dict):
             raise HTTPException(404, "Generate a Creative Brief before editing it")
+        brief = with_document_funnel(brief, await _document_selector(bc_id), kind="brief")
         existing_sections = brief.get("sections") or []
         if not isinstance(existing_sections, list) or len(payload.sections) != len(existing_sections):
             raise HTTPException(400, "Keep the brief's existing sections when saving edits")
@@ -13377,6 +13444,7 @@ def make_v3_router(db):
                 project_duration = await _project_brief_duration(bc_id, scoped_snapshot_id)
                 if project_duration:
                     brief["duration"] = project_duration
+                brief = with_document_funnel(brief, selector, kind="brief")
                 brief["business_case_id"] = bc_id
                 brief["business_case_title"] = case_title
                 brief["brand_name"] = brand_label
@@ -13735,7 +13803,7 @@ def make_v3_router(db):
             deck = await db.v3_pitch_decks.find_one({**query, "alignment_snapshot_id": alignment_snapshot_id}, {"_id": 0})
         if not deck:
             deck = await db.v3_pitch_decks.find_one(query, {"_id": 0})
-        return {"ok": True, "pitch_deck": deck}
+        return {"ok": True, "pitch_deck": await _deck_with_funnel(deck)}
 
     @router.post("/business-cases/{bc_id}/ai/pitch-deck/generate")
     async def generate_pitch_deck(bc_id: str, alignment_snapshot_id: Optional[str] = None):
@@ -13833,6 +13901,7 @@ def make_v3_router(db):
                     "creator_images": (existing or {}).get("creator_images", []),
                     "updated_at": now,
                 }
+                deck = with_document_funnel(deck, selector, kind="deck")
                 if existing:
                     await db.v3_pitch_decks.update_one({"id": deck_id}, {"$set": deck})
                 else:
@@ -13905,7 +13974,7 @@ def make_v3_router(db):
                 raise HTTPException(400, f"cover_option must be one of {sorted(allowed)}")
             updates["cover_option"] = payload.cover_option
         await db.v3_pitch_decks.update_one({"id": deck_id}, {"$set": updates})
-        updated = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
+        updated = await _deck_with_funnel(await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0}))
         return {"ok": True, "pitch_deck": updated}
 
     # ---------------- Pitch Deck imagery ----------------
@@ -14059,7 +14128,7 @@ def make_v3_router(db):
         if deck_id:
             match = next((d for d in decks if d.get("id") == deck_id), None)
             if match:
-                return match
+                return await _deck_with_funnel(match)
         snapshot_id = alignment_snapshot_id
         if not snapshot_id:
             case = await db.v3_business_cases.find_one({"id": bc_id}, {"_id": 0, "frame": 1}) or {}
@@ -14074,11 +14143,11 @@ def make_v3_router(db):
         if snapshot_id:
             match = next((d for d in decks if d.get("alignment_snapshot_id") == snapshot_id), None)
             if match:
-                return match
+                return await _deck_with_funnel(match)
         legacy = next((d for d in decks if not d.get("alignment_snapshot_id")), None)
         if legacy:
-            return legacy
-        return max(decks, key=lambda d: str(d.get("updated_at") or d.get("created_at") or ""))
+            return await _deck_with_funnel(legacy)
+        return await _deck_with_funnel(max(decks, key=lambda d: str(d.get("updated_at") or d.get("created_at") or "")))
 
     class PitchDeckApprovePayload(BaseModel):
         approver: str
@@ -14268,6 +14337,7 @@ def make_v3_router(db):
         deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
         if not deck:
             raise HTTPException(404, "Pitch Deck not found")
+        deck = await _deck_with_funnel(deck)
         case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0}) or {}
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
         # The flipbook HTML is served from the backend origin, so an empty
@@ -14280,6 +14350,9 @@ def make_v3_router(db):
         cache_key = "|".join([
             str(deck_id), str(deck.get("updated_at") or deck.get("generated_at") or ""),
             mode, deck_source, str(brand.get("id") or ""),
+            json.dumps(((deck.get("slides") or {}).get("funnel") or {}).get("tiers")
+                       or next((section.get("content") for section in deck.get("sections") or []
+                                if section.get("heading") == "Audience Funnel"), "")),
         ])
 
         payload = _flipbook_cache_get(cache_key)
@@ -14324,6 +14397,7 @@ def make_v3_router(db):
         deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
         if not deck:
             raise HTTPException(404, "Pitch Deck not found")
+        deck = await _deck_with_funnel(deck)
         # Zipping the .docx is CPU-bound and the package runs to ~600 KB, so
         # it goes to a worker thread rather than stalling the event loop.
         data = await asyncio.to_thread(pitch_deck_docx_bytes, deck)
@@ -14345,6 +14419,7 @@ def make_v3_router(db):
         deck = await db.v3_pitch_decks.find_one({"id": deck_id}, {"_id": 0})
         if not deck:
             raise HTTPException(404, "Pitch Deck not found")
+        deck = await _deck_with_funnel(deck)
         pdf_bytes = await asyncio.to_thread(pitch_deck_pdf_bytes, deck)
         case = await db.v3_business_cases.find_one({"id": deck.get("business_case_id")}, {"_id": 0}) or {}
         brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
