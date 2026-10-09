@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { pickActiveBrainstormRound } from '../../lib/brainstormRound';
-import { unlockedBusinessCasePhaseIndex } from '../../lib/businessCasePhase';
+import { unlockedBusinessCasePhaseIndex, unfinishedFramingPath } from '../../lib/businessCasePhase';
 import { adminRoute } from '../../lib/v3AdminRouteBase';
 import useTopbarOffset from '../../lib/useTopbarOffset';
 import { flowNeighbours, flowStepHref, flowSnapshotId, pitchDeckHref, flowStepComplete, flowGateKey, flowStepOwnsNext, creatorsSelected, STEP_PENDING_HINT, rememberFlowPage, lastFlowPage, flowStepRank } from '../../lib/v1FlowSteps';
@@ -130,6 +130,7 @@ import {
   v3ContractPdfUrl,
   v3ContractViewUrl,
   v3AlignmentDocxUrl,
+  v3AlignmentPreviewUrl,
   v3TemplateBriefDocxUrl,
   v3TemplateBriefPreviewUrl,
   v3GeneratePitchDeck,
@@ -405,8 +406,11 @@ const resolvePhasePath = (id, bc = {}) => {
   // admin was last on only wins when it is at or beyond that point (say, the
   // Pitch Deck within Framing) - looking back at Planning from Reporting
   // used to make every later "Continue" reopen Planning.
-  const furthest = furthestPhasePath(id, bc);
   const remembered = lastFlowPage(id);
+  const unfinished = unfinishedFramingPath(bc, remembered);
+  if (unfinished) return unfinished.startsWith('/frame/')
+    ? adminRoute(`/business-cases/${id}${unfinished}`) : unfinished;
+  const furthest = furthestPhasePath(id, bc);
   if (remembered && flowStepRank(remembered) >= flowStepRank(furthest)) return remembered;
   return furthest;
 };
@@ -456,6 +460,7 @@ const furthestPhasePath = (id, bc = {}) => {
  */
 export const businessCasePhasePath = (id, bc = {}, options = {}) => {
   const resolved = resolvePhasePath(id, bc);
+  if (unfinishedFramingPath(bc)) return resolved;
   if (options.area !== 'business-case') return resolved;
   return isCrmAreaPath(resolved) ? adminRoute(`/business-cases/${id}/plan/planning`) : resolved;
 };
@@ -2828,7 +2833,8 @@ export const V3BusinessCaseFrameSnapshot = () => {
   };
 
   const copyBrandReviewLink = () => {
-    const link = `${window.location.origin}/brand/approvals`;
+    if (!activeSnapshot?.id) { setNotice('Generate the Alignment Snapshot before sharing it.'); return; }
+    const link = v3AlignmentPreviewUrl(activeSnapshot.id);
     if (!navigator.clipboard) {
       setNotice(`Brand review link: ${link}`);
       return;
@@ -2936,7 +2942,7 @@ export const V3BusinessCaseFrameSnapshot = () => {
       setNotice('Generate the Alignment Snapshot before sharing it.');
       return;
     }
-    const link = `${window.location.origin}/brand/approvals`;
+    const link = v3AlignmentPreviewUrl(activeSnapshot.id);
     const text = `${activeSnapshot.title || 'Alignment Snapshot'}\n${link}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
   };
@@ -5156,7 +5162,8 @@ export const V3BusinessCasePitchDeck = () => {
   // does not count as "opened first" - on a second walk through the stages
   // that sent the admin from here straight to Planning, skipping the Brief.
   useEffect(() => { if (id && !getFrameEntry(id)) setFrameEntry(id, 'pitch'); }, [id]);
-  const briefWasFirst = getFrameEntry(id) === 'brief';
+  const briefWasFirst = Boolean((bundle?.alignment_snapshot?.generated_brief
+    || bundle?.business_case?.plan?.generated_brief)?.sections?.length);
 
   useEffect(() => {
     const persisted = bundle?.pitch_deck;

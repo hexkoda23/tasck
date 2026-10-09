@@ -37,13 +37,15 @@ export const resolveGuard = ({
   pathname = '',
   search = '',
   wrongRoleToLogin = false,
+  requireBrandAccount = false,
+  brandId = null,
 }) => {
   // Auth is read from localStorage in an effect, so the first render of a
   // signed-in visitor still looks signed out. Redirecting here would bounce
   // every logged-in person to the login page on a hard refresh.
   if (loading) return { action: WAIT };
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || (requireBrandAccount && !brandId)) {
     return { action: REDIRECT, to: loginPath, from: `${pathname}${search}` };
   }
 

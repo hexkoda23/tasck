@@ -256,7 +256,8 @@ export const v3StrategySnapshotDocxUrl = (snapshotId) => `${BACKEND_URL}/api/v3/
 export const v3ContractDocxUrl = (contractId) => `${BACKEND_URL}/api/v3/contracts/${contractId}/docx`;
 // Links people are sent (Copy link / WhatsApp) must be absolute even when the
 // API is same-origin (BACKEND_URL empty in production builds).
-export const v3ShareableUrl = (url) => (/^https?:\/\//i.test(url) ? url : `${window.location.origin}${url}`);
+export const v3ShareableUrl = (url) => new URL(url, `${window.location.origin}/`).href;
+export const v3AlignmentPreviewUrl = (snapshotId) => v3ShareableUrl(`${V3}/alignment-snapshots/${encodeURIComponent(snapshotId)}/preview`);
 // The contract alone in the browser (inline PDF) - what Copy link and
 // WhatsApp share, instead of the admin Contract page.
 export const v3ContractViewUrl = (contractId) => v3ShareableUrl(`${BACKEND_URL}/api/v3/contracts/${contractId}/view`);
@@ -530,7 +531,7 @@ const briefQuery = (snapshotId, creatorId) => {
   return qs ? `?${qs}` : '';
 };
 export const v3TemplateBriefDocxUrl = (bcId, snapshotId, creatorId) => `${V3}/business-cases/${bcId}/creative-brief/docx${briefQuery(snapshotId, creatorId)}`;
-export const v3TemplateBriefPreviewUrl = (bcId, snapshotId, creatorId) => `${V3}/business-cases/${bcId}/creative-brief/preview${briefQuery(snapshotId, creatorId)}`;
+export const v3TemplateBriefPreviewUrl = (bcId, snapshotId, creatorId) => v3ShareableUrl(`${V3}/business-cases/${bcId}/creative-brief/preview${briefQuery(snapshotId, creatorId)}`);
 
 // --- Pitch Deck: ten AI-written sections, brand-facing -------------------
 export const v3GetPitchDeck = (bcId, snapshotId) => v3.get(`/business-cases/${bcId}/pitch-deck`, {

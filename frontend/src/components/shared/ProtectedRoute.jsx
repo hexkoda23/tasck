@@ -20,13 +20,15 @@ import { RENDER, WAIT, resolveGuard } from '../../lib/routeGuard';
  * @param {string} [props.loginPath] where to send someone who is not signed in
  * @param {boolean} [props.wrongRoleToLogin] send the wrong role to loginPath too
  */
-const ProtectedRoute = ({ children, allowedRoles, loginPath = '/', wrongRoleToLogin = false }) => {
+const ProtectedRoute = ({ children, allowedRoles, loginPath = '/', wrongRoleToLogin = false, requireBrandAccount = false }) => {
   const { user, isAuthenticated, loading } = useAuth();
   const location = useLocation();
 
   const decision = resolveGuard({
     loading,
     isAuthenticated,
+    requireBrandAccount,
+    brandId: user?.brand_id,
     role: user?.role,
     allowedRoles,
     loginPath,

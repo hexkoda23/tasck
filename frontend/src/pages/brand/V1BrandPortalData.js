@@ -3,6 +3,8 @@ import { CheckCircle2, Clock3, FileText, MessageSquare, Send, ShieldCheck } from
 import { v3AddAlignmentComment, v3AddPitchDeckComment, v3AddStrategySnapshotComment, v3ApproveAlignmentAs, v3ApproveContract, v3ApprovePitchDeckAs, v3ApproveSnapshot, v3CreateInteraction, v3GetBrand, v3GetBusinessCase, v3ListBusinessCases, v3ListInteractions, v3SubmitBrandFeedback } from '../../lib/v3api';
 import { formatNairaV3 } from '../../lib/v3data';
 import { getBrandPortalSession } from '../../lib/v3brandPortal';
+import { useAuth } from '../../context/AuthContext';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { BrandLogo as SharedBrandLogo, isThirdPartyLogoDomain } from '../../lib/brandLogo';
 
 export const emptyText = 'Not captured yet.';
@@ -145,8 +147,11 @@ const sanitizeBundleForBrand = (bundle) => {
 };
 
 export const useV1BrandPortalData = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const session = useMemo(() => getBrandPortalSession(), []);
-  const brandId = session?.brandId || session?.brand_id;
+  const brandId = user?.brand_id;
   const [state, setState] = useState(() => {
     const cached = brandId ? portalCache.get(brandId) : null;
     return cached
@@ -170,12 +175,15 @@ export const useV1BrandPortalData = () => {
       portalCache.set(brandId, fresh);
       setState({ loading: false, hydrated: true, error: '', ...fresh });
     } catch (e) {
+      if (e?.response?.status === 404) {
+        navigate('/brand/login', { replace: true, state: { from: `${location.pathname}${location.search}` } });
+      }
       // A failed load is still a settled one: pages wait on `hydrated`, so
       // leaving it false here kept them on "Loading brand portal data..."
       // forever instead of showing the error.
       setState((current) => ({ ...current, loading: false, hydrated: true, error: portalCache.has(brandId) ? current.error : (e?.response?.data?.detail || e.message || 'Brand portal data could not be loaded.') }));
     }
-  }, [brandId]);
+  }, [brandId, navigate, location.pathname, location.search]);
   useEffect(() => { reload(); }, [reload]);
   return { ...state, session, brandId, reload };
 };

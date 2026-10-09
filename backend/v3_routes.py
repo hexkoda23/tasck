@@ -8758,13 +8758,27 @@ def make_v3_router(db):
                     selected = html.escape(str(sel.get("selected") or "Not selected yet"))
                     sections.append(f"<li><strong>{label}:</strong> {selected}</li>")
                 sections.append("</ul>")
+            elif section.get("rows"):
+                columns = section.get("columns") or []
+                sections.append("<table>")
+                if columns:
+                    sections.append("<thead><tr>" + "".join(
+                        f"<th>{html.escape(str(column))}</th>" for column in columns) + "</tr></thead>")
+                sections.append("<tbody>")
+                for row in section["rows"]:
+                    cells = ([row.get(column, "") for column in columns] if columns else list(row.values())) if isinstance(row, dict) else row
+                    if not isinstance(cells, (list, tuple)):
+                        cells = [cells]
+                    sections.append("<tr>" + "".join(
+                        f"<td>{html.escape(str(cell))}</td>" for cell in cells) + "</tr>")
+                sections.append("</tbody></table>")
             elif section.get("items"):
                 sections.append("<ul>")
                 for item in section.get("items", []) or []:
                     sections.append(f"<li>{html.escape(str(item))}</li>")
                 sections.append("</ul>")
         return (
-            '<!doctype html><html><head><meta charset="utf-8" />'
+            '<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" />'
             "<style>"
             "body{font-family:Arial,sans-serif;color:#1A1A1A;line-height:1.5;margin:32px;}"
             "h1{color:#1F4A3A;font-size:24px;}h2{font-size:16px;margin-top:24px;color:#4F3E2F;}"
@@ -9443,6 +9457,22 @@ def make_v3_router(db):
         # exactly. (Chioma: every doc sent to a brand or creator must use the
         # TASCK template.)
         return _docx_package(blocks)
+
+    @router.get("/alignment-snapshots/{snapshot_id}/preview")
+    async def alignment_snapshot_preview(snapshot_id: str):
+        """The exact shared document, independent of a browser's brand session."""
+        snap = await db.v3_alignment_snapshots.find_one({"id": snapshot_id}, {"_id": 0})
+        if not snap:
+            raise HTTPException(404, "Alignment Snapshot not found")
+        case = await db.v3_business_cases.find_one({"id": snap.get("business_case_id")}, {"_id": 0}) or {}
+        brand = await db.v3_brands.find_one({"id": case.get("brand_id")}, {"_id": 0}) or {}
+        document = alignment_snapshot_doc_html(case, brand, snap)
+        from urllib.parse import quote
+        review = f"{app_base_url()}/brand/alignment-snapshot?doc={quote(snapshot_id, safe='')}"
+        actions = (f'<nav style="margin-bottom:24px"><a href="{html.escape(review, quote=True)}">'
+                   'Sign in to comment or approve</a></nav>')
+        return HTMLResponse(document.replace("<body>", "<body>" + actions, 1),
+                            headers={"Cache-Control": "no-store"})
 
     @router.get("/alignment-snapshots/{snapshot_id}/docx")
     async def alignment_snapshot_docx(snapshot_id: str):

@@ -311,7 +311,7 @@ function AppRoutes() {
           // link, say) is sent to the brand login with the page they asked
           // for, not shown a portal with no brand behind it, which fell back
           // to demo data.
-          <ProtectedRoute allowedRoles={['brand']} wrongRoleToLogin loginPath="/brand/login">
+          <ProtectedRoute allowedRoles={['brand']} requireBrandAccount wrongRoleToLogin loginPath="/brand/login">
             <V1PortalLayout portal="brand" />
           </ProtectedRoute>
         )}
