@@ -3202,6 +3202,33 @@ def with_document_funnel(artifact: Dict[str, Any], selector: Dict[str, Any],
     return result
 
 
+def with_bundle_brief_funnel(case: Dict[str, Any], alignment: Optional[Dict[str, Any]],
+                             selector: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """The case mirror and preferred snapshot brief must expose identical rows."""
+    case = dict(case)
+    plan = case.get("plan") or {}
+    if isinstance(plan.get("generated_brief"), dict):
+        case["plan"] = {**plan, "generated_brief":
+                        with_document_funnel(plan["generated_brief"], selector, kind="brief")}
+    if isinstance(alignment, dict) and isinstance(alignment.get("generated_brief"), dict):
+        alignment = {**alignment, "generated_brief":
+                     with_document_funnel(alignment["generated_brief"], selector, kind="brief")}
+    return case, alignment
+
+
+def restore_missing_funnel_lines(old_rows: List[Dict[str, Any]],
+                                 new_rows: Any) -> Any:
+    """Accept a draft opened before the brief's calculated lines were added."""
+    if not isinstance(new_rows, list) or len(new_rows) != len(old_rows) - 5:
+        return new_rows
+    labels = ["Audience Funnel"] + [row["label"] for row in document_funnel_rows({})]
+    suffix = old_rows[-5:]
+    if ([row.get("label") if isinstance(row, dict) else None for row in suffix] == labels
+            and not any(isinstance(row, dict) and row.get("label") in labels for row in new_rows)):
+        return new_rows + suffix
+    return new_rows
+
+
 def _pitch_deck_system_prompt() -> str:
     return """
 You are TASCK's senior strategist writing a brand-facing Pitch Deck on the
@@ -6910,10 +6937,7 @@ def make_v3_router(db):
             duration = creative_brief_duration(((brainstorm or {}).get("creator_selector") or {}).get("timelines"), pitch_deck)
             if duration:
                 case["plan"] = {**case["plan"], "generated_brief": {**plan_brief, "duration": duration}}
-        plan_brief = (case.get("plan") or {}).get("generated_brief")
-        if isinstance(plan_brief, dict):
-            case["plan"] = {**case["plan"], "generated_brief":
-                            with_document_funnel(plan_brief, selector_for_documents, kind="brief")}
+        case, alignment = with_bundle_brief_funnel(case, alignment, selector_for_documents)
         return {
             "business_case": case,
             "brand": brand,
@@ -13314,6 +13338,10 @@ def make_v3_router(db):
                 if field in proposed:
                     old_rows = original.get(field) or []
                     new_rows = proposed[field]
+                    if field == "lines":
+                        # A brief loaded before the calculated funnel lines
+                        # were added may still be open in another browser tab.
+                        new_rows = restore_missing_funnel_lines(old_rows, new_rows)
                     if not isinstance(new_rows, list) or len(new_rows) != len(old_rows):
                         raise HTTPException(400, f"Keep the existing {field} structure")
                     merged_rows = []
